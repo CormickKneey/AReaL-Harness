@@ -1,4 +1,5 @@
 // Adapted from ZCode GitPaneChangeCard. Core supplies patch text and file statistics.
+import { useMemo } from "react";
 import { ActivityIcon } from "./ActivityIcon.js";
 import { FileTree, MessageCopy as CopyIcon, MoreOptionsIcon } from "./interfaceIcons.js";
 import { MessageResponse } from "./components/ai-elements/message.js";
@@ -35,6 +36,18 @@ export function GitPaneChangeCard({
   fullFiles?: boolean;
   reviewOptions?: Pick<DiffViewerProps, "options" | "annotations" | "selectedLines">;
 }) {
+  const { workspaceRelativePath, beforeText, afterText } = change;
+  const fullFileInput = useMemo(() => fullFiles && beforeText !== undefined && afterText !== undefined ? {
+    oldFile: { name: workspaceRelativePath, contents: beforeText },
+    newFile: { name: workspaceRelativePath, contents: afterText },
+  } : undefined, [fullFiles, workspaceRelativePath, beforeText, afterText]);
+  const { ignoreWhitespace, stripTrailingCr, callback, headerOptions } = reviewOptions?.options?.parseDiffOptions ?? {};
+  const parseDiffOptions = useMemo(() => ({
+    ignoreWhitespace, stripTrailingCr, callback, headerOptions, context: 1,
+  }), [ignoreWhitespace, stripTrailingCr, callback, headerOptions]);
+  const fullFileOptions = useMemo(() => ({
+    ...reviewOptions?.options, parseDiffOptions, collapsedContextThreshold: 0,
+  }), [reviewOptions?.options, parseDiffOptions]);
   const file = resolveFileDisplayDescriptor(change.workspaceRelativePath);
   const fileActions = [
     { label: "复制相对路径", icon: CopyIcon, run: () => onCopyRelativePath(change) },
@@ -96,12 +109,8 @@ export function GitPaneChangeCard({
           ) : change.binary ? (
             <p className="px-4 py-3 text-ui-base text-foreground-subtle">二进制文件改动</p>
           ) : change.patch ? (
-            <DiffViewer {...(fullFiles && change.beforeText !== undefined && change.afterText !== undefined ? {
-              oldFile: { name: change.workspaceRelativePath, contents: change.beforeText },
-              newFile: { name: change.workspaceRelativePath, contents: change.afterText },
-              // The reference keeps one context line and folds even one omitted
-              // line. Expansion is backed by these verified historical texts.
-              options: { ...reviewOptions?.options, parseDiffOptions: { ...reviewOptions?.options?.parseDiffOptions, context: 1 }, collapsedContextThreshold: 0 },
+            <DiffViewer {...(fullFileInput ? {
+              ...fullFileInput, options: fullFileOptions,
             } : { patch: change.patch, options: reviewOptions?.options })} disableWorkerPool
               themeType={document.documentElement.classList.contains("dark") ? "dark" : "light"}
               diffClassName="block" selectedLines={reviewOptions?.selectedLines} annotations={reviewOptions?.annotations} />

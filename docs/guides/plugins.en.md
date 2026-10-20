@@ -71,6 +71,8 @@ Installed copies retain content identity; source edits do not change installed r
 
 Applying standalone skill configuration to a new chat can restart Core. The desktop restores previously connected standalone MCP servers and trusted plugin MCP connections. Plugin restoration still requires the original installed digest. Failures do not replay tool calls. After creating a chat, an interactive app reads the current connection for the same plugin version before its first open request.
 
+For ordinary conversations, Core saves the message and submission receipt before automatically reconnecting trusted plugins for the first model request. Accepted messages remain visible while plugin authentication or initialization waits. The model request starts after preparation. Cancelling the Turn retains shared connection cleanup; pending preparation remains an unsettled lifecycle resource. Reconnection uses only trusted plugin digests allowed when the Turn was admitted and does not expand restricted Profile permissions.
+
 Mutations require `requestId` and applicable `expectedRevision`; RPC installation additionally requires selected `source` and `expectedDigest`. Identical requests recover their prior result; reused keys with different parameters reject. Check Plugin Submission queries receipts after an unknown outcome without replay:
 
 ```sh
@@ -92,6 +94,8 @@ Add a Git marketplace in the GUI. Entries accept `git-subdir` with `url/ref/path
 GUI Git marketplace add and marketplace update requests wait up to 120 seconds within the outer 150-second service deadline. A timeout or disconnect can leave an unknown result. Check the original submission receipt without automatic resubmission.
 
 Portable and legacy adapters normalize fields privately. Auth supports provided/DCR/CIMD preference, declared endpoint/resource/OIDC/scope overrides and API-key bearer/basic/custom headers. CIMD preference without a trusted host metadata URL falls back to DCR; it never impersonates an OpenAI client. Main stores client secrets and signing keys securely; Core stores references. ON_INSTALL exposes pending authentication and gates declared auth services; ON_USE requests auth when needed, allowing mixed public access anonymously. OAuth uses PKCE and private storage. Empty scope overrides remain exact through refresh. Challenge-driven upgrades retain proven grants across cancelled retries in the same binding; pending requests are not grants and new configurations/accounts do not inherit them. Private challenges reject the exact sent token without deleting concurrent refreshed tokens or replaying MCP operations.
+
+Cached credential recovery discovers authorization metadata without probing the original MCP resource endpoint. Standard well-known locations or explicitly configured endpoints support silent recovery. A service that exposes metadata only through a custom authentication challenge requires explicit authentication after a cold start to recover that discovery path. Challenges and scopes from real requests remain intact, and authentication never replays the rejected MCP operation.
 
 Codex marketplace/add accepts top-level sparsePaths. Nonempty paths use Git cone directory selection, retained across updates. Callers include the catalog and required package paths; selection is never silently widened. Missing/empty paths retain full checkout; local directory sources reject nonempty sparse selection.
 

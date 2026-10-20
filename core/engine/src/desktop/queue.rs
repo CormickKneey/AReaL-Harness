@@ -10,12 +10,17 @@ impl Engine {
         {
             let cell = self.cell(&request.thread_id).await?;
             let state = cell.state.lock().await;
-            if let Some(result) = receipt(&desktop(&state.thread), &identity, &request.request_id, "areal/turn/submit", &hash)? {
+            if let Some(result) = receipt(
+                &desktop(&state.thread),
+                &identity,
+                &request.request_id,
+                "areal/turn/submit",
+                &hash,
+            )? {
                 return Ok(result);
             }
         }
         self.refresh_plugins().await?;
-        self.connect_trusted_plugins(&request.thread_id).await?;
         self.mutate(move |engine| async move {
             let _gate = engine.desktop.lifecycle.gate.lock().await;
             let cell = engine.cell(&request.thread_id).await?;
@@ -38,8 +43,33 @@ impl Engine {
             { return Err(invalid("ordinary submit requires an ordinary conversation profile")); }
             engine.check_turn_available(&cell, &state).await?;
             let pending = data.queue.items.iter().any(|item| item.status == "pending");
+            let mut edit_source = None;
             let (input, continued_from) = match request.intent {
                 TurnSubmitIntent::Message { input } => (input, None),
+                TurnSubmitIntent::Edit { expected_turn_id, item_id, input } => {
+                    if state.active.is_some()
+                        || data.queue.items.iter().any(|item| matches!(item.status.as_str(), "pending" | "running"))
+                        || state.thread.turns.last().is_none_or(|turn| turn.id != expected_turn_id)
+                    { return Err(Error::Conflict); }
+                    // Rebuild from authoritative history, including compacted input.
+                    // Discard summaries as they may contain the replaced response.
+                    let mut source = engine.store.hydrate(state.thread.clone()).await
+                        .map_err(|error| Error::Storage(error.to_string()))?;
+                    let (turn_index, item_index) = source.turns.iter().enumerate().rev()
+                        .filter(|(_, turn)| turn.continued_from_turn_id.is_none() && turn.goal.is_none())
+                        .find_map(|(at, turn)| turn.items.iter().rposition(|item| matches!(item, Item::UserMessage { .. })).map(|index| (at, index)))
+                        .ok_or(Error::Conflict)?;
+                    if source.turns[turn_index].items[item_index].id() != item_id {
+                        return Err(Error::Conflict);
+                    }
+                    source.turns.truncate(turn_index + 1);
+                    source.turns[turn_index].items.truncate(item_index);
+                    if item_index == 0 { source.turns.pop(); }
+                    source.context_checkpoint = None;
+                    if source.turns.is_empty() { source.preview.clear(); }
+                    edit_source = Some(source);
+                    (input, None)
+                }
                 TurnSubmitIntent::Continue { expected_turn_id } => {
                     if state.active.is_some() { return Err(Error::Conflict); }
                     let turn = state.thread.turns.last().ok_or(Error::Conflict)?;
@@ -53,7 +83,8 @@ impl Engine {
                 }
             };
             let queued = pending || state.active.is_some();
-            let result;
+            let mut result;
+            let mut accepted_configuration = None;
             let mut candidate;
             let mut activation = None;
             if queued {
@@ -64,6 +95,7 @@ impl Engine {
                     engine.select_plugin_attachments(&mut configuration, &input, true)?;
                     let configuration = engine.freeze_configuration(configuration);
                     validate_input(&input, &engine.configured_model(&configuration)?.capabilities())?;
+                    accepted_configuration = Some(configuration.clone());
                     let item = QueueItem { id: id(), input, configuration, submitted_by: identity.clone(), status: "pending".into(), turn_id: None };
                     let item_id = item.id.clone();
                     data.queue.items.push(item);
@@ -77,7 +109,7 @@ impl Engine {
                 candidate = state.thread.clone();
                 candidate.desktop = Some(data);
             } else {
-                let (mut prepared, mut turn) = engine.prepare_turn(&state.thread, input)?;
+                let (mut prepared, mut turn) = engine.prepare_turn(edit_source.as_ref().unwrap_or(&state.thread), input)?;
                 turn.continued_from_turn_id = continued_from;
                 *prepared.turns.last_mut().unwrap() = turn.clone();
                 let queue = &mut prepared.desktop.get_or_insert_with(Default::default).queue;
@@ -87,13 +119,22 @@ impl Engine {
                     queue.revision += 1;
                 }
                 let permit = engine.reserve_active_turn()?;
+                accepted_configuration = turn.configuration.clone();
                 result = json!({"turn": turn});
                 candidate = prepared;
                 activation = Some((turn, permit));
             }
+            if let Some(configuration) = accepted_configuration {
+                engine.remember_accepted_model(&mut candidate, &configuration)?;
+                result["lastAcceptedModel"] = json!(candidate.desktop.as_ref().unwrap().last_accepted_model);
+            }
             remember(candidate.desktop.as_mut().unwrap(), &identity, &request.request_id, method, hash, result.clone());
             engine.persist(&candidate).await?;
             state.thread = candidate;
+            if edit_source.is_some() {
+                // A deletion is explicit, unlike partial turn/completed events.
+                cell.emit("areal/thread/edited", json!({"threadId": request.thread_id, "thread": state.thread}));
+            }
             cell.emit("areal/queue/updated", json!({"threadId": request.thread_id, "queue": state.thread.desktop.as_ref().unwrap().queue}));
             if let Some((turn, permit)) = activation {
                 engine.activate(&cell, &mut state, &turn, engine.shutdown.child_token(), permit);
@@ -131,9 +172,6 @@ impl Engine {
         skill: Option<VersionRef>,
     ) -> Result<Value> {
         self.refresh_plugins().await?;
-        if !enqueue {
-            self.connect_trusted_plugins(&request.thread_id).await?;
-        }
         self.mutate(move |engine| async move {
             let _gate = engine.desktop.lifecycle.gate.lock().await;
             if !engine.accepting_work() { return Err(Error::Closed); }
@@ -182,14 +220,19 @@ impl Engine {
             let mut configuration = engine.freeze_configuration(configuration);
             if let Some(mode) = request.interaction_mode { configuration.options.interaction_mode = mode; }
             validate_input(&request.input,&engine.configured_model(&configuration)?.capabilities())?;
+            let accepted_configuration = configuration.clone();
             if enqueue {
                 if data.queue.items.len()>=128 { return Err(Error::Exhausted("queue history capacity reached".into())); }
                 let item = QueueItem {id:id(),input:request.input,configuration,submitted_by:identity.clone(),status:"pending".into(),turn_id:None};
                 data.queue.revision+=1;
-                let result = json!({"queueItemId":item.id,"queueRevision":data.queue.revision,"configRevision":item.configuration.revision});
+                let mut result = json!({"queueItemId":item.id,"queueRevision":data.queue.revision,"configRevision":item.configuration.revision});
                 data.queue.items.push(item);
-                remember(&mut data,&identity,&request.request_id,method,hash,result.clone());
                 let mut candidate=state.thread.clone();candidate.desktop=Some(data);
+                if skill.is_none() {
+                    engine.remember_accepted_model(&mut candidate, &accepted_configuration)?;
+                    result["lastAcceptedModel"] = json!(candidate.desktop.as_ref().unwrap().last_accepted_model);
+                }
+                remember(candidate.desktop.as_mut().unwrap(),&identity,&request.request_id,method,hash,result.clone());
                 if let Some(goal) = &mut candidate.goals.goal
                     && goal.status == areal_protocol::goals::GoalStatus::Active
                 {
@@ -218,7 +261,11 @@ impl Engine {
                 candidate.desktop.as_mut().unwrap().configuration.options.interaction_mode = previous_mode;
                 if skill.is_some() { candidate.desktop.as_mut().unwrap().configuration = original_configuration; }
                 let permit=engine.reserve_active_turn()?;
-                let result=json!({"turn":turn});
+                let mut result=json!({"turn":turn});
+                if skill.is_none() {
+                    engine.remember_accepted_model(&mut candidate, &accepted_configuration)?;
+                    result["lastAcceptedModel"] = json!(candidate.desktop.as_ref().unwrap().last_accepted_model);
+                }
                 remember(candidate.desktop.as_mut().unwrap(),&identity,&request.request_id,method,hash,result.clone());
                 engine.persist(&candidate).await?;state.thread=candidate;
                 engine.activate(&cell,&mut state,&turn,engine.shutdown.child_token(),permit);
@@ -303,9 +350,17 @@ impl Engine {
                 && execution.plugin.as_ref().is_some_and(|plugin| plugin.operations.iter().any(|op| op.outcome == areal_protocol::ToolOutcome::Unknown))))
             || state.thread.desktop.as_ref().is_some_and(|data| data.hook_runs.iter().any(|hook| hook.outcome == "unknown" && hook.inspection.is_none()))
         { return Err(invalid("UNKNOWN requires operator inspection")); }
-        if state.thread.desktop.as_ref().is_some_and(|data| data.processes.iter().any(|process|
-            !process.cleanup_confirmed && (process.state == "unknown" || state.active.is_none() && process.lifetime == "turn")))
-        { return Err(invalid("UNKNOWN process cleanup requires operator inspection")); }
+        if state.thread.desktop.as_ref().is_some_and(|data| {
+            data.processes.iter().any(|process| {
+                !process.cleanup_confirmed
+                    && (process.state == "unknown"
+                        || state.active.is_none() && process.lifetime == "turn")
+            })
+        }) {
+            return Err(invalid(
+                "UNKNOWN process cleanup requires operator inspection",
+            ));
+        }
         Ok(())
     }
     pub async fn queue(&self, thread_id: &str) -> Result<Queue> {

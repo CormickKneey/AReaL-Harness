@@ -47,6 +47,8 @@ export function SidePane({
   workspaceView,
   previewTabId,
   onKeepTab,
+  transient = false,
+  hideDisabled = false,
 }: {
   workspaceView?: {
     mode: "split" | "panel" | "conversation";
@@ -61,6 +63,8 @@ export function SidePane({
   names: string[];
   previewTabId?: string;
   onKeepTab?: (id: string) => void;
+  transient?: boolean;
+  hideDisabled?: boolean;
   onSelect: (name: string) => void;
   onChange: (names: string[]) => void;
   onHide: () => void;
@@ -198,7 +202,7 @@ export function SidePane({
       />
       <div className="side-pane-tabbar">
         {fullView && workspaceView.navigation}
-        <Tabs value={conversationActive ? "__conversation" : active} onValueChange={id => id === "__conversation" ? workspaceView?.onChange("conversation") : onSelect(id)} className="side-pane-tabs-root" style={{ width: Math.max(0, tabs.length * 240 - 2 + (fullView ? 220 : 0)) }}>
+        {transient ? <strong className="flex-1 px-3 text-ui-sm">{active}</strong> : <Tabs value={conversationActive ? "__conversation" : active} onValueChange={id => id === "__conversation" ? workspaceView?.onChange("conversation") : onSelect(id)} className="side-pane-tabs-root" style={{ width: Math.max(0, tabs.length * 240 - 2 + (fullView ? 220 : 0)) }}>
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
@@ -246,8 +250,8 @@ export function SidePane({
               </TabsList>
             </SortableContext>
           </DndContext>
-        </Tabs>
-        {tabs.length > 0 && (
+        </Tabs>}
+        {!transient && tabs.length > 0 && (
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
@@ -271,7 +275,7 @@ export function SidePane({
             </DropdownMenuContent>
           </DropdownMenu>
         )}
-        {tabs.length > 0 && (
+        {!transient && tabs.length > 0 && (
           <SidePaneTabOverview
             tabs={tabs}
             activeTabId={active}
@@ -306,6 +310,7 @@ export function SidePane({
           className={workspaceView ? undefined : "ml-auto"}
           size="icon"
           variant="ghost"
+          disabled={hideDisabled}
           aria-label={fullView ? "进入分屏视图" : "关闭面板"}
           onClick={() => fullView ? workspaceView.onChange("split") : onHide()}
         >
@@ -313,7 +318,7 @@ export function SidePane({
         </Button>
       </div>
       <div className="panel-resource-layout" data-file-preview={active.startsWith("file:") || undefined}>
-        <div className={`panel-content ${active === "功能" || ["预览", "终端", "改动", "文件", "旁路讨论"].includes(active) || active.startsWith("file:") || active.startsWith("terminal:") || isBrowserTab(active) ? "full-height" : ""}`}>
+        <div className={`panel-content ${active === "功能" || ["预览", "终端", "改动", "文件", "旁路讨论", "图片标注"].includes(active) || active.startsWith("file:") || active.startsWith("terminal:") || isBrowserTab(active) ? "full-height" : ""}`}>
           {active === "功能" ? <SidePaneLauncher items={items} /> : render(active)}
         </div>
         {auxiliary && <aside className="panel-resource-tree" aria-label="文件列表">{auxiliary}</aside>}

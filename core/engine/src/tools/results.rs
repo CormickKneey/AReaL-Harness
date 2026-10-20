@@ -217,11 +217,11 @@ impl Engine {
             "result snapshot failed integrity verification"
         );
         let mut text = String::from_utf8(bytes)?;
-        if let Ok(mut value) = serde_json::from_str::<Value>(&text) {
-            if value.get("mcpResult").is_some() {
-                crate::desktop::mcp_apps::strip_meta(&mut value);
-                text = serde_json::to_string(&value)?;
-            }
+        if let Ok(mut value) = serde_json::from_str::<Value>(&text)
+            && value.get("mcpResult").is_some()
+        {
+            crate::desktop::mcp_apps::strip_meta(&mut value);
+            text = serde_json::to_string(&value)?;
         }
         let offset = match args.get("after").filter(|v| !v.is_null()) {
             Some(cursor) => cursor

@@ -111,10 +111,9 @@ impl Input {
             mcp_content: Some(content),
             ..
         } = self
+            && mcp_content_text(content)? != *text
         {
-            if mcp_content_text(content)? != *text {
-                return Err("MCP content projection mismatch".into());
-            }
+            return Err("MCP content projection mismatch".into());
         }
         Ok(())
     }
@@ -328,6 +327,9 @@ pub struct ToolExecution {
     /// 当前调用准许暴露的原始结果，引用保留在权威历史中以支持恢复与 GC。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result_snapshot: Option<MediaRef>,
+    /// Exact file bytes captured before a conditional workspace write.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_before: Option<MediaRef>,
     /// 只记录转换度量，不持有另一份权威历史。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_projection: Option<Value>,
@@ -582,6 +584,11 @@ pub struct Thread {
     pub session_id: String,
     pub parent_thread_id: Option<String>,
     pub preview: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    // 请求前持久化来源 Turn；失败、取消和重启均不再自动提交。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name_attempt_turn_id: Option<String>,
     pub model_provider: String,
     pub created_at: i64,
     pub updated_at: i64,

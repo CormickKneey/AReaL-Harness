@@ -106,10 +106,9 @@ pub(crate) fn take_rejection(rejected: &AuthRejections, id: &RequestId) -> bool 
 // Only caller-owned tools/read requests are tracked, never initialization or
 // discovery. Entries are consumed on every reply/cancellation; overflow fails
 // before POST rather than evicting an in-flight credential binding.
+type SentCredentialMap = HashMap<RequestId, (AuthorizedCredential, Option<String>)>;
 #[derive(Clone, Default)]
-pub(crate) struct SentCredentials(
-    Arc<std::sync::Mutex<HashMap<RequestId, (AuthorizedCredential, Option<String>)>>>,
-);
+pub(crate) struct SentCredentials(Arc<std::sync::Mutex<SentCredentialMap>>);
 impl std::fmt::Debug for SentCredentials {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("SentCredentials([REDACTED])")
@@ -186,13 +185,12 @@ impl HttpClient {
         endpoint: &str,
         mut headers: HashMap<HeaderName, HeaderValue>,
     ) -> Result<HashMap<HeaderName, HeaderValue>, StreamableHttpError<reqwest_mcp::Error>> {
-        if let Some(c) = &self.credential {
-            if let Some((name, value)) = c
+        if let Some(c) = &self.credential
+            && let Some((name, value)) = c
                 .fixed_header(endpoint)
                 .map_err(StreamableHttpError::Auth)?
-            {
-                headers.insert(name, value);
-            }
+        {
+            headers.insert(name, value);
         }
         Ok(headers)
     }

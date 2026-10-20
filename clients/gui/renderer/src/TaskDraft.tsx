@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { CalendarClock, X } from "lucide-react";
 import { Button } from "./components/ui/button.js";
+import { ChatPromptEditor } from "./prompt-editor/ChatPromptEditor.js";
+import type { LexicalChatInputHandle } from "./LexicalChatInput.js";
+import { useApplicationPreferences } from "./settings/applicationPreferences.js";
 import type { Action, Data } from "./services.js";
+import { TaskRunConversations } from "./TaskRunConversations.js";
 
 export function taskFrequency(seconds?: number) {
   if (!seconds) return "仅一次";
@@ -10,10 +14,25 @@ export function taskFrequency(seconds?: number) {
   }
   return `每 ${seconds} 秒`;
 }
-export type TaskConversationRenderer = (project: Data, thread: Data, beforeTurns?: ReactNode) => ReactNode;
+export type TaskConversationRenderer = (project: Data, thread: Data, beforeTurns?: ReactNode, options?: {
+  afterTurns?: ReactNode; embedded?: boolean; readOnly?: boolean;
+}) => ReactNode;
 type DraftLocation = { kind: "project"; projectId: string; cwd?: string } | { kind: "independent"; cwd?: string };
-type SavedDraft = { draftId: string; location: DraftLocation; ownerId?: string; threadId?: string; pending?: "start" | "confirm"; failedTurn?: string; text?: string };
-const starts = new Map<string, Promise<SavedDraft>>();
+type SavedDraft = { draftId: string; location: DraftLocation; ownerId?: string; threadId?: string; pending?: "start" | "confirm"; failedTurn?: string; text?: string; modelNotice?: "model-unavailable" | "effort-unsupported" };
+type DraftAdmission = Pick<SavedDraft, "ownerId" | "location" | "threadId" | "pending" | "modelNotice">;
+const starts = new Map<string, Promise<DraftAdmission>>();
+function retainedDraft(storageKey: string, fallback: SavedDraft): SavedDraft {
+  try {
+    const value = JSON.parse(localStorage.getItem(storageKey) ?? "null");
+    if (value?.draftId === fallback.draftId) return value;
+  } catch {}
+  return fallback;
+}
+function mergeDraft(storageKey: string, fallback: SavedDraft, patch: Partial<SavedDraft>) {
+  const next = { ...retainedDraft(storageKey, fallback), ...patch };
+  localStorage.setItem(storageKey, JSON.stringify(next));
+  return next;
+}
 
 /** Task management owns admission/recovery only. Messages and Composer belong to the normal conversation. */
 export function TaskDraft({ projects, initialProjectId, task, action, disabled, onCreated, onClose, onOpenModelSettings, initialText = "", renderConversation, renderResources }: {
@@ -21,6 +40,7 @@ export function TaskDraft({ projects, initialProjectId, task, action, disabled, 
   onCreated: (task: Data, projectId: string) => void; onClose: () => void; onOpenModelSettings: () => void; initialText?: string;
   renderConversation: TaskConversationRenderer; renderResources?: (project: Data, thread: Data) => ReactNode;
 }) {
+  const prefs = useApplicationPreferences();
   const storageKey = task ? `areal-gui:task-edit:${initialProjectId}:${task.id}` : `areal-gui:task-draft:${initialProjectId ?? "global"}`;
   const [saved, setSaved] = useState<SavedDraft>(() => {
     const locationFor = (projectId?: string): DraftLocation => {
@@ -41,7 +61,13 @@ export function TaskDraft({ projects, initialProjectId, task, action, disabled, 
     return value;
   });
   const current = useRef(saved); current.current = saved;
+  const inputApi = useRef<LexicalChatInputHandle | null>(null);
+  const preparingElement = useRef<HTMLDivElement>(null);
+  const focusAfterHandoff = useRef<string | undefined>(undefined);
+  const composing = useRef(false);
+  const deferredView = useRef<{ result: Data; projectId: string } | undefined>(undefined);
   const [view, setView] = useState<Data>();
+  const currentView = useRef(view); currentView.current = view;
   const [error, setError] = useState("");
   const [readError, setReadError] = useState("");
   const [opening, setOpening] = useState(false), [saving, setSaving] = useState(false);
@@ -51,14 +77,35 @@ export function TaskDraft({ projects, initialProjectId, task, action, disabled, 
   const notified = useRef("");
   const project = projects.find(p => p.id === saved.ownerId);
   const persist = (patch: Partial<SavedDraft>) => {
-    const next = { ...current.current, ...patch };
-    current.current = next; localStorage.setItem(storageKey, JSON.stringify(next)); setSaved(next);
+    const next = mergeDraft(storageKey, current.current, patch);
+    current.current = next; setSaved(next);
+  };
+  const showView = (result: Data, projectId: string) => {
+    if (!task && !currentView.current?.thread && result.thread && current.current.text !== undefined) {
+      if (composing.current) { deferredView.current = { result, projectId }; return; }
+      const latest = retainedDraft(storageKey, current.current);
+      const text = latest.text ?? "";
+      const inputKey = `areal-gui:draft:${projectId}:${result.thread.id}`;
+      const retained = localStorage.getItem(inputKey);
+      if (retained == null) localStorage.setItem(inputKey, text);
+      if (preparingElement.current?.contains(document.activeElement)) focusAfterHandoff.current = inputKey;
+      persist({ text: retained == null || retained === text || !text ? undefined : text });
+    }
+    deferredView.current = undefined;
+    currentView.current = result; setView(result);
   };
   useEffect(() => {
+    const key = focusAfterHandoff.current;
+    if (!view?.thread || !key) return;
+    focusAfterHandoff.current = undefined;
+    const frame = requestAnimationFrame(() => window.dispatchEvent(new CustomEvent("areal-draft-change", { detail: key })));
+    return () => cancelAnimationFrame(frame);
+  }, [view?.thread?.id]);
+  useEffect(() => {
     if (!startRequested || disabled || saved.threadId || saved.pending) return;
-    const retained = JSON.parse(localStorage.getItem(storageKey) ?? "null");
+    const retained = retainedDraft(storageKey, current.current);
     if (retained?.threadId || retained?.pending) {
-      persist(retained); setOpening(false); setStartRequested(false); return;
+      current.current = retained; setSaved(retained); setOpening(false); setStartRequested(false); return;
     }
     let live = true;
     setOpening(true); setError("");
@@ -66,32 +113,29 @@ export function TaskDraft({ projects, initialProjectId, task, action, disabled, 
     let start = starts.get(draft.draftId);
     if (!start) {
       start = (async () => {
-        const prepared = { ...draft };
+        let prepared = retainedDraft(storageKey, draft);
         if (!draft.ownerId && draft.location.kind === "project") {
           const location = draft.location;
-          prepared.ownerId = location.projectId;
-          prepared.location = { ...location, cwd: location.cwd ?? projects.find(project => project.id === location.projectId)?.root };
+          prepared = mergeDraft(storageKey, draft, { ownerId: location.projectId,
+            location: { ...location, cwd: location.cwd ?? projects.find(project => project.id === location.projectId)?.root } });
         } else if (!draft.ownerId) {
           const result = await action("projectless", { operation: "prepare", requestId: draft.draftId,
             ...(draft.location.cwd ? { directory: draft.location.cwd } : {}) });
-          prepared.ownerId = result.projectId;
-          prepared.location = { ...draft.location, cwd: result.cwd ?? draft.location.cwd };
+          prepared = mergeDraft(storageKey, draft, { ownerId: result.projectId,
+            location: { ...draft.location, cwd: result.cwd ?? draft.location.cwd } });
         }
-        localStorage.setItem(storageKey, JSON.stringify(prepared));
         const projectId = prepared.ownerId!;
         let result;
         try { result = await action("manage", { projectId, operation: "taskDraftStart", draftId: draft.draftId,
           timeZone: task?.schedule?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
           ...(prepared.location.cwd ? { cwd: prepared.location.cwd } : {}), ...(task ? { taskId: task.id } : {}) }); }
         catch (cause) {
-          if ((cause as Error & { submissionUnknown?: boolean }).submissionUnknown) localStorage.setItem(storageKey, JSON.stringify({ ...prepared, pending: "start" }));
+          if ((cause as Error & { submissionUnknown?: boolean }).submissionUnknown) mergeDraft(storageKey, draft, { pending: "start" });
           throw cause;
         }
-        // Seed the ordinary Composer's own draft once. Never overwrite a retained input.
-        const inputKey = `areal-gui:draft:${projectId}:${result.threadId}`;
-        if (draft.text && localStorage.getItem(inputKey) == null) localStorage.setItem(inputKey, draft.text);
-        const next = { ...prepared, threadId: result.threadId, pending: undefined, text: undefined };
-        localStorage.setItem(storageKey, JSON.stringify(next));
+        const next: DraftAdmission = { ownerId: projectId, location: prepared.location,
+          threadId: result.threadId, pending: undefined, modelNotice: result.modelNotice };
+        mergeDraft(storageKey, draft, next);
         return next;
       })();
       starts.set(draft.draftId, start);
@@ -99,7 +143,7 @@ export function TaskDraft({ projects, initialProjectId, task, action, disabled, 
     void start.then(result => { if (live) persist(result); })
       .catch(cause => {
         starts.delete(draft.draftId);
-        if (live) { setError(cause.message); persist(JSON.parse(localStorage.getItem(storageKey)!)); setStartRequested(false); }
+        if (live) { setError(cause.message); const latest = retainedDraft(storageKey, current.current); current.current = latest; setSaved(latest); setStartRequested(false); }
       }).finally(() => { starts.delete(draft.draftId); if (live) setOpening(false); });
     return () => { live = false; };
   }, [action, disabled, saved.threadId, saved.pending, startRequested, retry]);
@@ -112,7 +156,7 @@ export function TaskDraft({ projects, initialProjectId, task, action, disabled, 
       try {
         let result = await action("manage", { projectId: project.id, operation: "taskDraftRead", threadId: saved.threadId });
         if (!live) return;
-        setReadError(""); setView(result);
+        setReadError(""); showView(result, project.id);
         if (result.thread?.cwd && current.current.location.cwd !== result.thread.cwd) persist({ location: { ...current.current.location, cwd: result.thread.cwd } });
         if (current.current.failedTurn && current.current.failedTurn !== result.turnId) setError("");
         // Read-only recovery never replays an unknown or failed save.
@@ -123,7 +167,7 @@ export function TaskDraft({ projects, initialProjectId, task, action, disabled, 
               turnId: result.turnId, digest: result.digest });
             const next = await action("manage", { projectId: project.id, operation: "taskDraftRead", threadId: saved.threadId });
             if (!live) return;
-            result = next; persist({ pending: undefined, failedTurn: undefined }); setError(""); setView(result);
+            result = next; persist({ pending: undefined, failedTurn: undefined }); setError(""); showView(result, project.id);
           } catch (cause) {
             if (!live) return;
             const failure = cause as Error & { submissionUnknown?: boolean };
@@ -147,14 +191,17 @@ export function TaskDraft({ projects, initialProjectId, task, action, disabled, 
     return () => { live = false; clearInterval(timer); };
   }, [action, saved.threadId, project?.id, project?.state?.connected, disabled, retry]);
   const thread = view?.thread;
+  const preparingInput = !task && !thread && saved.text !== undefined;
   const credentialUnavailable = !saved.threadId && !saved.pending && /^(?:MODEL_)?CREDENTIAL_UNAVAILABLE(?::|$)/.test(error);
   const empty = thread && !thread.turns?.length;
   const welcome = <div className="task-create-welcome"><CalendarClock size={36}/><h2>让 Agent 定时帮你完成任务</h2><p>告诉我需要做什么、什么时候执行。</p><div className="task-examples">{[
     ["行业动态日报", "每天上午 9 点，整理 AI 行业动态并附上原始来源。"],
     ["跟踪产品更新", "每周一上午 9 点，汇总我指定产品的新变化并附上来源。"],
   ].map(([title, text]) => <button key={title} onClick={() => {
-    const key = `areal-gui:draft:${project!.id}:${thread.id}`;
-    localStorage.setItem(key, text); window.dispatchEvent(new CustomEvent("areal-draft-change", { detail: key }));
+    if (project && thread) {
+      const key = `areal-gui:draft:${project.id}:${thread.id}`;
+      localStorage.setItem(key, text); window.dispatchEvent(new CustomEvent("areal-draft-change", { detail: key }));
+    } else { persist({ text }); inputApi.current?.setText(text); inputApi.current?.focus(); }
   }}><h3>{title}</h3><p>{text}</p></button>)}</div></div>;
   // Keep all message/history/attachment rendering in the existing components.
   const owner = project && { ...project, state: { ...project.state, connected: project.state?.connected && !disabled && !saving && !task?.cancelled && !readError && !current.current.pending } };
@@ -162,11 +209,31 @@ export function TaskDraft({ projects, initialProjectId, task, action, disabled, 
     <header><h2>{task?.objective ?? "新建任务"}</h2>{task && project && thread && renderResources?.(project, thread)}
       <Button size="icon-sm" variant="ghost" aria-label={task ? "关闭任务详情" : "关闭创建对话"} onClick={onClose}><X size={16}/></Button></header>
     {(error || readError || view?.error) && <p role="alert" className="task-plan-note task-draft-error">{credentialUnavailable ? <>模型凭据不可用。请在模型设置中补充 API Key 并保存，或选择可用的新会话默认模型。完成后重试，或从“定时任务”重新打开“新建任务”。<Button variant="ghost" onClick={onOpenModelSettings}>打开模型设置</Button></> : error || readError || view?.error}</p>}
+    {saved.modelNotice && <p role="status" className="task-plan-note">{saved.modelNotice === "model-unavailable" ? "上次使用的模型当前不可用，已显示备用默认模型，请确认后发送。" : "上次使用的思考强度当前不受支持，已使用模型默认值。"}</p>}
     {saved.pending && <p role="status" className="task-plan-note">{saving ? "正在保存任务安排…" : "提交结果尚未确认，请核对当前任务；不会自动重复提交。"}{!saving && <Button variant="ghost" disabled={!project?.state?.connected} onClick={() => {void action("reconcile", {projectId: project!.id}).then(result => {if (saved.pending === "start" && result.outcomes?.[saved.draftId]?.accepted) {persist({pending:undefined});setStartRequested(true);setRetry(n => n + 1);}}).catch(cause => setError(cause.message));}}>核对受理状态</Button>}</p>}
-    {!thread && <div className="task-conversation-pending">
+    {!thread && !preparingInput && <div className="task-conversation-pending">
       <div role="status">{opening || startRequested && !disabled && !saved.threadId && !saved.pending ? "正在打开会话…" : task || saved.threadId || saved.pending ? "正在读取会话…" : error ? "会话打开失败，请重试。" : "等待连接后台…"}{!saved.pending && !opening && (error || saved.threadId) && <Button variant="ghost" disabled={disabled} onClick={() => {setStartRequested(true);setRetry(n => n + 1);}}>{saved.threadId ? "重新读取" : "重试"}</Button>}</div>
     </div>}
-    {owner && thread && <div className="task-conversation-body"><section className="task-chat-pane">{renderConversation(owner, thread, empty ? welcome : undefined)}</section>
+    {preparingInput && <div className="task-conversation-body"><section className="task-chat-pane">
+      <div className="flex-1 overflow-auto">{welcome}{!opening && (!startRequested || disabled || saved.pending) && <p role="status" className="task-plan-note">输入已保留，会话就绪后即可发送。{!saved.pending && (error || saved.threadId) && <Button variant="ghost" disabled={disabled} onClick={() => { setStartRequested(true); setRetry(n => n + 1); }}>重试</Button>}</p>}</div>
+      <div ref={preparingElement} className="composer-dock" data-v4-composer-dock="true"
+        onCompositionStartCapture={() => { composing.current = true; }}
+        onCompositionEnd={() => {
+          queueMicrotask(function handoffCommittedComposition() { composing.current = false; const pending = deferredView.current; if (pending) showView(pending.result, pending.projectId); });
+        }}>
+        <ChatPromptEditor shellClassName="@container/composer" workspacePath="" taskId={null}
+          inputApiRef={inputApi} initialValue={saved.text} inputTestId="chat-input" submitTestId="chat-send-button"
+          placeholder="描述任务和执行时间" disabled={false} submitDisabled submitLabel="发送"
+          enterSubmits={prefs.sendShortcut === "enter"} enableMentionPanel={false}
+          onChange={text => persist({ text })} onSubmit={() => false} />
+      </div>
+    </section></div>}
+    {!task && project && thread && saved.text !== undefined && <p role="status" className="task-plan-note">会话中已有另一份草稿，准备期间的输入已另行保留。<Button variant="ghost" onClick={() => {
+      const key = `areal-gui:draft:${project.id}:${thread.id}`;
+      localStorage.setItem(key, retainedDraft(storageKey, current.current).text ?? ""); persist({ text: undefined });
+      window.dispatchEvent(new CustomEvent("areal-draft-change", { detail: key }));
+    }}>用保留输入替换会话草稿</Button></p>}
+    {owner && thread && <div className="task-conversation-body"><section className="task-chat-pane">{renderConversation(owner, thread, empty ? welcome : undefined, { afterTurns: task && project ? <TaskRunConversations project={project} task={task} action={action} disabled={disabled} renderConversation={renderConversation} /> : undefined })}</section>
     </div>}
   </main>;
 }

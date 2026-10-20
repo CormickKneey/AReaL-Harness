@@ -489,11 +489,12 @@ async fn active_model_reads_admitted_revision_after_update_and_child_cannot_expa
         done.turns.last().unwrap().status,
         areal_protocol::TurnStatus::Completed
     );
-    let results = model.results.lock().unwrap();
-    assert_eq!(results[0]["data"].as_array().unwrap().len(), 1);
-    assert_eq!(results[0]["data"][0]["revision"], old.revision);
-    assert!(results[1]["text"].as_str().unwrap().contains("old body"));
-    drop(results);
+    {
+        let results = model.results.lock().unwrap();
+        assert_eq!(results[0]["data"].as_array().unwrap().len(), 1);
+        assert_eq!(results[0]["data"][0]["revision"], old.revision);
+        assert!(results[1]["text"].as_str().unwrap().contains("old body"));
+    }
     let listed = e.skills(&thread.id).await.unwrap();
     let current = listed["data"]
         .as_array()
@@ -534,14 +535,15 @@ async fn disabled_plugin_is_revoked_during_active_model_calls() {
         .await
         .unwrap()
         .unwrap();
-    let results = model.results.lock().unwrap();
-    assert_eq!(results[0]["data"], json!([]));
-    assert!(!results[1].to_string().contains("old body"));
-    assert!(
-        results[1].to_string().contains("not selected")
-            || results[1].to_string().contains("disabled")
-    );
-    drop(results);
+    {
+        let results = model.results.lock().unwrap();
+        assert_eq!(results[0]["data"], json!([]));
+        assert!(!results[1].to_string().contains("old body"));
+        assert!(
+            results[1].to_string().contains("not selected")
+                || results[1].to_string().contains("disabled")
+        );
+    }
     e.shutdown().await;
 }
 #[tokio::test]
@@ -714,11 +716,12 @@ async fn gui_attachment_selects_hidden_skill_but_cannot_widen_side_or_child() {
         .unwrap();
     model.release.notify_one();
     e.wait(&thread.id).await.unwrap();
-    let results = model.results.lock().unwrap();
-    assert_eq!(results[0]["data"].as_array().unwrap().len(), 2);
-    assert!(results[1]["text"].as_str().unwrap().contains("setup body"));
-    assert!(!results[1]["text"].as_str().unwrap().contains("FORGED BODY"));
-    drop(results);
+    {
+        let results = model.results.lock().unwrap();
+        assert_eq!(results[0]["data"].as_array().unwrap().len(), 2);
+        assert!(results[1]["text"].as_str().unwrap().contains("setup body"));
+        assert!(!results[1]["text"].as_str().unwrap().contains("FORGED BODY"));
+    }
     assert!(
         e.read(&thread.id, true)
             .await
@@ -781,15 +784,16 @@ async fn active_model_retains_removed_skill_after_package_update() {
         .await
         .unwrap()
         .unwrap();
-    let results = model.results.lock().unwrap();
-    assert_eq!(
-        results[0]["data"].as_array().unwrap().len(),
-        1,
-        "an enabled plugin update must not revoke an admitted old component"
-    );
-    assert_eq!(results[0]["data"][0]["revision"], old.revision);
-    assert!(results[1]["text"].as_str().unwrap().contains("old body"));
-    drop(results);
+    {
+        let results = model.results.lock().unwrap();
+        assert_eq!(
+            results[0]["data"].as_array().unwrap().len(),
+            1,
+            "an enabled plugin update must not revoke an admitted old component"
+        );
+        assert_eq!(results[0]["data"][0]["revision"], old.revision);
+        assert!(results[1]["text"].as_str().unwrap().contains("old body"));
+    }
     e.plugin_configure("sample@local".into(), "user".into(), false, 2)
         .await
         .unwrap();

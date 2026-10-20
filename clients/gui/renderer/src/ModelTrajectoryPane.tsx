@@ -12,7 +12,8 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Data } from "./services.js";
-import { trajectoryEntries, turnStatus } from "./trajectory.js";
+import { trajectoryEntries, trajectoryText, turnStatus } from "./trajectory.js";
+import { CopyTextAction } from "./MessageActions.js";
 import { trajectoryRoleTextClass } from "./ModelTrajectoryRoleStyles.js";
 import { TrajectorySectionTitle } from "./ModelTrajectorySectionTitle.js";
 
@@ -70,6 +71,7 @@ export function ModelTrajectoryPane({
       })),
     [thread.turns],
   );
+  const copyText = useMemo(() => trajectoryText(thread, title), [thread, title]);
   const matches = useMemo(
     () =>
       query.trim()
@@ -140,6 +142,7 @@ export function ModelTrajectoryPane({
       <header className="trajectory-header">
         <div className="trajectory-toolbar">
           <strong title={title}>{title}</strong>
+          <CopyTextAction text={copyText} noun="轨迹" iconSize={15} />
           <button
             className="icon-button"
             title="搜索调用轨迹"

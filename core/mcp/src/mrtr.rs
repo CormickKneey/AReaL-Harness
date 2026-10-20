@@ -173,7 +173,7 @@ impl RequestChannel<'_> {
                     _=operation.cancelled()=>bail!("MCP operation cancelled; outcome is UNKNOWN"),
                     _=self.revoked.cancelled()=>bail!("MCP generation revoked; outcome is UNKNOWN"),
                     _=&mut deadline=>bail!("MCP operation timed out; outcome is UNKNOWN"),
-                    r=broker.request_owned(self.server,self.generation,Value::String(key.clone()),params,owner.token.clone(),operation.clone(),self.revoked.clone())=>r?,
+                    r=broker.request_owned((self.server,self.generation),Value::String(key.clone()),params,owner.token.clone(),operation.clone(),self.revoked.clone())=>r?,
                 };
                 responses.insert(key, response);
             }

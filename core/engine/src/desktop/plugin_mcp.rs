@@ -11,6 +11,34 @@ pub(super) struct Generation {
     pub servers: Vec<areal_mcp::McpServer>,
     pub configs: BTreeMap<String, PluginServerConfig>,
 }
+impl Generation {
+    fn model_tools(&self) -> impl Iterator<Item = McpTool> + '_ {
+        self.tools
+            .iter()
+            .filter(|t| {
+                serde_json::to_value(t.metadata()).is_ok_and(|v| {
+                    v["_meta"]["ui"]["visibility"]
+                        .as_array()
+                        .is_none_or(|visibility| visibility.iter().any(|v| v == "model"))
+                })
+            })
+            .cloned()
+    }
+}
+enum ConnectionIntent {
+    Explicit { connect: bool },
+    Trusted,
+}
+struct PendingPreparation(Arc<Engine>);
+impl Drop for PendingPreparation {
+    fn drop(&mut self) {
+        self.0
+            .desktop
+            .plugin_mcp
+            .preparations
+            .fetch_sub(1, Ordering::AcqRel);
+    }
+}
 struct Owned {
     view: Generation,
     connection: Connections,
@@ -61,11 +89,12 @@ struct AuthConfiguration {
     references: areal_protocol::plugin_runtime::HostAuthReferences,
     revision: String,
 }
+type ServerStates = BTreeMap<String, (String, BTreeMap<String, String>)>;
 pub(crate) struct Manager {
     live: std::sync::RwLock<BTreeMap<String, Generation>>,
     owners: Mutex<Vec<Owned>>,
     states: std::sync::RwLock<BTreeMap<String, String>>,
-    server_states: std::sync::RwLock<BTreeMap<String, (String, BTreeMap<String, String>)>>,
+    server_states: std::sync::RwLock<ServerStates>,
     trusted: std::sync::RwLock<BTreeMap<String, String>>,
     connectors: std::sync::RwLock<BTreeMap<String, Connector>>,
     auth_configurations: std::sync::RwLock<BTreeMap<String, AuthConfiguration>>,
@@ -75,6 +104,7 @@ pub(crate) struct Manager {
     operation: Mutex<()>,
     known: std::sync::RwLock<BTreeMap<u64, (String, bool)>>,
     watching: std::sync::atomic::AtomicBool,
+    preparations: std::sync::atomic::AtomicUsize,
     auth: areal_mcp::AuthManager,
 }
 impl Manager {
@@ -104,6 +134,7 @@ impl Manager {
             operation: Mutex::new(()),
             known: Default::default(),
             watching: Default::default(),
+            preparations: Default::default(),
             auth: areal_mcp::AuthManager::new(root.join("private/mcp-auth"), "plugins")?,
         })
     }
@@ -112,15 +143,11 @@ impl Manager {
             .read()
             .unwrap()
             .values()
-            .flat_map(|g| g.tools.clone())
-            .filter(|t| {
-                serde_json::to_value(t.metadata()).is_ok_and(|v| {
-                    v["_meta"]["ui"]["visibility"]
-                        .as_array()
-                        .is_none_or(|visibility| visibility.iter().any(|v| v == "model"))
-                })
-            })
+            .flat_map(Generation::model_tools)
             .collect()
+    }
+    pub(super) fn pending_preparations(&self) -> usize {
+        self.preparations.load(Ordering::Acquire)
     }
     pub(super) fn generations(&self) -> Vec<Generation> {
         self.live.read().unwrap().values().cloned().collect()
@@ -482,16 +509,19 @@ impl Engine {
             .write()
             .unwrap()
             .retain(|(plugin, _, digest), _| current.get(plugin) == Some(digest));
+        let Ok(_retirement_guard) = self.desktop.plugin_mcp.operation.try_lock() else {
+            return Ok(());
+        };
         // 所有者扫描只读取已冻结的代；已受理旧工具在新包安装后仍可结算。
         let cells: Vec<_> = self.threads.read().await.values().cloned().collect();
         let mut active = BTreeSet::new();
         for cell in cells {
             let state = cell.state.lock().await;
-            if let Some(a) = &state.active {
-                if let Ok(registry) = &a.registry {
-                    for generation in registry.mcp_generations() {
-                        active.insert(generation);
-                    }
+            if let Some(a) = &state.active
+                && let Ok(registry) = &a.registry
+            {
+                for generation in registry.mcp_generations() {
+                    active.insert(generation);
                 }
             }
         }
@@ -610,11 +640,21 @@ impl Engine {
         connect: bool,
     ) -> Result<Value> {
         let _operation = self.desktop.plugin_mcp.operation.lock().await;
+        self.plugin_connection_locked(id, expected_digest, ConnectionIntent::Explicit { connect })
+            .await?;
+        self.plugin_mcp_list().await
+    }
+    async fn plugin_connection_locked(
+        self: &Arc<Self>,
+        id: String,
+        expected_digest: String,
+        intent: ConnectionIntent,
+    ) -> Result<()> {
         let component = self.plugin_component(&id).await?;
         if component.digest != expected_digest {
             return Err(Error::Conflict);
         }
-        if !connect {
+        if matches!(intent, ConnectionIntent::Explicit { connect: false }) {
             self.revoke_plugin_mcp(&id).await?;
             self.desktop.plugin_mcp.trusted.write().unwrap().remove(&id);
             let trusted = self.desktop.plugin_mcp.trusted.read().unwrap().clone();
@@ -622,7 +662,15 @@ impl Engine {
                 .save_metadata("plugin-trust", &trusted)
                 .await
                 .map_err(invalid)?;
-            return self.plugin_mcp_list().await;
+            return Ok(());
+        }
+        if matches!(intent, ConnectionIntent::Trusted) {
+            if self.desktop.plugin_mcp.trusted.read().unwrap().get(&id) != Some(&expected_digest) {
+                return Err(Error::Conflict);
+            }
+            if component.mcp_documents.is_empty() {
+                return Ok(());
+            }
         }
         if self
             .desktop
@@ -635,9 +683,20 @@ impl Engine {
         {
             return Err(invalid("previous plugin cleanup remains UNKNOWN"));
         }
+        if matches!(intent, ConnectionIntent::Trusted)
+            && self
+                .desktop
+                .plugin_mcp
+                .live
+                .read()
+                .unwrap()
+                .get(&id)
+                .is_some_and(|generation| generation.digest == expected_digest)
+        {
+            return Ok(());
+        }
         // Explicit Connect is also retry/reauth: new handles replace discovery,
         // while admitted Turns and Apps retain the previous generation until drain.
-        // Automatic trusted admission separately skips already-live digests.
         let (configs, configuration_diagnostics) = self.component_configuration(&component)?;
         if configs.keys().any(|name| {
             self.extensions.mcp_servers.contains_key(name)
@@ -774,18 +833,17 @@ impl Engine {
             if let Some(failure) = error
                 .chain()
                 .find_map(|e| e.downcast_ref::<areal_mcp::ConnectionFailure>())
+                && let Some(challenge) = failure.authentication_challenge()
             {
-                if let Some(challenge) = failure.authentication_challenge() {
-                    self.desktop
-                        .plugin_mcp
-                        .auth_challenges
-                        .write()
-                        .unwrap()
-                        .insert(
-                            (id.clone(), failure.server.clone(), component.digest.clone()),
-                            challenge,
-                        );
-                }
+                self.desktop
+                    .plugin_mcp
+                    .auth_challenges
+                    .write()
+                    .unwrap()
+                    .insert(
+                        (id.clone(), failure.server.clone(), component.digest.clone()),
+                        challenge,
+                    );
             }
             let state = connection_failure_state(&error);
             for server in eligible.keys() {
@@ -860,7 +918,7 @@ impl Engine {
                 .write()
                 .unwrap()
                 .insert(id.clone(), state.into());
-            return self.plugin_mcp_list().await;
+            return Ok(());
         }
         if self
             .plugin_component(&id)
@@ -928,23 +986,25 @@ impl Engine {
             .write()
             .unwrap()
             .insert(id.clone(), generation);
-        self.desktop
-            .plugin_mcp
-            .trusted
-            .write()
-            .unwrap()
-            .insert(id.clone(), expected_digest);
-        let trusted = self.desktop.plugin_mcp.trusted.read().unwrap().clone();
-        self.store
-            .save_metadata("plugin-trust", &trusted)
-            .await
-            .map_err(invalid)?;
+        if matches!(intent, ConnectionIntent::Explicit { connect: true }) {
+            self.desktop
+                .plugin_mcp
+                .trusted
+                .write()
+                .unwrap()
+                .insert(id.clone(), expected_digest);
+            let trusted = self.desktop.plugin_mcp.trusted.read().unwrap().clone();
+            self.store
+                .save_metadata("plugin-trust", &trusted)
+                .await
+                .map_err(invalid)?;
+        }
         self.desktop.plugin_mcp.states.write().unwrap().insert(
             id,
             if has_failures { "partial" } else { "connected" }.into(),
         );
         self.spawn_mcp_forms(receiver);
-        self.plugin_mcp_list().await
+        Ok(())
     }
     fn plugin_auth_key(&self, plugin: &str, server: &str, digest: &str) -> String {
         let mappings = self.desktop.plugin_mcp.auth_configurations.read().unwrap();
@@ -1284,46 +1344,107 @@ impl Engine {
             .and_then(|p| p.output_token_limit)
             .map(|n| usize::try_from(n).unwrap_or(usize::MAX))
     }
-    pub(crate) async fn connect_trusted_plugins(self: &Arc<Self>, thread_id: &str) -> Result<()> {
-        let cell = self.cell(thread_id).await?;
-        let state = cell.state.lock().await;
-        let config = desktop(&state.thread).configuration;
-        if state.active.is_some() || state.compacting {
-            return Ok(());
-        }
-        if state.thread.is_side()
+    pub(crate) fn pending_trusted_plugins(
+        &self,
+        cell: &Cell,
+        thread: &Thread,
+        turn: &Turn,
+        active: &Active,
+    ) -> Vec<TrustedPlugin> {
+        let Some(config) = &turn.configuration else {
+            return vec![];
+        };
+        if thread.is_side()
             || cell.research
-            || state.thread.parent_thread_id.is_some()
+            || thread.parent_thread_id.is_some()
+            || thread.source == "nativeTaskAgent"
             || cell.exclusive_writer
+            || cell.inherited_registry.is_some()
+            || active.direct_tool.is_some()
             || !config.allow_plugin_skills
             || config.read_only
         {
-            return Ok(());
+            return vec![];
         }
-        drop(state);
-        let store = match self.plugin_store() {
-            Ok(s) => s,
-            Err(_) => return Ok(()),
+        let Ok(registry) = &active.registry else {
+            return vec![];
         };
-        let components = tokio::task::spawn_blocking(move || store.enabled_components())
-            .await
-            .map_err(invalid)?
-            .map_err(invalid)?;
-        for c in components {
-            let trusted =
-                self.desktop.plugin_mcp.trusted.read().unwrap().get(&c.id) == Some(&c.digest);
-            let connected = self
-                .desktop
-                .plugin_mcp
-                .live
-                .read()
-                .unwrap()
-                .contains_key(&c.id);
-            if trusted && !connected && !c.mcp_documents.is_empty() {
-                self.plugin_connection(c.id, c.digest, true).await?;
+        let known = self.desktop.plugin_mcp.known.read().unwrap();
+        let frozen: BTreeSet<_> = registry
+            .mcp_generations()
+            .iter()
+            .filter_map(|generation| known.get(generation).map(|(plugin, _)| plugin.clone()))
+            .collect();
+        let plugins = self.desktop.plugins.read().unwrap();
+        self.desktop
+            .plugin_mcp
+            .trusted
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|(id, _)| plugins.enabled_plugin_ids.contains(*id) && !frozen.contains(*id))
+            .map(|(id, digest)| TrustedPlugin {
+                id: id.clone(),
+                digest: digest.clone(),
+            })
+            .collect()
+    }
+    pub(crate) async fn prepare_turn_plugins(
+        self: &Arc<Self>,
+        cell: Arc<Cell>,
+        turn_id: String,
+        pending: Vec<TrustedPlugin>,
+    ) -> Result<()> {
+        self.desktop
+            .plugin_mcp
+            .preparations
+            .fetch_add(1, Ordering::AcqRel);
+        let preparation = PendingPreparation(self.clone());
+        self.mutate(move |engine| async move {
+            let _preparation = preparation;
+            for plugin in pending {
+                let _operation = engine.desktop.plugin_mcp.operation.lock().await;
+                {
+                    let state = cell.state.lock().await;
+                    if state.active.as_ref().is_none_or(|active| {
+                        active.id != turn_id || active.sealed || active.cancel.is_cancelled()
+                    }) {
+                        return Ok(());
+                    }
+                }
+                match engine
+                    .plugin_connection_locked(
+                        plugin.id.clone(),
+                        plugin.digest.clone(),
+                        ConnectionIntent::Trusted,
+                    )
+                    .await
+                {
+                    Ok(()) => {}
+                    Err(Error::Conflict) => continue,
+                    Err(error) => return Err(error),
+                }
+                let mut state = cell.state.lock().await;
+                let Some(active) = state.active.as_mut().filter(|active| {
+                    active.id == turn_id && !active.sealed && !active.cancel.is_cancelled()
+                }) else {
+                    return Ok(());
+                };
+                let registry = active.registry.as_ref().map_err(invalid)?;
+                let live = engine.desktop.plugin_mcp.live.read().unwrap();
+                let additions = live
+                    .get(&plugin.id)
+                    .filter(|generation| generation.digest == plugin.digest)
+                    .into_iter()
+                    .flat_map(Generation::model_tools)
+                    .collect::<Vec<_>>();
+                if !additions.is_empty() {
+                    active.registry = Ok(registry.clone().with_mcp(additions).map_err(invalid)?);
+                }
             }
-        }
-        Ok(())
+            Ok(())
+        })
+        .await
     }
 }
 fn component_flag(old: Option<&Value>, new: Option<&Value>, component: &str) -> bool {

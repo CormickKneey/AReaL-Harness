@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
+import { randomUUID } from "node:crypto";
 import { spawn, execFileSync } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
@@ -124,7 +125,7 @@ test(
 
 const candidate = process.env.AREAL_GUI_EXECUTABLE;
 test(
-  "packaged background starts through its own macOS entry without a GUI or project and stops safely",
+  "packaged background requires its application owner and exits when the owner pipe closes",
   {
     skip: process.platform !== "darwin" || !candidate,
     timeout: 45000,
@@ -134,6 +135,8 @@ test(
     const userData = join(root, "user-data"),
       user = join(root, "user");
     await mkdir(user);
+    await mkdir(userData);
+    const owner = { kind: "gui", appRunId: randomUUID(), profile: await realpath(userData) };
     const contents = dirname(dirname(candidate));
     const paths = desktopExecutables({
       packaged: true,
@@ -143,6 +146,8 @@ test(
     const env = {
       ...process.env,
       AREAL_GUI_USER_DATA: userData,
+      AREAL_GUI_OWNER: JSON.stringify(owner),
+      AREAL_GUI_DESKTOP_LIFETIME_FD: "3",
       AREAL_CORE_HOME: join(root, "core"),
       AREAL_CORE_USER_HOME: user,
       AREAL_HARNESS_HOME: join(user, ".areal"),
@@ -158,8 +163,7 @@ test(
       delete env[name];
     const log = createWriteStream(join(root, "service.log"));
     await once(log, "open");
-    // 无参数直接启动后台入口也只能装配后台，不能打开窗口或依赖调用方补充模式参数。
-    const child = spawn(paths.service, [], { env, stdio: ["ignore", log.fd, log.fd] });
+    const child = spawn(paths.service, [], { env, stdio: ["ignore", log.fd, log.fd, "pipe"] });
     let exited = false;
     const exit = once(child, "exit").then((value) => {
       exited = true;
@@ -182,6 +186,7 @@ test(
     t.after(async () => {
       connection.close();
       try {
+        child.stdio[3].destroy();
         if (!exited) child.kill("SIGTERM");
         // 只清理本测试直接启动的空配置后台；启动失败也不能无限等待退出。
         if (!(await waitExit(3000))) child.kill("SIGKILL");
@@ -203,6 +208,7 @@ test(
     }
     assert.ok(metadata, `background did not start; inspect ${root}`);
     assert.equal(metadata.pid, child.pid);
+    assert.deepEqual(metadata.applicationOwner, owner);
     await connection.connect(metadata);
     await connection.request("hello", { protocol: metadata.protocol, identity: metadata.identity });
     const { snapshot } = await connection.request("snapshot");
@@ -215,13 +221,8 @@ test(
     await new Promise((resolve) => setTimeout(resolve, 8000));
     assert.equal(exited, false, `background exited while idle; inspect ${root}`);
     await connection.request("snapshot");
-    const result = await connection.request(
-      "stopService",
-      { protocol: metadata.protocol, cancel: false, expectedTargets: [] },
-      true,
-    );
-    assert.equal(result.stopped, true);
-    assert.deepEqual(await exit, [0, null]);
+    child.stdio[3].end();
+    assert.deepEqual(await exit, [1, null], "owner loss is an interrupted application lifetime");
     console.log(
       JSON.stringify({ nativeServicePassed: true, root, serviceName, pid: metadata.pid }),
     );

@@ -8,6 +8,7 @@
 |---|---|
 | 项目规则 | 按工作区根到会话 cwd 加载 `AGENTS.md`，子目录优先、每 Turn 刷新、有界且经 Runtime 读取。[客户端](guides/clients.md) |
 | 会话与模型 | 持久 Thread/Turn、流式正文、Chat Completions 思考与 Responses 思考摘要/文本事件、追加输入、取消、恢复；Chat Completions / Responses，模态取决于 adapter 和模型。[客户端](guides/clients.md) |
+| 会话名称 | 普通根会话首个成功 Turn 后异步总结名称，手动名称优先；失败保留预览，重启不重复请求。[Core 契约](api/core.md#会话名称) |
 | 文件与进程 | 条件文件写入、命令、stdin、PTY、有界输出、Scope 权限收窄及清理。[Runtime](api/runtime.md) |
 | 工具结果 | 内置固定版本 rg、历史结果原文分页回取；可配置的搜索分组与精确重复行视图，默认 observe。[工具](guides/tools.md) |
 | 公开多模态输入 | 原生 CLI 只读附件绑定；按需 PNG/JPEG/WebP/GIF 视图，独立模型请求字节限额。[评测输入](benchmarks/README.md#原生平台接入) |
@@ -18,6 +19,7 @@
 | 权限模式 | 本地默认 YOLO，可配置 ASK_PERMISSIONS；TUI/Web 审批、会话/项目精确授权与自动 Thread scratch。[配置](guides/configuration.md#permissions) |
 | 桌面接口 | 认证、Profile/Skill/Plan、`--agent id@revision` 选择、Profile 绑定 Workflow 自动启动、审批/追问、提交去重与队列、共享终端、配置 CAS、模型切换、媒体 Blob、归档与 GC。[桌面 API](api/desktop.md) |
 | 桌面 GUI | `clients/gui` 提供 React/Electron、原生文件/差异/终端/浏览器面板、模型与资源设置、手机配对和定时任务界面；普通会话支持暂停后在原会话手动继续，最后一条用户消息可编辑后作为新消息发送并保留原记录。启用 Browser 的聊天可在用户授权后让 Core 读取该聊天当前原生网页的可访问性文本。人工批注支持冻结原生截图、元素/区域选择、多条 Composer 附件与含裁图和说明的消息，不要求启用模型 Browser 工具包。公共服务连接使 GUI 退出不终止 Core 任务；启动恢复支持二次确认后取消活动轮次并重启后台。支持独立公开依赖构建与 macOS arm64 本地包。[GUI](../clients/gui/README.md) |
+| 会话轮次导航 | 启用旁路预览时，选中文本后通过该轮“…”菜单询问所选内容，不自动展示浮动提示。主会话和 Side chat 共用左侧波纹轨道。悬停预览问题与回复，点击定位对应轮次，各面板独立滚动。支持方向键、Home/End、Enter/Space、Esc 和减少动态效果。[GUI](../clients/gui/README.md) |
 | 客户端 | 统一 `areal` 命令（默认 TUI、exec、version、upgrade、app-server、config、workgroup、service、web）与本地 Web；TUI 支持 Unicode 光标编辑与常用输入快捷键、持久错误提示、默认分组折叠、鼠标/键盘展开及过程/最终正文分级；CLI 实现选定 Claude Code 非交互参数与消息。[CLI 契约](api/claude-cli.md) |
 | Skills | 自动发现与显式 Profile 共用元信息登记、正文/附件按需读取；单个无效全局 Skill 告警隔离，不创建内容快照。[Skill 指南](guides/skills.md) |
 | Task Mode 与独立频道 | foreground/scheduled/background、持久 TaskRun、独立 Inbox 回复、headless 无人工等待；统一委派的 TaskRun worker 跨协调 Turn 存活并共享预算。Web 提供任务控制、定时创建和独立收件箱。[接口](api/tasks.md) |
@@ -25,7 +27,7 @@
 | 共享本地服务 | 多 TUI 窗口与 Web 复用 Core/Runtime；本地 Web 启动通过一次性登录码自动认证；公共 JSON 发现/控制供 Desktop Main 使用，按工作区隔离、模型配置热更新、热更新未应用时的空闲安全重启（支持继承新凭据）、显式停止与故障清理。[契约](api/local-service.md) |
 | SDK | 仓库内私有 `@areal/runtime` 和 `@areal/plugins`，Node.js 22.19.0+。[SDK 契约](api/typescript-sdk.md) |
 | 观测与验证           | 标准 OpenTelemetry Traces 与 Events/Logs，通过标准 OTEL 配置导出模型和工具轨迹（OTLP HTTP/protobuf）；确定性模型回归、原生 smoke、Docker lite/pro 评测。[配置](guides/configuration.md) · [测试](development/testing.md)                                                                        |
-| 持久轨迹导出 | 可选 `[trajectory]` 配置、跨本地 run 的有界磁盘队列、独立 OTLP Logs 上传进程、退避与手动重试；CLI 状态、会话内一次异常提示和 GUI 数据飞轮实时状态；区分模型调用、Agent 执行与上传时间。上传不改变 Turn 结果；平台分析登记由接收端完成。[配置](guides/configuration.md#持久轨迹导出) |
+| 持久轨迹导出 | 可选 `[trajectory]` 配置、跨本地 run 的有界磁盘队列、独立 OTLP Logs 上传进程、退避与手动重试；CLI 状态、会话内一次异常提示和 GUI 数据飞轮启停开关与实时状态；区分模型调用、Agent 执行与上传时间。上传不改变 Turn 结果；平台分析登记由接收端完成。[配置](guides/configuration.md#持久轨迹导出) |
 
 Remote 的 Direct 与 Relay 已接入共同 Host 授权和 PWA 协议，Direct 提供 Serve/组织 HTTPS 配置及可选 Funnel 范围切换。源码能力不等于路线或平台已认证；本机严格 TLS 夹具不代表 Native/Core、浏览器 TLS、真实手机或公网部署验收。配置、迁移与路线矩阵见 [Remote 指南](guides/remote-control.md)，独立验证要求见[测试与发布门槛](development/remote-control-testing.md)。
 
@@ -44,3 +46,7 @@ Remote 的 Direct 与 Relay 已接入共同 Host 授权和 PWA 协议，Direct �
 文件参考保留与连续相同失败的执行上限需要显式实验配置，默认关闭；非交互命令仍默认关闭 stdin，详见[配置指南](guides/configuration.md#参考保留与有界工具恢复)。功能存在不代表已证明业务成功率提升。
 
 旧观察折叠与空白响应额外恢复同样默认关闭，需在冻结的实验配置中显式启用；正确性回归不能代替端到端收益验证。
+
+## 回答评价
+
+开启数据飞轮且接收端支持时，可为已结束回复点赞或点踩，填写理由，使用独立 Side 润色后提交冻结上下文。详见[回答评价](guides/user-feedback.md)。

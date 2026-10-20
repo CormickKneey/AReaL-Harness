@@ -60,7 +60,7 @@ export function createTerminalServices(action: Action, projectId: string, thread
     const processes = new Map<string, Process>();
     // A tab generation owns one create attempt. Unknown attempts are retained;
     // only an explicit receipt lookup can reconnect them, never another start.
-    type Attempt = { requestId: string; state: 'pending' | 'confirmed' | 'rejected'; inFlight?: boolean; message?: string; result?: { id: string; closed?: boolean; controls?: number } };
+    type Attempt = { requestId: string; state: 'pending' | 'confirmed' | 'rejected'; inFlight?: boolean; message?: string; result?: { id: string; shell: string; closed?: boolean; controls?: number } };
     const creations = new Map<string, Attempt>();
     const attemptKey = (clientId: string) => `areal-gui:terminal-create:${projectId}:${threadId}:${clientId}`;
     const saveAttempt = (clientId: string, attempt: Attempt) => {
@@ -178,7 +178,7 @@ export function createTerminalServices(action: Action, projectId: string, thread
                 // must never turn an uncertain creation into a fresh request.
                 if (!previous) { attempt.inFlight = true; saveAttempt(clientId, attempt); }
                 let result;
-                try { result = attempt.result ?? await api('processStart', { requestId: attempt.requestId, argv: ['/bin/sh', '-i'], lifetime, guiOwned: true, timeoutMs: 86_400_000, tty: true, cols, rows }); }
+                try { result = attempt.result ?? await api('processStart', { requestId: attempt.requestId, terminal: true, lifetime, guiOwned: true, timeoutMs: 86_400_000, tty: true, cols, rows }); }
                 catch (error) {
                     attempt.inFlight = false;
                     if (!(error as { submissionUnknown?: boolean }).submissionUnknown) saveAttempt(clientId, { ...attempt, state: 'rejected', message: (error as Error).message });
@@ -189,7 +189,7 @@ export function createTerminalServices(action: Action, projectId: string, thread
                 const p: Process = { closed: result.closed === true, cleanupDone: result.closed === true, data: new Set(), exit: new Set(), chain: Promise.resolve(), controls: result.controls ?? 0, buffer: '', decoder: new TextDecoder() };
                 processes.set(result.id, p);
                 setTimeout(() => { if (p.closed) void publishExit(result.id, p); else void poll(result.id, p); }, 0);
-                return { id: result.id, shell: '/bin/sh' };
+                return { id: result.id, shell: result.shell };
             },
             hasPartialOutput: id => processes.get(id)?.partialOutput === true,
             recover,

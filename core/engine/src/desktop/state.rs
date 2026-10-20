@@ -254,6 +254,8 @@ impl Engine {
                 session_id: thread_id.clone(),
                 parent_thread_id: None,
                 preview: format!("分支 · {}", source.preview),
+                name: None,
+                name_attempt_turn_id: None,
                 model_provider: engine.model_provider(),
                 created_at: now(),
                 updated_at: now(),
@@ -904,12 +906,14 @@ impl Engine {
                 return Err(invalid("invalid client option budget"));
             }
             if let Some(names) = &o.tool_allowlist {
-                let registry = cell.bindings.read().await;
                 if names.len() > 128 {
                     return Err(invalid("tool allowlist exceeds budget"));
                 }
+                let registry = engine
+                    .managed_registry(&state.thread, cell.research)
+                    .map_err(invalid)?;
                 for name in names {
-                    registry.registry.get(name).map_err(invalid)?;
+                    registry.get(name).map_err(invalid)?;
                     if configuration
                         .tool_allowlist
                         .as_ref()

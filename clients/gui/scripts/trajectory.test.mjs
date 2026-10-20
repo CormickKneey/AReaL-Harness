@@ -250,17 +250,23 @@ test("explicit retry and ordinary send still count as work and release admission
   await rejected;
   assert.equal(backend.activeCommands, 0);
 
-  const project = { model: { state: { threads: {} } } };
+  const project = {
+    model: { state: { threads: {} } },
+    client: { capabilities: { methods: ["areal/turn/submit"], features: { ordinaryTurnSubmit: true } } },
+    configurations: { thread: { revision: 0 } },
+  };
   backend.start = async (id) => {
     assert.equal(id, "project");
     return project;
   };
   backend.submit = async (value, method, params) => {
     assert.equal(value, project);
-    assert.equal(method, "areal/turn/start");
-    assert.deepEqual(params, { threadId: "thread", input: [{ type: "text", text: "fixture" }] });
+    assert.equal(method, "areal/turn/submit");
+    assert.deepEqual(params, { threadId: "thread", expectedConfigRevision: 0,
+      intent: { type: "message", input: [{ type: "text", text: "fixture" }] } });
     submitted.resolve();
     await releaseSend.promise;
+    return { turn: { id: "turn" } };
   };
   const sending = backend.command("send", {
     projectId: "project",
@@ -315,6 +321,19 @@ test("fixed CLI arguments preserve GUI config and environment; only public field
   assert.deepEqual(await exporter.command({ operation: "retry" }), status);
   assert.equal(JSON.parse(await readFile(calls, "utf8")).args[1], "retry");
   assert.equal(JSON.parse(await readFile(calls, "utf8")).credential, "fixture-secret");
+  const toggle = { operation: "setEnabled", enabled: false, expectedRevision: "a".repeat(64) };
+  assert.deepEqual(await exporter.command(toggle), status);
+  const toggled = JSON.parse(await readFile(calls, "utf8"));
+  assert.deepEqual(toggled.args, [
+    "trajectory",
+    "set-enabled",
+    "false",
+    "--expected-revision",
+    toggle.expectedRevision,
+    "--config",
+    status.configPath,
+  ]);
+  assert.equal(toggled.credential, "fixture-secret");
   await assert.rejects(exporter.command({ operation: "status", config: "/other.toml" }), {
     code: "INVALID_DESKTOP_REQUEST",
   });

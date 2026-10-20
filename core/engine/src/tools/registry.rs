@@ -156,7 +156,7 @@ pub(crate) enum Backend {
     Core,
     Command(CommandTool),
     Client,
-    Mcp(areal_mcp::McpTool),
+    Mcp(Box<areal_mcp::McpTool>),
     Plugin(super::plugins::PluginTool),
 }
 
@@ -375,7 +375,7 @@ impl Registry {
     }
     pub fn with_mcp(mut self, tools: Vec<areal_mcp::McpTool>) -> anyhow::Result<Self> {
         for tool in tools {
-            self.insert(tool.definition.clone(), Backend::Mcp(tool))?;
+            self.insert(tool.definition.clone(), Backend::Mcp(Box::new(tool)))?;
         }
         Ok(self)
     }

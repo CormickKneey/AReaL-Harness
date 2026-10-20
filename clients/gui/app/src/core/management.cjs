@@ -2,6 +2,29 @@
 const {configurePluginAuthentication} = require('./plugin-authentication.cjs');
 const { manageTask, taskOperations } = require('./tasks.cjs');
 const { workgroupArtifactFile } = require('./workgroup-artifacts.cjs');
+const os = require('node:os');
+const fs = require('node:fs');
+const path = require('node:path');
+
+function loginTerminalCommand() {
+  const user = os.userInfo();
+  if (typeof user.username !== 'string' || !user.username || user.username.includes('\0')) throw new Error('无法读取终端所属账户');
+  const shell = [user.shell, process.env.SHELL, '/bin/sh'].find(candidate => {
+    if (typeof candidate !== 'string' || !path.isAbsolute(candidate) || candidate.includes('\0')) return false;
+    try { fs.accessSync(candidate, fs.constants.X_OK); return fs.statSync(candidate).isFile(); }
+    catch { return false; }
+  });
+  if (!shell) throw new Error('没有可用的登录 shell');
+  return { shell, argv: ['/usr/bin/env', `SHELL=${shell}`, `USER=${user.username}`, `LOGNAME=${user.username}`, 'TERM=xterm-256color', shell, '-l', '-i'] };
+}
+
+function shellFromManagedArgv(argv) {
+  if (!Array.isArray(argv)) return undefined;
+  if (argv.length === 8 && argv[0] === '/usr/bin/env' && typeof argv[5] === 'string'
+    && argv[1] === `SHELL=${argv[5]}` && argv[2]?.startsWith('USER=') && argv[3]?.startsWith('LOGNAME=')
+    && argv[4] === 'TERM=xterm-256color' && argv[6] === '-l' && argv[7] === '-i') return argv[5];
+  return argv[0];
+}
 
 const mutations = {
   pluginArchiveImport: 'areal/plugin/importArchive',
@@ -187,7 +210,7 @@ async function manage(backend, project, request) {
   if (operation === 'processSubmission') {
     if (typeof request.threadId !== 'string' || !request.threadId || typeof request.requestId !== 'string' || !/^[0-9a-f-]{36}$/.test(request.requestId)) throw new Error('缺少原终端请求标识或任务');
     const result = await backend.recoverProcessSubmission(project, request.threadId, request.requestId);
-    return result ? { confirmed: true, result } : { confirmed: false };
+    return result ? { confirmed: true, result: { ...result, shell: shellFromManagedArgv(result.argv) } } : { confirmed: false };
   }
   if (operation === 'agentSubmission') {
     if (typeof request.parentThreadId !== 'string' || !request.parentThreadId || typeof request.requestId !== 'string' || !request.requestId) throw new Error('缺少原创建请求标识或父任务');
@@ -272,10 +295,18 @@ async function manage(backend, project, request) {
       if (request[key] !== undefined && request[key] !== null && (!Number.isSafeInteger(request[key]) || request[key] <= 0)) throw new Error('目标预算必须为正整数');
     }
   }
+  let terminal;
+  if (operation === 'processStart') {
+    if (request.terminal !== undefined && typeof request.terminal !== 'boolean') throw new Error('无效终端启动标识');
+    if (request.terminal === true) {
+      if (request.argv !== undefined || request.tty !== true) throw new Error('登录终端需要 tty，且不能同时指定 argv');
+      terminal = loginTerminalCommand();
+    }
+  }
   let result;
   try {
     if (operation === 'goalCreate' || operation === 'goalResume') await backend.providers.refreshGoalTransport(project, request.threadId);
-    result = await backend.submit(project, method, pick(request, fields[operation]), operation === 'mcpFormResourceStage' || operation === 'processStart' || operation.startsWith('plugin') || operation.startsWith('marketplace') || operation === 'connectorConfigure' ? { requestId: request.requestId } : {});
+    result = await backend.submit(project, method, { ...pick(request, fields[operation]), ...(terminal ? { argv: terminal.argv } : {}) }, operation === 'mcpFormResourceStage' || operation === 'processStart' || operation.startsWith('plugin') || operation.startsWith('marketplace') || operation === 'connectorConfigure' ? { requestId: request.requestId } : {});
   }
   catch (error) {
     if (threadMutationMethods.has(method)) {
@@ -302,6 +333,6 @@ async function manage(backend, project, request) {
   }
   } catch (error) { project.error = `操作已完成，刷新失败：${error.message}`; }
   backend.onChange();
-  return result;
+  return terminal ? { ...result, shell: terminal.shell } : result;
 }
 module.exports = { manage, managementMethods, threadMutationMethods };

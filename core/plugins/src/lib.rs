@@ -45,7 +45,7 @@ pub fn prepare_data_directory(path: &Path) -> Result<()> {
     Ok(())
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct InstalledSkill {
     pub id: String,
@@ -58,7 +58,7 @@ pub struct InstalledSkill {
     pub allow_implicit_invocation: bool,
     pub onboarding: bool,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginDetail {
     pub revision: u64,
@@ -98,7 +98,7 @@ pub struct PluginDetail {
     pub skills: Vec<InstalledSkill>,
     pub onboarding_skill: Option<String>,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Marketplace {
     pub name: String,
@@ -108,7 +108,7 @@ pub struct Marketplace {
     #[serde(default)]
     pub resolved_commit: Option<String>,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginList {
     pub revision: u64,

@@ -69,6 +69,7 @@ impl Fixture {
             config_fingerprint: "fixture".into(),
         };
         let service = Service {
+            owner: None,
             identity: identity.clone(),
             endpoint: format!("ws://{addr}"),
             web_url: format!("http://{addr}/ui"),

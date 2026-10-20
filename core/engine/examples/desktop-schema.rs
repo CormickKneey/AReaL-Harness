@@ -19,6 +19,14 @@ fn main() {
     }
     add!("areal/capabilities", CapabilitiesRequest);
     add!(
+        "areal/server/modelConfiguration/read",
+        ModelConfigurationRead
+    );
+    add!(
+        "areal/server/modelConfiguration/apply",
+        ModelConfigurationApply
+    );
+    add!(
         "areal/plugin/hooks/list",
         areal_protocol::plugin_runtime::Empty
     );
@@ -214,9 +222,16 @@ fn main() {
         ),
     );
     methods.insert(
+        "areal/plugin/importArchive".into(),
+        object(
+            json!({"path":string,"expectedRevision":integer,"requestId":string}),
+            vec!["path", "expectedRevision", "requestId"],
+        ),
+    );
+    methods.insert(
         "areal/marketplace/addGit".into(),
         object(
-            json!({"url":string,"refName":string,"expectedRevision":integer,"requestId":string}),
+            json!({"url":string,"refName":string,"sparsePaths":{"type":"array","items":string},"expectedRevision":integer,"requestId":string}),
             vec!["url", "expectedRevision", "requestId"],
         ),
     );
@@ -471,6 +486,20 @@ fn main() {
     let (responses, notifications) = schema::projections();
     output["responses"] = responses;
     output["notifications"] = notifications;
+    schema::plugins::codex_management(&mut output);
+    let requests = output["requests"].as_object().unwrap();
+    let responses = output["responses"].as_object().unwrap();
+    assert_eq!(
+        requests.keys().collect::<Vec<_>>(),
+        responses.keys().collect::<Vec<_>>(),
+        "every desktop method requires both request and response schemas"
+    );
+    for method in NOTIFICATIONS {
+        assert!(
+            output["notifications"].get(*method).is_some(),
+            "advertised notification lacks schema: {method}"
+        );
+    }
     let browser_request = object(
         json!({"threadId":string,"turnId":string,"callId":string,"tool":string,"arguments":{},"hostGeneration":string}),
         vec![
@@ -497,13 +526,13 @@ fn main() {
 fn inline(value: &mut Value, inherited: &Value) {
     let defs = value
         .get("$defs")
+        .or_else(|| value.get("$schema").and_then(|_| value.get("definitions")))
         .cloned()
         .unwrap_or_else(|| inherited.clone());
-    if let Some(reference) = value
-        .get("$ref")
-        .and_then(Value::as_str)
-        .and_then(|r| r.strip_prefix("#/$defs/"))
-    {
+    if let Some(reference) = value.get("$ref").and_then(Value::as_str).and_then(|r| {
+        r.strip_prefix("#/$defs/")
+            .or_else(|| r.strip_prefix("#/definitions/"))
+    }) {
         *value = defs[reference].clone();
         assert!(!value.is_null(), "unresolved schema reference");
         inline(value, &defs);
@@ -512,6 +541,9 @@ fn inline(value: &mut Value, inherited: &Value) {
     match value {
         Value::Object(map) => {
             map.remove("$defs");
+            if map.contains_key("$schema") {
+                map.remove("definitions");
+            }
             map.remove("$schema");
             for child in map.values_mut() {
                 inline(child, &defs);

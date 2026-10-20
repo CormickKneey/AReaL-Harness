@@ -113,26 +113,26 @@ pub(super) async fn run(
                     let value = serde_json::to_value(result)?;
                     if let Some(content) = value["content"].as_array() {
                         for part in content {
-                            if part["type"] == "text" {
-                                if let Some(text) = part["text"].as_str() {
-                                    if output
-                                        .stdout
-                                        .len()
-                                        .saturating_add(text.len())
-                                        .saturating_add(1)
-                                        > OUTPUT_LIMIT
-                                    {
-                                        output.outcome = "failed".into();
-                                        output.exit_code = None;
-                                        output.stdout.clear();
-                                        output.stderr = "MCP hook output exceeds budget".into();
-                                        break;
-                                    }
-                                    if !output.stdout.is_empty() {
-                                        output.stdout.push('\n');
-                                    }
-                                    output.stdout.push_str(text);
+                            if part["type"] == "text"
+                                && let Some(text) = part["text"].as_str()
+                            {
+                                if output
+                                    .stdout
+                                    .len()
+                                    .saturating_add(text.len())
+                                    .saturating_add(1)
+                                    > OUTPUT_LIMIT
+                                {
+                                    output.outcome = "failed".into();
+                                    output.exit_code = None;
+                                    output.stdout.clear();
+                                    output.stderr = "MCP hook output exceeds budget".into();
+                                    break;
                                 }
+                                if !output.stdout.is_empty() {
+                                    output.stdout.push('\n');
+                                }
+                                output.stdout.push_str(text);
                             }
                         }
                     }

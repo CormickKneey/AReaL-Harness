@@ -73,6 +73,7 @@ fn tool_journal_projection_preserves_pinned_upstream_item_schemas() {
             call_id: "call".into(),
             execution: Box::new(ToolExecution {
                 result_snapshot: None,
+                file_before: None,
                 output_projection: None,
                 plugin: None,
                 backend: None,

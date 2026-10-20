@@ -57,6 +57,8 @@ make build
 
 `make smoke` 还验证可选轨迹导出：本地接收端返回 503 时 Agent 正常返回，Core 退出后独立上传器继续补传，并验证关闭开关。测试还覆盖 401 失败记录在停用后 5 秒自动节流窗口内重新启用、worker 被强杀后的首次显式重试，以及并发重试保持单一 worker、串行发送和无重复接收。可单独运行 `node scripts/trajectory-smoke.mjs`；设置 `AREAL_TRAJECTORY_FIXTURE_OUTPUT` 可保存真实 OTLP protobuf 供接收端互通测试，内容仅为本地测试数据。设置 `AREAL_TRAJECTORY_SMOKE_OUTPUT` 可保存 JSON 验收记录，包含真实启动时间、重试时距和并发观察。
 
+`pnpm --dir clients/gui run test:trajectory-native` 使用隔离的本地模型/接收端，验证真实桌面后端、Core、Runtime 和上传器：从关闭启动后启用，等待当前任务完成再安全重启；停用保留失败副本；重新开启自动补传。回归证明启停和送达不变量，不用于推断整体 Agent 能力提升。
+
 `node scripts/trajectory-semantics-smoke.mjs` 使用真实 owned Core/Runtime 与本地模型、接收端，覆盖多轮工具、子 Agent、同线程换模型、失败和流式取消。`make smoke` 包含此检查；HTTP 模型输入与 OTLP protobuf 默认保存到 `out/trajectory-semantics/`，可用 `AREAL_TRAJECTORY_SEMANTICS_OUTPUT` 改写目录，供接收端逐条核对。脚本使用独立临时 home、状态和工作区，不读取用户配置。
 
 `python3 scripts/tui-local-smoke.py` 在真实 owned TUI/Runtime 中注入隔离的无效轨迹接收地址，验证异常提醒不遮住请求状态，并继续执行多轮、工具、取消和恢复；导出 worker 不启动。该检查属于 `make harness-smoke`。GUI 的状态轮询、协议投影与真实界面检查见 [GUI 验证入口](../../clients/gui/README.md#生命周期)。
@@ -78,3 +80,13 @@ Homebrew/Linux 发行产物、安装验收与 draft 发布流程见[发行流程
 GUI 使用独立 pnpm 11.7.0 workspace。运行 `make gui-install`、`make gui-build`、`make gui-smoke`；启动、打包与隔离配置见 [GUI 指南](../../clients/gui/README.md)。
 
 `make setup-node` 仅安装锁定的 Node 开发依赖，供不运行格式检查的原生 CI 使用；本地完整开发仍使用 `make setup`。
+
+## 验证产物保留
+
+运行 `make artifact-cleanup` 预览 `~/Documents/Codex` 及本仓已登记工作树中的 AReaL 产物，默认只读。GUI 以打包记录识别轮次并检查可执行文件及 Core 的完整性，匹配的应用和 ZIP 副本归入同轮。独立 Core 则保留最新 5 个完整且通过清单校验的版本包，以构建身份和文件哈希去重。Cargo profile 是可变构建输出，不作为历史轮次计数。只有某 profile 的三个二进制均匹配已知完整包、且已有至少 5 个校验通过的版本包时，才清理其散装产物；无法识别的产物保留。
+
+Rust 的 `deps`、`incremental`、`build`、`.fingerprint` 独立于版本保留管理。仅把仓库当作工作目录不阻止缓存清理；构建/调试器进程、候选目录内打开的文件及持有的 Cargo 锁会阻止清理。使用中的 profile 产物会一起保护伴随二进制。保留版本包中的 GUI/Core 运行文件保留，清缓存可能损失生成的调试信息。无法识别的归档和小型打包验收记录保留。自定义 `target/delivery-*` 仅按已识别的包处理，不把整目录当作缓存。
+
+单独扫描使用 `python3 scripts/artifact-cleanup.py --root /path/to/artifacts --no-worktrees --json`；`--root` 可重复，`--keep` 修改保留上限。`--report /path/outside/scanned/roots/preview.json` 保存完整清单。空间按已分配块估算并排除路径重叠；硬链接、APFS 克隆和快照可能降低实际回收量。
+
+审阅预览后，显式使用 `--apply --report /path/outside/scanned/roots/result.json` 执行删除。执行会持有 profile 的 Cargo 锁文件排他锁、复查活动，并在每项删除前后记录结果；锁文件保留，检查失败时跳过路径。无法检查进程时阻止删除。命令不停止进程，不移除工作树、源码、配置和历史。失败以非零退出；结果文件记录已完成与可能中断的删除，部分失败后先检查记录并重新预览。不安装定时清理。

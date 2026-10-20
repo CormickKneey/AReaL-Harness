@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ContentBlock } from "@modelcontextprotocol/client";
+import { FileText } from "lucide-react";
+import { CloseIcon } from "./interfaceIcons.js";
 import { readMcpDraft, removeMcpDraft } from "./mcp-app-draft.js";
 export type McpDraftEntry = { id: string; block: ContentBlock };
 export function useMcpDraft(key: string) {
@@ -52,15 +54,20 @@ export function McpComposerAttachments({
     return entries.length ? (
         <div className="composer-attachments" aria-label="应用附件">
             {entries.map((entry) => (
-                <div className="composer-text-card" key={entry.id}>
-                    <McpContentLabel block={entry.block} />
+                <div className="composer-text-card composer-mcp-card" key={entry.id}>
+                    <span className="composer-text-icon"><FileText size={22} /></span>
+                    <div className="composer-text-copy">
+                        <McpContentLabel block={entry.block} />
+                        <small>MCP 应用附件</small>
+                    </div>
                     <button
                         type="button"
+                        className="composer-remove-attachment"
                         disabled={disabled}
                         aria-label="移除应用附件"
                         onClick={() => removeMcpDraft(draftKey, entry.id)}
                     >
-                        ×
+                        <CloseIcon size={12} />
                     </button>
                 </div>
             ))}

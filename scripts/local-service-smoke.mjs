@@ -1,3 +1,4 @@
+import { respondToSessionName } from "./model-fixture.mjs";
 // 真实 Core/Runtime 验证跨进程复用、客户端独立生命周期和故障恢复。
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -48,6 +49,7 @@ const model = createServer(async (req, res) => {
   let body = "";
   for await (const part of req) body += part;
   const request = JSON.parse(body);
+  if (respondToSessionName(request, res)) return;
   const text = request.messages.findLast(
     (message) =>
       message.role === "user" &&
@@ -91,6 +93,31 @@ const ensure = (extra = []) =>
   ]);
 const stop = (s, cancel = false) =>
   cli(["service", "stop", "--json", "--instance", s.serviceId, ...(cancel ? ["--cancel"] : [])]);
+const operation = (s, requestId) =>
+  cli([
+    "service",
+    "operation",
+    "--json",
+    "--instance",
+    s.serviceId,
+    "--expected-generation",
+    s.generation,
+    "--request-id",
+    requestId,
+  ]);
+const requestStop = (s, requestId, cancel = false) =>
+  cli([
+    "service",
+    "stop",
+    "--json",
+    "--instance",
+    s.serviceId,
+    "--expected-generation",
+    s.generation,
+    "--request-id",
+    requestId,
+    ...(cancel ? ["--cancel"] : []),
+  ]);
 async function client(s) {
   const c = await connect(s.endpoint, s.authFile);
   clients.push(c);
@@ -193,6 +220,14 @@ async function control(s, request) {
   for await (const b of socket) output += b;
   return JSON.parse(output);
 }
+async function discardControlResponse(s, request) {
+  const socket = unixConnect(join(home, "services", s.serviceId, "control.sock"));
+  await once(socket, "connect");
+  await new Promise((resolve, reject) => {
+    socket.write(JSON.stringify(request) + "\n", (error) => (error ? reject(error) : resolve()));
+  });
+  socket.destroy();
+}
 let current;
 try {
   await mkdir(workspace);
@@ -213,6 +248,16 @@ try {
   );
   assert.equal((await cli(["web", "--json", ...local])).generation, current.generation);
   assert.equal((await ensure(["--runtime-max-processes", "4"])).generation, current.generation);
+  assert.equal((await ensure(["--no-auto-restart"])).generation, current.generation);
+  await rejected(
+    () => ensure(["--no-auto-restart", "--runtime-max-processes", "32"]),
+    /configuration conflict|explicit lifecycle restart/s,
+  );
+  assert.equal(
+    (await cli(["service", "status", "--instance", current.serviceId])).generation,
+    current.generation,
+    "GUI discovery cannot replace an existing service for configuration drift",
+  );
   assert.equal((await ensure(["--sandbox-profile", "full-access"])).generation, current.generation);
   await rejected(
     () => ensure(["--sandbox-profile", "native"]),
@@ -253,11 +298,39 @@ try {
     current.generation,
   );
   assert(!JSON.stringify(current).includes(auth));
+  setPhase("stop-operation-capabilities");
+  assert.deepEqual(
+    await cli([
+      "service",
+      "capabilities",
+      "--json",
+      "--instance",
+      current.serviceId,
+      "--expected-generation",
+      current.generation,
+    ]),
+    { version: 1, stopOperations: 1 },
+  );
+  assert.deepEqual(await operation(current, crypto.randomUUID()), { operation: null });
   assert.equal(
     (await control(current, { method: "stop", version: 1, generation: "stale", cancel: true }))
       .result,
     "error",
   );
+  for (const cancel of [false, true]) {
+    const response = await control(current, {
+      method: "stop",
+      version: 1,
+      generation: current.generation,
+      cancel,
+    });
+    assert.equal(response.result, "error");
+    assert.match(response.message, /legacy stop requests are disabled/);
+    const observed = await cli(["service", "status", "--instance", current.serviceId]);
+    assert.equal(observed.state, "ready");
+    assert.equal(observed.generation, current.generation);
+    assert.equal(observed.corePid, current.corePid);
+  }
   const first = await client(current),
     second = await client(current);
   setPhase("busy-service-and-shared-windows");
@@ -274,6 +347,16 @@ try {
   await until(() => held.length > 0);
   await first.close();
   await rejected(() => stop(current), /service is busy/);
+  const blockedRequestId = crypto.randomUUID();
+  const blockedStop = await requestStop(current, blockedRequestId);
+  assert.equal(blockedStop.state, "blocked");
+  assert.equal(blockedStop.requestId, blockedRequestId);
+  assert.equal(blockedStop.generation, current.generation);
+  assert.equal(blockedStop.cancel, false);
+  assert.deepEqual((await operation(current, blockedRequestId)).operation, blockedStop);
+  assert.deepEqual(await requestStop(current, blockedRequestId), blockedStop);
+  await rejected(() => requestStop(current, blockedRequestId, true), /request.*conflict/i);
+  assert.equal(held.length, 1, "conflicting request must not cancel the active turn");
   held.shift()();
   const completed = await second.waitEvent("turn/completed", (p) => p.threadId === thread.id);
   assert.equal(completed.turn.status, "completed");
@@ -298,7 +381,7 @@ try {
   // 没有配置模型的 Web 管理入口仍须能启动并输出发现信息。
   const empty = join(root, "empty.toml");
   await writeFile(empty, "schema_version = 1\n");
-  const unconfigured = await ensure(["--workspace", ws2, "--config", empty]);
+  const unconfigured = await ensure(["--workspace", ws2, "--config", empty, "--no-auto-restart"]);
   await stop(unconfigured);
   setPhase("cancel-stop-and-history-recovery");
   await second.call("areal/turn/start", {
@@ -307,12 +390,61 @@ try {
     input: [{ type: "text", text: "hang" }],
   });
   await until(() => held.length > 0);
-  assert.equal((await stop(current, true)).state, "stopped");
+  const stopRequestId = crypto.randomUUID();
+  const stoppedTopology = await serviceProcesses(current);
+  process.kill(stoppedTopology.launcher, "SIGSTOP");
+  try {
+    await discardControlResponse(current, {
+      method: "stopOperation",
+      version: 1,
+      generation: current.generation,
+      requestId: stopRequestId,
+      cancel: true,
+    });
+    await until(
+      async () =>
+        (await operation(current, stopRequestId)).operation?.lifecycle?.settled?.allowed === true,
+    );
+    assert.equal(
+      (await operation(current, stopRequestId)).operation?.state,
+      "acceptedPending",
+      "Core settlement must not complete a stop while the launcher still holds the service lease",
+    );
+  } finally {
+    try {
+      process.kill(stoppedTopology.launcher, "SIGCONT");
+    } catch (error) {
+      if (error.code !== "ESRCH") throw error;
+    }
+  }
+  let completedStop;
+  await until(async () => {
+    completedStop = (await operation(current, stopRequestId)).operation;
+    return completedStop?.state === "completed";
+  }, 60000);
+  assert.equal(completedStop.requestId, stopRequestId);
+  assert.equal(completedStop.generation, current.generation);
+  assert.equal(completedStop.cancel, true);
+  assert.equal(
+    (await cli(["service", "status", "--instance", current.serviceId])).state,
+    "stopped",
+  );
+  assert.deepEqual(await requestStop(current, stopRequestId, true), completedStop);
   await dead(current.corePid);
   const old = current;
   current = await ensure();
   assert.equal(current.serviceId, old.serviceId);
   assert.notEqual(current.generation, old.generation);
+  assert.deepEqual((await operation(old, stopRequestId)).operation, completedStop);
+  await rejected(() => requestStop(current, stopRequestId, true), /request.*conflict/i);
+  assert.equal((await cli(["service", "status", "--instance", current.serviceId])).state, "ready");
+  lifecycleChecks.push({
+    fault: "stop-response-discarded",
+    requestId: stopRequestId,
+    generation: old.generation,
+    observedState: completedStop.state,
+    replacementGeneration: current.generation,
+  });
   const resumed = await client(current);
   const snapshot = await resumed.call("thread/resume", { threadId: thread.id });
   assert.equal(snapshot.thread.turns.length, 2);
@@ -321,12 +453,29 @@ try {
   for (const victim of ["launcher", "host"]) {
     setPhase(`${victim}-killed`);
     const { launcher, runtime, processes } = await serviceProcesses(current);
+    let interruptedRequestId;
     if (victim === "host") {
       // 让 Runtime 清理停在可观测窗口：Core 锁已释放，launcher 仍须阻止替代实例。
       process.kill(runtime, "SIGSTOP");
       try {
+        interruptedRequestId = crypto.randomUUID();
+        await discardControlResponse(current, {
+          method: "stopOperation",
+          version: 1,
+          generation: current.generation,
+          requestId: interruptedRequestId,
+          cancel: true,
+        });
+        await until(
+          async () =>
+            (await operation(current, interruptedRequestId)).operation?.state === "acceptedPending",
+        );
         process.kill(current.hostPid, "SIGKILL");
-        process.kill(current.corePid, "SIGKILL");
+        try {
+          process.kill(current.corePid, "SIGKILL");
+        } catch (error) {
+          if (error.code !== "ESRCH") throw error;
+        }
         await dead(current.hostPid);
         await dead(current.corePid);
         await rejected(() => ensure(), /active owner but cannot be reached/);
@@ -350,6 +499,16 @@ try {
     ]);
     current = replacement;
     assert.notEqual(current.generation, previous.generation);
+    if (interruptedRequestId) {
+      const interrupted = (await operation(previous, interruptedRequestId)).operation;
+      assert.equal(interrupted.state, "admissionUnknown");
+      assert.deepEqual(await requestStop(previous, interruptedRequestId, true), interrupted);
+      assert.equal(
+        (await cli(["service", "status", "--instance", current.serviceId])).state,
+        "ready",
+      );
+      lifecycleCheck.interruptedOperation = interrupted;
+    }
     for (const status of statuses) {
       assert.equal(status.serviceId, current.serviceId);
       if (status.generation === previous.generation) assert.equal(status.state, "stopped");
@@ -469,7 +628,37 @@ try {
     input: [{ type: "text", text: "after-reload" }],
   });
   await until(() => requests.some((r) => r.text === "after-reload"));
-  assert.equal(requests.find((r) => r.text === "after-reload").model, "fixture-new");
+  assert.equal(requests.find((r) => r.text === "after-reload").model, "fixture");
+  await until(async () => (await hot.call("areal/server/status", {})).restartSafe);
+  const { thread: newHotThread } = await hot.call("areal/thread/start", {
+    requestId: crypto.randomUUID(),
+    cwd: workspace,
+  });
+  await hot.call("areal/turn/start", {
+    requestId: crypto.randomUUID(),
+    threadId: newHotThread.id,
+    input: [{ type: "text", text: "new-thread-after-reload" }],
+  });
+  await until(() => requests.some((r) => r.text === "new-thread-after-reload"));
+  assert.equal(requests.find((r) => r.text === "new-thread-after-reload").model, "fixture-new");
+  await until(async () => (await hot.call("areal/server/status", {})).restartSafe);
+  const { thread: beforeReset } = await hot.call("thread/read", {
+    threadId: hotThread.id,
+    includeTurns: true,
+  });
+  await hot.call("areal/thread/configure", {
+    requestId: crypto.randomUUID(),
+    threadId: hotThread.id,
+    expectedRevision: beforeReset.desktop.configuration.revision,
+    resetModel: true,
+  });
+  await hot.call("areal/turn/start", {
+    requestId: crypto.randomUUID(),
+    threadId: hotThread.id,
+    input: [{ type: "text", text: "after-default-reset" }],
+  });
+  await until(() => requests.some((r) => r.text === "after-default-reset"));
+  assert.equal(requests.find((r) => r.text === "after-default-reset").model, "fixture-new");
   await until(async () => (await hot.call("areal/server/status", {})).restartSafe);
   // 非法编辑保留旧配置，修复后无需重启即可再次更新。
   await writeFile(config, "schema_version = 1\n[model\n");
@@ -543,7 +732,15 @@ try {
   assert.notEqual(current.generation, beforeCredentialRestart.generation);
   assert.equal(applied[1].generation, current.generation);
   const refreshed = await client(current);
-  await refreshed.call("thread/resume", { threadId: hotThread.id });
+  const { thread: beforeCredentialReset } = await refreshed.call("thread/resume", {
+    threadId: hotThread.id,
+  });
+  await refreshed.call("areal/thread/configure", {
+    requestId: crypto.randomUUID(),
+    threadId: hotThread.id,
+    expectedRevision: beforeCredentialReset.desktop.configuration.revision,
+    resetModel: true,
+  });
   await refreshed.call("areal/turn/start", {
     requestId: crypto.randomUUID(),
     threadId: hotThread.id,
@@ -559,6 +756,12 @@ try {
   setPhase("limit-restart-and-open-window");
   await writeFile(config, hotConfig("fixture-third", "[limits]\nmax_threads = 1234\n"));
   const previousGeneration = current.generation;
+  await rejected(() => ensure(["--no-auto-restart"]), /explicit lifecycle restart/);
+  assert.equal(
+    (await cli(["service", "status", "--instance", current.serviceId])).generation,
+    previousGeneration,
+    "configuration drift cannot make GUI discovery stop a live service",
+  );
   current = await ensure();
   assert.notEqual(current.generation, previousGeneration);
   const finalClient = await client(current);

@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import { preserveSignedPaths } from "./macos-signing-paths.mjs";
+import { buildMacOSDmg } from "./macos-dmg.mjs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
@@ -330,13 +332,18 @@ async function main() {
       gatekeeperAssess: false,
       preAutoEntitlements: false,
       preEmbedProvisioningProfile: false,
-      ignore: (path) => ignored.includes(path),
+      ignore: preserveSignedPaths(ignored),
       optionsForFile: () => ({
         hardenedRuntime: true,
         entitlements: join(desktop, "scripts/entitlements.mac.plist"),
       }),
     });
     assertApp();
+    // 外层签名不得改变已签 Core 的字节；在任何 Apple 上传前检查，失败保留现场。
+    require(join(desktop, "app/src/core/bundle.cjs")).verifyCoreBundle(
+      join(app, "Contents/Resources"),
+      { hashes: true },
+    );
     run("/usr/bin/ditto", ["-c", "-k", "--keepParent", app, join(output, "app-submission.zip")]);
     state.phase = "signed";
     save();
@@ -473,25 +480,12 @@ async function main() {
     });
     state.packagedModelSelection = "passed";
     // These paths belong to this locked run and may contain interrupted output.
-    for (const path of [zip, dmg, join(output, "dmg-root")])
+    for (const path of [zip, dmg])
       rmSync(path, { recursive: true, force: true });
     run("/usr/bin/ditto", ["-c", "-k", "--keepParent", app, zip]);
-    const staging = join(output, "dmg-root");
-    mkdirSync(staging);
-    run("/usr/bin/ditto", [app, join(staging, state.appName)]);
-    run("/bin/ln", ["-s", "/Applications", join(staging, "Applications")]);
-    run("/usr/bin/hdiutil", [
-      "create",
-      "-volname",
-      "AReaL Harness " + state.version,
-      "-srcfolder",
-      staging,
-      "-format",
-      "UDZO",
-      "-fs",
-      "HFS+",
-      dmg,
-    ]);
+    state.dmgExport = await buildMacOSDmg({
+      app, destination: dmg, volumeName: "AReaL Harness " + state.version,
+    });
     run("/usr/bin/codesign", ["--force", "--sign", state.identity, "--timestamp", dmg]);
     run("/usr/bin/codesign", ["--verify", "--strict", dmg]);
     const detail = run("/usr/bin/codesign", ["--display", "--verbose=4", dmg]).stderr;

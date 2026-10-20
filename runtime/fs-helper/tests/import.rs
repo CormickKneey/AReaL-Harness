@@ -10,7 +10,7 @@ fn picker_snapshots_and_rejects_links_and_budgets() {
     let out = root.join("out");
     std::fs::create_dir(&out).unwrap();
     let summary = import_selection(
-        &[source.clone()],
+        std::slice::from_ref(&source),
         &out,
         ImportKind::Directory,
         &[".txt".into()],
@@ -26,7 +26,15 @@ fn picker_snapshots_and_rejects_links_and_budgets() {
     std::os::unix::fs::symlink(source.join("data.txt"), source.join("link.txt")).unwrap();
     let out2 = root.join("out2");
     std::fs::create_dir(&out2).unwrap();
-    assert!(import_selection(&[source.clone()], &out2, ImportKind::Directory, &[]).is_err());
+    assert!(
+        import_selection(
+            std::slice::from_ref(&source),
+            &out2,
+            ImportKind::Directory,
+            &[]
+        )
+        .is_err()
+    );
     std::os::unix::fs::symlink(&source, root.join("alias")).unwrap();
     assert!(
         import_selection(&[root.join("alias/data.txt")], &out2, ImportKind::File, &[]).is_err()

@@ -1,11 +1,13 @@
 'use strict';
-const { randomBytes, timingSafeEqual } = require('node:crypto');
+const { randomBytes, randomUUID, timingSafeEqual } = require('node:crypto');
 const { appendFileSync } = require('node:fs');
 const { WebSocketServer } = require('ws');
 const { validateCommand: validateDesktopCommand, desktopError } = require('@areal/workbench/desktop-contract');
-const { inspectResources, recoverResource, summary, blocked } = require('./resource-recovery.cjs');
+const { inspectResources, recoverResource, blocked } = require('./resource-recovery.cjs');
 const { validToolInput, failure: browserFailure, success: browserSuccess } = require('./browser-tool.cjs');
+const { ProjectionEncoder } = require('@areal/workbench/state-projection');
 const PROTOCOL = 'areal.desktop-service.v1';
+const COMMAND_CONTRACT = 'areal.desktop-commands.v1';
 const browserKey = (projectId, threadId) => JSON.stringify([projectId, threadId]);
 function validateCommand(name, params) {
   validateDesktopCommand(name, params, { serviceOnly: true });
@@ -31,6 +33,7 @@ function decodeMedia(value) {
 class DesktopService {
   constructor(backend, identity, onStop = () => {}, backgroundNotifications, power) {
     this.backend = backend; this.identity = identity; this.onStop = onStop;
+    this.lifecycle = backend.lifecycleOperations?.attach(this);
     this.backgroundNotifications = backgroundNotifications; this.power = power;
     this.pendingNotificationTarget = null;
     this.token = randomBytes(32).toString('hex'); this.clients = new Set();
@@ -39,7 +42,7 @@ class DesktopService {
     this.browserPending = new Map(); this.nextBrowserId = 0;
     this.browserTestTrace = process.env.AREAL_BROWSER_READ_TEST_TRACE;
     backend.browserRead = request => this.browserRead(request);
-    this.sequence = 0; this.inflight = 0; this.stopping = false;
+    this.sequence = 0; this.inflight = 0;
     this.idleSince = Date.now(); this.closed = false;
     backend.onChange = () => this.schedule();
     backend.onNotification = notice => this.notify(notice);
@@ -61,10 +64,12 @@ class DesktopService {
   }
   packet() {
     return { sequence: ++this.sequence, snapshot: this.backend.snapshot(), service: {
-      connected: true, cancelStop: true, clients: this.clients.size, busy: this.backend.hasWork({ includePausedQueues: false }),
+      ...(this.backend.applicationOwner ? { applicationOwner: this.backend.applicationOwner } : {}),
+      connected: true, commandContract: COMMAND_CONTRACT, clients: this.clients.size, busy: this.backend.hasWork({ includePausedQueues: false }),
       activeCommands: this.inflight, providerUpdating: !!this.backend.providerUpdating,
-      starting: this.backend.starting.size, pid: process.pid, lifecycleVersion: 1, stopReport: this.stopReport ?? null,
-      targets: [...this.backend.projects].map(([projectId, p]) => ({ projectId, serviceId: p.service?.serviceId ?? null, generation: p.service?.generation ?? null })),
+      starting: this.backend.starting.size, pid: process.pid, ...(this.lifecycle ? { lifecycle: this.lifecycle.snapshot() } : {}),
+      targets: this.lifecycle?.targets() ?? [],
+      remote: { enabled: this.remote?.config?.enabled === true || this.remote?.config?.directEnabled === true, connections: this.remote?.channels?.size ?? 0 },
       browserCore: Object.fromEntries([...this.backend.projects].map(([id, project]) =>
         [id, project.service?.serviceId ?? null])),
       // Authenticated desktop Main uses actual active Core listeners to deny
@@ -72,9 +77,15 @@ class DesktopService {
       browserControlEndpoints: [...this.backend.projects.values()].map(project => project.endpoint).filter(Boolean),
     } };
   }
-  send(socket, value) {
+  send(socket, value, full = false) {
     if (socket.readyState !== 1) return;
     if (socket.bufferedAmount > 32 * 1024 * 1024) { socket.terminate(); return; }
+    if (socket.projection) {
+      const key = value.method === 'state' ? 'params' : 'result';
+      const packet = value[key];
+      if (packet?.snapshot && packet.service && Number.isSafeInteger(packet.sequence))
+        value = { ...value, [key]: { ...packet, snapshot: socket.projection.encode(packet.snapshot, full) } };
+    }
     socket.send(JSON.stringify(value));
   }
   schedule() {
@@ -113,6 +124,8 @@ class DesktopService {
     catch (error) { console.warn(this.backend.providers.redact(`通知打开界面失败：${error.message}`)); }
   }
   async listen() {
+    await this.lifecycle?.init();
+    await this.lifecycle?.reconcileLoaded();
     this.server = new WebSocketServer({ host: '127.0.0.1', port: 0, maxPayload: 256 * 1024 * 1024,
       verifyClient: ({ req }) => {
         const actual = Buffer.from(req.headers.authorization ?? '');
@@ -141,7 +154,8 @@ class DesktopService {
     await new Promise((resolve, reject) => { this.server.once('listening', resolve); this.server.once('error', reject); });
     this.activityTimer = setInterval(() => { this.sampleActivity(); }, 5000);
     this.flushTimer = setInterval(() => { void this.backend.analytics.flush(); }, 30000);
-    return { protocol: PROTOCOL, endpoint: `ws://127.0.0.1:${this.server.address().port}`, token: this.token, identity: this.identity, pid: process.pid };
+    return { ...(this.backend.applicationOwner ? { applicationOwner: this.backend.applicationOwner } : {}), protocol: PROTOCOL, endpoint: `ws://127.0.0.1:${this.server.address().port}`, token: this.token, identity: this.identity,
+      ...(this.lifecycle ? { desktopGeneration: this.lifecycle.generation } : {}), pid: process.pid };
   }
   sampleActivity() {
     const now = Date.now();
@@ -150,27 +164,14 @@ class DesktopService {
     this.backend.analytics.sample({ time: now, focused: active });
   }
   async stop({ cancel = false } = {}) {
-    const { desktopBlockers, blockerMessage } = require('./lifecycle.cjs');
-    const guards = desktopBlockers({ activeCommands: this.inflight, providerUpdating: this.backend.providerUpdating, starting: this.backend.starting.size }, false);
-    if (this.stopping || guards.length || (!cancel && this.backend.hasWork({ includePausedQueues: false })))
-      throw Object.assign(new Error(this.stopping ? '后台服务正在停止' : guards.length ? blockerMessage(guards) : '后台仍有任务，请完成后重试'),
-        { code: 'LIFECYCLE_BLOCKED' });
-    this.stopping = true; // Block new admissions before asynchronous status checks.
-    try {
-      if (!cancel) {
-        const projects = await inspectResources(this.backend);
-        if (projects.some(p => !p.restartSafe)) throw blocked('Core 仍有活动工作或未结算资源。\n' + summary(projects));
-      }
-      await this.backend.shutdown({ requireSafe: true, cancel });
-      await this.backend.library?.writes;
-      await Promise.all(this.backend.saves?.values() ?? []);
-    } catch (error) {
-      this.stopReport = error.lifecycle ?? (this.backend.closing
-        ? { phase: 'incomplete', projects: this.backend.stopOutcomes ?? [] } : null);
-      this.stopping = false;
-      if (this.server) this.schedule();
-      throw error;
-    }
+    if (!this.lifecycle) throw Object.assign(new Error('后台未声明持久生命周期能力'), { code: 'LIFECYCLE_UNSUPPORTED' });
+    return this.lifecycle.request({ requestId: randomUUID(), kind: 'stopDesktop', mode: cancel ? 'cancel' : 'ifIdle',
+      expectedDesktopGeneration: this.lifecycle.generation, expectedTargets: this.lifecycle.targets() });
+  }
+  requestExit(receipt) {
+    if (this.exitRequested || receipt?.desktopExit !== 'requested' || receipt.desktopGeneration !== this.lifecycle?.generation) return;
+    this.exitRequested = true;
+    setImmediate(() => this.onStop());
   }
   async receive(socket, bytes) {
     let message;
@@ -178,17 +179,13 @@ class DesktopService {
     const { id, method, params } = message ?? {};
     if (!Number.isSafeInteger(id) || typeof method !== 'string') { socket.close(1008); return; }
     try {
-      if (this.stopReport && ['command', 'addProject', 'remoteControl'].includes(method)
-        && !(method === 'command' && require('./lifecycle.cjs').isRecoveryCommand(params?.name, params?.request)))
-        throw Object.assign(new Error('后台停止尚未完成，仅允许检查和显式恢复'), { code: 'LIFECYCLE_INCOMPLETE', lifecycle: this.stopReport });
-      if (this.stopping) throw Object.assign(new Error('后台服务正在停止'), { code: 'SERVICE_STOPPING' });
-      if (this.recovering) throw blocked('正在处理后台资源，请稍后重试');
       if (method === 'hello') {
         if (params?.protocol !== PROTOCOL || params?.identity !== this.identity) throw Object.assign(new Error('后台服务版本或启动配置不兼容。请先安全停止旧后台服务。'), { code: 'SERVICE_INCOMPATIBLE' });
+        socket.projection = params.capabilities?.projection === 1 ? socket.projection ?? new ProjectionEncoder(randomUUID()) : null;
         socket.notifications = params.notifications === true;
         this.clients.add(socket);
         this.idleSince = null;
-        this.send(socket, { id, result: this.packet() });
+        this.send(socket, { id, result: this.packet() }, true);
         if (socket.notifications && this.pendingNotificationTarget) {
           this.send(socket, { method: 'notificationOpen', params: this.pendingNotificationTarget });
           this.pendingNotificationTarget = null;
@@ -199,17 +196,25 @@ class DesktopService {
       // an incompatible GUI. Possession of the private token is still mandatory.
       if (method === 'stopService') {
         if (params?.protocol !== PROTOCOL) throw new Error('后台服务协议不兼容');
-        if (params?.forUpdate && this.clients.size > 1) throw new Error('请先退出其他连接此后台服务的 GUI，再停止后台或安装更新');
-        if (params?.expectedTargets !== undefined) {
-          const { isDeepStrictEqual } = require('node:util');
-          const { targets } = require('./lifecycle.cjs');
-          const current = targets([...this.backend.projects].map(([projectId, p]) => ({ projectId, serviceId: p.service?.serviceId, generation: p.service?.generation })));
-          if (!isDeepStrictEqual(params.expectedTargets, current)) throw Object.assign(new Error('后台实例或项目范围已变化，请重新确认'), { code: 'CONFIRMATION_STALE' });
-        } else if (params?.cancel === true) throw Object.assign(new Error('取消缺少已确认的后台目标'), { code: 'CONFIRMATION_STALE' });
-        await this.stop({ cancel: params?.cancel === true }); this.send(socket, { id, result: { stopped: true, cancelled: params?.cancel === true } });
-        setImmediate(() => this.onStop()); return;
+        if (!this.lifecycle) throw Object.assign(new Error('后台未声明持久生命周期能力'), { code: 'LIFECYCLE_UNSUPPORTED' });
+        if (params.cancel === true && !Array.isArray(params.expectedTargets))
+          throw Object.assign(new Error('取消缺少已确认的后台目标'), { code: 'CONFIRMATION_STALE' });
+        const result = await this.lifecycle.request({ requestId: params.requestId ?? randomUUID(), kind: params.forUpdate ? 'updateDesktop' : 'stopDesktop',
+          mode: params.cancel === true ? 'cancel' : 'ifIdle', expectedDesktopGeneration: params.expectedDesktopGeneration ?? this.lifecycle.generation,
+          expectedTargets: params.expectedTargets ?? this.lifecycle.targets() });
+        this.send(socket, { id, result }); this.requestExit(result); return;
       }
       if (!this.clients.has(socket)) throw new Error('请先完成后台服务握手');
+      if (['lifecycleRequest', 'lifecycleRead', 'lifecycleReconcile'].includes(method)) {
+        if (!this.lifecycle) throw Object.assign(new Error('后台未声明持久生命周期能力'), { code: 'LIFECYCLE_UNSUPPORTED' });
+        if (params?.protocol !== PROTOCOL) throw Object.assign(new Error('后台服务协议不兼容'), { code: 'LIFECYCLE_UNSUPPORTED' });
+        const result = method === 'lifecycleRequest' ? await this.lifecycle.request(params)
+          : method === 'lifecycleRead' ? await this.lifecycle.read(params.requestId) : await this.lifecycle.reconcile(params.requestId);
+        this.send(socket, { id, result });
+        if (method === 'lifecycleRequest') this.requestExit(result);
+        this.schedule(); return;
+      }
+      if (this.recovering && !['snapshot', 'activity'].includes(method)) throw blocked('正在处理后台资源，请稍后重试');
       if (method === 'browserClaim') {
         const { coreInstanceId: claimedCoreId, projectId, threadId, pageId,
           browserHostId, hostGeneration, pageGeneration, controlEpoch } = params ?? {};
@@ -306,7 +311,7 @@ class DesktopService {
         finally { this.inflight--; this.recovering = false; this.schedule(); }
         return;
       }
-      if (method === 'snapshot') { this.send(socket, { id, result: this.packet() }); return; }
+      if (method === 'snapshot') { this.send(socket, { id, result: this.packet() }, true); return; }
       if (method === 'activity') {
         this.sampleActivity();
         const windowFocused = params?.focused === true && params?.suspended !== true;
@@ -319,7 +324,7 @@ class DesktopService {
       else if (typeof params?.path !== 'string') throw new Error('无效工作区路径');
       this.inflight++; this.schedule();
       try {
-        const entryKey = method === 'command' && ['send', 'continue'].includes(params.name)
+        const entryKey = method === 'command' && ['send', 'editMessage', 'continue'].includes(params.name)
           ? browserKey(params.request.projectId, params.request.threadId) : null;
         const entryProject = entryKey && this.backend.projects.get(params.request.projectId);
         const entry = entryProject?.model.state.threads[params.request.threadId]
@@ -366,7 +371,7 @@ class DesktopService {
     this.server?.close();
   }
   async executeRemote(name, request) {
-    if (this.closed || this.stopping || this.recovering) throw new Error('后台正在停止或恢复，请稍后重试');
+    if (this.closed || this.recovering) throw new Error('后台正在停止或恢复，请稍后重试');
     this.inflight++; this.schedule();
     try { return await this.backend.command(name, request); }
     finally { this.inflight--; this.schedule(); }
@@ -458,7 +463,7 @@ class DesktopService {
       browserHostId: claim.browserHostId, hostGeneration: claim.hostGeneration, available: true,
       operations: ['describe', 'observe', 'capture', 'act', 'wait', 'navigate', 'newPage', 'diagnostics', 'runBatch'],
       instructions: 'Use navigate with a listed pageId and a URL to open a site, then observe to obtain current refs. Fill the search field and press Enter to submit an approved public search. describe creates or reuses the visible page after Core approval; no development service is needed. Human input revokes access; only a new explicit chat request can authorize re-entry.',
-      parameterGuide: 'Every new user request starts with describe and a fresh observe; never reuse earlier-turn snapshotId or refs. Replace pageId with an ID from pages, snapshotId with the latest observe.observationId, and ref with a ref from that observation. act takes one nested action object. Observe again after fill before submitting with press Enter.',
+      parameterGuide: 'Invoke browser_v1 only when the current user task requires browser interaction. For ordinary chat and tasks that do not need a browser, do not call browser_v1 merely because it is available. Every new browser task starts with describe and empty parameters, then a fresh observe for an existing page; never reuse earlier-turn snapshotId or refs. Replace pageId with an ID from pages, snapshotId with the latest observe.observationId, and ref with a ref from that observation. act takes one nested action object. Observe again after fill before submitting with press Enter.',
       examples: [
         { operation: 'observe', parameters: { pageId: '<pageId>' } },
         { operation: 'act', parameters: { pageId: '<pageId>', snapshotId: '<observe.observationId>',
@@ -587,4 +592,4 @@ class DesktopService {
     return browserSuccess(result);
   }
 }
-module.exports = { PROTOCOL, DesktopService, validateCommand, encodeMedia, decodeMedia };
+module.exports = { PROTOCOL, COMMAND_CONTRACT, DesktopService, validateCommand, encodeMedia, decodeMedia };

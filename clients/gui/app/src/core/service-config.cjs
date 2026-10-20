@@ -1,6 +1,6 @@
 'use strict';
 const { createHash } = require('node:crypto');
-const { existsSync, readFileSync, readdirSync, statSync, realpathSync } = require('node:fs');
+const { existsSync, readFileSync, readdirSync, realpathSync, createReadStream } = require('node:fs');
 const { join, dirname, basename, resolve } = require('node:path');
 const { homedir } = require('node:os');
 const { resolveCoreBinary, executables } = require('./bundle.cjs');
@@ -24,6 +24,7 @@ function serviceOptions(app) {
   const configHome = resolve(process.env.AREAL_HARNESS_HOME || join(process.env.AREAL_CORE_USER_HOME || homedir(), '.areal'));
   return { binary: resolveCoreBinary({ explicit: process.env.AREAL_CORE_BIN || (!app.isPackaged ? resolve(__dirname, '../../../../../target/debug/areal') : undefined), packaged: app.isPackaged, resourcesPath: process.resourcesPath }),
     home: serviceHome(app),
+    applicationOwner: process.env.AREAL_GUI_OWNER ? require('./application-owner.cjs').parseOwner(process.env.AREAL_GUI_OWNER) : undefined,
     // macOS Unix socket 长度有限，注册目录不能嵌入较长的 userData 路径。
     harnessHome: process.env.AREAL_HARNESS_SERVICE_HOME || process.env.AREAL_HARNESS_HOME || join(app.getPath('home'), '.areal', 'gui', createHash('sha256').update(resolve(serviceHome(app))).digest('hex').slice(0, 12)),
     userHome: process.env.AREAL_CORE_USER_HOME, config: config ? resolve(config) : undefined, configHome,
@@ -47,8 +48,6 @@ function configurationIdentity(path) {
 }
 async function serviceIdentity(options) {
   const hash = createHash('sha256');
-  // Source changes must not silently attach a new GUI to old backend code. GUI
-  // assets are deliberately excluded. Binary stamps also cover sibling helpers.
   for (const name of readdirSync(__dirname).filter(n => /\.(cjs|json)$/.test(n)).sort()) hash.update(name).update(readFileSync(join(__dirname, name)));
   const subscriptionRoot = dirname(require.resolve('@areal/chatgpt-provider/package.json'));
   for (const name of readdirSync(subscriptionRoot).filter(n => /\.(js|json)$/.test(n)).sort()) hash.update(name).update(readFileSync(join(subscriptionRoot, name)));
@@ -56,6 +55,7 @@ async function serviceIdentity(options) {
   hash.update(CoreClient.toString()).update(CoreRpcError.toString());
   hash.update(readFileSync(require.resolve('@areal/workbench/core-model')));
   hash.update(readFileSync(require.resolve('@areal/workbench/desktop-contract')));
+  hash.update(readFileSync(require.resolve('@areal/workbench/state-projection')));
   hash.update(readFileSync(require.resolve('@areal/remote')));
   hash.update(readFileSync(require.resolve('../workspace-files')));
   hash.update(readFileSync(require.resolve('@areal/workspace-git')));
@@ -63,8 +63,13 @@ async function serviceIdentity(options) {
     const packagedHelper = join(dirname(options.binary), '..', 'libexec', 'areal', name);
     const path = name !== 'areal' && existsSync(packagedHelper)
       ? packagedHelper : join(dirname(options.binary), name);
-    try { const stat = statSync(path); hash.update(JSON.stringify([realpathSync(path), stat.size, stat.mtimeMs])); }
-    catch (e) { if (name === 'areal') throw e; hash.update(name + ':absent'); }
+    let actual;
+    try { actual = realpathSync(path); }
+    catch (e) { if (name === 'areal' || !['ENOENT', 'ENOTDIR'].includes(e.code)) throw e; hash.update(name + ':absent'); continue; }
+    hash.update(JSON.stringify([actual]));
+    const content = createHash('sha256');
+    for await (const chunk of createReadStream(actual)) content.update(chunk);
+    hash.update(content.digest());
   }
   // Core owns mutable model configuration and its revisions. Saving it must
   // not make a later window incompatible with the still-running service;

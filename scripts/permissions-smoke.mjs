@@ -1,3 +1,4 @@
+import { respondToSessionName } from "./model-fixture.mjs";
 import WebSocket from "ws";
 // Real Core/Runtime permissions, using only local deterministic HTTP fixtures.
 import assert from "node:assert/strict";
@@ -19,6 +20,7 @@ const model = createServer(async (req, res) => {
   let body = "";
   for await (const chunk of req) body += chunk;
   const request = JSON.parse(body);
+  if (respondToSessionName(request, res)) return;
   const results = request.messages.filter((m) => m.role === "tool");
   res.writeHead(200, { "content-type": "text/event-stream" });
   const event = (delta, finish_reason = null) => {

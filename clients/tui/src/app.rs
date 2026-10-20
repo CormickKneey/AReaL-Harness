@@ -110,6 +110,7 @@ pub struct App {
     configuration: Value,
     pub threads: BTreeMap<String, Thread>,
     pub selected: Option<String>,
+    pub session_creation_error: Option<String>,
     pub input: String,
     // 使用字素边界的字节偏移，避免拆开中文、组合字符和 emoji。
     pub input_cursor: usize,
@@ -177,6 +178,7 @@ impl App {
             configuration: Value::Null,
             threads: BTreeMap::new(),
             selected: None,
+            session_creation_error: None,
             input: String::new(),
             input_cursor: 0,
             status: "Connected · /help for commands".into(),
@@ -239,6 +241,54 @@ impl App {
             .turns
             .last()
             .filter(|t| t.status == TurnStatus::InProgress)
+    }
+    pub fn creating_session(&self) -> bool {
+        self.pending.values().chain(self.outbox.iter()).any(
+            |r| matches!(r.purpose, Purpose::Create(generation) if generation == self.generation),
+        )
+    }
+    pub fn input_target_label(&self) -> &str {
+        self.selected.as_deref().unwrap_or_else(|| {
+            if self.creating_session() {
+                "Creating session"
+            } else {
+                "No session"
+            }
+        })
+    }
+    fn work_status_uncertain(&self) -> bool {
+        self.selected.as_ref().is_some_and(|id| {
+            !self.connected
+                || !self.subscriptions.contains(id)
+                || self.syncing.contains(id)
+                || self.current().is_none()
+        }) || self
+            .current()
+            .is_some_and(|t| matches!(t.status, ThreadStatus::Active { .. }))
+            || self.selected.as_deref().is_some_and(|id| {
+                self.pending.values().chain(self.outbox.iter()).any(|r| {
+                    r.params["threadId"].as_str() == Some(id)
+                        && matches!(
+                            r.method.as_str(),
+                            "turn/start" | "turn/steer" | "areal/goal/create" | "areal/goal/resume"
+                        )
+                })
+            })
+    }
+    pub fn control_c_hint(&self) -> &'static str {
+        if self
+            .current()
+            .and_then(|t| t.goals.goal.as_ref())
+            .is_some_and(|g| g.status == areal_protocol::goals::GoalStatus::Active)
+        {
+            "pause goal"
+        } else if self.active().is_some() {
+            "interrupt"
+        } else if self.work_status_uncertain() {
+            "check status"
+        } else {
+            "quit"
+        }
     }
     pub fn node_status(&self, id: &str) -> &'static str {
         let Some(thread) = self.threads.get(id) else {
@@ -321,6 +371,7 @@ impl App {
             "Wait for the current session creation to finish"
         );
         self.generation += 1;
+        self.session_creation_error = None;
         // 创建会话也会占用服务端订阅；先退回当前会话订阅，为新会话预留槽位。
         if self.view != View::Welcome {
             self.view = View::Conversation;
@@ -391,6 +442,7 @@ impl App {
             "Disconnected; reconnect before opening a session"
         );
         self.generation += 1;
+        self.session_creation_error = None;
         self.selected = Some(id.into());
         self.nav_selected = Some(NavTarget::Thread(id.into()));
         self.histories.entry(id.into()).or_default();
@@ -1416,6 +1468,10 @@ impl App {
                             json!({"threadId":self.selected,"turnId":turn.id}),
                             Purpose::Ordinary,
                         )?;
+                    } else if self.work_status_uncertain() {
+                        self.status = "Work status is awaiting confirmation; inspect the session or reconnect. Ctrl-Q exits the TUI.".into();
+                    } else {
+                        return Ok(true);
                     }
                 }
                 KeyCode::Char('r') => self.reconnect_requested = true,
@@ -1511,7 +1567,17 @@ impl App {
             return Ok(false);
         }
         if self.picker.is_some() {
+            if key.code == KeyCode::Enter
+                && self.picker.as_ref().is_some_and(|p| p.query == "/quit")
+            {
+                return Ok(true);
+            }
             self.picker_key(key.code)?;
+            return Ok(false);
+        }
+        if key.code == KeyCode::Char('/') && self.focus != Focus::Input {
+            self.focus = Focus::Input;
+            self.insert_input("/");
             return Ok(false);
         }
         let completions = self.completions();
@@ -1877,6 +1943,16 @@ impl App {
                 return Ok(());
             };
             if let Some(error) = value.get("error") {
+                if let Purpose::Create(generation) = &request.purpose {
+                    if *generation != self.generation {
+                        return Ok(());
+                    }
+                    self.session_creation_error = Some(safe_text(
+                        error["message"]
+                            .as_str()
+                            .unwrap_or("Session creation failed"),
+                    ));
+                }
                 if let (Some(input), Some(thread_id)) = (
                     &request.submitted_input,
                     request.params["threadId"].as_str(),
@@ -1986,13 +2062,16 @@ impl App {
                             |m| format!("Default (profile: {} / {})", m.provider_id, m.model_id),
                         ),
                         model: None,
-                        available: profile_model.map_or(default.is_some(), |model| {
-                            data.iter().any(|entry| {
-                                entry["providerId"].as_str() == Some(&model.provider_id)
-                                    && entry["modelId"].as_str() == Some(&model.model_id)
-                                    && entry["available"].as_bool() == Some(true)
-                            })
-                        }),
+                        available: profile_model.map_or_else(
+                            || default.is_some_and(|m| m["available"].as_bool() == Some(true)),
+                            |model| {
+                                data.iter().any(|entry| {
+                                    entry["providerId"].as_str() == Some(&model.provider_id)
+                                        && entry["modelId"].as_str() == Some(&model.model_id)
+                                        && entry["available"].as_bool() == Some(true)
+                                })
+                            },
+                        ),
                     }];
                     for entry in data {
                         if let (Some(provider), Some(model)) =
@@ -2049,6 +2128,7 @@ impl App {
                     let thread: Thread = serde_json::from_value(result["thread"].clone())?;
                     self.subscriptions.insert(thread.id.clone());
                     if self.generation == generation {
+                        self.session_creation_error = None;
                         self.selected = Some(thread.id.clone());
                         self.nav_selected = Some(NavTarget::Thread(thread.id.clone()));
                     }

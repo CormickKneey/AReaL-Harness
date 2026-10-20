@@ -61,6 +61,7 @@ export function ComposerQueueAttachment({
                 </>
             )}
             <button
+                type="button"
                 className="composer-remove-attachment"
                 disabled={disabled}
                 aria-label={`移除排队附件 ${name}`}

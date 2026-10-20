@@ -9,27 +9,27 @@
 /** @typedef {{projectId:string,threadId:string,expectedTurnId:string,expectedConfigRevision?:number,requestId?:string}} ContinueRequest */
 /** @typedef {{projectId:string,sourceThreadId:string,requestId?:string,workspaceMode:'sharedCurrent',anchor:{turnId:string,boundary:'before'|'after'},target?:Record<string,unknown>}} ForkRequest */
 
-/** @typedef {{operation:'status'|'retry'}} TrajectoryRequest */
+/** @typedef {{operation:'status'|'retry'}|{operation:'setEnabled',enabled:boolean,expectedRevision:string}} TrajectoryRequest */
 /** @typedef {{id:string,status:'pending'|'uploading'|'failed'|'uploaded'|'evicted',created_at:number,uploaded_at:number|null,attempts:number,next_attempt_at:number|null,bytes:number,error:string|null,turn_id?:string|null,event_name?:string|null,model_name?:string|null,harness_version?:string|null,execution_duration_ms?:number|null,model_call_duration_ms?:number|null,occurred_at?:number|null}} TrajectoryRecord */
 /** @typedef {{scope:'recent_records',record_limit:100,records_considered:number,model_calls:number,total_duration_ms:number|null,mean_duration_ms:number|null,max_duration_ms:number|null}} TrajectoryModelCallSummary */
-/** @typedef {{enabled:boolean,state:'disabled'|'ready'|'degraded'|'invalid',endpoint:string,configPath:string|null,spool_dir:string,worker_running:boolean,queue:{pending:number,uploading:number,failed:number,uploaded:number,evicted:number,bytes:number,max_bytes:number,dropped_memory:number,dropped_oversize:number},last_error:string|null,last_success_at:number|null,records:TrajectoryRecord[],model_call_summary?:TrajectoryModelCallSummary,limits:{max_retries:number,upload_interval_ms:number,max_memory_bytes:number}}} TrajectoryStatus */
+/** @typedef {{enabled:boolean,config_revision?:string,capture_apply_pending?:boolean,capture_apply_error?:string|null,state:'disabled'|'ready'|'degraded'|'invalid',endpoint:string,configPath:string|null,spool_dir:string,worker_running:boolean,queue:{pending:number,uploading:number,failed:number,uploaded:number,evicted:number,bytes:number,max_bytes:number,dropped_memory:number,dropped_oversize:number},last_error:string|null,last_success_at:number|null,records:TrajectoryRecord[],model_call_summary?:TrajectoryModelCallSummary,limits:{max_retries:number,upload_interval_ms:number,max_memory_bytes:number}}} TrajectoryStatus */
 
 // 名称、作用域和执行层只维护一份；Main 专属能力不能从后台服务入口调用。
 const commandDefinitions = Object.freeze({
   connect: ['service', 'project'], list: ['service', 'project'], open: ['service', 'thread'],
-  create: ['service', 'project'], prepareCreator: ['service', 'project'], fork: ['service', 'project'], side: ['service', 'project'], send: ['service', 'thread'], continue: ['service', 'thread'], stop: ['service', 'thread'],
+  create: ['service', 'project'], prepareCreator: ['service', 'project'], fork: ['service', 'project'], side: ['service', 'project'], send: ['service', 'thread'], editMessage: ['service', 'thread'], continue: ['service', 'thread'], stop: ['service', 'thread'],
   attachBrowser: ['service', 'thread'],
   respond: ['service', 'thread'], reconcile: ['service', 'project'], configure: ['service', 'thread'],
   queue: ['service', 'thread'], queueEdit: ['service', 'thread'], library: ['service', 'app'],
   manage: ['service', 'project'], workspace: ['service', 'project'], media: ['service', 'thread'],
   steer: ['service', 'thread'], dismissRecovery: ['service', 'project'], providers: ['service', 'app'],
   chatgpt: ['service', 'app'], analytics: ['service', 'app'], resources: ['service', 'app'],
-  projectless: ['service', 'app'], tasks: ['service', 'app'], trajectory: ['service', 'app'],
-  serviceStatus: ['main', 'app'], stopService: ['main', 'app'], recoverResources: ['main', 'app'],
+  projectless: ['service', 'app'], tasks: ['service', 'app'], trajectory: ['service', 'app'], feedback: ['service', 'app'],
+  serviceLifecycle: ['main', 'app'], serviceStatus: ['main', 'app'], stopService: ['main', 'app'], recoverResources: ['main', 'app'],
   connectService: ['main', 'app'], export: ['main', 'thread'], remoteControl: ['main', 'app'],
 });
 /** @typedef {keyof typeof commandDefinitions} CommandName */
-/** @template {CommandName} N @typedef {N extends 'continue' ? ContinueRequest : N extends 'prepareCreator' ? PrepareCreatorRequest : N extends 'fork' ? ForkRequest : N extends 'configure' ? ConfigureRequest : N extends 'side' ? SideRequest : N extends 'trajectory' ? TrajectoryRequest : Record<string,unknown>} CommandParams */
+/** @template {CommandName} N @typedef {N extends 'serviceLifecycle' ? {operation:'update'|'stop'|'check'|'recover'|'quitInterface'|'stopAndQuit'} : N extends 'stop' ? {projectId:string,threadId:string,turnId:string,requestId:string} : N extends 'continue' ? ContinueRequest : N extends 'prepareCreator' ? PrepareCreatorRequest : N extends 'fork' ? ForkRequest : N extends 'configure' ? ConfigureRequest : N extends 'side' ? SideRequest : N extends 'trajectory' ? TrajectoryRequest : Record<string,unknown>} CommandParams */
 /** @typedef {'show'|'navigate'|'back'|'forward'|'reload'|'stop'|'state'|'external'|'devtools'|'openLink'|'release'|'claim'|'takeover'|'captureRegion'|'captureElement'|'selectElement'|'cancelElementSelection'|'checkElement'|'endRegion'|'beginStyleTrial'|'applyStyleTrial'|'undoStyleTrial'|'redoStyleTrial'|'styleTrialState'|'captureStyleTrialAfter'|'clearStyleTrial'|'newPage'|'selectPage'|'subscribe'|'unsubscribe'|'allowNextDownload'|'cancelFileHandoff'|'cancelDownload'|'authorizeFrameOrigin'|'reloadFrameOrigin'|'revokeFrameOrigin'} OwnedPreviewOperation */
 /** @typedef {{operation:'hide',projectId?:string,threadId?:string,pageId?:string,captureId?:string}|{operation:OwnedPreviewOperation,projectId:string,threadId:string,pageId?:string,captureId?:string,x?:number,y?:number,elementId?:string,trialId?:string,property?:string,value?:string,downloadId?:string,url?:string,userIntent?:boolean,visible?:boolean,bounds?:{x:number,y:number,width:number,height:number}}} PreviewRequest */
 /** @param {unknown} value @returns {value is Record<string,unknown>} */
@@ -48,9 +48,19 @@ function validateCommand(name, params, { serviceOnly = false } = {}) {
   if (serviceOnly && layer !== 'service') invalid();
   if (scope !== 'app' && !identifier(params.projectId)) invalid();
   if (scope === 'thread' && !identifier(params.threadId)) invalid();
+  if (name === 'serviceLifecycle' && (!['update', 'stop', 'check', 'recover', 'quitInterface', 'stopAndQuit'].includes(String(params.operation))
+    || Object.keys(params).some(key => key !== 'operation'))) invalid();
+  if (name === 'stop' && (!identifier(params.turnId) || typeof params.requestId !== 'string'
+    || !/^[0-9a-f-]{36}$/.test(params.requestId)
+    || Object.keys(params).some(key => !['projectId', 'threadId', 'turnId', 'requestId'].includes(key)))) invalid();
   if (name === 'prepareCreator' && (Object.keys(params).some(key => !['projectId', 'profile'].includes(key))
     || params.profile !== undefined && (!record(params.profile) || !resource(params.profile) || Object.keys(params.profile).some(key => !['id', 'revision'].includes(key))))) invalid();
   if (name === 'send' && params.requestId !== undefined && (typeof params.requestId !== 'string' || !/^[0-9a-f-]{36}$/.test(params.requestId))) invalid();
+  if (name === 'editMessage' && (!identifier(params.expectedTurnId) || !identifier(params.itemId)
+    || typeof params.text !== 'string' || !params.text.trim()
+    || !Number.isSafeInteger(params.expectedConfigRevision) || Number(params.expectedConfigRevision) < 0
+    || typeof params.requestId !== 'string' || !/^[0-9a-f-]{36}$/.test(params.requestId)
+    || Object.keys(params).some(key => !['projectId', 'threadId', 'expectedTurnId', 'itemId', 'expectedConfigRevision', 'requestId', 'text', 'attachments', 'mcpContent'].includes(key)))) invalid();
   if (name === 'continue' && (!identifier(params.expectedTurnId)
     || Object.keys(params).some(key => !['projectId', 'threadId', 'expectedTurnId', 'expectedConfigRevision', 'requestId'].includes(key))
     || params.requestId !== undefined && (typeof params.requestId !== 'string' || !/^[0-9a-f-]{36}$/.test(params.requestId))
@@ -71,9 +81,38 @@ function validateCommand(name, params, { serviceOnly = false } = {}) {
     || params.expectedToolsetRevision < 0)) invalid();
 
   // 导出目标与配置路径只由可信启动配置选择，Renderer 不能扩展 CLI 参数。
-  if (name === 'trajectory' && (!['status', 'retry'].includes(String(params.operation)) || Object.keys(params).some(key => key !== 'operation'))) invalid();
+  if (name === 'trajectory') {
+    const toggling = params.operation === 'setEnabled';
+    if ((!toggling && !['status', 'retry'].includes(String(params.operation)))
+      || Object.keys(params).some(key => !(toggling ? ['operation','enabled','expectedRevision'] : ['operation']).includes(key))
+      || toggling && (typeof params.enabled !== 'boolean' || typeof params.expectedRevision !== 'string' || !/^[a-f0-9]{64}$/.test(params.expectedRevision))) invalid();
+  }
+  if (name === 'feedback') {
+    const operation = String(params.operation);
+    if (!['status','preference','prepare','read','draft','refine','submit','close'].includes(operation)) invalid();
+    const fields = ['operation', ...(operation === 'preference' ? ['enabled'] : operation === 'status' ? [] :
+      ['projectId','threadId', ...(operation === 'prepare' ? ['turnId','itemId','rating'] : ['id']),
+        ...(['draft','refine','submit'].includes(operation) ? ['rating','reason','analysis','analysisItemId'] : []),
+        ...(operation === 'refine' ? ['text'] : [])])];
+    if (Object.keys(params).some(key => !fields.includes(key))) invalid();
+    if (operation === 'preference' && typeof params.enabled !== 'boolean') invalid();
+    if (!['status','preference'].includes(operation) && (!identifier(params.projectId) || !identifier(params.threadId))) invalid();
+    if (operation === 'prepare' && (!identifier(params.turnId) || !identifier(params.itemId) || !['up','down'].includes(String(params.rating)))) invalid();
+    if (!['status','preference','prepare'].includes(operation) && !identifier(params.id)) invalid();
+    if (params.rating !== undefined && !['up','down'].includes(String(params.rating))) invalid();
+    if (params.analysisItemId !== undefined && (typeof params.analysisItemId !== 'string' || params.analysisItemId.length > 256)) invalid();
+    for (const [key, max] of /** @type {[string,number][]} */ ([['reason',32768],['analysis',65536],['text',16384]])) {
+      if (params[key] !== undefined && (typeof params[key] !== 'string' || new TextEncoder().encode(/** @type {string} */ (params[key])).length > max)) invalid();
+    }
+  }
   if (['manage', 'workspace', 'media', 'queueEdit', 'library', 'providers', 'chatgpt', 'analytics', 'resources', 'projectless', 'tasks', 'remoteControl'].includes(name)
     && !identifier(params.operation)) invalid();
+  if (name === 'tasks' && (!['list', 'inbox'].includes(String(params.operation))
+    || Object.keys(params).some(key => !['operation', 'projectId', 'limit', 'requestId', 'viewEpoch'].includes(key))
+    || params.projectId !== undefined && !identifier(params.projectId)
+    || params.limit !== undefined && (!Number.isSafeInteger(params.limit) || Number(params.limit) < 1 || Number(params.limit) > 1024)
+    || params.requestId !== undefined && (typeof params.requestId !== 'string' || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(params.requestId))
+    || params.viewEpoch !== undefined && (!Number.isSafeInteger(params.viewEpoch) || Number(params.viewEpoch) < 0))) invalid();
   if (name === 'resources' && params.operation === 'builtinSkill'
     && (params.id !== 'openai-skill-creator' || Object.keys(params).some(key => !['operation', 'id'].includes(key)))) invalid();
   if (name === 'manage' && ['pluginArchivePick', 'pluginArchiveImport'].includes(String(params.operation))) {
@@ -226,6 +265,17 @@ function validateCommandResponse(name, params, value) {
       || !record(value.provenance) || Object.keys(value.provenance).some(key => !['upstream', 'revision', 'contentDigest'].includes(key))
       || !identifier(value.provenance.upstream) || !identifier(value.provenance.revision)
       || typeof value.provenance.contentDigest !== 'string' || !/^[a-f0-9]{64}$/.test(value.provenance.contentDigest)) invalid();
+    return;
+  }
+  if (name === 'tasks') {
+    if (params.projectId !== undefined && (!record(value) || value.projectId !== params.projectId
+      || value.requestId !== params.requestId || value.viewEpoch !== params.viewEpoch
+      || !Array.isArray(value.owners) || value.owners.length !== 1 || !record(value.owners[0]) || value.owners[0].projectId !== params.projectId)) {
+      throw Object.assign(new Error('当前后台不支持按所有者读取任务目录。请安全更新后台后重试。'), { code: 'SERVICE_COMMAND_UNSUPPORTED' });
+    }
+    if (!record(value) || !Array.isArray(value.data) || !value.data.every(record) || !Array.isArray(value.errors) || !value.errors.every(record) || typeof value.hasMore !== 'boolean'
+      || params.projectId !== undefined && (value.data.some(row => row.projectId !== params.projectId) || value.errors.some(error => error.projectId !== params.projectId)
+        || !['ready', 'error'].includes(String(value.owners[0].status)) || value.owners[0].status === 'ready' && (!Number.isSafeInteger(value.owners[0].connectionGeneration) || value.owners[0].connectionGeneration < 0))) invalid();
     return;
   }
   if (name === 'continue' && (!record(value) || !(record(value.turn) && identifier(value.turn.id) || Number.isSafeInteger(value.queueRevision) && Number(value.queueRevision) >= 0))) invalid();

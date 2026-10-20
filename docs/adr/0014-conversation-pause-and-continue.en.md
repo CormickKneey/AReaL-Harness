@@ -29,7 +29,7 @@ Exact execution-position recovery would require retaining model streams, tools a
 
 ## Edit the last user message
 
-Offer a pencil action on the last user message. Users can edit the prompt inline and select Cancel or Send. Cancel retains the original message. Send executes the revised content as a new user message in the same conversation, preserving the original reply and every execution record. State that the revision is sent as a new message. Existing file changes and external effects remain. Editing arbitrary historical messages and maintaining a version tree are outside this change.
+Offer a pencil action on the last user message. Users can edit the prompt inline and select Cancel or Send. Cancel retains the original message. Send replaces that message and subsequent replies and executes the revision in the same conversation. Core atomically replaces history and creates a new execution Turn; the UI and subsequent model context exclude the replaced content. For a steered message, earlier items in its Turn remain; later continuation Turns are replaced as well. An edit binds the latest Turn, message ID, and configuration revision. Stale targets, active execution, pending queue items, and uninspected UNKNOWN outcomes reject admission and retain the draft. Unknown submissions only query the original receipt. Existing file changes and external effects remain. Editing arbitrary historical messages and maintaining a version tree are outside this change.
 
 ## Queue and history
 

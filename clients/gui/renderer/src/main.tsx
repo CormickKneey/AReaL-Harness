@@ -5,12 +5,12 @@ import './styles.css';
 import './workbench.css';
 import { TooltipProvider } from './components/ui/tooltip.js';
 import { App } from './App.js';
-import type { PlatformServices } from './services.js';
+import { createDesktopServices, type DesktopBridge } from './desktop-services.js';
 // This is the only module allowed to access the desktop preload object.
-const services = (window as unknown as {
-    arealDesktop: PlatformServices;
+const bridge = (window as unknown as {
+    arealDesktop: DesktopBridge;
 }).arealDesktop;
-if (!services)
+if (!bridge)
     document.getElementById('root')!.textContent = '请通过 AReaL Harness 桌面入口打开此界面。';
 else
-    createRoot(document.getElementById('root')!).render(<TooltipProvider><App services={services}/></TooltipProvider>);
+    createRoot(document.getElementById('root')!).render(<TooltipProvider><App services={createDesktopServices(bridge)}/></TooltipProvider>);

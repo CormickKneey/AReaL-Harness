@@ -36,6 +36,16 @@ input 为有序 text/image/audio/file 等内容，UTF-8 文本合计最多 1 MiB
 
 上下文压缩可能将活动 Turn 的前缀移入冷历史，因此 `turn/started` / `turn/completed` 的 `turn.items` 不能视为完整历史替换。客户端按稳定 Item ID 合并已观察条目，更新同 ID 内容与阶段，追加新条目，并保留事件中省略的旧条目及其顺序；已有 Turn 的重复开始回执不能覆盖已显示消息或把终态回退为运行中。`areal/model/completionDiscarded` 才显式移除指定的未提交模型响应。`thread/read(includeTurns:true)`、`thread/resume` 和 `areal/thread/observe` 还原冷历史，作为可替换本地投影的权威完整基线。压缩、正常完成、停止和失败均不应隐藏已保留的用户输入、steer 或 Agent 回复。
 
+### 会话名称
+
+`Thread` 增加可选只读字段 `name`（自动总结的名称）和 `nameAttemptTurnId`（已领取命名请求的来源 Turn）。旧记录缺失时保持兼容；`preview` 仍保留原始首条输入的预览。普通、非临时的 `appServer` 根会话在首个成功用户 Turn 后异步尝试一次，排除子会话、Side、TaskRun 和 Goal 流程。名称通过 `thread/list`、`thread/read` 和 `areal/thread/edited` 返回。不会在启动时批量为已有会话补名。Workgroup 内部 worker 不参与命名，避免占用父 Goal 或 Workgroup 的模型预算。
+
+自动名称概括用户的任务或问题，避免直接引用或截断提示词。例如，输入包含重复数字并要求回复 `1` 时，可以概括为 `单字符回复测试`。
+
+Core 使用该 Turn 的模型和共享模型容量，仅发送有界文本，不提供工具。用户与 Agent 文本各最多 2048 字符，输出预算为 96 tokens，总时限为 20 秒。有效名称为单行、最多 60 字符；空白、控制字符、多行、超长、工具和二进制结果不提交。命名请求会产生额外模型用量，但不改写已完成 Turn 的历史、状态或 usage。沿用模型传输层的现有重试策略，不新增命名重试。
+
+Core 在请求前持久化领取标记。失败、取消、UNKNOWN 或重启均不再次自动提交，继续使用原有预览。提交只合并当前 Thread 的名称，并拒绝已删除、已归档或来源被修改的结果。GUI 显示优先级为手动名称、Core 自动名称、原有输入预览；自动总结不覆盖手动改名。
+
 ### 结构化终止原因
 
 `Turn.error` 保留 `message`，增加可选 `outcome:{code,class,source,details?}`。Core 在错误产生处保留类型，在 Turn 结算时生成 outcome；`turn/completed`、`thread/read`、持久化及重启恢复使用同一对象。旧记录没有 outcome 时按原样读取；消费者不能通过 message 猜测分类。Rust 构造旧 `TurnError` 时需填写 `outcome: None`。
@@ -377,6 +387,10 @@ Goal 提示投影不携带 eventSequence 或逐请求累计用量/时钟，只�
 HTTP 模型收尾轮保留当前可见工具 schema，通过 `tool_choice=none` 禁用调用，同时将解码和执行额度设为零；供应商若仍返回调用会被拒绝。工具定义和固定委派指令不因正常收尾而删除，从而保留可复用前缀。无 `tool_choice` 能力的自定义 Model 适配器继续接收空工具列表。权限变化仍即时调整工具可见性，缓存不覆盖授权。
 
 Goal 的 steer（包括向计量子任务发送 `agent_send_input`）立即持久化，但不丢弃在途模型请求。Core 等待该响应结算，再于工具派发前处理待接收修订；旧响应的工具调用被丢弃，已知消费仍准确计入一次。既有 idle、显式 Goal 期限及取消保持有效，真正缺失的用量仍为 UNKNOWN。普通无 Goal 计量的 Turn 保持即时 steer 行为。
+
+### 本地轨迹启停控制
+
+`areal trajectory set-enabled <true|false> [--expected-revision <sha256>] --config <file>` 仅修改现有配置中的 `[trajectory].enabled`，使用共享配置文件锁和原子写入，保留格式、注释、其它字段与队列身份。启用需要已配置合法 HTTP(S) 接收地址；不创建接收端配置。`status` 和控制响应包含可选 `config_revision`（原始文件 SHA-256；文件缺失为 `missing`）。旧版本缺少此字段时客户端不得假设支持启停。省略 `--expected-revision` 时也绑定命令本次载入的文件哈希，拒绝读取与写入之间的并发变更。陈旧版本拒绝写入；`set-enabled true` 从关闭变开启时自动补传仍保留的失败记录并保留服务端退避，已开启时不重置尝试次数。`sync-config --resume-retained` 为仓库外配置工具提供相同的显式恢复语义。已有 Core 的新采集装配由客户端安全应用，CLI 不取消运行中任务。见[配置指南](../guides/configuration.md#持久轨迹导出)。
 
 ### 子任务停止与计量收尾
 

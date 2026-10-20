@@ -8,9 +8,9 @@ use areal_engine::{
         UnconfiguredModel,
     },
 };
-use serde_json::{Value, json, value::RawValue};
+use serde_json::{Value, value::RawValue};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, path::Path, sync::Arc, time::Duration};
+use std::{collections::BTreeMap, path::Path, sync::Arc};
 
 pub fn model(
     config: &SelectedModelConfig,
@@ -69,7 +69,7 @@ pub fn model(
     ))
 }
 
-fn parameters(config: &SelectedModelConfig) -> areal_protocol::desktop::ModelParameters {
+pub(super) fn parameters(config: &SelectedModelConfig) -> areal_protocol::desktop::ModelParameters {
     areal_protocol::desktop::ModelParameters {
         context_window_tokens: config.context_window_tokens,
         temperature: config.temperature,
@@ -79,23 +79,19 @@ fn parameters(config: &SelectedModelConfig) -> areal_protocol::desktop::ModelPar
     }
 }
 
-fn deployment(config: &ResolvedCoreConfig) -> Value {
+pub(super) fn deployment(config: &ResolvedCoreConfig) -> Value {
     let mut value = config.diagnostic(false);
-    if config.model_catalog_managed {
-        // 共享目录采用显式安全应用；普通 CLI 文件保留已有默认模型重载语义。
-        value["modelCatalog"] = json!(config.model_catalog);
-    } else {
-        value.as_object_mut().unwrap().remove("model");
-    }
+    value.as_object_mut().unwrap().remove("model");
     value
 }
 
 pub struct Reload {
-    inputs: ConfigInputs,
-    deployment: Value,
-    models: BTreeMap<String, Box<RawValue>>,
-    current: String,
-    data: std::path::PathBuf,
+    pub(super) inputs: ConfigInputs,
+    pub(super) deployment: Value,
+    pub(super) models: BTreeMap<String, Box<RawValue>>,
+    pub(super) current: String,
+    pub(super) managed: bool,
+    pub(super) data: std::path::PathBuf,
 }
 
 impl Reload {
@@ -142,13 +138,14 @@ impl Reload {
             deployment: deployment(config),
             models,
             current: String::new(),
+            managed: config.model_catalog_managed,
             data: config.data_dir.clone(),
         };
         reload.apply(&config.model, engine, true)?;
         Ok(reload)
     }
 
-    fn apply(
+    pub(super) fn apply(
         &mut self,
         config: &SelectedModelConfig,
         engine: &Engine,
@@ -186,51 +183,9 @@ impl Reload {
         self.current = revision;
         Ok(())
     }
-
-    pub async fn run(mut self, engine: Arc<Engine>) {
-        let mut interval = tokio::time::interval(Duration::from_secs(1));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        engine
-            .set_configuration_status(
-                json!({"modelRevision":self.current,"restartRequired":false,"error":null}),
-            )
-            .await;
-        let mut pending = None;
-        loop {
-            interval.tick().await;
-            let result = match areal_config::load_management_config(&self.inputs) {
-                Ok(config) => {
-                    let candidate = (deployment(&config), config.model.fingerprint());
-                    // 连续两次读到同一有效配置后再应用，兼容编辑器的替换保存与连续写入。
-                    if pending.as_ref() != Some(&candidate) {
-                        pending = Some(candidate);
-                        continue;
-                    }
-                    if candidate.0 != self.deployment {
-                        Ok(true)
-                    } else {
-                        self.apply(&config.model, &engine, false).map(|()| false)
-                    }
-                }
-                Err(error) => {
-                    pending = None;
-                    Err(anyhow::Error::from(error))
-                }
-            };
-            let (restart, error) = match result {
-                Ok(restart) => (restart, None),
-                Err(error) => (requires_fresh_credentials(&error), Some(error.to_string())),
-            };
-            engine
-                .set_configuration_status(
-                    json!({"modelRevision":self.current,"restartRequired":restart,"error":error}),
-                )
-                .await;
-        }
-    }
 }
 
-fn requires_fresh_credentials(error: &anyhow::Error) -> bool {
+pub(super) fn requires_fresh_credentials(error: &anyhow::Error) -> bool {
     // 新终端可提供旧服务环境中不存在的凭据；客户端仍须先校验自身配置再安全重启。
     error
         .downcast_ref::<areal_config::ConfigError>()

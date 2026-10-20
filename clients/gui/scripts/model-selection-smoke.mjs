@@ -1,3 +1,4 @@
+import { assertApplicationStopped } from "./application-cleanup.mjs";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -5,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { captureSmokeFailure, createProjectConversation, selectConversation } from "./smoke-navigation.mjs";
 
 // 模型可用性来自真实 Core；仅上游推理使用本地确定性服务。
@@ -18,11 +19,22 @@ await mkdir(workspace); await mkdir(join(userHome, ".areal"), { recursive: true 
 execFileSync("git", ["init", "-b", "main"], { cwd: workspace, stdio: "ignore" });
 const requests = [];
 const modelRequests = [];
+let releaseHeldReply;
 const server = createServer(async (request, response) => {
   let body = ""; for await (const chunk of request) body += chunk;
   const payload = JSON.parse(body);
-  requests.push({ model: payload.model, authenticated: request.headers.authorization === "Bearer fixture-key", authorizationPresent: request.headers.authorization !== undefined });
-  modelRequests.push({ model: payload.model, effort: payload.reasoning_effort ?? null, hasEffort: Object.hasOwn(payload, "reasoning_effort") });
+  const naming = payload.messages?.some(message => message.role === "system" && JSON.stringify(message.content).includes("Generate a concise semantic session title"));
+  if (!naming) {
+    requests.push({ model: payload.model, authenticated: request.headers.authorization === "Bearer fixture-key", authorizationPresent: request.headers.authorization !== undefined });
+    modelRequests.push({ model: payload.model, effort: payload.reasoning_effort ?? null, hasEffort: Object.hasOwn(payload, "reasoning_effort") });
+    const lastMessage = JSON.stringify(payload.messages?.at(-1));
+    if (lastMessage?.includes("LAST_MODEL_ACCEPTED_FAILURE")) {
+      response.writeHead(400, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ error: { message: "Deterministic failure after admission" } }));
+      return;
+    }
+    if (lastMessage?.includes("LAST_MODEL_HOLD_REPLY")) await new Promise(resolve => { releaseHeldReply = resolve; });
+  }
   response.writeHead(200, { "Content-Type": "text/event-stream" });
   response.end(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: "MODEL_SELECTION_OK" }, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`);
 });
@@ -46,7 +58,7 @@ const coreBinary = process.env.AREAL_GUI_EXECUTABLE
   ? join(process.env.AREAL_GUI_EXECUTABLE, "../../Resources/areal-core/bin/areal")
   : env.AREAL_CORE_BIN;
 const coreSha256 = createHash("sha256").update(await readFile(coreBinary)).digest("hex");
-let app, page, failure = null, passed = false;
+let app, page, stoppingAdapter, failure = null, passed = false;
 const checks = [], errors = [];
 const stoppedServices = [];
 const button = name => page.getByRole("button", { name, exact: true });
@@ -82,6 +94,12 @@ async function until(predicate, label) {
   throw new Error(`Timeout: ${label}`);
 }
 async function stopService() {
+  if (stoppingAdapter?.applicationOwner) {
+    await assertApplicationStopped(coreBinary, env, stoppingAdapter);
+    stoppedServices.push({ pid: stoppingAdapter.pid, exited: true });
+    stoppingAdapter = undefined;
+    return;
+  }
   const { ServiceConnection } = require("../app/src/core/service-client.cjs");
   const connection = new ServiceConnection();
   const metadata = JSON.parse(await readFile(join(scratch, "core/service.json"), "utf8"));
@@ -121,7 +139,30 @@ async function launch() {
     BrowserWindow.getAllWindows()[0].setSize(1440, 960);
   }, workspace);
 }
+async function closeGui() {
+  const current = app;
+  if (!current) return;
+  const child = current.process();
+  stoppingAdapter = await readFile(join(scratch, "core/service.json"), "utf8").then(JSON.parse).catch(error => { if (error.code === "ENOENT") return null; throw error; });
+  if (failure) {
+    await current.evaluate(({ app }) => app.exit(1)).catch(error => { if (child.exitCode === null) throw error; });
+  } else {
+    await current.evaluate(({ Menu }) => {
+      const quit = Menu.getApplicationMenu().items[0].submenu.items.find(item => item.label === "退出 AReaL Harness");
+      if (!quit) throw new Error("Safe application quit menu is missing");
+      quit.click();
+    }).catch(error => { if (child.exitCode === null) throw error; });
+  }
+  const deadline = Date.now() + 15000;
+  while (child.exitCode === null && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
+  assert.notEqual(child.exitCode, null, "owned Electron process exits");
+  app = undefined;
+}
 async function verifyModelDefaults(projectId) {
+  await page.waitForFunction(async () => {
+    const reply = await window.arealDesktop.command("serviceStatus", {});
+    return reply.ok && !reply.value.busy && !reply.value.activeCommands && !reply.value.starting && !reply.value.providerUpdating;
+  });
   const previous = await call("providers", { operation: "list" });
   const seeded = await call("providers", { operation: "saveAndApply", expectedRevision: previous.revision, authentication: "none", provider: {
     name: "Defaults", baseUrl: `http://127.0.0.1:${server.address().port}/v1`, protocol: "chatCompletions", enabled: true, parameters: {},
@@ -145,21 +186,21 @@ async function verifyModelDefaults(projectId) {
   const setDefault = async (name, reference = { providerId: provider.id, modelId: name === "Alpha" ? "alpha-default" : "beta-default" }) => {
     await button("会话配置").click();
     await page.waitForFunction(() => {
-      const menu = document.querySelector('[role="combobox"][aria-label="新会话默认模型"]');
-      const tabs = document.querySelector('[role="tablist"][aria-label="新会话默认模型"]');
+      const menu = document.querySelector('[role="combobox"][aria-label="备用默认模型"]');
+      const tabs = document.querySelector('[role="tablist"][aria-label="备用默认模型"]');
       return (menu && !menu.disabled) || (tabs && [...tabs.querySelectorAll('[role="tab"]')].some(tab => !tab.disabled));
     });
-    const defaultMenu = page.getByRole("combobox", { name: "新会话默认模型", exact: true });
+    const defaultMenu = page.getByRole("combobox", { name: "备用默认模型", exact: true });
     if (await defaultMenu.count()) {
       await defaultMenu.click();
       await page.getByRole("option", { name, exact: true }).click();
-    } else await page.getByRole("tablist", { name: "新会话默认模型", exact: true }).getByRole("tab", { name, exact: true }).click();
+    } else await page.getByRole("tablist", { name: "备用默认模型", exact: true }).getByRole("tab", { name, exact: true }).click();
     await button("返回应用").click({ trial: true, timeout: 180000 });
     const configured = await call("providers", { operation: "list" });
     assert.deepEqual(configured.defaultModel, reference);
     assert.equal(configured.pendingApply, false);
     if (await defaultMenu.count()) assert.equal((await defaultMenu.innerText()).trim(), name, "default picker shows the model name rather than its internal reference");
-    else assert.equal(await page.getByRole("tablist", { name: "新会话默认模型", exact: true }).getByRole("tab", { name, exact: true }).getAttribute("aria-selected"), "true");
+    else assert.equal(await page.getByRole("tablist", { name: "备用默认模型", exact: true }).getByRole("tab", { name, exact: true }).getAttribute("aria-selected"), "true");
   };
   const chooseModel = async name => {
     await button("模型").click(); await button("选择模型").click();
@@ -192,6 +233,7 @@ async function verifyModelDefaults(projectId) {
   await page.screenshot({ path: join(scratch, "default-model-settings.png"), animations: "disabled" });
   await button("返回应用").click();
   await createProjectConversation(page, "workspace");
+  await chooseModel("Alpha");
   await expectModel("Alpha", "高");
   const switched = await send("Default Alpha uses configured high", { model: "alpha-default", effort: "high", hasEffort: true });
   await chooseModel("Beta");
@@ -201,34 +243,87 @@ async function verifyModelDefaults(projectId) {
   await until(snapshot => snapshotProject(snapshot)?.configurations?.[switched]?.parameters?.reasoningEffort === "none", "unsent model and effort changes persist");
   await createProjectConversation(page, "workspace");
   await expectModel("Alpha", "高");
-  const alpha = await send("New conversation still uses global Alpha", { model: "alpha-default", effort: "high", hasEffort: true });
+  const alpha = await send("Unsent Beta selection does not change last accepted Alpha", { model: "alpha-default", effort: "high", hasEffort: true });
   await settings(); await setDefault("Beta"); await button("返回应用").click();
   await expectModel("Alpha", "高");
-  await createProjectConversation(page, "workspace"); await expectModel("Beta", "供应商默认");
-  const beta = await send("New default Beta omits reasoning effort", { model: "beta-default", effort: null, hasEffort: false });
+  await createProjectConversation(page, "workspace"); await expectModel("Alpha", "高");
+  await chooseModel("Beta"); await expectModel("Beta", "供应商默认");
+  const beta = await send("Explicit draft Beta omits reasoning effort", { model: "beta-default", effort: null, hasEffort: false });
   await chooseNone(); await expectModel("Beta", "无");
   await send("Explicit none remains distinct", { model: "beta-default", effort: "none", hasEffort: true });
+  await createProjectConversation(page, "workspace"); await expectModel("Beta", "无");
+  await send("New conversation inherits accepted explicit none", { model: "beta-default", effort: "none", hasEffort: true });
+  await selectConversation(page, beta); await expectModel("Beta", "无");
   await button("模型").click(); await button("使用模型默认").click(); await page.keyboard.press("Escape");
   await expectModel("Beta", "供应商默认");
   await send("Reset restores supplier default", { model: "beta-default", effort: null, hasEffort: false });
+  const failedRequestId = randomUUID();
+  const failedSubmission = { projectId, threadId: switched, requestId: failedRequestId, text: "LAST_MODEL_ACCEPTED_FAILURE" };
+  const failed = await call("send", failedSubmission);
+  assert.equal(failed.lastAcceptedModel.modelId, "beta-default", "admission records selection before model success");
+  assert.equal(failed.lastAcceptedModel.reasoningEffort, "none");
+  await until(snapshot => snapshotProject(snapshot)?.state?.threads?.[switched]?.turns?.at(-1)?.status === "failed", "model failure after admission");
+  await createProjectConversation(page, "workspace"); await expectModel("Beta", "无");
+  const held = await call("send", { projectId, threadId: alpha, text: "LAST_MODEL_HOLD_REPLY" });
+  await until(() => !!releaseHeldReply, "held model request");
+  assert.equal(held.lastAcceptedModel.modelId, "alpha-default");
+  const queued = await call("send", { projectId, threadId: alpha, text: "Queued preference admission" });
+  assert.ok(queued.queueItemId, "active main submission is queued");
+  assert.ok(queued.lastAcceptedModel.acceptedAt > held.lastAcceptedModel.acceptedAt, "queue admission updates preference without waiting for execution");
+  await selectConversation(page, switched); await expectModel("Beta", "无");
+  await send("Newer Beta admission while Alpha is queued", { model: "beta-default", effort: "none", hasEffort: true });
+  const beforeQueueExecution = snapshotProject(await state()).lastAcceptedModel;
+  releaseHeldReply(); releaseHeldReply = undefined;
+  await until(snapshot => snapshotProject(snapshot)?.state?.threads?.[alpha]?.turns?.at(-1)?.status === "completed" && snapshotProject(snapshot).state.threads[alpha].turns.at(-1).items.some(item => item.type === "userMessage" && JSON.stringify(item.content).includes("Queued preference admission")), "queued Alpha executes");
+  assert.deepEqual(snapshotProject(await state()).lastAcceptedModel, beforeQueueExecution, "background queue execution cannot replace a newer admission");
+  await createProjectConversation(page, "workspace"); await expectModel("Beta", "无");
   await selectConversation(page, alpha); await expectModel("Alpha", "高");
   await send("Historical Alpha ignores changed global default", { model: "alpha-default", effort: "high", hasEffort: true });
+  const beforeReceiptReplay = snapshotProject(await state()).lastAcceptedModel, requestsBeforeReplay = modelRequests.length;
+  const replayed = await page.evaluate(parameters => window.arealDesktop.command("send", parameters), failedSubmission);
+  assert.equal(replayed.ok, false, "Desktop rejects reusing a known submitted request ID");
+  assert.match(replayed.error.message, /请求标识已使用/);
+  assert.equal(modelRequests.length, requestsBeforeReplay, "duplicate submission does not execute the model again");
+  assert.deepEqual(snapshotProject(await state()).lastAcceptedModel, beforeReceiptReplay, "duplicate submission cannot overwrite newer preference");
+  checks.push("main and queued admission update preference before completion; model failure retains it; queued execution and rejected duplicate submission cannot overwrite newer admission");
   await selectConversation(page, switched); await expectModel("Beta", "无");
   const beforeRestart = modelRequests.length;
   await writeFile(join(scratch, "model-defaults-before.json"), JSON.stringify(await state(), null, 2));
-  await app.close(); app = undefined; await stopService(); await launch();
+  await closeGui(); app = undefined; await stopService(); await launch();
   await until(snapshot => snapshotProject(snapshot)?.state?.connected, "model-defaults cold reopen");
   await selectConversation(page, alpha); await expectModel("Alpha", "高");
   await selectConversation(page, switched); await expectModel("Beta", "无");
   await selectConversation(page, beta); await expectModel("Beta", "供应商默认");
   assert.equal(modelRequests.length, beforeRestart, "cold reopen and history navigation cannot replay requests");
   await page.screenshot({ path: join(scratch, "model-defaults-reopened.png"), animations: "disabled" });
-  await createProjectConversation(page, "workspace"); await expectModel("Beta", "供应商默认");
-  await send("Cold new conversation keeps global Beta", { model: "beta-default", effort: null, hasEffort: false });
+  await createProjectConversation(page, "workspace"); await expectModel("Alpha", "高");
+  await send("Cold new conversation inherits last accepted Alpha despite history navigation", { model: "alpha-default", effort: "high", hasEffort: true });
+  const preference = snapshotProject(await state()).lastAcceptedModel;
+  assert.equal(preference.modelId, "alpha-default");
+  assert.equal(preference.reasoningEffort, "high");
+  // A side turn is an explicit user submission, but cannot update the main preference.
+  const side = await call("side", { projectId, sourceThreadId: alpha, operation: "start", text: "Side preference isolation", model: { providerId: provider.id, modelId: "beta-default" }, parameters: { reasoningEffort: "none" } });
+  await until(snapshot => snapshotProject(snapshot)?.state?.threads?.[side.threadId]?.turns?.at(-1)?.status === "completed", "side first reply");
+  await call("side", { projectId, threadId: side.threadId, operation: "send", text: "Side follow-up cannot update main preference" });
+  await until(snapshot => snapshotProject(snapshot)?.state?.threads?.[side.threadId]?.turns?.length === 2 && snapshotProject(snapshot).state.threads[side.threadId].turns.at(-1).status === "completed", "side follow-up reply");
+  assert.deepEqual(snapshotProject(await state()).lastAcceptedModel, preference, "side admission does not replace main preference");
+  const secondWorkspace = join(scratch, "second-workspace");
+  await mkdir(secondWorkspace); execFileSync("git", ["init", "-b", "main"], { cwd: secondWorkspace, stdio: "ignore" });
+  await app.evaluate(({ dialog }, path) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] }); }, secondWorkspace);
+  await page.evaluate(() => window.arealDesktop.chooseProject());
+  await until(snapshot => snapshot.projects.find(item => item.root === secondWorkspace)?.state?.connected, "second project ready");
+  await createProjectConversation(page, "second-workspace"); await expectModel("Alpha", "高");
+  await page.screenshot({ path: join(scratch, "last-model-cross-project.png"), animations: "disabled" });
+  await createProjectConversation(page, "workspace");
+  // A rejected request cannot advance the preference.
+  const rejected = await page.evaluate(({ projectId, threadId }) => window.arealDesktop.command("send", { projectId, threadId, text: "" }), { projectId, threadId: alpha });
+  assert.equal(rejected.ok, false);
+  assert.deepEqual(snapshotProject(await state()).lastAcceptedModel, preference, "rejected submission preserves preference");
+  checks.push("Side first/follow-up turns and rejected messages preserve the main preference; a new project inherits the same accepted model/effort");
   await writeFile(join(scratch, "model-defaults-after.json"), JSON.stringify(await state(), null, 2));
-  checks.push("UI default selection applies to new conversations; per-conversation model/effort and unsent changes survive global changes and a cold GUI/backend restart without replay");
+  checks.push("New conversations inherit last admitted main model/effort; fallback settings, unsent changes and history navigation cannot override it; existing configurations and preference survive cold GUI/Core restart without replay");
   checks.push("resolved high, explicit none, and supplier default labels match actual model requests; resetting effort restores model defaults");
-  await app.close(); app = undefined; await stopService();
+  await closeGui(); app = undefined; await stopService();
   await writeFile(config, `schema_version=1\n[model]\nprovider="legacy"\nname="legacy-alpha"\nreasoning_effort="high"\n[model.providers.legacy]\nname="Legacy"\nendpoint="http://127.0.0.1:${server.address().port}/v1/chat/completions"\nprotocol="chat-completions"\nmodels=[{id="legacy-alpha",display_name="Legacy Alpha"},{id="legacy-beta",display_name="Legacy Beta"}]\n`);
   await launch();
   await until(snapshot => snapshotProject(snapshot)?.state?.connected && snapshotProject(snapshot)?.models.some(model => model.modelId === "legacy-alpha"), "legacy service default ready");
@@ -246,7 +341,7 @@ async function verifyModelDefaults(projectId) {
   await button("模型").click(); await button("使用模型默认").click(); await page.keyboard.press("Escape");
   await expectModel("legacy-alpha", "高");
   await send("Implicit reset uses archived model defaults", { model: "legacy-alpha", effort: "high", hasEffort: true });
-  await app.close(); app = undefined; await stopService(); await launch();
+  await closeGui(); app = undefined; await stopService(); await launch();
   await until(snapshot => snapshotProject(snapshot)?.state?.connected, "implicit history cold reopen");
   await selectConversation(page, implicit); await expectModel("legacy-alpha", "高");
   assert.equal(snapshotProject(await state()).configurations[implicit].defaultModelRevision, implicitConfig.defaultModelRevision);
@@ -284,7 +379,8 @@ try {
   await page.evaluate(({ key, text }) => localStorage.setItem(key, JSON.stringify({ draftId: crypto.randomUUID(), location: { kind: "independent" }, text })), { key: taskDraftKey, text: taskDescription });
   await button("新建自动化").click();
   await page.getByRole("alert").filter({ hasText: "模型凭据不可用" }).waitFor();
-  assert.equal(await page.getByTestId("chat-input").count(), 0);
+  assert.equal(await page.getByTestId("chat-input").isEditable(), true);
+  assert.equal(await page.getByTestId("chat-send-button").isDisabled(), true, "credential failure retains editable local text without allowing submission");
   assert.equal(requests.length, 0, "a rejected task configuration cannot issue a model request");
   const rejectedDraft = await page.evaluate(key => JSON.parse(localStorage.getItem(key)), taskDraftKey);
   assert.ok(rejectedDraft.ownerId);
@@ -303,7 +399,7 @@ try {
   assert.equal(await page.getByText("帮助", { exact: true }).count(), 0);
   assert.equal(await page.getByText("凭据来源", { exact: true }).count(), 0);
   assert.equal(await page.getByRole("tab", { name: "模型", exact: true }).getAttribute("aria-selected"), "true");
-  assert.equal(await page.getByRole("combobox", { name: "新会话默认模型", exact: true }).count(), 0, "global default belongs to session settings");
+  assert.equal(await page.getByRole("combobox", { name: "备用默认模型", exact: true }).count(), 0, "global default belongs to session settings");
   const search = page.getByRole("searchbox", { name: "搜索模型名称或 ID", exact: true });
   const modelRow = page.locator(".provider-model-row").filter({ hasText: "theta-model" });
   assert.ok((await search.boundingBox()).y < (await modelRow.boundingBox()).y, "search precedes results");
@@ -347,7 +443,8 @@ try {
   await button("定时任务").click();
   await button("新建自动化").click();
   await page.getByTestId("chat-input").waitFor();
-  await page.waitForFunction(() => document.querySelector('[data-testid="chat-input"]')?.getAttribute("contenteditable") === "true");
+  await page.waitForFunction(key => { const draft = JSON.parse(localStorage.getItem(key)); return !!draft?.threadId && draft.text === undefined; }, taskDraftKey);
+  await page.waitForFunction(text => document.querySelector('[data-testid="chat-input"]')?.textContent?.trim() === text, taskDescription);
   const recoveredDraft = await page.evaluate(key => JSON.parse(localStorage.getItem(key)), taskDraftKey);
   assert.equal(recoveredDraft.draftId, rejectedDraft.draftId);
   assert.equal(recoveredDraft.ownerId, rejectedDraft.ownerId);
@@ -371,7 +468,7 @@ try {
   assert.deepEqual(requests, [{ model: "theta-model", authenticated: true, authorizationPresent: true }]);
   assert.equal(fixtureProject(await state()).configurations[Object.keys(fixtureProject(await state()).state.threads)[0]]?.model?.providerId, "theta", "the newly created Core task uses the chosen model");
   // 重启本次隔离后台，证明凭据从安全存储恢复，而非沿用旧进程的内存。
-  await app.close(); app = undefined;
+  await closeGui(); app = undefined;
   await stopService();
   await launch();
   providerStatus = page.getByRole("status", { name: "供应商状态", exact: true });
@@ -529,6 +626,7 @@ try {
   if (page) await captureSmokeFailure(page, scratch, error);
   throw error;
 } finally {
+  releaseHeldReply?.();
   const cleanupFailure = (operation, error) => {
     errors.push(`cleanup ${operation}: ${error.message}`); passed = false; process.exitCode = 1;
   };
@@ -541,14 +639,14 @@ try {
       for (const window of BrowserWindow.getAllWindows()) window.destroy();
     }).catch(error => cleanupFailure("destroy failed window", error));
     // 先断开 GUI，避免设置页的刷新请求与安全停止竞争。
-    await app.close().catch(error => cleanupFailure("close GUI", error));
+    await closeGui().catch(error => cleanupFailure("close GUI", error));
     try {
       await stopService();
     } catch (error) { cleanupFailure("stop service", error); }
   }
   server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   const files = ["scripts/model-selection-smoke.mjs", "renderer/src/settings/ModelSettings.tsx", "renderer/src/settings/UnsavedChanges.tsx", "renderer/src/settings/SettingsWorkspace.tsx", "renderer/src/i18n/IntlProvider.tsx", "app/src/core/model-config.cjs", "app/src/core/providers.cjs", "app/src/core/backend.cjs", "../../core/config/src/models.rs", "../../core/config/src/lib.rs", "../../core/local-service/src/spec.rs", "../../core/engine/src/desktop/server.rs", "../../core/engine/src/desktop/catalog.rs", "../../core/engine/src/desktop/state.rs", "../../core/engine/src/default_model.rs", "../../core/server/src/lib.rs", "../../core/server/src/reload.rs", "renderer/src/ComposerModelMenu.tsx", "renderer/src/Composer.tsx", "renderer/src/ConversationComposer.tsx", "renderer/src/DraftComposer.tsx", "renderer/src/ProjectlessDraft.tsx", "renderer/src/WorktreeStarter.tsx", "renderer/src/workbench.css"];
-  files.push("renderer/src/settings/NewSessionModelSetting.tsx", "renderer/src/settings/ModelSettings.css", "renderer/src/settings/ModelEditor.tsx", "renderer/src/TaskDraft.tsx", "renderer/src/TaskCenter.tsx", "renderer/src/App.tsx");
+  files.push("../../core/engine/src/desktop/model_selection.rs", "../../core/engine/src/desktop/queue.rs", "../../core/protocol/src/desktop.rs", "renderer/src/settings/NewSessionModelSetting.tsx", "renderer/src/settings/ModelSettings.css", "renderer/src/settings/ModelEditor.tsx", "renderer/src/TaskDraft.tsx", "renderer/src/TaskCenter.tsx", "renderer/src/App.tsx");
   const hashes = Object.fromEntries(await Promise.all(files.map(async file => [file, createHash("sha256").update(await readFile(join(gui, file))).digest("hex")])));
   const coreUnchanged = createHash("sha256").update(await readFile(coreBinary)).digest("hex") === coreSha256;
   await writeFile(join(scratch, "model-requests.json"), JSON.stringify(modelRequests, null, 2));

@@ -211,7 +211,7 @@ pub fn import_selection(
             path: destination.join(slot).join(&name),
             size: copier.bytes - before,
             file_count: copier.files - files_before,
-            mime_type: metadata.is_file().then(|| mime(&name).into()),
+            mime_type: metadata.is_file().then(|| mime(&name)),
         });
     }
     Ok(ImportedSelection {

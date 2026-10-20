@@ -53,39 +53,47 @@ pub struct ConfiguredModels {
     pub providers: Vec<Provider>,
     pub provider_ids: BTreeSet<String>,
     pub parameters: BTreeMap<(String, String), ModelParameters>,
+    pub credential_environments: BTreeMap<(String, String), String>,
     pub default_model: Option<ModelRef>,
+}
+
+pub(super) fn configured_catalog(
+    catalog: &Catalog,
+    configured: &ConfiguredModels,
+) -> anyhow::Result<Catalog> {
+    let mut candidate = catalog.clone();
+    for id in &catalog.configured_provider_ids {
+        candidate.providers.remove(id);
+    }
+    for id in &configured.provider_ids {
+        candidate.providers.remove(id);
+    }
+    for provider in &configured.providers {
+        anyhow::ensure!(
+            valid_id(&provider.id) && configured.provider_ids.contains(&provider.id),
+            "invalid configured provider identity"
+        );
+        let mut provider = provider.clone();
+        let previous = catalog.providers.get(&provider.id);
+        provider.revision = previous.map_or(1, |old| old.revision);
+        if previous.is_some_and(|old| old != &provider) {
+            provider.revision += 1;
+        }
+        candidate.providers.insert(provider.id.clone(), provider);
+    }
+    candidate.configured_provider_ids = configured.provider_ids.clone();
+    anyhow::ensure!(
+        candidate.providers.len() <= 32 && serde_json::to_vec(&candidate)?.len() <= 2 * 1024 * 1024,
+        "desktop provider catalog exceeds capacity"
+    );
+    Ok(candidate)
 }
 
 impl Engine {
     /// 只在启动装配期间调用。旧投影在落盘后替换，已持久化的任务配置保持原样。
     pub fn install_configured_models(&self, configured: ConfiguredModels) -> anyhow::Result<()> {
         let mut catalog = self.desktop.catalog.write().unwrap();
-        let mut candidate = catalog.clone();
-        for id in &catalog.configured_provider_ids {
-            candidate.providers.remove(id);
-        }
-        for id in &configured.provider_ids {
-            candidate.providers.remove(id);
-        }
-        for provider in &configured.providers {
-            anyhow::ensure!(
-                valid_id(&provider.id) && configured.provider_ids.contains(&provider.id),
-                "invalid configured provider identity"
-            );
-            let mut provider = provider.clone();
-            let previous = catalog.providers.get(&provider.id);
-            provider.revision = previous.map_or(1, |old| old.revision);
-            if previous.is_some_and(|old| old != &provider) {
-                provider.revision += 1;
-            }
-            candidate.providers.insert(provider.id.clone(), provider);
-        }
-        candidate.configured_provider_ids = configured.provider_ids.clone();
-        anyhow::ensure!(
-            candidate.providers.len() <= 32
-                && serde_json::to_vec(&candidate)?.len() <= 2 * 1024 * 1024,
-            "desktop provider catalog exceeds capacity"
-        );
+        let candidate = configured_catalog(&catalog, &configured)?;
         self.store.save_metadata_sync("catalog", &candidate)?;
         *catalog = candidate;
         *self.desktop.configured_models.write().unwrap() = configured;
@@ -242,11 +250,14 @@ impl Engine {
         if !valid_id(&reference) || value.is_empty() {
             return Err(invalid("invalid credential reference"));
         }
-        self.desktop
-            .credentials
-            .write()
-            .unwrap()
-            .insert(reference, value);
+        let mut credentials = self.desktop.credentials.write().unwrap();
+        if credentials
+            .get(&reference)
+            .is_some_and(|previous| previous != &value)
+        {
+            return Err(invalid("credential references are immutable"));
+        }
+        credentials.insert(reference, value);
         Ok(())
     }
     pub fn profiles(&self) -> Value {
@@ -420,13 +431,29 @@ impl Engine {
             .credential_ref
             .as_ref()
             .map(|reference| {
-                self.desktop
+                let credential = self
+                    .desktop
                     .credentials
                     .read()
                     .unwrap()
                     .get(reference)
-                    .cloned()
-                    .ok_or_else(|| invalid("CREDENTIAL_UNAVAILABLE"))
+                    .cloned();
+                credential.ok_or_else(|| {
+                    let configured = self.desktop.configured_models.read().unwrap();
+                    match configured
+                        .credential_environments
+                        .get(&(provider.id.clone(), reference.clone()))
+                    {
+                        Some(name) => invalid(format!(
+                            "CREDENTIAL_UNAVAILABLE: provider '{}' requires environment variable '{}'. Set it to a nonempty valid HTTP header value in the Core launch environment, then restart Core or the shared service.",
+                            provider.id, name
+                        )),
+                        None => invalid(format!(
+                            "CREDENTIAL_UNAVAILABLE: configure credentials for provider '{}' in Core, then restart Core or the shared service.",
+                            provider.id
+                        )),
+                    }
+                })
             })
             .transpose()?;
         let model = model::HttpModel::with_protocol(
@@ -486,6 +513,7 @@ impl Engine {
         parameters: ModelParameters,
         revision: u64,
     ) -> Result<EffectiveConfig> {
+        let _configuration = self.desktop.model_configuration.read().unwrap();
         let profile = profile.as_ref().map(|p| self.profile(p)).transpose()?;
         let model = model
             .or_else(|| profile.as_ref().and_then(|p| p.model.clone()))
@@ -509,7 +537,7 @@ impl Engine {
                 .unwrap_or_default(),
         };
         let parameters = merge_model_parameters(parameters, defaults);
-        let configuration = EffectiveConfig {
+        let mut configuration = EffectiveConfig {
             allow_plugin_skills: false,
             plugin_skills: None,
             default_model_revision: None,
@@ -524,6 +552,7 @@ impl Engine {
             parameters,
             instructions: String::new(),
         };
+        self.pin_desktop_default(&mut configuration);
         self.validate_config_model(&configuration)?;
         Ok(configuration)
     }
@@ -561,6 +590,7 @@ impl Engine {
         configuration: &mut EffectiveConfig,
         parameters: ModelParameters,
     ) {
+        let _configuration = self.desktop.model_configuration.read().unwrap();
         let defaults = match (&configuration.model, &configuration.provider) {
             (Some(model), Some(provider)) => self.model_parameters(model, &provider.parameters),
             _ => self
@@ -879,14 +909,13 @@ impl Engine {
             let Some(skill) = catalog.skills.get(&format!("{}/{}", r.id, r.revision)) else {
                 continue;
             };
-            if let Some(plugin) = &skill.plugin {
-                if !manager.enabled_plugin_ids.contains(&plugin.plugin_id)
+            if let Some(plugin) = &skill.plugin
+                && (!manager.enabled_plugin_ids.contains(&plugin.plugin_id)
                     || (model
                         && !plugin.allow_implicit_invocation
-                        && config.selected_skills.is_none())
-                {
-                    continue;
-                }
+                        && config.selected_skills.is_none()))
+            {
+                continue;
             }
             if !result.contains(r) {
                 result.push(r.clone());

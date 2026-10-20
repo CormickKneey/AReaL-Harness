@@ -33,9 +33,6 @@
 .task-resource-agent-body p { margin: 3px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-foreground-subtle); font-size: 11px; }
 .task-resources-agents { height: auto; }
 
-/* 折叠保留创建入口，其他活动仍由现有 disclosure 隐藏。 */
-.execution-details[data-expanded="false"][data-featured-entries="true"] { display: flex; }
-
 .task-resource-description { display: block; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-resource-agent-body > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .task-resource-thumbnail { width: 18px; height: 22px; flex: none; object-fit: cover; border-radius: 4px; }

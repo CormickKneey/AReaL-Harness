@@ -19,8 +19,8 @@ export function ProviderTemplatePicker({
     onCreate({ ...template, definitionId });
   };
   return (
-    <section className="space-y-5">
-      <div className="resource-title">
+    <section className="provider-picker" aria-label="选择供应商">
+      <div className="provider-picker-heading">
         <Button variant="ghost" size="icon" aria-label="返回供应商列表" onClick={onBack}>
           <ArrowLeft />
         </Button>

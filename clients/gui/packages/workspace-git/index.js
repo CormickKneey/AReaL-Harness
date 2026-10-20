@@ -179,8 +179,8 @@ async function reviewTrees(root, before, after, options = {}) {
   return { root, head: after, base: before, diff, files, scope: 'last-turn', conflicts: [], target: null, token: hash(JSON.stringify({ before, after, diff })) };
 }
 
-function reviewTurnFiles(root, turn, { itemId } = {}) {
-  const { diff, contents } = require('./turn-review').turnChanges(turn, { itemId });
+function reviewTurnFiles(root, turn, { itemId, fileBefores } = {}) {
+  const { diff, contents } = require('./turn-review').turnChanges(turn, { itemId, fileBefores });
   const version = `turn:${turn.id}${itemId === undefined ? '' : `:item:${itemId}`}`;
   return { root, diff, files: reviewFiles(diff).map(file => ({ ...file, beforeText: contents.get(file.path)?.before, afterText: contents.get(file.path)?.after })), scope: itemId === undefined ? 'last-turn' : 'tool', turnId: turn.id, itemId,
     head: `${version}:after`, base: `${version}:before`, token: hash(JSON.stringify({ turnId: turn.id, itemId, diff })),

@@ -36,7 +36,7 @@ impl std::fmt::Debug for HostAuthConfiguration {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
 #[serde(tag = "status", rename_all = "camelCase")]
 pub enum AuthStatus {
     Pending {
@@ -128,15 +128,14 @@ impl AuthorizedCredential {
         let Ok(_guard) = store.guard().await else {
             return;
         };
-        if let Ok(Some(saved)) = store.load().await {
-            if saved
+        if let Ok(Some(saved)) = store.load().await
+            && saved
                 .token_response
                 .as_ref()
                 .map(|t| t.access_token().secret().as_str())
                 == token
-            {
-                let _ = store.invalidate().await;
-            }
+        {
+            let _ = store.invalidate().await;
         }
     }
 }
@@ -244,7 +243,7 @@ impl AuthManager {
             _ = cancel.cancelled() => return Ok(None),
             result = tokio::time::timeout(
                 Duration::from_secs(60),
-                self.prepare(name, endpoint, policy, None, None, host, PreparationIntent::CachedOnly)
+                self.prepare(name, endpoint, policy, (None, None), host, PreparationIntent::CachedOnly)
                     .with_subscriber(tracing::subscriber::NoSubscriber::default()),
             ) => result
                 .map_err(|_| anyhow::anyhow!("MCP credential recovery timed out"))
@@ -338,7 +337,7 @@ impl AuthManager {
             );
             rejected
         };
-        let prepared = tokio::select! {biased;_ = cancel.cancelled()=>return Ok(AuthStatus::Cancelled),r=tokio::time::timeout(Duration::from_secs(60),self.prepare(name,endpoint,policy,challenge,rejected,host,PreparationIntent::Interactive).with_subscriber(tracing::subscriber::NoSubscriber::default()))=>r.map_err(|_|anyhow::anyhow!("MCP authentication setup timed out")).and_then(|r|r)};
+        let prepared = tokio::select! {biased;_ = cancel.cancelled()=>return Ok(AuthStatus::Cancelled),r=tokio::time::timeout(Duration::from_secs(60),self.prepare(name,endpoint,policy,(challenge,rejected),host,PreparationIntent::Interactive).with_subscriber(tracing::subscriber::NoSubscriber::default()))=>r.map_err(|_|anyhow::anyhow!("MCP authentication setup timed out")).and_then(|r|r)};
         let prepared = match prepared {
             Ok(p) => p,
             Err(_) => {
@@ -363,7 +362,7 @@ impl AuthManager {
                     cancelled: cancel.clone(),
                 };
                 let mut entries = self.entries.lock().await;
-                if cancel.is_cancelled() || !entries.get(name).is_some_and(|e| e.id == id) {
+                if cancel.is_cancelled() || entries.get(name).is_none_or(|e| e.id != id) {
                     return Ok(AuthStatus::Cancelled);
                 }
                 let e = entries.get_mut(name).unwrap();
@@ -382,7 +381,7 @@ impl AuthManager {
                     cancelled: cancel.clone(),
                 };
                 let mut entries = self.entries.lock().await;
-                if cancel.is_cancelled() || !entries.get(name).is_some_and(|e| e.id == id) {
+                if cancel.is_cancelled() || entries.get(name).is_none_or(|e| e.id != id) {
                     return Ok(AuthStatus::Cancelled);
                 }
                 let e = entries.get_mut(name).unwrap();
@@ -396,7 +395,7 @@ impl AuthManager {
                 };
                 {
                     let mut entries = self.entries.lock().await;
-                    if cancel.is_cancelled() || !entries.get(name).is_some_and(|e| e.id == id) {
+                    if cancel.is_cancelled() || entries.get(name).is_none_or(|e| e.id != id) {
                         return Ok(AuthStatus::Cancelled);
                     }
                     entries.get_mut(name).unwrap().public_status = Some(status.clone());
@@ -406,7 +405,7 @@ impl AuthManager {
                 tokio::spawn(async move {
                     let result = tokio::select! {biased;_ = cancel.cancelled()=>return,r=tokio::time::timeout(Duration::from_secs(600),callback(&session,listener,&store).with_subscriber(tracing::subscriber::NoSubscriber::default()))=>r.ok().and_then(|r|r.ok())};
                     let mut entries = entries.lock().await;
-                    if cancel.is_cancelled() || !entries.get(&name).is_some_and(|e| e.id == id) {
+                    if cancel.is_cancelled() || entries.get(&name).is_none_or(|e| e.id != id) {
                         return;
                     }
                     let Some(entry) = entries.get_mut(&name) else {
@@ -436,11 +435,11 @@ impl AuthManager {
         name: &str,
         endpoint: &str,
         policy: &AuthPolicy,
-        challenge: Option<&str>,
-        rejected: Option<String>,
+        rejection: (Option<&str>, Option<String>),
         host: &HostAuthConfiguration,
         intent: PreparationIntent,
     ) -> Result<Prepared> {
+        let (challenge, rejected) = rejection;
         ensure!(
             !policy.unsupported,
             "portable authentication mechanism requires host support"
@@ -460,7 +459,14 @@ impl AuthManager {
             return Ok(Prepared::Fixed(transport::api_key_header(policy, host)?));
         }
         let (mut manager, metadata, mut scopes, resource_identity, refresh_scope_boundary) =
-            transport::prepare_manager(endpoint, policy, challenge, host).await?;
+            transport::prepare_manager(
+                endpoint,
+                policy,
+                challenge,
+                host,
+                matches!(intent, PreparationIntent::CachedOnly),
+            )
+            .await?;
         // Bind every persisted token to the trusted account, all declared configuration,
         // issuer, client identity and host credential values (hash only, never plaintext).
         let binding = serde_json::to_vec(&serde_json::json!([
@@ -493,15 +499,14 @@ impl AuthManager {
         manager.set_metadata(metadata.clone());
         let _guard = store.guard().await?;
         store.adopt()?;
-        if let Some(rejected) = rejected {
-            if store
+        if let Some(rejected) = rejected
+            && store
                 .load()
                 .await?
                 .and_then(|s| s.token_response)
                 .is_some_and(|t| t.access_token().secret() == &rejected)
-            {
-                store.invalidate().await?;
-            }
+        {
+            store.invalidate().await?;
         }
         let saved = store.load().await?;
         // Rejected tokens cannot be reused, but their provider-confirmed grants remain

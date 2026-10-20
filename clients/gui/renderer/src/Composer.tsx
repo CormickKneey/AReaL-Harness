@@ -10,6 +10,7 @@ import { canExecutePlan, permissionMode, permissionOptions, planModeOptions } fr
 import { ComposerPlanMode } from "./ComposerPlanMode.js";
 import { ControlHintTooltip } from "./ControlHintTooltip.js";
 import { Button } from "./components/ui/button.js";
+import { BACKEND_STATUS_ID } from "./BackendStatusNotice.js";
 import { ComposerQueue } from "./ComposerQueue.js";
 import { useComposerQueueEdit } from "./useComposerQueueEdit.js";
 import { ComposerQueueAttachment } from "./ComposerQueueAttachment.js";
@@ -26,6 +27,7 @@ import { ComposerMcpIcon } from "./ComposerIcons.js";
 import { ComposerMcp } from "./ComposerMcp.js";
 import { AttachmentIcon } from "./interfaceIcons.js";
 import type { ComposerCatalogEntry } from "./prompt-editor/ComposerCatalog.js";
+import { imageAnnotationBlocked, snapshotImageAnnotations, serializeImageAnnotations, useImageAnnotationRevision, type ImageAnnotationTarget } from "./imageAnnotations.js";
 import { BrowserAnnotationAttachments } from "./BrowserAnnotationAttachments.js";
 import { browserAnnotation, browserAnnotationText, useBrowserAnnotationEditing } from "./browserAnnotations.js";
 import { ReviewCommentAttachment } from "./ReviewCommentViews.js";
@@ -59,6 +61,7 @@ export function Composer({
   onOpenTask,
   onSide,
   onMcpMention,
+  onAnnotate,
 }: {
   project: Data;
   thread: Data;
@@ -69,6 +72,7 @@ export function Composer({
   onOpenTask?: (target: { projectId: string; taskId: string; runId: string }) => void;
   onSide?: (draft: string) => void;
   onMcpMention?: () => void;
+  onAnnotate?: (target: ImageAnnotationTarget) => void;
 }) {
   const prefs = useApplicationPreferences();
   const key = `areal-gui:draft:${project.id}:${thread.id}`;
@@ -92,11 +96,14 @@ export function Composer({
   const busy = useSyncExternalStore(subscribeSending, () => sending.has(key));
   const [files, setFiles] = useState<ComposerDraftAttachment[]>(() => attachmentDrafts.get(key) ?? []);
   const input = composerInput(text, files);
-  const annotationEditing = useBrowserAnnotationEditing(key);
+  useImageAnnotationRevision();
+  const imageEditing = imageAnnotationBlocked(key, input.files);
+  const annotationEditing = useBrowserAnnotationEditing(key) || imageEditing;
   const invalidAnnotation = input.files.some(file => browserAnnotation(file)?.comment.trim() === "");
   const [admissionError, setAdmissionError] = useState(() => attachmentErrors.get(key) ?? "");
   useEffect(() => {
     attachmentDrafts.set(key, files);
+    window.dispatchEvent(new CustomEvent("areal-attachments-change", { detail: key }));
   }, [key, files]);
   useEffect(() => {
     if (admissionError) attachmentErrors.set(key, admissionError);
@@ -122,9 +129,13 @@ export function Composer({
   }, [questions.length]);
   const baseDisabled = !project.state?.connected || archived || busy || pending || !!unknown || !!reviewDraft.error;
   const queueEditor = useComposerQueueEdit({ project, threadId: thread.id, draftKey: key, action, readAction, api, draftFiles: attachmentDrafts,
-    setText, setFiles, setGoalMode, inFlight: busy, setInFlight: active => markSending(key, active), uploadFiles: selected => uploadComposerFiles(action, project.id, thread.id, selected) });
+    setText, setFiles, setGoalMode, annotationBlocked: annotationEditing || invalidAnnotation, inFlight: busy, setInFlight: active => markSending(key, active), uploadFiles: selected => uploadComposerFiles(action, project.id, thread.id, selected) });
   const disabled = baseDisabled || queueEditor.busy || queueEditor.locked;
-  const stop = () => { void action("stop", { projectId: project.id, threadId: thread.id }).catch(() => {}); };
+  const desktopUnsupported = project.desktopCapabilities?.currentCommands === false;
+  const stop = () => {
+    if (running) void action("stop", { projectId: project.id, threadId: thread.id, turnId: running.id, requestId: crypto.randomUUID() })
+      .catch((cause: Error) => setDeliveryError(cause.message));
+  };
   const config = project.configurations?.[thread.id];
   const [mcpOpen, setMcpOpen] = useState(false);
 
@@ -197,6 +208,7 @@ export function Composer({
     if (thread.goals?.goal && goalMode) changeGoalMode(false);
   }, [thread.goals?.goal?.id]);
   const submit = async (value: string, invert = false, approvePlan = false) => {
+    if (desktopUnsupported && !creatingGoal && !queueEditor.edit) return;
     const submittedInput = composerInput(value, files);
     const sideCommand = /^\/side(?:\s|$)/i.exec(submittedInput.text);
     if (sideCommand && (!onSide || submittedInput.files.length)) {
@@ -209,6 +221,7 @@ export function Composer({
       clearText();
       return;
     }
+    if (annotationEditing || invalidAnnotation) return;
     if (queueEditor.edit) { await queueEditor.save(); return; }
     if (disabled || annotationEditing || invalidAnnotation || sending.has(key) || (!submittedInput.text.trim() && !submittedInput.files.length && !comments.length && !skills.selected.length && !mcpDraft.length)) return;
     if (approvePlan && (!planReady || input.text.trim() || input.files.length || comments.length)) return;
@@ -255,7 +268,7 @@ export function Composer({
     }
   };
   const continueExecution = async () => {
-    if (!canContinue || disabled || sending.has(key)) return;
+    if (desktopUnsupported || !canContinue || disabled || sending.has(key)) return;
     markSending(key, true); setDeliveryError("");
     try {
       await action("continue", { projectId: project.id, threadId: thread.id, expectedTurnId: interrupted.id, expectedConfigRevision: config?.revision });
@@ -329,7 +342,7 @@ export function Composer({
       )}
       {planReady && !queueEditor.edit && <section className="flex items-center justify-between gap-3 px-3 py-2 text-ui-sm" aria-label="计划确认">
         <span className="text-foreground-subtle">计划已完成。批准后将以自动编辑模式执行。</span>
-        <Button size="sm" disabled={disabled || !!input.text.trim() || !!input.files.length || !!comments.length} onClick={() => void submit("按上方已确认的计划执行。", false, true)}>批准并执行</Button>
+        <Button size="sm" disabled={disabled || desktopUnsupported || !!input.text.trim() || !!input.files.length || !!comments.length} aria-describedby={desktopUnsupported ? BACKEND_STATUS_ID : undefined} onClick={() => void submit("按上方已确认的计划执行。", false, true)}>批准并执行</Button>
       </section>}
       <div className="composer-input-stack">
       <div ref={setMenuAnchor} className="composer-menu-anchor" />
@@ -373,7 +386,7 @@ export function Composer({
         submitTestId="chat-send-button"
         placeholder={archived ? "已归档任务只读" : creatingGoal ? "描述目标，明确可衡量的结果" : planActive ? "描述任务，生成计划…" : "随心输入"}
         disabled={disabled}
-        submitDisabled={disabled || (taskManagement && !!running) || annotationEditing || invalidAnnotation || (queueEditor.edit ? queueEditor.saveDisabled || (!input.text.trim() && !input.files.length && !queueEditor.edit.attachments.length) : creatingGoal ? !input.text.trim() || !!running : !canContinue && emptyDraft)}
+        submitDisabled={disabled || (desktopUnsupported && !queueEditor.edit && !creatingGoal) || (taskManagement && !!running) || annotationEditing || invalidAnnotation || (queueEditor.edit ? queueEditor.saveDisabled || (!input.text.trim() && !input.files.length && !queueEditor.edit.attachments.length) : creatingGoal ? !input.text.trim() || !!running : !canContinue && emptyDraft)}
         submitting={busy}
         submitLabel={queueEditor.edit ? "保存排队消息" : creatingGoal ? "开始目标" : canContinue ? "继续执行" : "发送"}
         enterSubmits={prefs.sendShortcut === "enter"}
@@ -405,20 +418,24 @@ export function Composer({
           </div>}
           {queueEditor.feedback && <p role="alert" className="composer-queue-feedback">{queueEditor.feedback}</p>}
           {queueEditor.edit?.unknown && <Button type="button" size="sm" disabled={queueEditor.busy || !project.state?.connected} onClick={() => void queueEditor.reconcile()}>核对编辑操作</Button>}
-          {!queueEditor.edit && <>{skills.tags}<ReviewCommentAttachment comments={comments} disabled={disabled} onRemove={() => detachReviewComments(reviewKey)} /></>}
+          {!queueEditor.edit && skills.tags}
+          <BrowserAnnotationAttachments files={files} disabled={disabled} onChange={setFiles} />
+          <div className="composer-attachment-row">
           {!!queueEditor.edit?.attachments.length && <div className="composer-attachments">
             {queueEditor.edit.attachments.map((part, index) => <ComposerQueueAttachment key={`${index}:${part.url}`} part={part} projectId={project.id} threadId={thread.id} action={readAction} disabled={disabled}
               onRemove={() => queueEditor.removeAttachment(index)} />)}
           </div>}
-          {!queueEditor.edit && <McpComposerAttachments draftKey={key} entries={mcpDraft} disabled={disabled}/> }
-          <BrowserAnnotationAttachments files={files} disabled={disabled} onChange={setFiles} />
           {files.some(file => !isComposerFile(file) || !browserAnnotation(file)) ? (
             <div className="composer-attachments" data-testid="composer-attachments">
               {files.filter(file => !isComposerFile(file) || !browserAnnotation(file)).map((file, i) => <ComposerAttachment disabled={disabled} key={isComposerFile(file) ? `${file.name}-${file.lastModified}-${i}` : `pasted-text-${i}`} file={file}
+                onAnnotate={onAnnotate ? file => onAnnotate({ draftKey: key, file, returnFocus: () => api.current?.focus() }) : undefined}
                 onRemove={() => setFiles((current) => current.filter(item => item !== file))}
                 onExpand={content => { api.current?.appendText(`${text.length ? "\n\n" : ""}${content}`); setFiles(current => current.filter(item => item !== file)); }} />)}
             </div>
-          ) : null}</>
+          ) : null}
+          {!queueEditor.edit && <ReviewCommentAttachment comments={comments} disabled={disabled} onRemove={() => detachReviewComments(reviewKey)} />}
+          {!queueEditor.edit && <McpComposerAttachments draftKey={key} entries={mcpDraft} disabled={disabled} />}
+          </div></>
         }
         promptHistory={(thread.turns ?? []).flatMap((t: Data) =>
           (t.items ?? [])
@@ -459,7 +476,8 @@ export function Composer({
         ) : running ? (
           <ControlHintTooltip title="发送" shortcut={prefs.sendShortcut === "enter" ? "Enter" : "⌘/Ctrl+Enter"}>
             <Button type="button" variant="composer" size="icon-md" aria-label="发送" data-testid="chat-send-button"
-              disabled={disabled || taskManagement || (!input.text.trim() && !input.files.length && !comments.length && !skills.selected.length && !mcpDraft.length)}
+              aria-describedby={desktopUnsupported ? BACKEND_STATUS_ID : undefined}
+              disabled={disabled || desktopUnsupported || taskManagement || (!input.text.trim() && !input.files.length && !comments.length && !skills.selected.length && !mcpDraft.length)}
               onClick={event => void submit(api.current?.getMarkdown() ?? text, event.metaKey || event.ctrlKey)}>
               <SendMessageIcon className="size-5" />
             </Button>
@@ -467,7 +485,8 @@ export function Composer({
         ) : canContinue ? (
           <ControlHintTooltip title="继续执行">
             <Button type="button" variant="composer" size="icon-md" aria-label="继续执行" data-testid="chat-continue-button"
-              disabled={disabled} className="composer-primary-action" onClick={() => void continueExecution()}>
+              aria-describedby={desktopUnsupported ? BACKEND_STATUS_ID : undefined}
+              disabled={disabled || desktopUnsupported} className="composer-primary-action" onClick={() => void continueExecution()}>
               <ContinueExecutionIcon className="size-5" />
             </Button>
           </ControlHintTooltip>
@@ -503,6 +522,7 @@ export async function submitMessage(
     const bytes = Uint8Array.from(atob(block.data), character => character.charCodeAt(0));
     return new File([bytes], typeof block._meta?.["openai/title"] === "string" ? block._meta["openai/title"] : "应用图片", {type:block.mimeType});
   });
+  const imageSnapshot = snapshotImageAnnotations(composerInput(text, files).files);
   const skillContent = options.appMessage ? "" : await composerSkillContent(options.skillAction ?? action, projectId, threadId, readComposerSkills(`areal-gui:draft:${projectId}:${threadId}`));
   const input = composerInput(text, files);
   const attachments: Data[] = await uploadComposerFiles(action, projectId, threadId, [...input.files, ...imageFiles]);
@@ -511,7 +531,7 @@ export async function submitMessage(
     const note = browserAnnotation(file);
     return note ? [browserAnnotationText(note, attachments[index].url)] : [];
   }).join("\n\n");
-  const feedback = [annotationFeedback, comments.map(reviewCommentText).join("\n\n"), skillContent].filter(Boolean).join("\n\n");
+  const feedback = [annotationFeedback, serializeImageAnnotations(imageSnapshot, attachments), comments.map(reviewCommentText).join("\n\n"), skillContent].filter(Boolean).join("\n\n");
   try {
     await action(options.steer ? "steer" : "send", {
         projectId,

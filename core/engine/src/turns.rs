@@ -31,7 +31,6 @@ impl Engine {
         cancel: CancellationToken,
     ) -> Result<Turn> {
         self.refresh_plugins().await?;
-        self.connect_trusted_plugins(thread_id).await?;
         let _admission = self.tasks.token();
         let _gate = self.desktop.lifecycle.gate.lock().await;
         let cell = self.cell(thread_id).await?;
@@ -43,7 +42,12 @@ impl Engine {
         if state.active.is_some() || state.compacting {
             return Err(Error::Conflict);
         }
-        if state.thread.desktop.as_ref().is_some_and(|data| data.queue.items.iter().any(|item| matches!(item.status.as_str(), "pending" | "running"))) {
+        if state.thread.desktop.as_ref().is_some_and(|data| {
+            data.queue
+                .items
+                .iter()
+                .any(|item| matches!(item.status.as_str(), "pending" | "running"))
+        }) {
             return Err(Error::Conflict);
         }
         if state.thread.is_side() && (input.len() != 1 || !matches!(&input[0], Input::Text { .. }))
@@ -210,7 +214,7 @@ impl Engine {
         cancel: CancellationToken,
         admission: OwnedSemaphorePermit,
     ) {
-        self.activate_with_tool(cell, state, turn, cancel, admission, None, None);
+        self.activate_with_tool(cell, state, turn, cancel, admission, (None, None));
     }
 
     pub(super) fn activate_with_tool(
@@ -220,9 +224,12 @@ impl Engine {
         turn: &Turn,
         cancel: CancellationToken,
         admission: OwnedSemaphorePermit,
-        direct_tool: Option<model::ToolCall>,
-        tool_meta: Option<serde_json::Map<String, Value>>,
+        direct_tool: (
+            Option<model::ToolCall>,
+            Option<serde_json::Map<String, Value>>,
+        ),
     ) {
+        let (direct_tool, tool_meta) = direct_tool;
         self.spawn_goal_scheduler();
         self.start_task_scheduler();
         let (tx, rx) = mpsc::channel(self.limits.mailbox_capacity);
@@ -283,6 +290,8 @@ impl Engine {
             process_cursors: BTreeMap::new(),
             handles: tools::Handles::default(),
         });
+        let pending =
+            self.pending_trusted_plugins(cell, &state.thread, turn, state.active.as_ref().unwrap());
         cell.settled.send_replace(false);
         let thread_id = &state.thread.id;
         cell.emit("turn/started", json!({"threadId": thread_id, "turn": turn}));
@@ -310,7 +319,7 @@ impl Engine {
             areal.turn.status = tracing::field::Empty,
         );
         self.tasks
-            .spawn(async move { engine.run(run_cell, cancel, rx).await }.instrument(span));
+            .spawn(async move { engine.run(run_cell, cancel, rx, pending).await }.instrument(span));
     }
 
     pub async fn steer(
@@ -491,7 +500,8 @@ impl Engine {
             }
         } else if state.thread.desktop.is_some() {
             let mut candidate = state.thread.clone();
-            if state.active.is_some() && !state.thread.is_side()
+            if state.active.is_some()
+                && !state.thread.is_side()
                 && state.thread.parent_thread_id.is_none()
                 && state.thread.goal_owner.is_none()
                 && state.thread.source != "nativeTaskAgent"
@@ -584,6 +594,7 @@ impl Engine {
         cell: Arc<Cell>,
         cancel: CancellationToken,
         mut steer: mpsc::Receiver<bool>,
+        pending: Vec<TrustedPlugin>,
     ) {
         let prompt_span = info_span!(target: trajectory::TARGET, "areal.user_prompt",
             gen_ai.input.messages = tracing::field::Empty,
@@ -653,6 +664,11 @@ impl Engine {
         };
         let mut result = {
             let generation = std::panic::AssertUnwindSafe(async {
+                if !pending.is_empty() {
+                    let turn_id = cell.state.lock().await.active.as_ref().unwrap().id.clone();
+                    self.prepare_turn_plugins(cell.clone(), turn_id, pending).await?;
+                }
+                anyhow::ensure!(!cancel.is_cancelled(), "cancelled before turn preparation completed");
                 if exclusive {
                     let guard=tokio::select! {biased; _=cancel.cancelled()=>anyhow::bail!("cancelled before writer admission"), guard=self.workspace_gate.clone().write_owned()=>guard};
                     self.ensure_workspace_processes_settled().await?;
@@ -979,6 +995,13 @@ impl Engine {
             });
         }
         let active = state.active.take().unwrap();
+        let name_model = active.model.clone();
+        let name_turn = state
+            .thread
+            .turns
+            .last()
+            .filter(|turn| turn.status == TurnStatus::Completed && !state.poisoned)
+            .cloned();
         if state.poisoned {
             state.quarantined_admission = Some(active._admission);
         } else {
@@ -1001,5 +1024,8 @@ impl Engine {
         self.goals.request(&cell.id);
         self.goals.wake();
         self.wake_tasks();
+        if let Some(turn) = name_turn {
+            self.schedule_session_name(cell.clone(), turn, name_model);
+        }
     }
 }

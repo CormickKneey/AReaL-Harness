@@ -2061,4 +2061,26 @@ async fn real_worker(stalled: Option<i32>, command_tools_only: bool) {
     );
     assert_eq!(model.usage().unknown_requests, 0);
     assert_eq!(tree::load(&root, &record.head).unwrap().len(), 2);
+    for entry in std::fs::read_dir(root.join("bindings")).unwrap().flatten() {
+        let binding = entry.path().join("binding.json");
+        if !binding.exists() {
+            continue;
+        }
+        let binding: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(binding).unwrap()).unwrap();
+        let history = entry
+            .path()
+            .join("history")
+            .join(format!("{}.json", binding["threadId"].as_str().unwrap()));
+        let stored: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(history).unwrap()).unwrap();
+        assert_eq!(
+            stored["thread"]["source"], "workgroupWorker",
+            "internal worker must not be eligible for user-session naming"
+        );
+        assert!(
+            stored["thread"].get("nameAttemptTurnId").is_none(),
+            "worker must not spend a Goal or Workgroup model request naming itself"
+        );
+    }
 }

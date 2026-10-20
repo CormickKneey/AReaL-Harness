@@ -579,10 +579,11 @@ async fn active_schema_survives_update_and_busy_configure() {
         .await
         .unwrap();
     e.wait(&thread.id).await.unwrap();
-    let schemas = model.schemas.lock().unwrap();
-    assert_eq!(schemas[0], schemas[1]);
-    assert_ne!(schemas[1], schemas[2]);
-    drop(schemas);
+    {
+        let schemas = model.schemas.lock().unwrap();
+        assert_eq!(schemas[0], schemas[1]);
+        assert_ne!(schemas[1], schemas[2]);
+    }
     e.shutdown().await;
 }
 
@@ -1973,11 +1974,11 @@ async fn parallel_submission_responses_remain_restartable() {
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
     loop {
         let mut accounted = 0;
-        for i in 0..3 {
+        for (i, job) in jobs.iter().enumerate().take(3) {
             let receipts = engine
                 .management_receipts("owner", &format!("new-{i}"))
                 .await;
-            if jobs[i].is_finished()
+            if job.is_finished()
                 || receipts["data"]
                     .as_array()
                     .unwrap()

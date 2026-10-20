@@ -18,14 +18,14 @@ pub struct PluginConfigOutcome {
     pub servers: BTreeMap<String, PluginServerConfig>,
     pub diagnostics: Vec<PluginDiagnostic>,
 }
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ToolPolicy {
     pub enabled: Option<bool>,
     pub approval_mode: Option<ApprovalMode>,
     pub output_token_limit: Option<u64>,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalMode {
     Auto,
@@ -33,7 +33,7 @@ pub enum ApprovalMode {
     Writes,
     Approve,
 }
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, schemars::JsonSchema)]
 pub struct PluginPolicy {
     pub enabled: bool,
     pub required: bool,
@@ -528,20 +528,18 @@ fn normalize(portable: bool, v: &Value, root: &Path, data: &Path) -> Result<Plug
     if auth.is_none() && o.get("auth").is_some_and(|v| v == "oauth") {
         auth = Some(AuthPolicy::default());
     }
-    if portable {
-        if let Some(extensions) = o.get("extensions") {
-            let extensions = extensions
-                .as_object()
-                .ok_or_else(|| anyhow::anyhow!("invalid extensions"))?;
-            let nested = extensions.get("com.openai").and_then(|v| v.get("auth"));
-            let dotted = extensions.get("com.openai.auth");
-            ensure!(
-                nested.is_none() || dotted.is_none(),
-                "duplicate authentication declaration"
-            );
-            if let Some(v) = nested.or(dotted) {
-                auth = portable_auth(v)?;
-            }
+    if portable && let Some(extensions) = o.get("extensions") {
+        let extensions = extensions
+            .as_object()
+            .ok_or_else(|| anyhow::anyhow!("invalid extensions"))?;
+        let nested = extensions.get("com.openai").and_then(|v| v.get("auth"));
+        let dotted = extensions.get("com.openai.auth");
+        ensure!(
+            nested.is_none() || dotted.is_none(),
+            "duplicate authentication declaration"
+        );
+        if let Some(v) = nested.or(dotted) {
+            auth = portable_auth(v)?;
         }
     }
     Ok(PluginServerConfig {

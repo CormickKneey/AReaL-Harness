@@ -12,7 +12,7 @@ const { _electron: electron } = require('playwright-core');
 const { ServiceConnection, waitForServiceProcessExit } = require('../app/src/core/service-client.cjs');
 const { DesktopLifecycle } = require('../app/src/core/lifecycle.cjs');
 const binary = process.env.AREAL_CORE_BIN || resolve(gui, '../../target/debug/areal');
-const scratch = await mkdtemp('/private/tmp/areal-lifecycle-electron-');
+const scratch = await mkdtemp('/private/tmp/al-');
 const workspace = join(scratch, 'workspace'), home = join(scratch, 'core');
 await mkdir(workspace); await mkdir(join(scratch, 'user/.areal'), { recursive: true });
 execFileSync('git', ['init', '-b', 'main'], { cwd: workspace, stdio: 'ignore' });
@@ -47,6 +47,8 @@ const env = { ...process.env, AREAL_CORE_BIN: binary, AREAL_CORE_CONFIG: config,
   AREAL_GUI_USER_DATA: join(scratch, 'electron'), AREAL_CORE_USER_HOME: join(scratch, 'user'),
   AREAL_HARNESS_SERVICE_HOME: join(scratch, 'registry') };
 for (const key of ['AREAL_CORE_WORKSPACE', 'AREAL_HARNESS_HOME', 'AREAL_HARNESS_CONFIG', 'AREAL_CORE_DESKTOP_CONFIG']) delete env[key];
+const crashUpdate = process.env.AREAL_LIFECYCLE_CRASH_UPDATE === '1';
+let crashDialogs = [];
 const testApp = join(scratch, 'app'); await mkdir(testApp);
 await writeFile(join(testApp, 'package.json'), JSON.stringify({ name: 'areal-lifecycle-fixture', main: 'bootstrap.cjs' }));
 await writeFile(join(testApp, 'bootstrap.cjs'), `
@@ -57,6 +59,19 @@ if (process.env.AREAL_LIFECYCLE_AUTO_RECOVERY === '1') {
     const options = args.at(-1); globalThis.__lifecycleDialogs.push(options);
     if (options.message === '确认取消后台任务？') return {response:1};
     return {response:options.buttons.indexOf('取消任务并重启')};
+  };
+}
+if (process.env.AREAL_LIFECYCLE_CRASH_UPDATE === '1' && !process.argv.includes('--areal-core-service')) {
+  const {ServiceConnection}=require(${JSON.stringify(join(gui,'app/src/core/service-client.cjs'))});
+  const original=ServiceConnection.prototype.request;
+  ServiceConnection.prototype.request=async function(method,params,mutation){
+    const receipt=await original.call(this,method,params,mutation);
+    if(method==='lifecycleRequest' && params.kind==='updateDesktop'){
+      require('node:fs').writeFileSync(${JSON.stringify(join(scratch,'update-accepted-before-gui-crash.json'))},JSON.stringify({requestId:params.requestId,desktopGeneration:params.expectedDesktopGeneration,receipt,dialogs:globalThis.__updateRecoveryDialogs}));
+      process.kill(process.pid,'SIGKILL');
+      await new Promise(()=>{});
+    }
+    return receipt;
   };
 }
 require(${JSON.stringify(join(gui, 'app/src/main.cjs'))});
@@ -100,34 +115,46 @@ try {
     await until(async () => queue(await state())?.items.some(i => i.input.some(p => p.text === text)), 'queued input');
   }
   const original = structuredClone(queue(await state()).items);
+  const preservedDraft = 'unsent lifecycle draft';
+  await page.getByTestId('chat-input').fill(preservedDraft);
+  const originalThread = structuredClone((await state()).projects.find(p => p.id === pid).state.threads[tid]);
   const metadata = JSON.parse(await readFile(join(home, 'service.json'), 'utf8'));
+  for (const request of [
+    { name: 'stop', params: { projectId: pid, threadId: tid } },
+    { name: 'serviceLifecycle', params: { operation: 'stop', expectedTargets: [] } },
+  ]) {
+    const rejected = await page.evaluate(({ name, params }) => window.arealDesktop.command(name, params), request);
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.error.code, 'INVALID_DESKTOP_REQUEST');
+  }
+  await call('serviceLifecycle', { operation: 'check' });
+  assert.equal((await state()).projects.find(p => p.id === pid).state.threads[tid].turns.at(-1).status, 'inProgress');
+  assert.deepEqual(JSON.parse(await readFile(join(home, 'service.json'), 'utf8')), metadata);
+  checks.push('Main rejects missing pause identity and untrusted lifecycle fields; check is read-only');
   await page.screenshot({ path: join(scratch, '01-live-queue.png') });
   const cancelFromMenu = async confirm => app.evaluate(async ({ Menu, dialog }, confirm) => {
-    const seen = []; let selected = false;
+    const seen = [];
     dialog.showMessageBox = async (...args) => {
-      const options = args.at(-1);
-      seen.push(options);
-      if (options.message === '确认取消后台任务？') return { response: confirm ? 1 : 0 };
-      if (!selected && options.buttons.includes('取消任务并停止')) { selected = true; return { response: options.buttons.indexOf('取消任务并停止') }; }
-      if (!selected && options.buttons.includes('重新检查') && seen.length < 20) {
-        await new Promise(r => setTimeout(r, 100)); return { response: options.buttons.indexOf('重新检查') };
-      }
-      return { response: 0 };
+      const options = args.at(-1); seen.push(options);
+      return { response: options.message === '确认取消后台任务？' && confirm ? 1 : 0 };
     };
     Menu.getApplicationMenu().items[0].submenu.items.find(i => i.label === '停止后台 Core 服务…').click();
     const deadline = Date.now() + 10000;
-    while (!seen.some(d => d.message === '确认取消后台任务？') && Date.now() < deadline) await new Promise(r => setTimeout(r, 50));
-    if (!confirm) while (seen.length < 3 && Date.now() < deadline) await new Promise(r => setTimeout(r, 50));
+    while (!seen.length && Date.now() < deadline) await new Promise(r => setTimeout(r, 50));
+    await new Promise(r => setTimeout(r, 200));
     return seen;
   }, confirm);
   const declined = await cancelFromMenu(false);
   dialogs.push(...declined);
-  assert.ok(declined.some(d => d.message === '确认取消后台任务？'));
+  assert.equal(declined.length, 1);
+  assert.equal(declined[0].message, '确认取消后台任务？');
+  assert.equal(await page.getByTestId('chat-input').innerText(), preservedDraft);
   assert.deepEqual(queue(await state()).items, original);
   assert.equal((await state()).projects[0].state.threads[tid].turns.at(-1).status, 'inProgress');
   checks.push('native menu recovery declined confirmation preserves the running turn and both queued inputs');
   const confirmed = await cancelFromMenu(true);
-  assert.ok(confirmed.some(d => d.message === '确认取消后台任务？'));
+  assert.equal(confirmed.length, 1);
+  assert.equal(confirmed[0].message, '确认取消后台任务？');
   dialogs.push(...confirmed);
   await waitForServiceProcessExit(home, metadata);
   assert.equal(requests.length, 1, 'cancel never dispatches pending input');
@@ -139,6 +166,8 @@ try {
   assert.equal(queue(await state()).paused, true);
   assert.deepEqual(queue(await state()).items, original);
   assert.equal(requests.length, 1);
+  assert.equal(await page.getByTestId('chat-input').innerText(), preservedDraft);
+  assert.deepEqual((await state()).projects.find(p => p.id === pid).state.threads[tid].turns.map(t => t.id), originalThread.turns.map(t => t.id));
   await page.screenshot({ path: join(scratch, '02-reopened-paused.png') });
   checks.push('explicit reconnect preserves Queue identities, bodies and order, remains paused and sends no model request');
 
@@ -150,37 +179,82 @@ try {
   const server = await call('manage', { projectId: pid, operation: 'server' });
   assert.equal(server.activeTurns.length, 0); assert.ok(server.activeGoals.length > 0); assert.ok(server.activeTasks > 0);
   const old = JSON.parse(await readFile(join(home, 'service.json'), 'utf8'));
+  const modelRequestsBeforeReopen = requests.length;
   await closeGui();
   env.AREAL_CORE_CONFIG = secondConfig;
   await launch({ recovery: true });
-  await until(async () => (await state()).connection?.state === 'ready', 'incompatible startup recovery');
+  await until(async () => (await state()).connection?.state === 'ready', 'reattach with original launch configuration');
   const startupDialogs = await app.evaluate(() => globalThis.__lifecycleDialogs ?? []);
   dialogs.push(...startupDialogs);
-  assert.ok(startupDialogs.some(d => d.message === '确认取消后台任务？'));
-  assert.ok(startupDialogs.every(d => !d.buttons.includes('暂停定时安排…')));
-  await waitForServiceProcessExit(home, old);
+  assert.deepEqual(startupDialogs, []);
+  const reattached = JSON.parse(await readFile(join(home, 'service.json'), 'utf8'));
+  assert.deepEqual(reattached, old, 'changing the requested config must not replace the running service');
+  await until(async () => (await state()).backendUpdate?.state === 'pending', 'nonblocking pending update');
+  await page.getByRole('button', { name: '更新后台…', exact: true }).waitFor();
   await call('open', { projectId: pid, threadId: tid });
   await until(async () => queue(await state())?.items.length === 2, 'queue after startup recovery');
   assert.deepEqual(queue(await state()).items, original); assert.equal(queue(await state()).paused, true);
+  assert.equal(await page.getByTestId('chat-input').innerText(), preservedDraft);
   const restored = await task();
   assert.equal(restored.id, scheduled.id); assert.equal(restored.paused, false);
+  assert.equal(restored.runs.at(-1).status, 'waitingForInput');
+  assert.equal(requests.length, modelRequestsBeforeReopen, 'reopening must not run the scheduled task again');
   await page.screenshot({ path: join(scratch, '03-startup-recovered.png') });
-  checks.push('incompatible startup cancels a waiting scheduled Run through the same lifecycle path, preserving schedule and Queue');
+  checks.push('reopen with a different config path retains the original service, waiting Run and Queue without dialogs or replay, and shows the original-config notice');
   const updateMetadata = JSON.parse(await readFile(join(home, 'service.json'), 'utf8'));
-  await app.evaluate(({ Menu, dialog }) => {
+  await app.evaluate(({ dialog }) => {
     globalThis.__updateRecoveryDialogs = [];
     dialog.showMessageBox = async (...args) => {
       const options = args.at(-1);
       globalThis.__updateRecoveryDialogs.push(options);
-      return { response: options.message === '确认取消后台任务？' ? 1 : options.buttons.indexOf('取消任务并停止') };
+      return { response: options.message === '确认取消后台任务？' ? 1 : 0 };
     };
-    Menu.getApplicationMenu().items[0].submenu.items.find(i => i.label === '检查后台资源…').click();
+
   });
+  const updatingGui = app.process();
+  await page.getByRole('button', { name: '更新后台…', exact: true }).click().catch(error => { if (!crashUpdate || !/closed|disconnected/i.test(error.message)) throw error; });
+  if (crashUpdate) {
+    await until(() => updatingGui.exitCode !== null || updatingGui.signalCode !== null, 'only GUI crashes after accepted update');
+    app = null;
+    const crashed = JSON.parse(await readFile(join(scratch,'update-accepted-before-gui-crash.json'),'utf8'));
+    assert.equal(crashed.receipt.desktopExit,'requested');
+    const control = JSON.parse(await readFile(join(env.AREAL_GUI_USER_DATA,'service-control.json'),'utf8'));
+    assert.equal(control.references.at(-1).requestId,crashed.requestId);
+    crashDialogs = crashed.dialogs;
+    await waitForServiceProcessExit(home, updateMetadata);
+    await launch({ recovery: true });
+    await page.getByRole('button', { name: '更新后台…', exact: true }).waitFor();
+    assert.equal((await state()).lifecycle.requestId,crashed.requestId,'reopen reads the original request');
+    assert.equal((await state()).lifecycle.phase,'completed','replacement requires confirmed original exit');
+    assert.equal(requests.length,modelRequestsBeforeReopen);
+    const operationsBefore = (await import('node:fs/promises')).readdir;
+    const journalNames = await operationsBefore(join(home,'lifecycle-operations'));
+    await page.getByRole('button', { name: '更新后台…', exact: true }).click();
+    await until(async () => (await state()).connection?.state === 'ready' && !(await state()).backendUpdate,'finish original update after GUI crash');
+    assert.deepEqual(await operationsBefore(join(home,'lifecycle-operations')),journalNames,'finishing the original update never submits another stop');
+    checks.push('forced GUI exit after accepted update retains the original request/generation and finishes replacement without a repeated stop or confirmation');
+  }
   await waitForServiceProcessExit(home, updateMetadata);
-  const updateDialogs = await app.evaluate(() => globalThis.__updateRecoveryDialogs);
+  await until(async () => (await state()).connection?.state === 'ready' && !(await state()).backendUpdate, 'updated replacement connected');
+  const replacement = JSON.parse(await readFile(join(home, 'service.json'), 'utf8'));
+  assert.notEqual(replacement.pid, updateMetadata.pid);
+  await call('open', { projectId: pid, threadId: tid });
+  await until(async () => queue(await state())?.items.length === 2, 'queue retained after update');
+  assert.deepEqual(queue(await state()).items, original);
+  assert.equal(queue(await state()).paused, true);
+  assert.equal(await page.getByTestId('chat-input').innerText(), preservedDraft);
+  const updatedTask = await task();
+  assert.equal(updatedTask.id, restored.id);
+  assert.equal(updatedTask.paused, restored.paused);
+  assert.deepEqual(updatedTask.runs.map(run => run.id), restored.runs.map(run => run.id));
+  assert.equal(updatedTask.runs.at(-1).status, 'paused');
+  assert.equal(requests.length, modelRequestsBeforeReopen, 'update must not replay queued input or waiting scheduled Run');
+  await page.screenshot({ path: join(scratch, '04-updated-preserved.png') });
+  const updateDialogs = crashUpdate ? crashDialogs : await app.evaluate(() => globalThis.__updateRecoveryDialogs);
   dialogs.push(...updateDialogs);
-  assert.ok(updateDialogs.some(d => d.message === '确认取消后台任务？'));
-  checks.push('update recovery owner uses the same observed, confirmed cancel and original-process exit path; no download/install');
+  assert.equal(updateDialogs.length, 1);
+  assert.equal(updateDialogs[0].message, '确认取消后台任务？');
+  checks.push('explicit GUI update confirms once, exits the original backend, connects the replacement, and preserves task/run/queue/history identities and unsent draft without replay; no package download/install');
   assert.deepEqual(errors, []);
   passed = true;
 } catch (error) {
@@ -203,7 +277,7 @@ try {
   await writeFile(join(scratch, 'model-requests.json'), JSON.stringify(requests, null, 2));
   if (!passed) process.exitCode = 1;
   await writeFile(join(scratch, 'manifest.json'), JSON.stringify({ passed, checks, errors, dialogs,
-    source: execFileSync('git', ['rev-parse', 'HEAD']).toString().trim(), binary,
+    crashUpdate, source: execFileSync('git', ['rev-parse', 'HEAD']).toString().trim(), binary,
     binarySha256: createHash('sha256').update(await readFile(binary)).digest('hex'),
     boundary: 'real Electron menu/startup + Desktop/Core/Runtime; local model; native dialogs injected; no update download/install' }, null, 2));
   console.log(JSON.stringify({ passed, evidence: scratch, checks, errors }));

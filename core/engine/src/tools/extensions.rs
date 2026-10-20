@@ -255,6 +255,41 @@ impl Invocation<'_> {
         let result = if matches!(self.entry.backend, Backend::Mcp(_) | Backend::Plugin(_)) {
             // These backends own cancellation and cleanup; do not drop their futures first.
             self.invoke(&arguments, browser_plan.as_ref()).await
+        } else if matches!(self.entry.backend, Backend::Builtin)
+            && matches!(
+                self.call.name.as_str(),
+                "fs_write" | "fs_create" | "fs_apply_patches"
+            )
+        {
+            self.invoke(&arguments, browser_plan.as_ref()).await
+        } else if matches!(self.entry.backend, Backend::Builtin)
+            && matches!(
+                self.call.name.as_str(),
+                "run_command" | "read_process" | "verify_command"
+            )
+        {
+            let runtime = self
+                .engine
+                .runtime
+                .as_ref()
+                .expect("registered Runtime tool");
+            let mut invocation = Box::pin(self.invoke(&arguments, browser_plan.as_ref()));
+            tokio::select! {
+                biased;
+                result = &mut invocation => result,
+                _ = self.cancel.cancelled() => {
+                    let cleanup = runtime.client.close_scope(self.scope).await;
+                    let result = invocation.await;
+                    match cleanup {
+                        Ok(_) => result,
+                        Err(error) => {
+                            let mut failure = unknown("Runtime scope cleanup failed; tool outcome is UNKNOWN");
+                            failure.details = Some(json!({"cleanupError":error,"invocationResult":result}));
+                            Err(failure)
+                        }
+                    }
+                }
+            }
         } else {
             tokio::select! {
                 biased;
@@ -262,7 +297,16 @@ impl Invocation<'_> {
                 result = self.invoke(&arguments, browser_plan.as_ref()) => result,
             }
         };
-        if result.as_ref().is_err_and(uncertain) {
+        // Known capture failures still run ordinary failure hooks. A cancelled
+        // capture never submitted the write and must not start effectful hooks.
+        if result.as_ref().is_err_and(|error| {
+            uncertain(error)
+                || self.cancel.is_cancelled()
+                    && error
+                        .details
+                        .as_ref()
+                        .is_some_and(|details| details["reason"] == "FILE_BEFORE_CAPTURE_FAILED")
+        }) {
             return result;
         }
         let (success, value) = match result {
@@ -507,6 +551,9 @@ impl Invocation<'_> {
                 )
                 .map_err(invalid)?;
                 drop(state);
+                if let Request::File(command) = &request {
+                    file_before::prepare(self, &runtime.client, command).await?;
+                }
                 let mut verification_receipt = None;
                 if let Request::Command(command) = &mut request {
                     if effective.get("stdinOpen").is_none() && call.name == "run_command" {
@@ -587,15 +634,29 @@ impl Invocation<'_> {
                     } else {
                         None
                     };
-                let (success, mut result) = execute(
+                let file_write = matches!(&request, Request::File(command) if command.writes());
+                if file_write {
+                    file_before::check_cancel(self.cancel).map_err(file_before::not_sent)?;
+                }
+                let invocation = execute(
                     &runtime.client,
                     request,
                     self.scope,
                     self.operation,
                     &self.engine.extensions.policy,
                     command_argv.as_deref(),
-                )
-                .await?;
+                );
+                let (success, mut result) = if file_write {
+                    tokio::select! {
+                        biased;
+                        result = invocation => result?,
+                        _ = self.cancel.cancelled() => {
+                            return Err(unknown("interrupted file write; outcome is UNKNOWN"));
+                        }
+                    }
+                } else {
+                    invocation.await?
+                };
                 if let Some(process) = result["processId"].as_str().map(str::to_owned) {
                     let receipt = {
                         let mut state = self.cell.state.lock().await;
@@ -656,7 +717,7 @@ impl Invocation<'_> {
                     owner.clone(),
                     tool.server_name().into(),
                     tool.generation(),
-                    Some(tool.clone()),
+                    Some(tool.as_ref().clone()),
                 );
                 let key = (tool.server_name().to_owned(), tool.generation());
                 {

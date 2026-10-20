@@ -1,3 +1,5 @@
+import { assertApplicationStopped } from "./application-cleanup.mjs";
+import { respondToSessionName } from "./model-fixture.mjs";
 import {
   captureSmokeFailure,
   resizeConversation,
@@ -12,7 +14,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const desktop = join(gui, "app");
 const require = createRequire(join(desktop, "package.json"));
@@ -68,7 +70,9 @@ const live = new Set();
 const server = createServer(async (req, res) => {
   let raw = "";
   for await (const chunk of req) raw += chunk;
-  received.push(JSON.parse(raw));
+  const body = JSON.parse(raw);
+  if (respondToSessionName(body, res)) return;
+  received.push(body);
   res.writeHead(200, { "Content-Type": "text/event-stream" });
   res.write(
     `data: ${JSON.stringify({ id: "fixture", choices: [{ index: 0, delta: { content: "等待队列验收" }, finish_reason: null }] })}\n\n`,
@@ -105,6 +109,8 @@ const errors = [],
   checks = [];
 const button = (name) => page.getByRole("button", { name, exact: true });
 const state = () => page.evaluate(() => window.arealDesktop.snapshot());
+const project = (snapshot) =>
+  snapshot.projects.find((p) => p.root === workspace && !p.projectless);
 async function call(name, params) {
   const result = await page.evaluate(
     async ({ name, params }) => {
@@ -206,8 +212,21 @@ try {
   }, workspace);
   await button("不在项目中工作").click();
   await page.getByRole("menuitem", { name: "新建项目", exact: true }).click();
-  await until((s) => s.projects[0]?.state?.connected, "project ready");
-  const pid = (await state()).projects[0].id;
+  await until((s) => project(s)?.state?.connected, "project ready");
+  const pid = project(await state()).id;
+  const selectFixtureProfile = async () => {
+    await page.waitForFunction((id) => {
+      const workbench = document.querySelector('[data-testid="areal-workbench"]');
+      return workbench?.dataset.projectId === id && !workbench.dataset.threadId;
+    }, pid);
+    assert(project(await state()).profiles.some((p) => p.id === "standard" && p.revision === "v1"));
+    await page.evaluate((id) => {
+      const key = `areal-gui:draft:${id}:new`;
+      localStorage.setItem(`${key}:profile`, JSON.stringify({ id: "standard", revision: "v1" }));
+      window.dispatchEvent(new CustomEvent("areal-draft-change", { detail: key }));
+    }, pid);
+  };
+  await selectFixtureProfile();
   await call("manage", {
     projectId: pid,
     operation: "providerSave",
@@ -222,7 +241,7 @@ try {
     },
   });
   await until(
-    (s) => s.projects[0].models.some((model) => model.modelId === "fixture-alt"),
+    (s) => project(s).models.some((model) => model.modelId === "fixture-alt"),
     "provider catalog",
   );
   const input = () => page.getByTestId("chat-input");
@@ -230,14 +249,16 @@ try {
   await button("发送").click();
   await until(
     (s) =>
-      Object.values(s.projects[0].state.threads).some(
+      Object.values(project(s).state.threads).some(
         (t) => t.turns?.at(-1)?.status === "inProgress",
       ) && received.length > 0,
     "held active turn",
   );
   const tid = await page.getByTestId("areal-workbench").getAttribute("data-thread-id");
+  assert.equal(project(await state()).configurations[tid].profile.id, "standard");
+  assert.equal(project(await state()).configurations[tid].profile.revision, "v1");
   const key = `areal-gui:draft:${pid}:${tid}`;
-  const queue = (s) => s.projects[0].state.queues[tid];
+  const queue = (s) => project(s).state.queues[tid];
   const pending = (s) => queue(s).items.filter((i) => i.status === "pending");
   const row = (text) =>
     page
@@ -507,11 +528,11 @@ try {
   await input().fill("断线时保留的编辑");
   await call("queue", { projectId: pid, threadId: tid });
   await app.evaluate(() => globalThis.queueFixtureLiveConnection.socket.terminate());
-  await until((s) => !s.projects[0].state.connected, "GUI service disconnected");
+  await until((s) => !project(s).state.connected, "GUI service disconnected");
   assert.ok(await button("保存").isDisabled());
   assert.equal(await input().textContent(), "断线时保留的编辑");
   await call("connectService", {});
-  await until((s) => s.projects[0].state.connected, "explicit reconnect");
+  await until((s) => project(s).state.connected, "explicit reconnect");
   assert.equal(queue(await state()).paused, true);
   await app.evaluate(() => {
     globalThis.queueFixtureConnection.prototype.fixtureDrop = "areal/queue/resume";
@@ -543,7 +564,7 @@ try {
   await button("核对编辑操作").click();
   await until(
     (s) =>
-      !s.projects[0].pending.length && pending(s).some((i) => i.input[0].text === "2 对账更新"),
+      !project(s).pending.length && pending(s).some((i) => i.input[0].text === "2 对账更新"),
     "update receipt reconciled",
   );
   await page.waitForFunction((key) => !localStorage.getItem(`${key}:queue-edit`), key);
@@ -564,13 +585,13 @@ try {
   await button("核对队列操作").waitFor();
   await button("核对队列操作").click();
   await until(
-    (s) => !s.projects[0].pending.length && queue(s).items.some((i) => i.status === "steered"),
+    (s) => !project(s).pending.length && queue(s).items.some((i) => i.status === "steered"),
     "steer receipt",
   );
   const after = await state();
   const transferred = queue(after).items.find((i) => i.input[0].text === "2 对账更新");
   assert.equal(transferred.status, "steered");
-  const messages = after.projects[0].state.threads[tid].turns
+  const messages = project(after).state.threads[tid].turns
     .flatMap((t) => t.items)
     .filter((i) => i.type === "userMessage" && i.content.some((p) => p.text === "2 对账更新"));
   assert.equal(messages.length, 1);
@@ -588,9 +609,9 @@ try {
     .click();
   await until((s) => pending(s).length === 0, "empty queue");
   await page.waitForFunction(() => !document.querySelector(".composer-queue-row"));
-  await call("stop", { projectId: pid, threadId: tid });
+  await call("stop", { projectId: pid, threadId: tid, turnId: project(await state()).state.threads[tid].turns.at(-1).id, requestId: randomUUID() });
   await until(
-    (s) => s.projects[0].state.threads[tid].turns.at(-1)?.status !== "inProgress",
+    (s) => project(s).state.threads[tid].turns.at(-1)?.status !== "inProgress",
     "turn stop",
   );
   checks.push("delete waits for Core; empty rows disappear; active turn explicitly settles");
@@ -604,19 +625,11 @@ try {
   );
   throw error;
 } finally {
+  const stoppingAdapter = await readFile(join(scratch, "core/service.json"), "utf8").then(JSON.parse).catch(error => { if (error.code === "ENOENT") return null; throw error; });
   await quit();
   try {
-    const { ServiceConnection } = require(join(desktop, "src/core/service-client.cjs"));
-    const connection = new ServiceConnection();
-    try {
-      await connection.connect(
-        JSON.parse(await readFile(join(scratch, "core/service.json"), "utf8")),
-      );
-      await connection.request("stopService", { protocol: "areal.desktop-service.v1" }, true);
-      checks.push("explicit safe service stop completes");
-    } finally {
-      connection.close();
-    }
+    await assertApplicationStopped(binary, env, stoppingAdapter);
+    checks.push("application quit stops the isolated adapter and all Core generations, including projectless");
   } catch (error) {
     console.error("Adapter fixture cleanup:", error.message);
     if (passed) {

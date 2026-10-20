@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Messages } from "./Messages.js";
 import { AgentAvatar, agentName, agentStatus, agentAssignment } from "./AgentIdentity.js";
 import type { Action, Data } from "./services.js";
@@ -13,6 +13,11 @@ export function AgentConversationPane({ project, parentId, childId, action, dark
   const [revision, refresh] = useState(0);
   const thread = project.state?.threads[childId];
   const connected = !!project.state?.connected;
+  // Reading a comparison refreshes the snapshot. Preserve the reader identity
+  // across that refresh so file summaries can accept the pending result.
+  const readTurnReview = useCallback((turnId: string, itemId?: string) => action("workspace", {
+    projectId: project.id, threadId: childId, turnId, itemId, operation: "turnReview",
+  }), [action, project.id, childId]);
   useEffect(() => {
     let live = true;
     setLoading(true); setError("");
@@ -32,7 +37,7 @@ export function AgentConversationPane({ project, parentId, childId, action, dark
     {error && <div className="agent-pane-notice" role="alert">{error}<button type="button" disabled={!connected || loading} onClick={() => refresh(n => n + 1)}>重新读取</button></div>}
     {owned ? <Messages project={project} thread={thread} action={action} dark={dark} onLink={onLink} onFile={onFile}
       onReview={turnId => onReview(childId, turnId)} onAgent={onAgent}
-      readTurnReview={(turnId, itemId) => action("workspace", { projectId: project.id, threadId: childId, turnId, itemId, operation: "turnReview" })} />
+      readTurnReview={readTurnReview} />
       : !error && <p className="agent-pane-notice" role="status">{loading ? "正在读取子对话…" : "子对话不可用。"}</p>}
   </section>;
 }

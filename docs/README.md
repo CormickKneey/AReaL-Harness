@@ -25,3 +25,5 @@
 Remote v2 设计与实施边界：[架构](design/remote-control.md) · [API](api/remote-control.md) · [连接与部署](guides/remote-control.md) · [验收计划](development/remote-control-testing.md) · [Host 所有权](adr/0008-remote-host-ownership.md)。各专题区分已实现的切片与后续设计，不代表完整 P0 已交付。
 
 客户端 UI 实现与设计约束：[设计规则 v1](../clients/gui/design-system/README.md) · [生产组件与 Token 指南](../clients/gui/DESIGN_SYSTEM.md)。
+
+- [回答评价](guides/user-feedback.md)

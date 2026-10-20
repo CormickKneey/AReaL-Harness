@@ -47,6 +47,30 @@ pub const METHODS: &[&str] = &[
     "areal/tool/acknowledge",
 ];
 
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AppliedModelConfiguration {
+    pub revision: String,
+    pub sequence: u64,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ModelConfigurationRead {
+    pub request_id: Option<String>,
+    pub expected_generation: Option<String>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ModelConfigurationApply {
+    pub request_id: String,
+    pub expected_generation: String,
+    pub expected_applied: AppliedModelConfiguration,
+    pub target_revision: String,
+    pub credentials: std::collections::BTreeMap<String, String>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AttachBrowserTools {
@@ -168,6 +192,7 @@ pub const NOTIFICATIONS: &[&str] = &[
     "areal/model/watchdogRetry",
     "areal/tool/cancelled",
     "areal/thread/configured",
+    "areal/thread/edited",
     "areal/thread/archived",
     "areal/thread/unarchived",
     "areal/plan/updated",
@@ -419,9 +444,21 @@ pub struct PermissionGrant {
     pub arguments: Value,
 }
 
+/// Model preference captured in the same snapshot as a user submission receipt.
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AcceptedModelSelection {
+    pub accepted_at: u64,
+    pub model: Option<ModelRef>,
+    pub model_id: String,
+    pub reasoning_effort: Option<String>,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DesktopState {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_accepted_model: Option<AcceptedModelSelection>,
     /// 只在读取活跃 Side 时由 Core 投影；历史快照不承载模型等待状态。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub side_capacity_status: Option<String>,
@@ -516,10 +553,19 @@ pub struct TurnSubmit {
 #[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
 pub enum TurnSubmitIntent {
-    Message { input: Vec<Input> },
+    Message {
+        input: Vec<Input>,
+    },
     Continue {
         #[serde(rename = "expectedTurnId")]
         expected_turn_id: String,
+    },
+    Edit {
+        #[serde(rename = "expectedTurnId")]
+        expected_turn_id: String,
+        #[serde(rename = "itemId")]
+        item_id: String,
+        input: Vec<Input>,
     },
 }
 #[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]

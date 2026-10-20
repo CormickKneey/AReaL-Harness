@@ -1,3 +1,4 @@
+import { assertApplicationStopped } from "./application-cleanup.mjs";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { mkdtemp, mkdir, readFile, writeFile, cp, readdir, lstat } from "node:fs/promises";
@@ -13,7 +14,6 @@ import { withSmokeDeadline } from "./smoke-deadline.mjs";
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(join(gui, "app/package.json"));
 const { _electron: electron } = require("playwright-core");
-const { ServiceConnection } = require(join(gui, "app/src/core/service-client.cjs"));
 const { values } = parseArgs({
   options: { source: { type: "string" }, executable: { type: "string" } },
 });
@@ -28,8 +28,10 @@ const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const hashes = new Map(),
   copyHashes = new Map(),
   sessions = new Map(),
+  stateDirectories = new Map(),
   checks = [];
 let app,
+  env,
   page,
   failure,
   copyUnchangedWhileOpen = false,
@@ -85,6 +87,19 @@ async function unchanged(root, expected = hashes) {
   return true;
 }
 
+async function stateEntries(root, relative) {
+  try {
+    assert.ok(
+      (await lstat(join(root, relative))).isDirectory(),
+      "State must be a directory, not a symlink",
+    );
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+  return (await readdir(join(root, relative))).sort();
+}
+
 async function call(name, params) {
   const result = await withSmokeDeadline(
     `history ${name}`,
@@ -125,12 +140,11 @@ try {
     const workspace = fixtureMode ? join(scratch, "workspaces", project.id) : project.root;
     if (fixtureMode) await mkdir(workspace, { recursive: true, mode: 0o700 });
     assert.equal(typeof workspace, "string", "Project workspace is missing");
-    assert.ok(
-      (await lstat(join(source, state))).isDirectory(),
-      "State must be a directory, not a symlink",
-    );
+    // 项目先登记再启动 Core；首次连接失败时可能尚无状态目录。
+    const entries = await stateEntries(source, state);
+    stateDirectories.set(state, entries);
     await mkdir(join(scratch, "core", state), { recursive: true, mode: 0o700 });
-    for (const name of await readdir(join(source, state))) {
+    for (const name of entries ?? []) {
       if (!name.endsWith(".json")) continue;
       assert.match(name, /^[a-f0-9-]{36}\.json$/, "Invalid stored session filename");
       const relative = join(state, name),
@@ -162,7 +176,6 @@ try {
         );
       }
     }
-    assert.ok(ids.length > 0, "Project has no history sessions");
     // 归档和附件仍由 Core 读取；不复制锁、服务登记、凭据或部署配置。
     for (const directory of ["history", "blobs"]) {
       const relative = join(state, directory);
@@ -201,7 +214,7 @@ try {
     `schema_version=1\n[model]\ncatalog_version=1\nprovider="history-fixture"\nname="fixture"\n[model.providers.history-fixture]\nname="History fixture"\nendpoint="http://127.0.0.1:${server.address().port}/v1/chat/completions"\nprotocol="chat-completions"\napi_key_env="AREAL_HISTORY_FIXTURE_KEY"\nmodels=[{id="fixture",enabled=true}]\n`,
     { mode: 0o600 },
   );
-  const env = Object.fromEntries(
+  env = Object.fromEntries(
     Object.entries(process.env).filter(
       ([key]) => !key.startsWith("AREAL_") && key !== "ELECTRON_RUN_AS_NODE",
     ),
@@ -232,9 +245,12 @@ try {
     assert.equal(restored.error, null);
     for (const id of sessions.get(project.id))
       assert.ok(restored.state.threads[id], "Existing session was not restored");
+    if (sessions.get(project.id).length === 0)
+      assert.equal(Object.keys(restored.state.threads).length, 0, "Empty project acquired sessions");
     checks.push({
       projectId: project.id,
       sessions: sessions.get(project.id).length,
+      sourceStatePresent: stateDirectories.get(join(project.id, "state")) !== null,
       connected: true,
     });
   }
@@ -254,25 +270,21 @@ try {
   failure = { message: error.message, stack: error.stack };
   if (page) await captureSmokeFailure(page, scratch, error);
 } finally {
-  if (app)
-    await app.close().catch((error) => {
-      failure ??= { cleanup: error.message };
-    });
   try {
-    const meta = JSON.parse(await readFile(join(scratch, "core/service.json"), "utf8"));
-    const connection = new ServiceConnection();
-    try {
-      await connection.connect(meta);
-      await connection.request("hello", { protocol: meta.protocol, identity: meta.identity });
-      await connection.request("stopService", { protocol: meta.protocol, forUpdate: true }, true);
-    } finally {
-      connection.close();
+    const meta = await readFile(join(scratch, "core/service.json"), "utf8").then(JSON.parse)
+      .catch(error => { if (error.code === "ENOENT") return null; throw error; });
+    if (app) {
+      await app.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 1 }); });
+      await withSmokeDeadline("history application quit", () => app.close(), 120000);
     }
+    if (env) await assertApplicationStopped(binary, env, meta);
   } catch (error) {
-    if (error.code !== "ENOENT") failure ??= { cleanup: error.message };
+    failure ??= { cleanup: error.message };
   }
   await new Promise((resolve) => server.close(resolve));
   try {
+    for (const [relative, entries] of stateDirectories)
+      assert.deepEqual(await stateEntries(source, relative), entries, "Source state entries changed");
     sourceUnchanged =
       (await unchanged(source)) &&
       (!projectIndexHash ||
@@ -294,7 +306,7 @@ try {
     sourceUnchanged,
     modelRequests,
     cleanupNote:
-      "Only copied services stopped; drain may update copied queue revisions after observation",
+      "Application quit confirmed the isolated adapter and all copied Core generations stopped; drain may update copied queue revisions after observation",
     failure,
   };
   const evidence = join(scratch, "manifest.json");

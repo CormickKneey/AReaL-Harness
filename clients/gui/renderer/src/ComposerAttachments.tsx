@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import type { ChatComposerPasteEvent } from "./LexicalChatInput.js";
 import { ScanText } from "lucide-react";
-import { CloseIcon } from "./interfaceIcons.js";
+import { ImagePreview } from "./MessageAttachment.js";
+import { imageAnnotation, useImageAnnotationRevision } from "./imageAnnotations.js";
+import { CloseIcon, ReviewCommentGlyph } from "./interfaceIcons.js";
 
 export type ComposerDraftAttachment = File | {
     readonly kind: "pasted-text";
@@ -43,31 +45,39 @@ export function ComposerAttachment({
     disabled,
     onRemove,
     onExpand,
+    onAnnotate,
 }: {
     file: ComposerDraftAttachment;
     disabled?: boolean;
     onRemove: () => void;
     onExpand: (text: string) => void;
+    onAnnotate?: (file: File) => void;
 }) {
+    useImageAnnotationRevision();
+    const [previewOpen, setPreviewOpen] = useState(false);
     const [url, setUrl] = useState("");
     const [error, setError] = useState("");
     const [reading, setReading] = useState(false);
     const actualFile = isComposerFile(file) ? file : null;
-    const name = actualFile ? actualFile.name : "粘贴的文本.txt";
+    const name = isComposerFile(file) ? file.name : file.text.split(/\r?\n/).find(line => line.trim())?.trim() || "粘贴的文本";
     const image = actualFile?.type.startsWith("image/") === true;
+    const count = actualFile ? imageAnnotation(actualFile)?.points.length ?? 0 : 0;
     useEffect(() => {
         if (!image || !actualFile) return;
         const value = URL.createObjectURL(actualFile);
         setUrl(value);
         return () => URL.revokeObjectURL(value);
     }, [actualFile, image]);
-    return (
+    const tile = (
         <div
             className={image ? "composer-image-card" : "composer-text-card"}
             data-testid="composer-attachment"
         >
             {image ? (
-                <img src={url} alt={name} />
+                <>
+                <button type="button" className="composer-image-open" aria-label={`预览图片 ${name}`} disabled={disabled} onClick={() => setPreviewOpen(true)}><img src={url} alt={name} /></button>
+                {previewOpen && <ImagePreview name={name} url={url} onClose={() => setPreviewOpen(false)} onAnnotate={onAnnotate && actualFile ? () => { setPreviewOpen(false); onAnnotate(actualFile); } : undefined} />}
+                </>
             ) : (
                 <>
                     <span className="composer-text-icon">
@@ -125,4 +135,5 @@ export function ComposerAttachment({
             )}
         </div>
     );
+    return image ? <div className="composer-image-attachment">{tile}{!!count && <button type="button" className="composer-image-note-count" disabled={disabled} aria-label={`${count} 条标注`} onClick={() => { if (actualFile) onAnnotate?.(actualFile); }}><ReviewCommentGlyph size={13} />{count} 条标注</button>}</div> : tile;
 }

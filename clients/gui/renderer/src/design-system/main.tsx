@@ -18,11 +18,12 @@ import { Button } from "../components/ui/button.js";
 import { Feedback } from "../components/ui/feedback.js";
 import { TooltipProvider } from "../components/ui/tooltip.js";
 import { MessageResponse } from "../components/ai-elements/message.js";
-import { TurnExecution } from "../TurnExecution.js";
+import { TurnActivity } from "../TurnExecution.js";
 import { Messages } from "../Messages.js";
 import { DecisionTransferExercise } from "./DecisionTransferExercise.js";
 import { SettingsReflowExercise } from "./SettingsReflowExercise.js";
 import { ConversationFlowExercise } from "./ConversationFlowExercise.js";
+import { SettingsPreview } from "./SettingsPreview.js";
 import { ConversationTimelinePreview } from "./ConversationTimelinePreview.js";
 import type { LexicalChatInputHandle } from "../LexicalChatInput.js";
 import type { Action, CommandName } from "../services.js";
@@ -66,7 +67,7 @@ function ChatMotionPreview({ dark }: { dark: boolean }) {
   }, [playing]);
   return <section className="design-preview-panel" aria-label="聊天动效预览">
     <h2>流式输出与等待状态</h2>
-    <TurnExecution items={[]} turn={{ id: "preview-turn", status: "inProgress", items: [] }} project={project} threadId="main" renderItem={() => null} />
+    <TurnActivity turn={{ id: "preview-turn", status: "inProgress", items: [] }} project={project} threadId="main" />
     <div className="design-preview-actions">
       <Button variant="outline" disabled={playing} onClick={() => setPlaying(true)}>播放流式输出</Button>
       <Button variant="ghost" disabled={playing} onClick={() => setLength(value => Math.min(value + 8, motionText.length))}>追加片段</Button>
@@ -86,7 +87,7 @@ function Preview() {
   const [showPanel, setShowPanel] = useState(true);
   const [panelLocation, setPanelLocation] = useState<"bottom" | "right">("bottom");
   const [message, setMessage] = useState("");
-  const [reducedMotion, setReducedMotion] = useState(true);
+  const [reducedMotion, setReducedMotion] = useState(false);
   const conversationExercise = new URLSearchParams(window.location.search).has("conversation-exercise");
   const decisionExercise = new URLSearchParams(window.location.search).has("decision-exercise");
   const exercise = new URLSearchParams(window.location.search).has("settings-exercise");
@@ -119,7 +120,7 @@ function Preview() {
     return {};
   }) as Action;
   const disabled = state === "busy" || state === "unknown";
-  return <main className="design-preview" data-width={width} data-view={new URLSearchParams(window.location.search).has("conversation") ? "conversation" : undefined}>
+  return <main className="design-preview" data-width={width} data-view={new URLSearchParams(window.location.search).has("conversation") ? "conversation" : new URLSearchParams(window.location.search).has("settings") ? "settings" : undefined}>
     <header className="design-preview-header">
       <div><h1>客户端设计系统</h1><p>生产组件与语义 Token · Base 候选 {baseCandidate.version}（未冻结）</p></div>
       <label>主题<select aria-label="主题" value={dark ? "dark" : "light"} onChange={event => setDark(event.target.value === "dark")}><option value="light">明亮</option><option value="dark">深色</option></select></label>
@@ -130,6 +131,7 @@ function Preview() {
       {exercise && <label>题目内容<select aria-label="题目内容" value={exerciseContent} onChange={event => setExerciseContent(event.target.value)}><option value="reference">参考内容</option><option value="stress">长文案</option></select></label>}
     </header>
     {conversationExercise ? <ConversationFlowExercise dark={dark} /> : decisionExercise ? <DecisionTransferExercise key={state} state={state} /> : exercise ? <SettingsReflowExercise key={exerciseContent} stress={exerciseContent === "stress"} state={state} /> : <>
+    <SettingsPreview />
     <section className="design-preview-panel" aria-label="公共控件">
       <h2>设置控件 · 按交互选择</h2>
       <p className="text-ui-sm text-foreground-subtle">执行操作用按钮，开启或关闭用开关，多项选择用下拉，仅两个选项直接并排选择。</p>

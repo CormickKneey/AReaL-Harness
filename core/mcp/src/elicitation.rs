@@ -56,14 +56,14 @@ impl ElicitationBroker {
     }
     pub(crate) async fn request_owned(
         &self,
-        server: &str,
-        generation: u64,
+        server_generation: (&str, u64),
         request_id: Value,
         mut params: Value,
         owner: String,
         cancel: CancellationToken,
         revoked: CancellationToken,
     ) -> Result<Value> {
+        let (server, generation) = server_generation;
         ensure!(
             serde_json::to_vec(&params)?.len() <= 65536,
             "MCP elicitation exceeds budget"

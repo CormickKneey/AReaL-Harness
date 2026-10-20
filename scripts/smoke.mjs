@@ -49,7 +49,6 @@ const model = createServer(async (req, res) => {
   let body = "";
   for await (const chunk of req) body += chunk;
   const request = JSON.parse(body);
-  requests.push(request);
   assert.equal(
     req.headers.authorization,
     request.model === "alternate" ? undefined : "Bearer fixture-key",
@@ -57,6 +56,21 @@ const model = createServer(async (req, res) => {
   assert.equal(req.url, "/v1/chat/completions");
   assert.equal(request.stream, true);
   res.writeHead(200, { "Content-Type": "text/event-stream" });
+  if (
+    request.messages.some(
+      (message) =>
+        message.role === "system" &&
+        typeof message.content === "string" &&
+        message.content.startsWith("Generate a concise semantic session title"),
+    )
+  ) {
+    assert.ok(!request.tools?.length, "session naming has no tools");
+    res.end(
+      `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: "Fixture session" }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`,
+    );
+    return;
+  }
+  requests.push(request);
   const text = request.messages.findLast(
     (message) =>
       message.role === "user" &&

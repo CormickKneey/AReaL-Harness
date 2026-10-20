@@ -126,7 +126,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Constraint::Length(3),
     ])
     .areas(conversation);
-    let read_progress = if app.view == View::Welcome {
+    let read_progress = if app.view == View::Welcome
+        && app.selected.is_none()
+        && app.session_creation_error.is_some()
+    {
+        conversation_view(frame, body, app, palette)
+    } else if app.view == View::Welcome {
         welcome(frame, body, app, palette);
         String::new()
     } else if app.view == View::Permissions {
@@ -172,7 +177,15 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             " ↑↓: select · Enter/Space: expand · ←→ · PgUp/PgDn · Ctrl-O: details · Esc: input"
         }
     };
-    frame.render_widget(Paragraph::new(hint).style(palette.surface), help);
+    frame.render_widget(
+        Paragraph::new(format!(
+            " Ctrl-Q: quit · Ctrl-C: {} ·{}",
+            app.control_c_hint(),
+            hint
+        ))
+        .style(palette.surface),
+        help,
+    );
     completion_popup(frame, input, body, app, palette);
     if app.theme_original.is_some() {
         theme_picker(frame, area, app, palette);
@@ -248,7 +261,7 @@ fn conversation_view(frame: &mut Frame, area: Rect, app: &mut App, p: Palette) -
         .selected
         .as_deref()
         .map(short)
-        .unwrap_or_else(|| "Connecting".into());
+        .unwrap_or_else(|| app.input_target_label().into());
     let block = panel(
         format!(" Conversation · {title} "),
         app.focus == Focus::Content,
@@ -291,6 +304,38 @@ fn conversation_view(frame: &mut Frame, area: Rect, app: &mut App, p: Palette) -
         );
         history.progress()
     } else {
+        let mut lines = Vec::new();
+        if let Some(error) = &app.session_creation_error {
+            lines.push(Line::styled(
+                "Session creation failed",
+                p.style(Role::Error).add_modifier(Modifier::BOLD),
+            ));
+            lines.push(Line::raw(safe_text(error)));
+            lines.push(Line::raw(""));
+            if error.contains("CREDENTIAL_UNAVAILABLE") {
+                lines.push(Line::raw(
+                    "Use --api-key-env NAME to choose the provider's environment variable.",
+                ));
+                lines.push(Line::raw(
+                    "Set that variable in the Core launch environment, then restart Core or the shared service. Updating only this shell does not update a running Core, including a remote Core.",
+                ));
+                lines.push(Line::raw(""));
+            }
+            lines.push(Line::raw("After fixing the error, use /new to retry or /sessions to open an existing session."));
+        } else if app.selected.is_some() {
+            lines.push(Line::raw("Waiting for the session snapshot…"));
+        } else if app.creating_session() {
+            lines.push(Line::raw("Creating session…"));
+        } else {
+            lines.push(Line::raw(
+                "Use /new to create a session or /sessions to open an existing session.",
+            ));
+        }
+        lines.push(Line::raw("Ctrl-Q exits the TUI."));
+        frame.render_widget(
+            Paragraph::new(lines).wrap(Wrap { trim: false }),
+            history_area,
+        );
         String::new()
     }
 }
@@ -434,7 +479,7 @@ fn welcome(frame: &mut Frame, area: Rect, app: &App, p: Palette) {
     let title = app
         .current()
         .map(|t| format!("Workspace: {}", safe_text(&t.cwd)))
-        .unwrap_or_else(|| "Connecting to Core…".into());
+        .unwrap_or_else(|| app.input_target_label().into());
     let mut lines = Vec::new();
     if !app.prefs.no_logo && area.height >= 15 {
         lines.extend(
@@ -644,7 +689,13 @@ fn agent_detail(frame: &mut Frame, area: Rect, app: &App, p: Palette) {
 
 fn execution_status(app: &App) -> String {
     let Some(t) = app.current() else {
-        return "Loading session…".into();
+        return if app.selected.is_some() {
+            "Loading session…".into()
+        } else if app.session_creation_error.is_some() {
+            "Session creation failed".into()
+        } else {
+            app.input_target_label().into()
+        };
     };
     let live = app.connected && app.subscriptions.contains(&t.id);
     let mut parts = vec![if !live {
@@ -890,11 +941,15 @@ fn group_view(frame: &mut Frame, area: Rect, app: &mut App, p: Palette) {
 }
 
 fn input_view(frame: &mut Frame, area: Rect, app: &App, p: Palette) {
-    let target = app.selected.as_deref().unwrap_or("loading");
+    let target = app
+        .selected
+        .as_deref()
+        .map(short)
+        .unwrap_or_else(|| app.input_target_label().into());
     let block = panel(
         format!(
-            " To {} · Enter: send/steer · Ctrl-C: cancel ",
-            short(target)
+            " To {target} · Enter: send/steer · Ctrl-C: {} ",
+            app.control_c_hint()
         ),
         app.focus == Focus::Input,
         p,
@@ -989,9 +1044,9 @@ fn picker_popup(frame: &mut Frame, area: Rect, app: &App, p: Palette) {
     frame.render_widget(Clear, popup);
     frame.render_widget(Block::default().style(p.surface), popup);
     let title = match picker.kind {
-        PickerKind::Sessions => " Sessions · Enter switch · Esc close ",
-        PickerKind::Models => " Models · Enter apply · Esc close ",
-        PickerKind::Skills => " Skills · Enter apply · Esc close ",
+        PickerKind::Sessions => " Sessions · Enter switch · Esc close · Ctrl-Q quit ",
+        PickerKind::Models => " Models · Enter apply · Esc close · Ctrl-Q quit ",
+        PickerKind::Skills => " Skills · Enter apply · Esc close · Ctrl-Q quit ",
     };
     let block = panel(title, true, p);
     let inner = block.inner(popup);
@@ -1137,7 +1192,7 @@ fn theme_picker(frame: &mut Frame, area: Rect, app: &App, p: Palette) {
     );
 }
 fn help_page(frame: &mut Frame, area: Rect, p: Palette) {
-    let text = "F1 /help: help · F2 /theme: theme picker\nF3 /topology: history · F4 /executions: subtasks and delivery\nF5 /sessions: switch session · F6 /model: switch model\n/skills: choose skill · /skill NAME: apply by name\n/goal OBJECTIVE · /goal-pause · /goal-resume · /goal-clear\n/goal-edit OBJECTIVE · /goal-budget TOKENS|none\n/new · /tasks · /sessions · /open ID · /spawn PROMPT · /agents\n/executions · /execution-cancel ID · /welcome · /quit\nAdvanced compatibility: /groups · /group ID\n/group-start JSON_FILE · /group-revise JSON_FILE · /group-cancel ID\n\n/: command suggestions · ↑↓ select · Tab complete\nTab / Shift-Tab: input, right panel, history focus\nInput: ←→ move · Option+←/→ word · Ctrl-A/E line start/end\nCtrl-D/Delete: delete next · Backspace: delete previous\nNavigation: arrows select/expand, Enter open, r refresh\nHistory: ↑↓ select, Enter/Space expand, ←→ collapse/expand\nPgUp/PgDn scroll, Home/End; --mouse=true enables clicking summaries\nCtrl-O /details: compact or detailed records\n/restore-input: restore failed submission\nMouse: --mouse=false enables native drag selection and terminal Copy\nCtrl-C: interrupt the input target's active Turn\nCtrl-R: reconnect · Ctrl-Q: quit\n\nRead % describes loaded history; session plan counts are separate.\nTask trees include historical child sessions. Snapshot nodes can lag.\nApprovals: use the terminal dialog. /permissions: inspect rules. Questions: respond in Web.\nEsc: return to input";
+    let text = "F1 /help: help · F2 /theme: theme picker\nF3 /topology: history · F4 /executions: subtasks and delivery\nF5 /sessions: switch session · F6 /model: switch model\n/skills: choose skill · /skill NAME: apply by name\n/goal OBJECTIVE · /goal-pause · /goal-resume · /goal-clear\n/goal-edit OBJECTIVE · /goal-budget TOKENS|none\n/new · /tasks · /sessions · /open ID · /spawn PROMPT · /agents\n/executions · /execution-cancel ID · /welcome · /quit\nAdvanced compatibility: /groups · /group ID\n/group-start JSON_FILE · /group-revise JSON_FILE · /group-cancel ID\n\n/: focus input and insert slash · ↑↓ select commands · Tab complete\nTab / Shift-Tab: input, right panel, history focus\nInput: ←→ move · Option+←/→ word · Ctrl-A/E line start/end\nCtrl-D/Delete: delete next · Backspace: delete previous\nNavigation: arrows select/expand, Enter open, r refresh\nHistory: ↑↓ select, Enter/Space expand, ←→ collapse/expand\nPgUp/PgDn scroll, Home/End; --mouse=true enables clicking summaries\nCtrl-O /details: compact or detailed records\n/restore-input: restore failed submission\nMouse: --mouse=false enables native drag selection and terminal Copy\nCtrl-C: pause active Goal, interrupt active Turn, or quit when idle\nPending work: inspect or reconnect · Ctrl-Q always quits\nPickers: exact /quit then Enter quits · Esc preserves your draft\nCtrl-R: reconnect · Ctrl-Q: quit\n\nRead % describes loaded history; session plan counts are separate.\nTask trees include historical child sessions. Snapshot nodes can lag.\nApprovals: use the terminal dialog. /permissions: inspect rules. Questions: respond in Web.\nEsc: return to input";
     frame.render_widget(
         Paragraph::new(text)
             .wrap(Wrap { trim: false })

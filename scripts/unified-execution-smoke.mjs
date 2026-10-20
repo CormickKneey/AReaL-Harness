@@ -1,3 +1,4 @@
+import { respondToSessionName } from "./model-fixture.mjs";
 // 真实模型协议、Core、私有 Runtime 与父工作区交付；脚本模型只验证编排契约。
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -59,6 +60,7 @@ const model = createServer(async (request, response) => {
     let bytes = "";
     for await (const part of request) bytes += part;
     const input = JSON.parse(bytes);
+    if (respondToSessionName(input, response)) return;
     modelRequests++;
     const userText = input.messages
       .filter(

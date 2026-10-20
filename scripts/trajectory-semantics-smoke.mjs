@@ -1,3 +1,4 @@
+import { respondToSessionName } from "./model-fixture.mjs";
 // 真实 owned Core/Runtime、多轮、子 Agent、换模型、失败与取消；模型和接收端均为本地夹具。
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
@@ -55,6 +56,7 @@ const model = createServer(async (req, res) => {
     let body = "";
     for await (const chunk of req) body += chunk;
     const input = JSON.parse(body);
+    if (respondToSessionName(input, res)) return;
     requests.push(input);
     const responseId = `chatcmpl-fixture-${requests.length}`;
     const frame = (delta, finish = null) =>

@@ -35,6 +35,10 @@ Without an endpoint, interactive TUI attaches to a shared Core/Runtime on a rand
 
 Shared mode defaults to a workspace-specific data directory under `~/.areal/instances/`; explicit data configuration keeps its precedence. To open old `~/.areal-harness/state` history, specify `--data-dir` or bind it after stopping the old Core. Model TOML changes reload automatically; other TOML changes restart after background work settles, while permission/deployment argument changes require explicit restart. Discovery, migration, logs and Desktop integration are specified in [local services](../api/local-service.en.md).
 
+TUI model credentials come from the environment that starts Core. Export the key variable in your terminal, then select its name with the provider's TOML `api_key_env = "MY_MODEL_KEY"`, `AREAL_HARNESS_API_KEY_ENV=MY_MODEL_KEY`, or `--api-key-env MY_MODEL_KEY`. CLI takes precedence over the environment override, then TOML. Encrypted keys saved by the GUI do not automatically enter an independent TUI's environment. Sharing the model catalog does not share those keys. Missing or invalid credentials identify the environment variable; you can exit after session creation fails and correct the configuration.
+
+Changing your terminal environment does not update a running Core. For an existing shared service, run `areal service restart` with the same configuration, workspace, and deployment arguments, then start the TUI. Wait for background work to settle rather than canceling it to update a key. `Ctrl-R` only reconnects and cannot inject a new key. With `--endpoint`, configure credentials in the remote Core's launch environment. Keep key values out of command arguments and TOML. See the [model configuration examples](configuration.en.md#shared-gui-and-cli-model-catalog).
+
 ```sh
 target/debug/areal web --workspace /absolute/task
 target/debug/areal service list --json
@@ -75,7 +79,7 @@ TUI headers and Web show YOLO/ASK_PERMISSIONS and Core remains authoritative. TU
 | ←/→, Option+←/→, Ctrl-A / Ctrl-E | In the editor, move by grapheme; Option+←/→ (Alt+b / Alt+f) jump to the previous word start / next word end using Codex word boundaries; Ctrl-A / Ctrl-E jump to the current line start / end |
 | Ctrl-D / Delete, Backspace | Delete the grapheme at / before the cursor; empty input or the corresponding boundary is a no-op, without exiting |
 | `/`, Tab, Esc | Slash candidates, completion and dismissal |
-| Ctrl-C / Ctrl-Q | Pause the current Goal and cancel its Turn (interrupt the Turn without a Goal) / exit |
+| Ctrl-C / Ctrl-Q | Ctrl-C pauses the current Goal or interrupts its active Turn, and exits the TUI when no task is active; Ctrl-Q exits the TUI from any view |
 | Ctrl-R | Reconnect and restore a snapshot without replay |
 | F5, `/sessions`, `/new`, `/open ID` | Select, create or open sessions |
 | F6, `/model` | Select a model or reset to default while idle |
@@ -92,6 +96,10 @@ TUI headers and Web show YOLO/ASK_PERMISSIONS and Core remains authoritative. TU
 | ↑/↓, Enter/Space, ←/→ | With history focused: select, toggle, collapse/expand; Esc returns to input |
 | Ctrl-O, `/details` | Toggle compact/detailed history, preserving local expansion choices |
 | `/restore-input` | Restore input retained after a failed or unconfirmed submission |
+
+`/quit` followed by Enter exits from the input or when entered as the complete filter in a picker. A `/` typed from navigation or history focuses the input. Ctrl-Q remains available in all dialogs. When disconnected, awaiting a restored snapshot, or awaiting submission confirmation, Ctrl-C asks you to inspect the status; Ctrl-Q still explicitly exits. Exiting a shared TUI leaves Core and its background tasks running.
+
+`AREAL_TEST_BIN=/absolute/fixed-slot/areal python3 scripts/tui-recovery-smoke.py` uses isolated Core/Runtime, a real PTY, and a local model to verify environment credential recovery, cancellation, and exit. It retains terminal screens and a report. It makes no real provider calls and does not modify user configuration.
 
 Subtask lists are paginated; TUI `/more` loads later records. Waiting or disconnecting does not replay child execution, and Core owns cancellation. Manual `/spawn` defaults to read-only analysis. Submit development requests through the ordinary prompt so the coordinator can declare modification and delivery intent.
 

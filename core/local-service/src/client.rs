@@ -1,6 +1,13 @@
-use crate::{LaunchSpec, storage};
+use crate::{
+    LaunchSpec,
+    gui_owner::{self, GuiLifetime},
+    storage,
+};
 use anyhow::{Context, Result, bail, ensure};
-use areal_protocol::service::{Identity, Request, Response, Service, State, VERSION};
+use areal_protocol::service::{
+    Capabilities, Identity, Request, Response, Service, State, StopOperation, StopOperationState,
+    VERSION,
+};
 use fs2::FileExt;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
@@ -15,23 +22,64 @@ use tokio::{
     time::{Instant, timeout},
 };
 
+#[derive(Debug)]
+struct ControlTransportError(std::io::Error);
+impl std::fmt::Display for ControlTransportError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, formatter)
+    }
+}
+impl std::error::Error for ControlTransportError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.0)
+    }
+}
+
 pub async fn ensure(spec: &LaunchSpec) -> Result<Service> {
-    ensure_inner(spec, None, false).await
+    ensure_inner(spec, None, false, true, None).await
+}
+
+pub async fn ensure_without_restart(spec: &LaunchSpec) -> Result<Service> {
+    ensure_inner(spec, None, false, false, None).await
 }
 
 pub async fn restart(spec: &LaunchSpec, cancel: bool) -> Result<Service> {
-    ensure_inner(spec, Some(cancel), false).await
+    ensure_inner(spec, Some(cancel), false, true, None).await
+}
+
+pub async fn ensure_with_lifetime(
+    spec: &LaunchSpec,
+    lifetime: &GuiLifetime,
+    no_auto_restart: bool,
+) -> Result<Service> {
+    ensure!(
+        spec.owner.is_some(),
+        "GUI lifetime requires an application owner"
+    );
+    ensure_inner(spec, None, false, !no_auto_restart, Some(lifetime)).await
 }
 
 async fn ensure_inner(
     spec: &LaunchSpec,
     restart: Option<bool>,
     reconnect: bool,
+    allow_automatic_restart: bool,
+    lifetime: Option<&GuiLifetime>,
 ) -> Result<Service> {
+    ensure!(
+        spec.owner.is_some() == lifetime.is_some(),
+        "GUI application services require an inherited lifetime descriptor"
+    );
+    if let Some(lifetime) = lifetime {
+        lifetime.check_open()?;
+    }
     let directory = spec.directory()?;
     storage::private_dir(&spec.home.join("services"))?;
     storage::private_dir(&directory)?;
     let _startup = startup_lock(&directory).await?;
+    if let Some(lifetime) = lifetime {
+        lifetime.check_open()?;
+    }
     if reconnect {
         let record: Service = storage::read(&directory.join("service.json"))?;
         ensure!(
@@ -47,9 +95,14 @@ async fn ensure_inner(
         let service = status_unlocked(&spec.home, &spec.service_id).await
             .context("service has an active owner but cannot be reached; inspect its log, do not start a second Core")?;
         ensure!(
+            service.state == State::Ready,
+            "service has an active owner but cannot be reached; inspect its log, do not start a second Core"
+        );
+        ensure!(
             Some(&service.identity.workspace) == spec.args.workspace.as_ref(),
             "data directory is bound to a different workspace"
         );
+        gui_owner::check(spec.owner.as_ref(), service.owner.as_ref())?;
         if restart.is_none() && check_compatible(spec, &service, &directory).is_ok() {
             // 优先等待热更新；超时后只为有效配置走既有的空闲重启流程。
             let deadline = Instant::now() + Duration::from_secs(3);
@@ -83,6 +136,7 @@ async fn ensure_inner(
                 "permissions",
                 "runtime",
                 "deployment",
+                "binaries",
                 "model-inputs",
             ] {
                 if previous
@@ -93,6 +147,10 @@ async fn ensure_inner(
                 }
             }
         }
+        ensure!(
+            restart.is_some() || allow_automatic_restart,
+            "service requires explicit lifecycle restart; the running instance is unchanged"
+        );
         stop_unlocked(&spec.home, &spec.service_id, restart.unwrap_or(false), None).await
             .with_context(|| format!("configuration requires a restart; wait for background work to finish, or run `{} --cancel` to explicitly cancel it", spec.restart_command()))?;
         if !reconnect {
@@ -122,8 +180,24 @@ async fn ensure_inner(
             "could not configure service log append mode"
         );
     }
-    let mut command =
-        crate::native_process::TrustedCommand::persistent(&spec.bin_dir.join("areal"))?;
+    if let Some(lifetime) = lifetime {
+        lifetime.check_open()?;
+    }
+    let binary = spec.bin_dir.join("areal");
+    let mut command = match lifetime {
+        Some(lifetime) => {
+            let mut command =
+                crate::native_process::TrustedCommand::gui_host(&binary, lifetime.as_raw_fd())?;
+            command
+                .env(gui_owner::LIFETIME_FD_ENV, lifetime.as_raw_fd().to_string())
+                .env(
+                    gui_owner::OWNER_ENV,
+                    serde_json::to_string(spec.owner.as_ref().unwrap())?,
+                );
+            command
+        }
+        None => crate::native_process::TrustedCommand::persistent(&binary)?,
+    };
     command.arg("service-host");
     command
         .current_dir(&spec.launch_cwd)
@@ -138,6 +212,9 @@ async fn ensure_inner(
     input.shutdown().await?;
     drop(input);
     loop {
+        if let Some(lifetime) = lifetime {
+            lifetime.check_open()?;
+        }
         if let Some(exit) = child.try_wait()? {
             let diagnostic =
                 std::fs::read_to_string(directory.join("host.log")).unwrap_or_default();
@@ -200,10 +277,11 @@ async fn startup_lock(directory: &Path) -> Result<std::fs::File> {
 }
 
 pub async fn reconnect(spec: &LaunchSpec) -> Result<Service> {
-    ensure_inner(spec, None, true).await
+    ensure_inner(spec, None, true, true, None).await
 }
 
 fn check_compatible(spec: &LaunchSpec, service: &Service, directory: &Path) -> Result<()> {
+    gui_owner::check(spec.owner.as_ref(), service.owner.as_ref())?;
     ensure!(
         service.state == State::Ready,
         "service is not accepting connections: {:?}",
@@ -269,6 +347,13 @@ pub async fn select(
 }
 
 pub async fn request(root: &Path, id: &str, request: Request) -> Result<Service> {
+    match control_request(root, id, request).await? {
+        Response::Ok { service } => Ok(*service),
+        _ => bail!("unexpected service control response"),
+    }
+}
+
+async fn control_request(root: &Path, id: &str, request: Request) -> Result<Response> {
     let directory = storage::registry(root, id)?;
     ensure!(directory.is_dir(), "unknown service instance: {id}");
     storage::private_dir(&directory)?;
@@ -276,19 +361,176 @@ pub async fn request(root: &Path, id: &str, request: Request) -> Result<Service>
         Duration::from_secs(2),
         UnixStream::connect(directory.join("control.sock")),
     )
-    .await??;
+    .await?
+    .map_err(ControlTransportError)?;
     let (read, mut write) = connection.into_split();
     let mut bytes = serde_json::to_vec(&request)?;
     bytes.push(b'\n');
-    write.write_all(&bytes).await?;
+    write
+        .write_all(&bytes)
+        .await
+        .map_err(ControlTransportError)?;
     let mut reader = BufReader::new(read.take(256 * 1024));
     let mut line = String::new();
     // 服务仅在私有 socket 上返回有界的一行响应。
     use tokio::io::AsyncReadExt;
-    timeout(Duration::from_secs(65), reader.read_line(&mut line)).await??;
+    let count = timeout(Duration::from_secs(65), reader.read_line(&mut line))
+        .await?
+        .map_err(ControlTransportError)?;
+    if count == 0 {
+        return Err(
+            ControlTransportError(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)).into(),
+        );
+    }
     match serde_json::from_str(&line)? {
-        Response::Ok { service } => Ok(*service),
         Response::Error { message } => bail!("{message}"),
+        response => Ok(response),
+    }
+}
+
+pub async fn capabilities(root: &Path, id: &str, generation: &str) -> Result<Capabilities> {
+    let directory = storage::registry(root, id)?;
+    let _startup = startup_lock(&directory).await?;
+    capabilities_unlocked(root, id, generation).await
+}
+
+async fn capabilities_unlocked(root: &Path, id: &str, generation: &str) -> Result<Capabilities> {
+    match control_request(
+        root,
+        id,
+        Request::Capabilities {
+            version: VERSION,
+            generation: generation.to_owned(),
+        },
+    )
+    .await
+    .context("service does not expose stop-operation capabilities")?
+    {
+        Response::Capabilities { capabilities } => Ok(capabilities),
+        _ => bail!("unexpected service capability response"),
+    }
+}
+
+pub async fn operation(
+    root: &Path,
+    id: &str,
+    generation: &str,
+    request_id: &str,
+) -> Result<Option<StopOperation>> {
+    let directory = storage::registry(root, id)?;
+    let _startup = startup_lock(&directory).await?;
+    operation_unlocked(&directory, id, generation, request_id)
+}
+
+fn operation_unlocked(
+    directory: &Path,
+    id: &str,
+    generation: &str,
+    request_id: &str,
+) -> Result<Option<StopOperation>> {
+    let Some(receipt) = storage::read_stop_receipt(directory, request_id)? else {
+        return Ok(None);
+    };
+    let mut operation = receipt.operation;
+    ensure!(
+        operation.version == VERSION
+            && operation.service_id == id
+            && operation.generation == generation
+            && receipt.service.identity.service_id == id
+            && receipt.service.identity.generation == generation,
+        "stop request conflict: operation identity does not match"
+    );
+    if operation.state == StopOperationState::AcceptedPending {
+        let current: Service = storage::read(&directory.join("service.json"))?;
+        ensure!(current.identity.service_id == id, "invalid service record");
+        let replaced = current.identity.generation != generation;
+        if replaced
+            || (storage::available(&receipt.service.identity.data_dir.join("service.lock"))?
+                && storage::store_available(&receipt.service.identity.data_dir)?)
+        {
+            let settled = storage::read_stop_receipt(directory, request_id)?
+                .context("the original stop receipt disappeared after shutdown")?;
+            ensure!(
+                settled.operation.version == operation.version
+                    && settled.operation.service_id == operation.service_id
+                    && settled.operation.generation == operation.generation
+                    && settled.operation.cancel == operation.cancel
+                    && settled.service.identity == receipt.service.identity,
+                "stop request conflict: settled operation identity does not match"
+            );
+            operation = settled.operation;
+            if operation.state == StopOperationState::AcceptedPending {
+                operation.state = if settled.cleanup_confirmed {
+                    StopOperationState::Completed
+                } else {
+                    StopOperationState::AdmissionUnknown
+                };
+                if !settled.cleanup_confirmed {
+                    operation.message =
+                        Some("the original host exited without confirming cleanup".into());
+                }
+            }
+        }
+    }
+    Ok(Some(operation))
+}
+
+pub async fn stop_operation(
+    root: &Path,
+    id: &str,
+    generation: &str,
+    request_id: &str,
+    cancel: bool,
+) -> Result<StopOperation> {
+    let directory = storage::registry(root, id)?;
+    let _startup = startup_lock(&directory).await?;
+    stop_operation_unlocked(root, id, generation, request_id, cancel)
+        .await
+        .with_context(|| format!("stop request {request_id} for generation {generation}"))
+}
+
+async fn stop_operation_unlocked(
+    root: &Path,
+    id: &str,
+    generation: &str,
+    request_id: &str,
+    cancel: bool,
+) -> Result<StopOperation> {
+    let directory = storage::registry(root, id)?;
+    if let Some(operation) = operation_unlocked(&directory, id, generation, request_id)? {
+        ensure!(
+            operation.cancel == cancel,
+            "stop request conflict: cancel strategy changed"
+        );
+        return Ok(operation);
+    }
+    let capabilities = capabilities_unlocked(root, id, generation).await?;
+    ensure!(
+        capabilities.version == VERSION && capabilities.stop_operations == 1,
+        "service does not support durable stop operations"
+    );
+    match control_request(root, id, Request::StopOperation {
+        version: VERSION,
+        generation: generation.to_owned(),
+        request_id: request_id.to_owned(),
+        cancel,
+    }).await {
+        Ok(Response::Operation { operation }) => {
+            ensure!(
+                operation.request_id == request_id && operation.service_id == id
+                    && operation.generation == generation && operation.cancel == cancel,
+                "invalid stop operation response"
+            );
+            Ok(*operation)
+        }
+        Ok(_) => bail!("unexpected stop operation response"),
+        Err(error) => match operation_unlocked(&directory, id, generation, request_id)? {
+            Some(operation) => {
+                ensure!(operation.cancel == cancel, "stop request conflict: cancel strategy changed");
+                Ok(operation)
+            }
+            None => Err(error).context("stop admission is unknown; read the original operation before taking further action"),
+        },
     }
 }
 
@@ -316,11 +558,34 @@ async fn status_unlocked(root: &Path, id: &str) -> Result<Service> {
         };
         return Ok(record);
     }
-    let live = request(root, id, Request::Status { version: VERSION }).await?;
+    let live = match request(root, id, Request::Status { version: VERSION }).await {
+        Ok(live) => live,
+        Err(error)
+            if error
+                .downcast_ref::<ControlTransportError>()
+                .is_some_and(|error| {
+                    matches!(
+                        error.0.kind(),
+                        std::io::ErrorKind::NotFound
+                            | std::io::ErrorKind::ConnectionRefused
+                            | std::io::ErrorKind::ConnectionReset
+                            | std::io::ErrorKind::BrokenPipe
+                            | std::io::ErrorKind::UnexpectedEof
+                    )
+                }) =>
+        {
+            // Host 可先关闭控制端点再释放租约。只报告不可用，不伪造停止或清理回执；
+            // 正常发现仍须核对代际，下一次查询只有两把锁都释放后才可观察 stopped。
+            record.state = State::Unavailable;
+            return Ok(record);
+        }
+        Err(error) => return Err(error),
+    };
     ensure!(
         live.identity == record.identity,
         "service generation changed; retry discovery"
     );
+    gui_owner::check(record.owner.as_ref(), live.owner.as_ref())?;
     if live.state == State::Ready {
         probe(&live).await?;
     }
@@ -386,38 +651,44 @@ async fn stop_unlocked(
     if service.state == State::Stopped {
         return Ok(service);
     }
-    request(
-        root,
-        id,
-        Request::Stop {
-            version: VERSION,
-            generation: service.identity.generation.clone(),
-            cancel,
-        },
-    )
-    .await?;
-    let deadline = Instant::now() + Duration::from_secs(45);
-    while !storage::available(&service.identity.data_dir.join("service.lock"))? {
-        ensure!(
-            Instant::now() < deadline,
-            "service cleanup is not confirmed; inspect {}",
-            service.log_file.display()
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    ensure!(
-        storage::store_available(&service.identity.data_dir)?,
-        "Core still owns the store; cleanup is not confirmed"
-    );
-    let settled: Service = storage::read(&storage::registry(root, id)?.join("service.json"))?;
-    ensure!(
-        settled.identity.generation == service.identity.generation
-            && settled.state == State::Stopped,
-        "service did not confirm clean shutdown or has already restarted; inspect {}",
-        service.log_file.display()
-    );
-    service.state = State::Stopped;
-    Ok(service)
+    let generation = service.identity.generation.clone();
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let outcome: Result<Service> = async {
+        let directory = storage::registry(root, id)?;
+        let mut operation =
+            stop_operation_unlocked(root, id, &generation, &request_id, cancel).await?;
+        let deadline = Instant::now() + Duration::from_secs(45);
+        loop {
+            ensure!(
+                matches!(operation.state, StopOperationState::AcceptedPending | StopOperationState::Completed),
+                "service stop is {:?}: {}; inspect the original operation before taking further action",
+                operation.state,
+                operation.message.as_deref().unwrap_or("cleanup is not confirmed")
+            );
+            if operation.state == StopOperationState::Completed
+                && storage::available(&service.identity.data_dir.join("service.lock"))?
+                && storage::store_available(&service.identity.data_dir)?
+            {
+                let settled: Service = storage::read(&directory.join("service.json"))?;
+                ensure!(
+                    settled.identity.generation == generation && settled.state == State::Stopped,
+                    "service did not confirm clean shutdown or has already restarted; inspect {}",
+                    service.log_file.display()
+                );
+                service.state = State::Stopped;
+                return Ok(service);
+            }
+            ensure!(
+                Instant::now() < deadline,
+                "service cleanup is not confirmed; inspect the original operation and {}",
+                service.log_file.display()
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            operation = operation_unlocked(&directory, id, &generation, &request_id)?
+                .context("the original stop receipt is missing; admission is unknown")?;
+        }
+    }.await;
+    outcome.with_context(|| format!("stop request {request_id} for generation {generation}"))
 }
 
 fn token(service: &Service) -> Result<String> {
@@ -591,6 +862,7 @@ mod tests {
         let data = root.path().join("data");
         storage::private_dir(&data).unwrap();
         let service = Service {
+            owner: None,
             identity: Identity {
                 protocol_version: VERSION,
                 service_id: id.clone(),
@@ -643,6 +915,97 @@ mod tests {
         assert_eq!(observed.state, State::Stopping);
         assert!(!storage::available(&data.join("service.lock")).unwrap());
         host.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn disconnected_control_is_unavailable_until_both_ownership_locks_release() {
+        let root = tempfile::tempdir_in("/tmp").unwrap();
+        let id = "b".repeat(24);
+        let directory = storage::registry(root.path(), &id).unwrap();
+        storage::private_dir(&directory).unwrap();
+        let data = root.path().join("data");
+        storage::private_dir(&data).unwrap();
+        let service = Service {
+            owner: None,
+            identity: Identity {
+                protocol_version: VERSION,
+                service_id: id.clone(),
+                generation: "original".into(),
+                workspace: root.path().join("workspace"),
+                data_dir: data.clone(),
+                config_fingerprint: "fixture".into(),
+            },
+            endpoint: "ws://127.0.0.1:1".into(),
+            web_url: "http://127.0.0.1:1/ui".into(),
+            auth_file: data.join("auth.json"),
+            log_file: directory.join("host.log"),
+            core_pid: 1,
+            host_pid: 2,
+            state: State::Ready,
+        };
+        storage::write(&directory.join("service.json"), &service).unwrap();
+        let lease = storage::open_private(&data.join("service.lock"), true).unwrap();
+        lease.try_lock_exclusive().unwrap();
+        let store = storage::open_private(&data.join("owner.lock"), true).unwrap();
+        store.try_lock_exclusive().unwrap();
+        assert_eq!(
+            status(root.path(), &id).await.unwrap().state,
+            State::Unavailable
+        );
+        let socket = directory.join("control.sock");
+        let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+        drop(listener);
+        assert_eq!(
+            status(root.path(), &id).await.unwrap().state,
+            State::Unavailable
+        );
+        std::fs::remove_file(&socket).unwrap();
+        for response in [
+            "",
+            "not-json",
+            "{\"result\":\"error\",\"message\":\"disk failure\"}",
+        ] {
+            let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+            let response = response.to_owned();
+            let disconnected = response.is_empty();
+            let host = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut line = String::new();
+                BufReader::new(&mut stream)
+                    .read_line(&mut line)
+                    .await
+                    .unwrap();
+                if !response.is_empty() {
+                    stream.write_all(response.as_bytes()).await.unwrap();
+                }
+            });
+            let observed = status(root.path(), &id).await;
+            if disconnected {
+                assert_eq!(observed.unwrap().state, State::Unavailable);
+            } else {
+                assert!(observed.is_err());
+            }
+            host.await.unwrap();
+            std::fs::remove_file(&socket).unwrap();
+        }
+        drop(lease);
+        assert_eq!(
+            status(root.path(), &id).await.unwrap().state,
+            State::Unavailable
+        );
+        drop(store);
+        let observed = status(root.path(), &id).await.unwrap();
+        assert_eq!(observed.state, State::Stopped);
+        assert_eq!(observed.identity, service.identity);
+        // 状态观察不补写 Host 的权威清理标记，恢复仍须另行核对它。
+        assert_eq!(
+            storage::read::<Service>(&directory.join("service.json"))
+                .unwrap()
+                .state,
+            State::Ready
+        );
+        std::fs::remove_file(directory.join("service.json")).unwrap();
+        assert!(status(root.path(), &id).await.is_err());
     }
 
     #[test]

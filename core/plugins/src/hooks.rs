@@ -10,7 +10,7 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, sync::LazyLock};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum HookEvent {
     PreToolUse,
     PermissionRequest,
@@ -76,7 +76,7 @@ impl HookEvent {
         )
     }
 }
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum HookHandler {
     Command {
@@ -99,7 +99,7 @@ impl HookHandler {
         }
     }
 }
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
 pub struct HookDefinition {
     pub id: String,
     pub digest: String,
@@ -300,17 +300,16 @@ pub(crate) fn discover(
         );
     }
     // Invalid members of a path list are ignored while valid paths still replace defaults.
-    if let Some(Value::Array(values)) = declaration {
-        if values.iter().all(Value::is_string)
-            && values
-                .iter()
-                .any(|v| validate_path(v.as_str().unwrap()).is_none())
-        {
-            diagnostics.push(
-                "hooks: ignored invalid path; paths must start with ./ and stay inside the package"
-                    .into(),
-            );
-        }
+    if let Some(Value::Array(values)) = declaration
+        && values.iter().all(Value::is_string)
+        && values
+            .iter()
+            .any(|v| validate_path(v.as_str().unwrap()).is_none())
+    {
+        diagnostics.push(
+            "hooks: ignored invalid path; paths must start with ./ and stay inside the package"
+                .into(),
+        );
     }
     let source = source.unwrap_or_else(|| {
         Source::Paths(if files.contains_key("hooks/hooks.json") {

@@ -183,7 +183,6 @@ impl Engine {
             }
             let invocation = id();
             let asynchronous = hook.definition.r#async;
-            let turn_tasks;
             let token = if asynchronous {
                 cell.hooks.cancel.child_token()
             } else {
@@ -199,7 +198,7 @@ impl Engine {
                 event == HookEvent::SessionEnd || !cell.hooks.closing.load(Ordering::Acquire),
                 "hook session closing before admission"
             );
-            turn_tasks = state.active.as_ref().map(|a| a.hook_tasks.clone());
+            let turn_tasks = state.active.as_ref().map(|a| a.hook_tasks.clone());
             let mut candidate = state.thread.clone();
             let turn_id = state.active.as_ref().map(|a| a.id.clone());
             let runs = &mut candidate

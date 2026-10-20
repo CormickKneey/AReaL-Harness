@@ -934,9 +934,9 @@ async fn discover(
     config: &ServerConfig,
     service: &RunningService<RoleClient, Handler>,
 ) -> Result<Vec<McpTool>> {
-    if !service
+    if service
         .peer_info()
-        .is_some_and(|info| info.capabilities.tools.is_some())
+        .is_none_or(|info| info.capabilities.tools.is_none())
     {
         return Ok(Vec::new());
     }
@@ -1033,6 +1033,12 @@ fn alias(server: &str, tool: &str) -> String {
     format!("mcp__{server}__{}", &digest[..24])
 }
 
+impl Drop for Connections {
+    fn drop(&mut self) {
+        self.revoke();
+    }
+}
+
 #[cfg(test)]
 mod cleanup_chain_tests {
     use super::*;
@@ -1046,11 +1052,5 @@ mod cleanup_chain_tests {
                 .chain()
                 .any(|cause| cause.is::<CleanupUnconfirmed>())
         );
-    }
-}
-
-impl Drop for Connections {
-    fn drop(&mut self) {
-        self.revoke();
     }
 }

@@ -1,6 +1,7 @@
 //! 桌面扩展投影的响应和事件；动态工具参数、Runtime capabilities 保留扩展对象。
 use areal_protocol::{desktop::*, *};
 use serde_json::{Value, json};
+pub mod plugins;
 fn schema<T: schemars::JsonSchema>() -> Value {
     serde_json::to_value(schemars::schema_for!(T)).unwrap()
 }
@@ -55,8 +56,29 @@ pub fn projections() -> (Value, Value) {
     let mcp = object(
         json!({"id":string,"revision":number,"directoryRevision":number,"config":schema::<areal_mcp::ServerConfig>(),"state":{"enum":["disconnected","connecting","connected","failed","stale","cleanupFailed"]},"error":nullable(string.clone()),"tools":nullable(array(schema::<ToolDefinition>()))}),
     );
+    let resource = json!({"anyOf":[
+        object(json!({"threadId":string,"id":string,"state":string,"epoch":string})),
+        object(json!({"kind":{"const":"runtime"},"state":string,"epoch":string})),
+        object(json!({"kind":{"const":"hookTaskScope"},"threadId":string,
+            "state":{"const":"cleanupUnknown"},"operationId":nullable(string.clone()),
+            "scopeId":nullable(string.clone())}))
+    ]});
+    let lifecycle_assessment = object(json!({
+        "allowed":boolean,
+        "reasons":array(object(json!({
+            "code":{"enum":["activeTurn","resource","compaction","workgroup","activeGoal","queuedMessage","activeTask"]},
+            "count":number
+        })))
+    }));
+    let lifecycle = object(json!({
+        "version":{"const":1},
+        "admission":{"enum":["open","draining","closed"]},
+        "ifIdle":lifecycle_assessment,
+        "settled":lifecycle_assessment,
+        "executionOutcomes":object(json!({"uninspectedUnknown":number}))
+    }));
     let status = object(
-        json!({"configuration":nullable(object(json!({"modelRevision":string,"restartRequired":boolean,"error":nullable(string.clone())}))),"apiVersion":{"const":API_VERSION},"stateVersion":number,"productVersion":string,"draining":boolean,"closed":boolean,"acceptingWork":boolean,"activeTasks":number,"activeGoals":array(string.clone()),"pendingQueueItems":number,"activeTurns":array(object(json!({"threadId":string,"turnId":string}))),"resources":array(object(json!({"threadId":string,"id":string,"state":string,"epoch":string}))),"unresolvedTools":array(object(json!({"threadId":string,"itemId":string}))),"compactions":array(string.clone()),"workgroups":array(group_entry.clone()),"runtime":nullable(any_object.clone()),"capacity":object(json!({"threads":number,"maxThreads":number,"activeTurns":number,"maxActiveTurns":number,"historyBytesPerThread":number,"blobBytes":number})),"restartSafe":boolean}),
+        json!({"configuration":nullable(object(json!({"modelRevision":string,"restartRequired":boolean,"error":nullable(string.clone())}))),"apiVersion":{"const":API_VERSION},"stateVersion":number,"productVersion":string,"draining":boolean,"closed":boolean,"acceptingWork":boolean,"activeTasks":number,"activeGoals":array(string.clone()),"pendingQueueItems":number,"activeTurns":array(object(json!({"threadId":string,"turnId":string}))),"resources":array(resource),"unresolvedTools":array(object(json!({"threadId":string,"itemId":string}))),"compactions":array(string.clone()),"workgroups":array(group_entry.clone()),"runtime":nullable(any_object.clone()),"capacity":object(json!({"threads":number,"maxThreads":number,"activeTurns":number,"maxActiveTurns":number,"historyBytesPerThread":number,"blobBytes":number})),"restartSafe":boolean,"lifecycle":lifecycle}),
     );
     let context_budget = object(
         json!({"windowTokens":number,"outputReserveTokens":number,"inputLimitTokens":number,"targetTokens":number,"windowSource":{"enum":["model","fallback"]},"outputLimitTokens":nullable(number.clone()),"historyEstimatedTokens":number,"estimatedInputTokens":number,"estimateScope":{"const":"historyWithRecordedInstructionsAndCurrentTools"},"retentionStrategy":{"enum":["automatic","legacyRecentBoundary"]}}),
@@ -273,6 +295,24 @@ pub fn projections() -> (Value, Value) {
     );
     insert(&["mcp/read"], mcp);
     insert(&["server/status", "server/drain"], status);
+    let model_configuration_proof = object(json!({
+        "serviceId":string,"generation":string,"applied":schema::<AppliedModelConfiguration>(),
+        "modelRevision":string,"credentialStates":{"type":"object","additionalProperties":{"enum":["notRequired","available","unavailable"]}}
+    }));
+    let mut model_configuration = model_configuration_proof.clone();
+    model_configuration["properties"]["operation"] = object(json!({
+        "requestId":string,"state":{"enum":["running","applied","rejected","unknown"]}
+    }));
+    model_configuration["properties"]["operation"]["properties"]["result"] =
+        model_configuration_proof;
+    model_configuration["properties"]["operation"]["properties"]["error"] = schema::<RpcError>();
+    insert(
+        &[
+            "server/modelConfiguration/read",
+            "server/modelConfiguration/apply",
+        ],
+        model_configuration,
+    );
     insert(
         &["server/gc"],
         object(json!({"deletedBlobs":number,"reclaimedBytes":number,"retainedBytes":number})),
@@ -454,6 +494,10 @@ pub fn projections() -> (Value, Value) {
     notifications.insert("areal/goal/updated".into(), goal_view);
     notifications.insert("areal/goal/cleared".into(),object(json!({"threadId":string,"revision":number,"eventSequence":number,"goal":nullable(schema::<areal_protocol::goals::Goal>()),"goalId":string})));
     notifications.insert("thread/started".into(), object(json!({"thread":thread})));
+    notifications.insert(
+        "areal/thread/edited".into(),
+        object(json!({"threadId":string,"thread":thread})),
+    );
     for name in ["turn/started", "turn/completed"] {
         notifications.insert(name.into(), object(json!({"threadId":string,"turn":turn})));
     }
@@ -545,6 +589,7 @@ pub fn projections() -> (Value, Value) {
     ] {
         notifications.insert(name.into(), value);
     }
+    plugins::projections(&mut responses, &mut notifications);
     (Value::Object(responses), Value::Object(notifications))
 }
 

@@ -64,6 +64,13 @@ pub enum FileCommand {
         offset: u64,
         max_bytes: usize,
     },
+    /// Private Core evidence read with the same access and chunk bounds as Read.
+    ReadForHistory {
+        path: String,
+        #[serde(default)]
+        offset: u64,
+        max_bytes: usize,
+    },
     Stat {
         path: String,
     },
@@ -120,6 +127,7 @@ impl FileCommand {
     pub fn path(&self) -> &str {
         match self {
             Self::Read { path, .. }
+            | Self::ReadForHistory { path, .. }
             | Self::Stat { path }
             | Self::List { path, .. }
             | Self::Search { path, .. }
@@ -134,6 +142,7 @@ impl FileCommand {
     pub fn path_mut(&mut self) -> &mut String {
         match self {
             Self::Read { path, .. }
+            | Self::ReadForHistory { path, .. }
             | Self::Stat { path }
             | Self::List { path, .. }
             | Self::Search { path, .. }

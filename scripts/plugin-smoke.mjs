@@ -1,3 +1,4 @@
+import { respondToSessionName } from "./model-fixture.mjs";
 import WebSocket from "ws";
 // Real DSH package -> SDK -> Core -> Runtime -> native file sandbox.
 import assert from "node:assert/strict";
@@ -48,6 +49,7 @@ const model = createServer(async (request, response) => {
     let body = "";
     for await (const chunk of request) body += chunk;
     const input = JSON.parse(body);
+    if (respondToSessionName(input, response)) return;
     const mode = input.messages.findLast((m) => m.role === "user").content;
     const results = input.messages.filter((m) => m.role === "tool");
     const editor = input.tools.find((t) => t.function.name === "str_replace_editor");
@@ -259,7 +261,7 @@ try {
   }
   assert.equal(items[1].execution.plugin.operations.at(-1).kind, "write");
   const stored = JSON.parse(await readFile(join(data, `${edit.threadId}.json`), "utf8"));
-  assert.equal(stored.version, 14);
+  assert.equal(stored.version, 15);
   assert(
     stored.thread.turns[0].items.some((i) =>
       i.execution?.plugin?.operations.some((o) => o.kind === "write" && o.outcome === "succeeded"),

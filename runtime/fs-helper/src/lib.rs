@@ -136,6 +136,9 @@ pub fn execute(request: FileHelperRequest) -> Result<Value> {
     match request.command {
         FileCommand::Read {
             offset, max_bytes, ..
+        }
+        | FileCommand::ReadForHistory {
+            offset, max_bytes, ..
         } => {
             if max_bytes == 0 || max_bytes > MAX_FILE_CHUNK {
                 return Err(invalid("maxBytes must be 1..65536"));

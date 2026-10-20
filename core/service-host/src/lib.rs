@@ -1,8 +1,15 @@
-//! 每个部署实例一个宿主；UI 进程退出不影响服务，停止须先完成 Core 结算。
+//! 每个部署实例一个宿主；GUI 宿主受应用生命期约束，公开停止须先完成 Core 结算。
 use anyhow::{Context, Result, bail, ensure};
 use areal_local_service::native_process::{TrustedChild as Child, TrustedCommand};
-use areal_local_service::{LaunchSpec, probe, rpc, storage};
-use areal_protocol::service::{Identity, Request, Response, Service, State, VERSION};
+use areal_local_service::{
+    LaunchSpec,
+    gui_owner::{self, GuiLifetime},
+    probe, rpc, storage,
+};
+use areal_protocol::service::{
+    Capabilities, Identity, Request, Response, Service, State, StopOperation, StopOperationState,
+    VERSION,
+};
 use fs2::FileExt;
 use serde_json::{Value, json};
 use std::{os::fd::AsRawFd, path::PathBuf, process::Stdio, sync::Arc, time::Duration};
@@ -15,14 +22,56 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 mod retention;
 
+#[derive(Default)]
+struct StopState {
+    stopping: bool,
+    operation: Option<storage::StopReceipt>,
+}
+
 pub async fn run() -> Result<()> {
+    let lifetime = GuiLifetime::from_env()?;
+    if let Some(lifetime) = &lifetime {
+        lifetime.check_open()?;
+    }
+    let owner = gui_owner::from_env()?;
+    ensure!(
+        owner.is_some() == lifetime.is_some(),
+        "GUI host requires matching owner and lifetime descriptor"
+    );
+    let shutdown = CancellationToken::new();
+    let owner_task = lifetime.map(|lifetime| {
+        let shutdown = shutdown.clone();
+        tokio::spawn(async move {
+            if let Err(error) = lifetime.closed().await {
+                eprintln!("GUI lifetime stream failed: {error}");
+            }
+            shutdown.cancel();
+        })
+    });
+    let result = run_host(owner, shutdown).await;
+    if let Some(task) = owner_task {
+        task.abort();
+        let _ = task.await;
+    }
+    result
+}
+
+async fn run_host(
+    owner: Option<areal_protocol::service::Owner>,
+    shutdown: CancellationToken,
+) -> Result<()> {
     let mut bytes = Vec::new();
-    timeout(
-        Duration::from_secs(10),
-        tokio::io::stdin().take(256 * 1024).read_to_end(&mut bytes),
-    )
-    .await??;
+    let mut input = tokio::io::stdin().take(256 * 1024);
+    tokio::select! {
+        _ = shutdown.cancelled() => bail!("GUI application ended before host startup"),
+        result = timeout(Duration::from_secs(10), input.read_to_end(&mut bytes)) => { result??; },
+    }
     let spec: LaunchSpec = serde_json::from_slice(&bytes)?;
+    gui_owner::check(owner.as_ref(), spec.owner.as_ref())?;
+    ensure!(
+        !shutdown.is_cancelled(),
+        "GUI application ended before host startup"
+    );
     let directory = spec.directory()?;
     storage::private_dir(&directory)?;
     let data = spec
@@ -53,10 +102,15 @@ pub async fn run() -> Result<()> {
     let info = run.join("identity.json");
     storage::write(&info, &identity)?;
     let ready = run.join("ready.json");
-    let log_file = directory.join("host.log");
     let lease_fd = ownership.as_raw_fd();
+    ensure!(
+        !shutdown.is_cancelled(),
+        "GUI application ended before launcher startup"
+    );
     let mut command = TrustedCommand::supervised(&spec.bin_dir.join("areal"), &[lease_fd])?;
     command
+        .env_remove(gui_owner::OWNER_ENV)
+        .env_remove(gui_owner::LIFETIME_FD_ENV)
         .arg("launcher")
         .arg("--lease-fd")
         .arg(ownership.as_raw_fd().to_string())
@@ -81,7 +135,6 @@ pub async fn run() -> Result<()> {
         .await
         .context("start trusted Core/Runtime launcher")?;
     drop(command);
-    let shutdown = CancellationToken::new();
     let signal_stop = shutdown.clone();
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
@@ -90,11 +143,25 @@ pub async fn run() -> Result<()> {
         signal_stop.cancel();
     });
     let generation = identity.generation.clone();
+    let stopping = Arc::new(Mutex::new(StopState::default()));
     let result = serve(
-        &spec, identity, &ready, log_file, &directory, &mut child, shutdown,
+        &spec,
+        identity,
+        &ready,
+        &directory,
+        &mut child,
+        shutdown,
+        stopping.clone(),
     )
     .await;
-    let cleanup = finish(&mut child, result.is_ok()).await;
+    let process_cleanup = finish(&mut child, result.is_ok()).await;
+    let socket_cleanup = match std::fs::remove_file(directory.join("control.sock")) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    };
+    let run_cleanup = std::fs::remove_dir_all(run).map_err(anyhow::Error::from);
+    let cleanup = process_cleanup.and(socket_cleanup).and(run_cleanup);
     if let Ok(mut record) = storage::read::<Service>(&directory.join("service.json"))
         && record.identity.generation == generation
         && (result.is_ok() || cleanup.is_err())
@@ -107,11 +174,19 @@ pub async fn run() -> Result<()> {
         storage::write(&directory.join("service.json"), &record)?;
     }
 
+    if let Some(receipt) = &mut stopping.lock().await.operation {
+        if cleanup.is_ok() && result.is_ok() {
+            receipt.cleanup_confirmed = true;
+        } else {
+            receipt.operation.state = StopOperationState::SettlementIncomplete;
+            receipt.operation.message =
+                Some("host cleanup is not confirmed; inspect the service log".into());
+        }
+        storage::write_stop_receipt(&directory, receipt)?;
+    }
+
     signal_task.abort();
     let _ = signal_task.await;
-    // 持锁清理当前 generation，旧实例不能删除新实例的登记。
-    let _ = std::fs::remove_file(directory.join("control.sock"));
-    let _ = std::fs::remove_dir_all(run);
     cleanup?;
     result
 }
@@ -128,11 +203,12 @@ async fn serve(
     spec: &LaunchSpec,
     identity: Identity,
     ready: &std::path::Path,
-    log_file: PathBuf,
     directory: &std::path::Path,
     child: &mut Child,
     shutdown: CancellationToken,
+    stopping: Arc<Mutex<StopState>>,
 ) -> Result<()> {
+    let log_file = directory.join("host.log");
     let deadline = Instant::now() + Duration::from_secs(40);
     let service = loop {
         ensure!(!shutdown.is_cancelled(), "service startup cancelled");
@@ -147,6 +223,7 @@ async fn serve(
                 .context("missing endpoint")?
                 .to_owned();
             let service = Service {
+                owner: spec.owner.clone(),
                 identity: identity.clone(),
                 web_url: format!("{}/ui", endpoint.replacen("ws://", "http://", 1)),
                 endpoint,
@@ -174,7 +251,6 @@ async fn serve(
     storage::write(&directory.join("components.json"), &spec.components)?;
     storage::write(&directory.join("service.json"), &service)?;
     let service = Arc::new(service);
-    let stopping = Arc::new(Mutex::new(false));
     let mut requests = tokio::task::JoinSet::new();
     let mut log_tick = tokio::time::interval(Duration::from_secs(1));
     let outcome = loop {
@@ -201,7 +277,7 @@ async fn serve(
 async fn control(
     socket: UnixStream,
     service: &Service,
-    stopping: Arc<Mutex<bool>>,
+    stopping: Arc<Mutex<StopState>>,
     shutdown: CancellationToken,
 ) -> Result<()> {
     let (read, mut write) = socket.into_split();
@@ -213,72 +289,83 @@ async fn control(
     .await??;
     let request: Request = serde_json::from_str(&line)?;
     let mut should_stop = false;
-    let outcome: Result<Service> = async {
+    let outcome: Result<Response> = async {
         match request {
             Request::Status { version } => {
                 ensure!(version == VERSION, "unsupported service protocol");
                 let mut response = service.clone();
-                if *stopping.lock().await {
+                if stopping.lock().await.stopping {
                     response.state = State::Stopping;
                 }
-                Ok(response)
+                Ok(Response::Ok {
+                    service: Box::new(response),
+                })
             }
-            Request::Stop {
+            Request::Capabilities {
                 version,
                 generation,
-                cancel,
             } => {
                 ensure!(
                     version == VERSION && generation == service.identity.generation,
                     "service generation/protocol mismatch"
                 );
-                let mut guard = stopping.lock().await;
-                ensure!(!*guard, "service is already stopping");
-                probe(service).await?;
-                if !cancel {
-                    let status = rpc(service, "areal/server/status", json!({})).await?;
-                    ensure!(
-                        if status.get("lifecycle").is_some() {
-                            status["lifecycle"]["version"] == 1
-                                && status["lifecycle"]["ifIdle"]["allowed"] == true
-                        } else {
-                            status["restartSafe"] == true
-                                && status["activeGoals"] == json!([])
-                                && status["pendingQueueItems"] == 0
-                                && status["activeTasks"].as_u64().unwrap_or(0) == 0
-                        },
-                        "service is busy; wait for work to settle or stop with --cancel"
-                    );
-                }
-                let status = rpc(
-                    service,
-                    "areal/server/drain",
-                    json!({
-                    "strategy":if cancel {"cancel"} else {"ifIdle"},"timeoutMs":30000}),
-                )
-                .await?;
+                Ok(Response::Capabilities {
+                    capabilities: Capabilities {
+                        version: VERSION,
+                        stop_operations: 1,
+                    },
+                })
+            }
+            Request::Stop {
+                version,
+                generation,
+                ..
+            } => {
                 ensure!(
-                    status["restartSafe"] == true,
-                    "service drain is incomplete; inspect resources/UNKNOWN outcomes and retry stop"
+                    version == VERSION && generation == service.identity.generation,
+                    "service generation/protocol mismatch"
                 );
-                *guard = true;
-                should_stop = true;
-                let mut response = service.clone();
-                response.state = State::Stopping;
-                // 显式停止记入登记，已打开的窗口不能把它误当故障而自动重启。
-                storage::write(
-                    &service.log_file.parent().unwrap().join("service.json"),
-                    &response,
-                )?;
-                Ok(response)
+                bail!(
+                    "legacy stop requests are disabled; use the current areal CLI with `service stop --instance {} --expected-generation {} --request-id <unique-id>` and inspect that operation before retrying",
+                    service.identity.service_id,
+                    service.identity.generation
+                );
+            }
+            Request::StopOperation {
+                version,
+                generation,
+                request_id,
+                cancel,
+            } => {
+                ensure!(version == VERSION, "unsupported service protocol");
+                let mut guard = stopping.lock().await;
+                if let Some(receipt) =
+                    storage::read_stop_receipt(service.log_file.parent().unwrap(), &request_id)?
+                {
+                    ensure!(
+                        receipt.operation.generation == generation
+                            && receipt.operation.cancel == cancel,
+                        "stop request conflict: generation or cancel strategy changed"
+                    );
+                    return Ok(Response::Operation {
+                        operation: Box::new(receipt.operation),
+                    });
+                }
+                ensure!(
+                    generation == service.identity.generation,
+                    "service generation/protocol mismatch"
+                );
+                let operation = begin_stop(service, &mut guard, request_id, cancel).await?;
+                should_stop = guard.stopping;
+                Ok(Response::Operation {
+                    operation: Box::new(operation),
+                })
             }
         }
     }
     .await;
     let response = match outcome {
-        Ok(service) => Response::Ok {
-            service: Box::new(service),
-        },
+        Ok(response) => response,
         Err(error) => Response::Error {
             message: error.to_string(),
         },
@@ -292,6 +379,87 @@ async fn control(
     }
     sent??;
     Ok(())
+}
+
+async fn begin_stop(
+    service: &Service,
+    state: &mut StopState,
+    request_id: String,
+    cancel: bool,
+) -> Result<StopOperation> {
+    let directory = service.log_file.parent().unwrap();
+    let mut receipt = storage::StopReceipt {
+        operation: StopOperation {
+            version: VERSION,
+            request_id,
+            service_id: service.identity.service_id.clone(),
+            generation: service.identity.generation.clone(),
+            cancel,
+            state: StopOperationState::AcceptedPending,
+            message: None,
+            lifecycle: None,
+        },
+        service: service.clone(),
+        cleanup_confirmed: false,
+    };
+    storage::write_stop_receipt(directory, &receipt)?;
+    let admission = async {
+        ensure!(!state.stopping, "service is already stopping");
+        probe(service).await?;
+        if !cancel {
+            let status = rpc(service, "areal/server/status", json!({})).await?;
+            receipt.operation.lifecycle = status.get("lifecycle").cloned();
+            ensure!(
+                if status.get("lifecycle").is_some() {
+                    status["lifecycle"]["version"] == 1
+                        && status["lifecycle"]["ifIdle"]["allowed"] == true
+                } else {
+                    status["restartSafe"] == true
+                        && status["activeGoals"] == json!([])
+                        && status["pendingQueueItems"] == 0
+                        && status["activeTasks"].as_u64().unwrap_or(0) == 0
+                },
+                "service is busy; wait for work to settle or stop with --cancel"
+            );
+        }
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+    if let Err(error) = admission {
+        receipt.operation.state = StopOperationState::Blocked;
+        receipt.operation.message = Some(error.to_string());
+    } else {
+        match rpc(
+            service,
+            "areal/server/drain",
+            json!({
+                "strategy":if cancel {"cancel"} else {"ifIdle"}, "timeoutMs":30000,
+            }),
+        )
+        .await
+        {
+            Ok(status) => {
+                receipt.operation.lifecycle = status.get("lifecycle").cloned();
+                if status["restartSafe"] != true {
+                    receipt.operation.state = StopOperationState::SettlementIncomplete;
+                    receipt.operation.message = Some("service drain is incomplete; inspect resources/UNKNOWN outcomes before starting a new stop operation".into());
+                }
+            }
+            Err(error) => {
+                receipt.operation.state = StopOperationState::AdmissionUnknown;
+                receipt.operation.message = Some(error.to_string());
+            }
+        }
+    }
+    storage::write_stop_receipt(directory, &receipt)?;
+    if receipt.operation.state == StopOperationState::AcceptedPending {
+        let mut record = service.clone();
+        record.state = State::Stopping;
+        storage::write(&directory.join("service.json"), &record)?;
+        state.stopping = true;
+        state.operation = Some(receipt.clone());
+    }
+    Ok(receipt.operation)
 }
 
 async fn finish(child: &mut Child, require_clean_exit: bool) -> Result<()> {

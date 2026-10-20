@@ -1,3 +1,4 @@
+import { respondToSessionName } from "./model-fixture.mjs";
 import WebSocket from "ws";
 // Real Core service, HTTP model transport, private Runtimes and verified artifacts.
 // Scripted model output proves orchestration, not model quality or LLM throughput.
@@ -36,6 +37,7 @@ const model = createServer(async (request, response) => {
     let bytes = "";
     for await (const part of request) bytes += part;
     const input = JSON.parse(bytes);
+    if (respondToSessionName(input, response)) return;
     requests++;
     assert.equal(
       input.tools.find((t) => t.function.name === "run_command").function.parameters.properties

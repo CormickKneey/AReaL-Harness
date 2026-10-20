@@ -7,15 +7,20 @@ const restartSafe = status => coreLifecycle(status).ifIdle.allowed;
 // Observe every connected Workspace before touching any of them. No drain here:
 // drain closes Core admission and cannot be undone by the GUI.
 async function inspectResources(backend, { includeTasks = false } = {}) {
+  await backend.refreshOwnedEngines?.();
   const projects = [];
-  for (const [projectId, project] of backend.projects) {
+  const engines = new Map(backend.projects);
+  for (const [projectId, owned] of backend.ownedEngines ?? []) engines.set(projectId, owned.project);
+  for (const [projectId, project] of engines) {
+    if (project.service && !project.client?.ready && backend.applicationOwner) await backend.reconnectProject(project);
     if (!project.client?.ready) {
       if (project.service) throw new Error('Core 连接未恢复，无法确认是否可安全停止');
       continue;
     }
     const status = await project.client.request('areal/server/status');
     const resources = [];
-    for (const threadId of new Set((status.resources ?? []).map(p => p.threadId))) {
+    const resourceThreads = (status.resources ?? []).map(resource => resource.threadId).filter(id => typeof id === 'string' && id.length > 0);
+    for (const threadId of new Set(resourceThreads)) {
       const processes = await project.client.request('areal/process/list', { threadId });
       for (const p of processes.data ?? []) if (!p.cleanupConfirmed) resources.push({
         projectId, threadId, id: p.id, epoch: p.runtimeEpoch, state: p.state,
@@ -63,7 +68,7 @@ async function recoverResource(backend, request) {
   const projects = await inspectResources(backend);
   const target = projects.find(p => p.projectId === request.projectId)?.resources.find(p => p.threadId === request.threadId && p.id === request.id);
   if (!target || target.epoch !== request.epoch) throw new Error('资源状态已变化，请重新检查');
-  const client = backend.projects.get(target.projectId).client;
+  const client = (backend.projects.get(target.projectId) ?? backend.ownedEngines?.get(target.projectId)?.project).client;
   if (target.stale) {
     if (request.operation !== 'acknowledge' || request.confirmed !== true) throw new Error('请先核实旧终端及其子进程已结束，再确认清理');
     await client.request('areal/process/acknowledgeCleanup', { threadId: target.threadId, id: target.id,

@@ -1,215 +1,314 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { createServer } from 'node:http';
 
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(join(gui, 'app/package.json'));
 const { CoreBackend } = require('../app/src/core/backend.cjs');
 const { DesktopService } = require('../app/src/core/service-protocol.cjs');
 const { ServiceConnection } = require('../app/src/core/service-client.cjs');
-const { recoverStartupService } = require('../app/src/core/startup-recovery.cjs');
-const { restoreLegacySchedules } = require('../app/src/core/legacy-service-cancel.cjs');
+const { executeCore } = require('../app/src/core/core-process.cjs');
+const { readLifecycleReceipt, reconcileLifecycleReceipt } = require('../app/src/core/lifecycle-operations.cjs');
 const scratch = await mkdtemp('/private/tmp/areal-startup-recovery-');
 const binary = process.env.AREAL_CORE_BIN || resolve(gui, '../../target/debug/areal');
 const binarySha256 = createHash('sha256').update(await readFile(binary)).digest('hex');
-const checks = [], dialogs = [];
-let backend, service, passed = false;
+const checks = [], held = new Set();
+let backend, service, passed = false, exitRequests = 0;
 const options = { binary, home: join(scratch, 'core'), harnessHome: join(scratch, 'registry'), userHome: join(scratch, 'user') };
 const workspace = join(scratch, 'workspace');
+const tracePath = join(scratch, 'cli-requests.jsonl');
+const wrapper = join(scratch, 'controlled-core.cjs');
+const controlPath = join(scratch, 'control.json');
+const model = createServer(async (request, response) => {
+  for await (const chunk of request) void chunk;
+  response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+  response.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: 'Lifecycle fixture is running.' }, finish_reason: null }] })}\n\n`);
+  held.add(response); response.on('close', () => held.delete(response));
+});
+await new Promise(resolve => model.listen(0, '127.0.0.1', resolve));
 await mkdir(workspace);
 await mkdir(join(options.userHome, '.areal'), { recursive: true });
-await writeFile(join(options.userHome, '.areal/config.toml'), 'schema_version=1\n[model]\nprovider="fixture"\nname="fixture"\n[model.providers.fixture]\nprotocol="chat-completions"\nendpoint="http://127.0.0.1:9/v1/chat/completions"\n');
-try {
-  // Real Core/Runtime, public CLI lifecycle, and persisted scheduled task.
-  backend = new CoreBackend(options);
-  await backend.init();
-  const projectId = await backend.addProject(workspace);
-  const scheduled = await backend.command('manage', { projectId, operation: 'taskCreate', mode: 'scheduled', objective: 'Future startup fixture', interactionMode: 'interactive', schedule: { at: Math.floor(Date.now() / 1000) + 3600, timeZone: 'Asia/Shanghai' } });
-  const project = backend.projects.get(projectId);
-  const generation = project.service.generation;
-  const status = await project.client.request('areal/server/status');
-  assert.equal(status.restartSafe, true);
-  assert.equal(status.activeTasks, 0, 'an idle future schedule must not count as live work');
-  service = new DesktopService(backend, 'fixture-current');
-  const resources = require('../app/src/core/resource-recovery.cjs');
-  const inspected = await resources.inspectResources(backend, { includeTasks: true });
-  assert.equal(inspected[0].restartSafe, true);
-  await service.stop();
-  service.close(); service = null;
-  checks.push('idle future schedule permits real Core safe shutdown');
-  backend = new CoreBackend(options);
-  await backend.init();
-  await backend.start(projectId);
-  const restored = await backend.command('manage', { projectId, operation: 'task', taskId: scheduled.id });
-  assert.equal(restored.paused, false);
-  assert.equal(restored.cancelled, false);
-  assert.deepEqual(restored.schedule, scheduled.schedule);
-  assert.equal(restored.runs.length, 0);
-  assert.notEqual(backend.projects.get(projectId).service.generation, generation);
-  checks.push('safe restart retains schedule identity, timing and enabled state without running it');
-  const { threadId } = await backend.command('create', { projectId });
-  await backend.projects.get(projectId).client.request('areal/queue/pause', { threadId, requestId: crypto.randomUUID(), expectedRevision: 0 });
-  await backend.projects.get(projectId).client.request('areal/turn/enqueue', { threadId, requestId: crypto.randomUUID(), input: [{ type: 'text', text: 'Preserved pending input' }] });
-  // A paused persisted queue is intentionally protected by public Core stop.
-  const guarded = await resources.inspectResources(backend);
-  assert.equal(guarded[0].restartSafe, false);
-  assert.match(resources.summary(guarded), /排队消息 [1-9]/);
-  await assert.rejects(() => require('../app/src/core/local-service.cjs').stopService(backend, backend.projects.get(projectId)), error => error.code === 'CORE_BUSY' && !error.message.includes('{'));
-  await assert.rejects(() => service?.stop() ?? backend.shutdown(), error => error.code === 'CORE_RESOURCES');
-  const currentService = backend.projects.get(projectId).service;
-  await assert.rejects(() => require('../app/src/core/core-process.cjs').executeCore(binary,
-    ['service', 'stop', '--instance', currentService.serviceId, '--expected-generation', 'unconfirmed-generation', '--cancel', '--json'],
-    { env: backend.hooks.environment(), timeout: 10000 }), error => error.stderr.includes('service generation changed'));
-  assert.equal((await backend.projects.get(projectId).client.request('areal/server/status')).acceptingWork, true);
-  checks.push('public stop rejects an unconfirmed generation before changing Core admission');
-  const queueBefore = await backend.projects.get(projectId).client.request('areal/queue/list', { threadId });
-  service = new DesktopService(backend, 'fixture-cancel');
-  const guardedMetadata = await service.listen();
-  const first = new ServiceConnection(), second = new ServiceConnection();
-  try {
-    for (const c of [first, second]) { await c.connect(guardedMetadata); await c.request('hello', { protocol: guardedMetadata.protocol, identity: guardedMetadata.identity }); }
-    const expectedTargets = [{ projectId, serviceId: currentService.serviceId, generation: currentService.generation }];
-    await assert.rejects(() => first.request('stopService', { protocol: guardedMetadata.protocol, forUpdate: true, cancel: true, expectedTargets }, true), /其他.*GUI/);
-    second.close(); await new Promise(r => setTimeout(r, 30));
-    await assert.rejects(() => first.request('stopService', { protocol: guardedMetadata.protocol, forUpdate: true, cancel: true,
-      expectedTargets: [{ ...expectedTargets[0], generation: 'unconfirmed-generation' }] }, true), error => error.code === 'CONFIRMATION_STALE');
-    assert.equal((await backend.projects.get(projectId).client.request('areal/server/status')).acceptingWork, true);
-    checks.push('authenticated Desktop stop rechecks peer clients and confirmed Core generation before cancellation');
-  } finally { first.close(); second.close(); }
-  await service.stop({ cancel: true });
-  service.close(); service = null;
-  backend = new CoreBackend(options);
-  await backend.init(); await backend.start(projectId);
-  const queueAfter = await backend.projects.get(projectId).client.request('areal/queue/list', { threadId });
-  assert.equal(queueAfter.paused, true);
-  assert.deepEqual(queueAfter.items, queueBefore.items);
-  const afterStatus = await backend.projects.get(projectId).client.request('areal/server/status');
-  assert.equal(afterStatus.lifecycle.ifIdle.allowed, false);
-  assert.equal(afterStatus.lifecycle.settled.allowed, true);
-  checks.push('cancel reaches the public host; stopped Core reopens with identical paused pending input and no replay');
-  const secondWorkspace = join(scratch, 'second-workspace'); await mkdir(secondWorkspace);
-  const secondProjectId = await backend.addProject(secondWorkspace);
-  const secondService = backend.projects.get(secondProjectId).service;
-  const failingBinary = join(scratch, 'fail-second-stop.cjs');
-  await writeFile(failingBinary, `#!/usr/bin/env node
+await writeFile(join(options.userHome, '.areal/config.toml'), `schema_version=1\n[model]\nprovider="fixture"\nname="fixture"\n[model.providers.fixture]\nprotocol="chat-completions"\nendpoint="http://127.0.0.1:${model.address().port}/v1/chat/completions"\n`);
+await writeFile(controlPath, '{}');
+await writeFile(wrapper, `#!/usr/bin/env node
+const {appendFileSync,readFileSync} = require('node:fs');
 const {spawnSync} = require('node:child_process');
-const args = process.argv.slice(2);
-if (args[0] === 'service' && args[1] === 'stop' && args.includes(${JSON.stringify(secondService.serviceId)})) {
-  process.stderr.write('injected second Core stop failure'); process.exit(1);
+const args = process.argv.slice(2), control = JSON.parse(readFileSync(${JSON.stringify(controlPath)}, 'utf8'));
+appendFileSync(${JSON.stringify(tracePath)}, JSON.stringify(args)+'\\n');
+if (args[0] === 'service' && (args[1] === 'stop' && args.includes(control.rejectStop) || args[1] === 'capabilities' && args.includes(control.legacy))) {
+  process.stderr.write(JSON.stringify({error:{code:'INJECTED_BEFORE_ADMISSION',message:'injected failure before host admission'}})); process.exit(1);
 }
 const result = spawnSync(${JSON.stringify(binary)}, args, {stdio:'inherit'});
 process.exit(result.status ?? 1);
 `, { mode: 0o755 });
-  service = new DesktopService(backend, 'fixture-partial');
-  const partialMetadata = await service.listen();
-  const recoveryConnection = new ServiceConnection();
-  try {
-    backend.binary = failingBinary;
-    await assert.rejects(() => service.stop({ cancel: true }), /injected second Core stop failure/);
-    assert.equal(backend.closing, true);
-    assert.deepEqual(service.stopReport.projects.map(p => p.phase), ['exited', 'unknown']);
-    await recoveryConnection.connect(partialMetadata);
-    await recoveryConnection.request('hello', { protocol: partialMetadata.protocol, identity: partialMetadata.identity });
-    await assert.rejects(() => recoveryConnection.request('command', { name: 'create', request: { projectId: secondProjectId } }, true), error => error.code === 'LIFECYCLE_INCOMPLETE');
-    const stillObservable = await recoveryConnection.request('command', { name: 'manage', request: { projectId: secondProjectId, operation: 'server' } });
-    assert.equal(stillObservable.lifecycle.version, 1);
-    const partialResources = await recoveryConnection.request('resources', { operation: 'inspect' });
-    assert.equal(partialResources.length, 1);
-    backend.binary = binary;
-    await service.stop({ cancel: true });
-    assert.deepEqual(backend.stopOutcomes.map(p => p.phase), ['exited', 'exited']);
-    checks.push('partial multi-Core stop retains exited and unknown outcomes, rejects new work, permits observation and settles on explicit retry');
-  } finally { backend.binary = binary; recoveryConnection.close(); service.close(); service = null; }
-  backend = null;
-
-  // Legacy adapter boundary: restartSafe=true but activeTasks includes a future
-  // schedule. The real authenticated transport runs the current recovery owner.
-  const legacyHome = join(scratch, 'legacy'); await mkdir(legacyHome);
-  const legacyTask = { id: 'legacy-schedule', threadId: 'legacy-thread', mode: 'scheduled', paused: false, cancelled: false, revision: 3, runs: [], nextRunAt: 4070908800, schedule: { at: '2099-01-01T00:00:00Z' } };
-  const legacy = {
-    projects: new Map([['legacy-project', { client: { ready: true, request: async method => {
-      assert.equal(method, 'areal/server/status');
-      return { restartSafe: true, activeGoals: [], activeTasks: legacyTask.paused ? 0 : 1, pendingQueueItems: 0, resources: [] };
-    } }, root: workspace, model: { state: { queues: {} } } }]]),
-    starting: new Map(), hasWork: () => false, snapshot: () => ({ projects: [{ id: 'legacy-project', root: workspace }] }),
-    providers: { redact: value => value }, analytics: { sample() {}, async flush() {} },
-    command: async (name, request) => {
-      assert.equal(name, 'manage'); assert.equal(request.taskId, legacyTask.id);
-      if (request.operation === 'task') return structuredClone(legacyTask);
-      assert.ok(['taskPause', 'taskResume'].includes(request.operation)); assert.equal(request.expectedRevision, legacyTask.revision);
-      legacyTask.paused = request.operation === 'taskPause'; legacyTask.revision++;
-      return structuredClone(legacyTask);
-    },
-    shutdown: async () => assert.equal(legacyTask.paused, true),
-  };
-  // Emulate the already-running adapter's old resource projection. Its count
-  // must still be checked by new Main even when the old restartSafe is true.
-  service = new DesktopService(legacy, 'fixture-legacy', () => { void rm(join(legacyHome, 'service.json')); });
-  const originalReceive = service.receive.bind(service);
-  service.receive = async (socket, bytes) => {
-    const message = JSON.parse(bytes);
-    if (message.method === 'resources' && message.params.operation === 'inspect') {
-      service.send(socket, { id: message.id, result: [{ projectId: 'legacy-project', root: workspace, restartSafe: true, resources: [], activeTurns: 0, goalThreads: [], activeTasks: legacyTask.paused ? 0 : 1, waitingMessages: 0, tasks: legacyTask.paused ? [] : [{ id: legacyTask.id, mode: 'scheduled', paused: false, running: false }] }] }); return;
-    }
-    return originalReceive(socket, bytes);
-  };
-  const originalPacket = service.packet.bind(service);
-  service.packet = () => { const packet = originalPacket(); delete packet.service.lifecycleVersion; delete packet.service.targets; return packet; };
+const until = async (read, label) => {
+  const deadline = Date.now() + 30000;
+  while (Date.now() < deadline) { const value = await read(); if (value) return value; await new Promise(resolve => setTimeout(resolve, 25)); }
+  throw new Error(`Timeout waiting for ${label}`);
+};
+const cliWrites = async () => (await readFile(tracePath, 'utf8').catch(error => { if (error.code === 'ENOENT') return ''; throw error; }))
+  .split('\n').filter(Boolean).map(line => JSON.parse(line)).filter(args => args[0] === 'service' && args[1] === 'stop');
+const target = projectId => { const descriptor = backend.projects.get(projectId).service; return { projectId, serviceId: descriptor.serviceId, generation: descriptor.generation }; };
+async function attach(identity = 'fixture-current') {
+  service = new DesktopService(backend, identity, () => { exitRequests++; });
   const metadata = await service.listen();
-  metadata.pid = 2147483000;
-  await writeFile(join(legacyHome, 'service.json'), JSON.stringify(metadata));
-  const probe = new ServiceConnection();
-  try {
-    await probe.connect(metadata);
-    await assert.rejects(() => probe.request('hello', { protocol: metadata.protocol, identity: 'fixture-current' }), error => error.code === 'SERVICE_INCOMPATIBLE');
-  } finally { probe.close(); }
-  await recoverStartupService({ metadata, home: legacyHome, notify: async dialog => {
-    dialogs.push(dialog);
-    if (dialogs.length === 1) {
-      assert.equal(dialog.message, '后台暂时无法重启');
-      assert.ok(!dialog.buttons.includes('重启后台并继续'));
-      assert.match(dialog.detail, /定时/);
-      return { response: dialog.buttons.indexOf('暂停定时安排…') };
-    }
-    if (dialogs.length === 2) {
-      assert.match(dialog.detail, /Run 保持暂停/);
-      return { response: 1 };
-    }
-    assert.equal(dialog.message, '需要重启后台服务');
-    return { response: dialog.buttons.indexOf('重启后台并继续') };
-  } });
-  assert.equal(legacyTask.paused, true);
-  assert.equal(legacyTask.cancelled, false);
-  assert.equal(JSON.parse(await readFile(join(legacyHome, 'legacy-schedule-recovery.json'))).entries[0].phase, 'paused');
-  checks.push('legacy incompatible adapter blocks unsafe restart and persists a revision-bound arrangement recovery before temporary pause');
-  service.close(); service = null;
-  service = new DesktopService(legacy, 'fixture-new');
-  const replacement = await service.listen();
-  replacement.pid = 2147482999;
-  const restoredConnection = new ServiceConnection();
-  try {
-    await restoredConnection.connect(replacement);
-    await restoredConnection.request('hello', { protocol: replacement.protocol, identity: replacement.identity });
-    const restoration = await restoreLegacySchedules({ connection: restoredConnection, home: legacyHome, metadata: replacement });
-    assert.deepEqual(restoration, { restored: 1, attention: [] });
-    assert.equal(legacyTask.paused, false);
-    assert.deepEqual(legacyTask.schedule, { at: '2099-01-01T00:00:00Z' });
-    await assert.rejects(readFile(join(legacyHome, 'legacy-schedule-recovery.json')), { code: 'ENOENT' });
-    checks.push('replacement restores only the original arrangement and removes its recovery record after confirmed revision-checked success');
-  } finally { restoredConnection.close(); service.close(); service = null; }
+  const connection = new ServiceConnection(); await connection.connect(metadata);
+  const packet = await connection.request('hello', { protocol: metadata.protocol, identity: metadata.identity });
+  return { metadata, connection, packet };
+}
+function intent(fixture, kind, expectedTargets, mode = 'ifIdle', extra = {}) {
+  return { protocol: fixture.metadata.protocol, requestId: randomUUID(), kind, mode,
+    expectedDesktopGeneration: fixture.packet.service.lifecycle.desktopGeneration, expectedTargets, ...extra };
+}
+const read = (fixture, request) => fixture.connection.request('lifecycleRead', { protocol: fixture.metadata.protocol, requestId: request.requestId });
+const reconcile = (fixture, request) => fixture.connection.request('lifecycleReconcile', { protocol: fixture.metadata.protocol, requestId: request.requestId });
+const submit = (fixture, request) => fixture.connection.request('lifecycleRequest', request, true);
+try {
+  backend = new CoreBackend(options); await backend.init();
+  const projectId = await backend.addProject(workspace);
+  const scheduled = await backend.command('manage', { projectId, operation: 'taskCreate', mode: 'scheduled', objective: 'Future startup fixture', interactionMode: 'interactive', schedule: { at: Math.floor(Date.now() / 1000) + 3600, timeZone: 'Asia/Shanghai' } });
+  let fixture = await attach();
+  assert.equal(fixture.packet.service.lifecycle?.version, 2, 'Desktop advertises durable lifecycle operations');
+  assert.match(fixture.packet.service.lifecycle.desktopGeneration, /^[0-9a-f-]{36}$/);
+  assert.deepEqual(fixture.packet.service.lifecycle.capabilities, { request: true, read: true, reconcile: true,
+    kinds: ['stopDesktop', 'updateDesktop', 'stopProject', 'updateProject', 'interruptTurn'] });
+  assert.equal(fixture.packet.service.lifecycle.activeRequestId, null);
+  backend.binary = wrapper;
+  const originalTarget = target(projectId);
+  await assert.rejects(() => submit(fixture, intent(fixture, 'stopProject', [originalTarget], 'cancel', { expectedDesktopGeneration: randomUUID() })), error => error.code === 'CONFIRMATION_STALE');
+  await assert.rejects(() => submit(fixture, intent(fixture, 'stopProject', [{ ...originalTarget, generation: randomUUID() }], 'cancel')), error => error.code === 'CONFIRMATION_STALE');
+  assert.equal((await backend.projects.get(projectId).client.request('areal/server/status')).acceptingWork, true);
+  assert.deepEqual(await cliWrites(), []);
+  checks.push('Desktop and Core generations are checked before durable admission or cancellation');
+
+  const safe = intent(fixture, 'stopProject', [originalTarget]);
+  const stopped = await submit(fixture, safe);
+  assert.equal(stopped.phase, 'completed'); assert.equal(stopped.targets[0].phase, 'completed');
+  assert.equal(stopped.desktopExit, 'notRequested'); assert.equal(exitRequests, 0);
+  const writesAfterSafeStop = await cliWrites();
+  assert.deepEqual(await submit(fixture, safe), stopped);
+  assert.deepEqual(await cliWrites(), writesAfterSafeStop, 'same request returns its receipt without stopping twice');
+  await backend.start(projectId);
+  assert.notEqual(target(projectId).generation, originalTarget.generation);
+  const restored = await backend.command('manage', { projectId, operation: 'task', taskId: scheduled.id });
+  assert.equal(restored.paused, false); assert.equal(restored.cancelled, false);
+  assert.deepEqual(restored.schedule, scheduled.schedule); assert.equal(restored.runs.length, 0);
+  assert.deepEqual(await reconcile(fixture, safe), stopped);
+  assert.equal((await backend.projects.get(projectId).client.request('areal/server/status')).acceptingWork, true);
+  checks.push('safe stop preserves an idle schedule; duplicate and reconcile cannot stop the replacement generation');
+
+  const beforeMaintenance = target(projectId);
+  const beforeMaintenanceWrites = (await cliWrites()).length;
+  await backend.restartProject(backend.projects.get(projectId));
+  assert.notEqual(target(projectId).generation, beforeMaintenance.generation);
+  const maintenanceWrites = (await cliWrites()).slice(beforeMaintenanceWrites);
+  assert.equal(maintenanceWrites.length, 1, 'configuration maintenance stops through the same durable lifecycle owner');
+  assert.equal(maintenanceWrites[0].includes('--request-id'), true);
+  assert.equal(maintenanceWrites[0].includes(beforeMaintenance.generation), true);
+  const maintenanceRequests = (await readFile(tracePath, 'utf8')).split('\n').filter(Boolean).map(line => JSON.parse(line));
+  assert.equal(maintenanceRequests.some(args => args[0] === 'service' && args[1] === 'restart'), false);
+  assert.equal(maintenanceRequests.filter(args => args[0] === 'service' && args[1] === 'ensure').every(args => args.includes('--no-auto-restart')), true);
+  checks.push('configuration maintenance uses the durable update owner and GUI ensure never restarts an existing generation implicitly');
+
+  const { threadId } = await backend.command('create', { projectId });
+  const client = backend.projects.get(projectId).client;
+  const turn = await client.request('turn/start', { threadId, input: [{ type: 'text', text: 'hold exact turn' }] });
+  await until(() => held.size, 'held model turn');
+  const interrupt = intent(fixture, 'interruptTurn', [target(projectId)], 'cancel', { threadId, turnId: turn.turn.id });
+  assert.equal((await submit(fixture, interrupt)).phase, 'completed');
+  await until(async () => (await client.request('thread/read', { threadId, includeTurns: true })).thread.turns.find(item => item.id === turn.turn.id)?.status === 'interrupted', 'fixed turn interruption');
+  const interruptBefore = await read(fixture, interrupt);
+  assert.equal(interruptBefore.turnId, turn.turn.id);
+  assert.equal((await reconcile(fixture, interrupt)).phase, 'completed');
+  const newerTurn = await client.request('turn/start', { threadId, input: [{ type: 'text', text: 'hold next exact turn' }] });
+  await until(() => held.size, 'next held model turn');
+  const staleInterrupt = await submit(fixture, intent(fixture, 'interruptTurn', [target(projectId)], 'cancel', { threadId, turnId: turn.turn.id }));
+  assert.equal(staleInterrupt.phase, 'blocked');
+  assert.equal((await client.request('thread/read', { threadId, includeTurns: true })).thread.turns.find(item => item.id === newerTurn.turn.id).status, 'inProgress');
+  assert.equal((await backend.command('stop', { projectId, threadId, turnId: newerTurn.turn.id, requestId: randomUUID() })).phase, 'completed');
+  const { threadId: queueThread } = await backend.command('create', { projectId });
+  await client.request('areal/queue/pause', { threadId: queueThread, requestId: randomUUID(), expectedRevision: 0 });
+  await client.request('areal/turn/enqueue', { threadId: queueThread, requestId: randomUUID(), input: [{ type: 'text', text: 'Preserved pending input' }] });
+  const queueBefore = await client.request('areal/queue/list', { threadId: queueThread });
+  const blocked = await submit(fixture, intent(fixture, 'stopProject', [target(projectId)]));
+  assert.equal(blocked.phase, 'blocked'); assert.equal(blocked.targets[0].phase, 'blocked');
+  assert.equal(backend.closing, false);
+  const secondWorkspace = join(scratch, 'second-workspace'); await mkdir(secondWorkspace);
+  const secondProjectId = await backend.addProject(secondWorkspace);
+  assert.equal(typeof (await backend.command('create', { projectId: secondProjectId })).threadId, 'string');
+  const cancel = intent(fixture, 'stopProject', [target(projectId)], 'cancel');
+  assert.equal((await submit(fixture, cancel)).phase, 'completed');
+  await backend.start(projectId);
+  const queueAfter = await backend.projects.get(projectId).client.request('areal/queue/list', { threadId: queueThread });
+  assert.equal(queueAfter.paused, true); assert.deepEqual(queueAfter.items, queueBefore.items);
+  checks.push('exact-turn interrupt uses the shared owner; known busy refusal preserves unrelated admissions and cancellation preserves pending input');
+
+  const beforePartial = [target(projectId), target(secondProjectId)].sort((a, b) => a.projectId.localeCompare(b.projectId));
+  const rejectedTarget = beforePartial[1];
+  await writeFile(controlPath, JSON.stringify({ legacy: rejectedTarget.serviceId }));
+  const partialRequest = intent(fixture, 'stopDesktop', beforePartial, 'cancel');
+  const partial = await submit(fixture, partialRequest);
+  assert.equal(partial.phase, 'partial');
+  assert.deepEqual(partial.targets.map(item => item.phase), ['completed', 'blocked']);
+  assert.equal(partial.desktopExit, 'notRequested'); assert.equal(exitRequests, 0);
+  assert.equal(backend.closing, false);
+  const beforeRead = await cliWrites();
+  assert.deepEqual((await reconcile(fixture, partialRequest)).targets.map(item => item.phase), ['completed', 'blocked']);
+  assert.deepEqual(await cliWrites(), beforeRead, 'reconcile never resends stop or drain');
+  fixture.connection.close(); service.close(); service = null;
+  fixture = await attach('fixture-restarted-desktop');
+  assert.notEqual(fixture.packet.service.lifecycle.desktopGeneration, partial.desktopGeneration);
+  const recovered = await read(fixture, partialRequest);
+  assert.equal(recovered.phase, 'partial'); assert.deepEqual(recovered.targets.map(item => item.phase), ['completed', 'blocked']);
+  assert.deepEqual(await cliWrites(), beforeRead);
+  await backend.start(beforePartial[0].projectId);
+  assert.equal(typeof (await backend.command('create', { projectId: beforePartial[0].projectId })).threadId, 'string');
+  await writeFile(controlPath, '{}');
+  const remaining = intent(fixture, 'stopProject', [target(rejectedTarget.projectId)], 'cancel');
+  assert.equal((await submit(fixture, remaining)).phase, 'completed');
+  assert.equal((await cliWrites()).filter(args => args.includes(beforePartial[0].serviceId) && args.includes(beforePartial[0].generation)).length, 1);
+  checks.push('partial Desktop operation survives a new Desktop generation and read-only reconciliation never repeats a completed target');
+
+  await backend.start(projectId);
+  const lost = intent(fixture, 'stopProject', [target(projectId)], 'cancel');
+  const send = service.send.bind(service);
+  let dropped = false;
+  service.send = (socket, packet) => {
+    if (!dropped && packet.id && packet.result?.requestId === lost.requestId) { dropped = true; socket.terminate(); return; }
+    send(socket, packet);
+  };
+  await assert.rejects(() => submit(fixture, lost), error => error.submissionUnknown === true);
+  assert.equal(dropped, true);
+  fixture.connection.close(); service.close(); service = null;
+  fixture = await attach('fixture-after-lost-response');
+  assert.equal((await read(fixture, lost)).phase, 'completed');
+  const writesAfterLost = await cliWrites();
+  assert.equal((await reconcile(fixture, lost)).phase, 'completed');
+  assert.deepEqual(await cliWrites(), writesAfterLost);
+  checks.push('a lost authenticated Desktop response is recovered from its original durable receipt after Desktop restart');
+
+  await backend.start(projectId);
+  const legacyTarget = target(projectId);
+  await writeFile(controlPath, JSON.stringify({ legacy: legacyTarget.serviceId }));
+  const oldHost = await submit(fixture, intent(fixture, 'stopProject', [legacyTarget], 'cancel'));
+  assert.equal(oldHost.phase, 'blocked'); assert.equal(oldHost.targets[0].error.code, 'LIFECYCLE_UNSUPPORTED');
+  assert.equal((await backend.projects.get(projectId).client.request('areal/server/status')).acceptingWork, true);
+  assert.deepEqual(await cliWrites(), writesAfterLost);
+  checks.push('unsupported host lifecycle capability refuses the new write before any legacy stop or cancel fallback');
+  await writeFile(controlPath, '{}');
+  const desktopTargets = [...backend.projects.keys()].filter(id => backend.projects.get(id).service).map(target).sort((a, b) => a.projectId.localeCompare(b.projectId));
+  const desktopStop = intent(fixture, 'stopDesktop', desktopTargets, 'cancel');
+  const exiting = await submit(fixture, desktopStop);
+  assert.equal(exiting.phase, 'acceptedPending'); assert.equal(exiting.desktopExit, 'requested');
+  assert.equal(exiting.targets[0].phase, 'completed');
+  await until(() => exitRequests === 1, 'Desktop exit request');
+  assert.equal((await read(fixture, desktopStop)).phase, 'acceptedPending', 'the owner cannot claim its own process already exited');
+  const afterExitWorkspace = join(scratch, 'after-exit-workspace'); await mkdir(afterExitWorkspace);
+  const savedBeforeExitAdmission = structuredClone(backend.saved);
+  await assert.rejects(() => backend.addProject(afterExitWorkspace), error => error.code === 'LIFECYCLE_EXIT_REQUESTED');
+  assert.deepEqual(backend.saved, savedBeforeExitAdmission, 'exit requested rejects registration before changing the index');
+  await assert.rejects(() => backend.restartProject(backend.projects.get(projectId)), error => error.code === 'LIFECYCLE_EXIT_REQUESTED');
+  checks.push('Desktop records exit requested only after Core lock settlement and leaves actual Desktop exit confirmation to Main');
+  fixture.connection.close(); service.close(); service = null;
+
+  backend = new CoreBackend(options); await backend.init();
+  const uncertainWorkspace = join(scratch, 'uncertain-workspace'); await mkdir(uncertainWorkspace);
+  const uncertainProjectId = await backend.addProject(uncertainWorkspace);
+  const uncertainThread = await backend.command('create', { projectId: uncertainProjectId });
+  backend.binary = wrapper;
+  fixture = await attach('fixture-admission-unconfirmed');
+  await writeFile(controlPath, JSON.stringify({ rejectStop: target(uncertainProjectId).serviceId }));
+  const uncertainRequest = intent(fixture, 'stopProject', [target(uncertainProjectId)], 'cancel');
+  const uncertain = await submit(fixture, uncertainRequest);
+  assert.equal(uncertain.phase, 'admissionUnconfirmed'); assert.equal(uncertain.targets[0].phase, 'admissionUnconfirmed');
+  const beforeUncertainRead = await cliWrites();
+  assert.equal((await reconcile(fixture, uncertainRequest)).phase, 'admissionUnconfirmed');
+  assert.deepEqual(await cliWrites(), beforeUncertainRead);
+  const observedList = await backend.command('list', { projectId: uncertainProjectId });
+  assert.equal(observedList.projects.find(project => project.id === uncertainProjectId).summaries.some(thread => thread.id === uncertainThread.threadId), true);
+  const observedHistory = await backend.command('open', { projectId: uncertainProjectId, threadId: uncertainThread.threadId });
+  assert.equal(observedHistory.projects.find(project => project.id === uncertainProjectId).state.threads[uncertainThread.threadId].id, uncertainThread.threadId);
+  assert.equal((await backend.command('manage', { projectId: uncertainProjectId, operation: 'server' })).acceptingWork, true);
+  assert.deepEqual(await cliWrites(), beforeUncertainRead);
+  await backend.addProject(workspace);
+  assert.equal(typeof (await backend.command('create', { projectId })).threadId, 'string');
+  checks.push('missing authoritative host receipt stays admission unconfirmed, never replays stop, and does not disable unrelated workspaces');
+  fixture.connection.close(); service.close(); service = null;
+
+  for (const project of backend.projects.values()) if (project.service) {
+    await executeCore(binary, ['service', 'stop', '--instance', project.service.serviceId, '--expected-generation', project.service.generation, '--cancel', '--json'],
+      { env: backend.hooks.environment(), timeout: 30000 });
+  }
+  await backend.disconnect();
+  const offlineOptions = { ...options, home: join(scratch, 'offline-core'), harnessHome: join(scratch, 'r2') };
+  await writeFile(controlPath, '{}');
+  backend = new CoreBackend(offlineOptions); await backend.init();
+  const offlineWorkspace = join(scratch, 'offline-workspace'); await mkdir(offlineWorkspace);
+  const offlineProjectId = await backend.addProject(offlineWorkspace);
+  backend.binary = wrapper;
+  fixture = await attach('fixture-offline-original-host');
+  const owner = service.lifecycle, store = owner.store.bind(owner);
+  const initialFailure = intent(fixture, 'stopProject', [target(offlineProjectId)]);
+  const writesBeforeInitialFailure = await cliWrites();
+  owner.store = async () => { throw Object.assign(new Error('injected initial receipt write failure'), { code: 'LIFECYCLE_RECEIPT_WRITE_FAILED' }); };
+  await assert.rejects(() => submit(fixture, initialFailure), error => error.code === 'LIFECYCLE_ADMISSION_FAILED' && error.submissionUnknown !== true);
+  assert.equal(await readLifecycleReceipt(offlineOptions.home, { requestId: initialFailure.requestId }), null);
+  assert.deepEqual(await cliWrites(), writesBeforeInitialFailure);
+  owner.store = store;
+  const offlineRequest = intent(fixture, 'stopDesktop', [target(offlineProjectId)]);
+  owner.store = async record => {
+    await store(record);
+    if (record.requestId === offlineRequest.requestId && record.targets[0].phase === 'acceptedPending')
+      throw Object.assign(new Error('injected Desktop death after durable admission'), { code: 'LIFECYCLE_RECEIPT_WRITE_FAILED' });
+  };
+  const postAdmissionError = await submit(fixture, offlineRequest).then(() => assert.fail('post-admission fault must reject'), error => error);
+  owner.store = store;
+  const staleReceipt = await readLifecycleReceipt(offlineOptions.home, { requestId: offlineRequest.requestId });
+  assert.equal(staleReceipt.targets[0].phase, 'acceptedPending');
+  assert.equal(staleReceipt.harnessHome, offlineOptions.harnessHome);
+  fixture.connection.close(); service.close(); service = null;
+  await backend.disconnect();
+  const originalHost = staleReceipt.targets[0];
+  await executeCore(wrapper, ['service', 'stop', '--instance', originalHost.serviceId, '--expected-generation', originalHost.generation,
+    '--request-id', originalHost.requestId, '--json'], { env: backend.hooks.environment(), timeout: 30000 });
+  await until(async () => JSON.parse((await executeCore(wrapper, ['service', 'operation', '--instance', originalHost.serviceId,
+    '--expected-generation', originalHost.generation, '--request-id', originalHost.requestId, '--json'],
+  { env: backend.hooks.environment(), timeout: 10000 })).stdout).operation?.state === 'completed', 'original Host physical receipt completion');
+  const writesAfterOriginalHost = await cliWrites();
+  const stalePath = join(offlineOptions.home, 'lifecycle-operations', `${offlineRequest.requestId}.json`);
+  const staleBytes = await readFile(stalePath, 'utf8');
+  const offlineProjection = await (reconcileLifecycleReceipt ?? readLifecycleReceipt)(offlineOptions.home, {
+    requestId: offlineRequest.requestId, desktopGeneration: staleReceipt.desktopGeneration,
+    binary: wrapper, harnessHome: join(scratch, 'wrong-current-registry'),
+  });
+  assert.equal(offlineProjection.targets[0].phase, 'completed', 'offline reconciliation reads original Host completion instead of stale Desktop JSON');
+  assert.equal(offlineProjection.phase, 'acceptedPending');
+  assert.equal(offlineProjection.desktopExit, 'notRequested', 'offline projection leaves original Desktop exit proof to Main');
+  assert.equal(await readFile(stalePath, 'utf8'), staleBytes, 'offline reconciliation never writes the Desktop journal');
+  assert.deepEqual(await cliWrites(), writesAfterOriginalHost, 'offline reconciliation never repeats stop or starts a missing service');
+  assert.equal(postAdmissionError.submissionUnknown, true, 'failure after durable admission retains the original request for reconciliation');
+  backend = new CoreBackend(offlineOptions); await backend.init();
+  assert.equal(backend.projects.size, 0, 'startup recovery reads receipts before any Core auto-start');
+  assert.equal((await backend.lifecycleOperations.read(offlineRequest.requestId)).targets[0].phase, 'completed');
+  await backend.start(offlineProjectId);
+  assert.notEqual(target(offlineProjectId).generation, originalHost.generation);
+  checks.push('offline original Host completion projects over stale Desktop receipts without writes, stop replay or new owner; initial and post-admission failures remain distinct');
   passed = true;
 } finally {
   service?.close();
   if (backend) {
+    backend.binary = binary;
     for (const project of backend.projects.values()) if (project.service) {
-      // Cleanup is restricted to this script's isolated fixtures.
-      await require('../app/src/core/core-process.cjs').executeCore(binary, ['service', 'stop', '--instance', project.service.serviceId, '--cancel', '--json'], { env: backend.hooks.environment(), timeout: 30000 }).catch(() => {});
+      await executeCore(binary, ['service', 'stop', '--instance', project.service.serviceId, '--expected-generation', project.service.generation, '--cancel', '--json'], { env: backend.hooks.environment(), timeout: 30000 }).catch(() => {});
     }
     await backend.disconnect().catch(() => {});
   }
-  await writeFile(join(scratch, 'manifest.json'), JSON.stringify({ passed, checks, dialogs, binarySha256, scope: 'real Core/Runtime lifecycle; authenticated legacy adapter fixture' }, null, 2));
+  for (const response of held) response.destroy();
+  await new Promise(resolve => model.close(resolve));
+  await writeFile(join(scratch, 'manifest.json'), JSON.stringify({ passed, checks, binarySha256, scope: 'real Core/Runtime and authenticated Desktop lifecycle; Desktop process exit remains separate Electron acceptance' }, null, 2));
   console.log(JSON.stringify({ passed, evidence: scratch, checks }));
 }

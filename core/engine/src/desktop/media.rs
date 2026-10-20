@@ -4,6 +4,12 @@ use crate::model::{Model, ModelProtocol};
 use areal_protocol::{MediaRef, Modality, ToolContent};
 
 pub(crate) const MAX_UPLOAD: usize = 16 * 1024 * 1024;
+enum InheritedBlobKind {
+    Media,
+    ToolResult,
+    FileBefore,
+}
+
 fn validate_media(mime: &str, bytes: &[u8]) -> Result<Modality> {
     if bytes.is_empty() || bytes.len() > MAX_UPLOAD {
         return Err(Error::Exhausted(
@@ -71,7 +77,8 @@ impl Engine {
                             | Input::File { url, .. }
                                 if url.starts_with("areal://blob/") =>
                             {
-                                self.verify_inherited_blob(url, None, false).await?;
+                                self.verify_inherited_blob(url, None, InheritedBlobKind::Media)
+                                    .await?;
                             }
                             Input::LocalImage { .. } | Input::LocalAudio { .. } => {
                                 return Err(invalid("MODEL_CONTEXT_INCOMPATIBLE"));
@@ -81,7 +88,7 @@ impl Engine {
                     }
                 }
                 Item::AgentMedia { media, .. } => {
-                    self.verify_inherited_blob(&media.uri, Some(media), false)
+                    self.verify_inherited_blob(&media.uri, Some(media), InheritedBlobKind::Media)
                         .await?;
                 }
                 Item::DynamicToolCall {
@@ -95,8 +102,12 @@ impl Engine {
                                 .map_err(invalid)?
                             {
                                 ToolContent::ArealMedia { media, .. } => {
-                                    self.verify_inherited_blob(&media.uri, Some(&media), false)
-                                        .await?;
+                                    self.verify_inherited_blob(
+                                        &media.uri,
+                                        Some(&media),
+                                        InheritedBlobKind::Media,
+                                    )
+                                    .await?;
                                 }
                                 ToolContent::InputText { .. } => {}
                                 ToolContent::InlineMedia { .. } => {
@@ -106,8 +117,20 @@ impl Engine {
                         }
                     }
                     if let Some(media) = &execution.result_snapshot {
-                        self.verify_inherited_blob(&media.uri, Some(media), true)
-                            .await?;
+                        self.verify_inherited_blob(
+                            &media.uri,
+                            Some(media),
+                            InheritedBlobKind::ToolResult,
+                        )
+                        .await?;
+                    }
+                    if let Some(media) = &execution.file_before {
+                        self.verify_inherited_blob(
+                            &media.uri,
+                            Some(media),
+                            InheritedBlobKind::FileBefore,
+                        )
+                        .await?;
                     }
                 }
                 _ => {}
@@ -120,7 +143,7 @@ impl Engine {
         &self,
         uri: &str,
         media: Option<&MediaRef>,
-        raw_result: bool,
+        kind: InheritedBlobKind,
     ) -> Result<()> {
         let id = uri
             .strip_prefix("areal://blob/")
@@ -133,10 +156,13 @@ impl Engine {
         if format!("{:x}", Sha256::digest(&bytes)) != id
             || media.is_some_and(|m| {
                 m.size_bytes != bytes.len() as u64
-                    || if raw_result {
-                        m.mime_type != "application/json"
-                    } else {
-                        validate_media(&m.mime_type, &bytes).is_err()
+                    || match kind {
+                        InheritedBlobKind::Media => validate_media(&m.mime_type, &bytes).is_err(),
+                        InheritedBlobKind::ToolResult => m.mime_type != "application/json",
+                        InheritedBlobKind::FileBefore => {
+                            m.mime_type != "application/octet-stream"
+                                || bytes.len() > areal_runtime_protocol::MAX_EDIT_FILE
+                        }
                     }
             })
         {
@@ -195,6 +221,7 @@ impl Engine {
                     Input::Image { url, .. } | Input::Audio { url } | Input::File { url, .. } if url == &uri)),
                 Item::AgentMedia { media, .. } => media.uri == uri,
                 Item::DynamicToolCall { content_items, execution, .. } => execution.result_snapshot.as_ref().is_some_and(|m|m.uri==uri)
+                    || execution.file_before.as_ref().is_some_and(|m|m.uri==uri)
                     || content_items.as_ref().is_some_and(|items|items.iter().any(|c|c["media"]["uri"]==uri)),
                 _ => false,
             });

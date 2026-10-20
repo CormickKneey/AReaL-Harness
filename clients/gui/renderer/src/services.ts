@@ -8,11 +8,18 @@ export type FileOpenRequest = { operation: 'targets' } | { operation: 'setDefaul
     | { operation: 'open' | 'reveal' | 'saveAs'; projectId: string; path: string };
 export interface Snapshot {
     projects: Data[];
+    desktopCapabilities?: { currentCommands: boolean };
     power?: { enabled: boolean; active: boolean; error: string | null } | null;
     menuBar?: { supported: boolean; active: boolean; error: string | null } | null;
     projectless?: { directory: string };
     revision?: number;
-    connection?: { state: 'connecting' | 'ready' | 'unavailable'; message?: string };
+    connection?: { state: 'connecting' | 'ready' | 'unavailable'; message?: string; recovery?: 'check' };
+    serviceSummary?: { state: 'running' | 'stopped' | 'unknown'; busy: boolean };
+    backendUpdate?: { state: 'applying' | 'pending' | 'failed'; message?: string };
+    lifecycle?: { recovery?: { canRecover: boolean; message: string; projects: { projectId: string; root: string; state: string; message: string }[] }; supported: boolean; phase?: string; message?: string; error?: string; requestId?: string; kind?: string; desktopExit?: string;
+      targets?: { projectId: string; phase: string; message?: string }[];
+      operations: { requestId: string; kind: string; phase: string; message?: string; threadId?: string; turnId?: string;
+        desktopExit?: string; targets: { projectId: string; phase: string; message?: string }[] }[] };
     library?: Data;
 }
 export interface UpdateState {
@@ -28,6 +35,7 @@ export type NotificationTarget = { projectId: string } & ({ threadId: string; ta
 export interface PlatformServices {
     /** The initial selected view has committed; desktop may reveal its window. */
     presentReady?(): Promise<void>;
+    onQuitRequested?(listener: () => Promise<boolean>): () => void;
     onNotificationOpen?(listener: (target: NotificationTarget) => void): () => void;
     updateState?(): Promise<UpdateState>;
     downloadUpdate?(): Promise<UpdateState>;

@@ -14,6 +14,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 requests = []
+summary_requests = []
 errors = []
 
 
@@ -24,6 +25,22 @@ class Model(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if any(
+                message.get("role") == "system"
+                and isinstance(message.get("content"), str)
+                and message["content"].startswith("Generate a concise semantic session title")
+                for message in request["messages"]
+            ):
+                assert not request.get("tools"), "session names never receive tools"
+                summary_requests.append(request)
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                self.wfile.write(
+                    b'data: {"choices":[{"index":0,"delta":{"content":"Fixture session"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'
+                )
+                self.wfile.flush()
+                return
             requests.append(request)
             tools = {tool["function"]["name"] for tool in request["tools"]}
             assert {"fs_read", "run_command"} <= tools, tools

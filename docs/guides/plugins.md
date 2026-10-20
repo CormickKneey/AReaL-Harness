@@ -71,6 +71,8 @@ Rust 嵌入式调用通过 `Engine::install_plugin_store` 接入插件。未配�
 
 新会话应用独立技能配置时可能重启 Core。桌面恢复此前已连接的独立 MCP 和已信任的插件 MCP；插件恢复仍须匹配原安装摘要，失败不重放工具调用。交互应用在创建会话后重新读取同一插件版本的当前连接，再执行首次打开。
 
+普通会话的消息和受理回执先由 Core 保存，可信插件的自动重连随后准备首轮模型工具。插件认证或初始化仍在等待时，已受理的消息可见，模型尚未开始请求。取消本轮不会丢弃共享连接的清理；准备尚未结束时，后台生命周期仍报告资源未结算。重连只使用本轮受理时允许的已信任插件摘要，不扩大受限 Profile 的权限。
+
 Core 管理写入要求 `requestId` 与必要的 `expectedRevision`；RPC 安装还要求选中 `source` 和 `expectedDigest`。重复同键同参数查询原结果，异参数拒绝。界面遇到结果未知可“核对插件提交”，只读查询受理回执，不重新执行：
 
 ```sh
@@ -97,6 +99,8 @@ GUI 的 Git marketplace 添加和 marketplace 更新请求最多等待 120 秒�
 认证配置支持 provided、DCR、CIMD preference、声明的 endpoint/resource/OIDC/scopes，以及 API-key bearer/basic/custom header。没有宿主可信 metadata URL 的 CIMD preference 回退 DCR；不会借用 OpenAI 客户端身份。OAuth client secret 和签名私钥在详情中配置并由 Main 安全存储，Core 只持引用。`ON_INSTALL` 安装后显示待认证并门控声明认证的服务；`ON_USE` 在需要时提出需求，mixed 可先匿名使用公开能力。
 
 OAuth 使用私有存储和 loopback PKCE callback。scope override（包括空列表）在授权与刷新时保留；认证挑战只交给认证所有者。服务要求增加权限时，同一绑定的授权请求保留已授予权限；取消后重试也保留，待授权权限不会被当成已授予权限，新配置或账号不继承旧授权。工具级拒绝绑定实际发送的 token，不误删并发刷新得到的新 token，也不自动重发 MCP 操作。实现与真实服务证据分开记录，见[验收矩阵](../development/codex-plugins-p1-p3-acceptance.md)。
+
+缓存凭据恢复只发现授权元数据，不向原 MCP 资源端点发送探测请求。标准 well-known 地址或显式配置的端点可用于静默恢复；若服务仅通过自定义认证挑战提供元数据地址，冷启动后需显式认证以恢复该发现路径。真实请求返回的挑战与 scope 保留，认证不会重放被拒绝的 MCP 操作。
 
 Codex `marketplace/add` 接受顶层 `sparsePaths`：非空列表使用 Git cone 目录选择并在更新时保留；调用方须包含目录文件与所需插件路径，不自动扩大选择。省略或空列表保留完整 checkout；本地目录来源不接受非空 sparse 选择。
 

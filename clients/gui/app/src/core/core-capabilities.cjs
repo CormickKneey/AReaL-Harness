@@ -42,6 +42,7 @@ function projectCoreCapabilities(binary, capabilities) {
     features: capabilities ? {
       conversation: supports('thread/start', 'turn/start'),
       ordinaryTurnSubmit: supports('areal/turn/submit') && capabilities?.features?.ordinaryTurnSubmit === true,
+      editLastMessage: supports('areal/turn/submit') && capabilities?.features?.editLastMessage === true,
       browserToolAttachment: supports('areal/thread/tools/attach') && capabilities?.features?.browserToolAttachment === true
         && capabilities?.browserToolBundles?.some(bundle => bundle.bundleId === 'areal.browser.v1') === true,
       forkPreview: supports('areal/thread/fork', 'areal/conversation/history') && capabilities?.features?.conversationDerivationV1?.workspaceModes?.includes('sharedCurrent') === true,

@@ -56,7 +56,7 @@ export class CoreTaskModel {
     if (method === 'areal/plan/updated') { this.setPlan(params.threadId, params.plan); return; }
     if (method === 'areal/goal/updated') { this.setGoal(params.threadId, params); return; }
     if (method === 'areal/queue/updated') { this.setQueue(params.threadId, params.queue); return; }
-    if (method === 'thread/started') { this.replace(params.thread); return; }
+    if (method === 'thread/started' || method === 'areal/thread/edited') { this.replace(params.thread); return; }
     if (method.startsWith('areal/interaction/')) {
       const item = params.interaction;
       if (!item) return;

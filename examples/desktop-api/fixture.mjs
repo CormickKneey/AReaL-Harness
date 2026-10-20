@@ -1,3 +1,4 @@
+import { respondToSessionName } from "../../scripts/model-fixture.mjs";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
@@ -17,6 +18,7 @@ export async function fixture() {
         if (text.length > 24 * 1024 * 1024) throw Error("fixture request too large");
       }
       const request = JSON.parse(text);
+      if (respondToSessionName(request, res)) return;
       requests.push(request);
       const lastUser = request.messages.findLastIndex(
         (m) =>

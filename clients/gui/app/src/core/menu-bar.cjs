@@ -5,8 +5,9 @@ const { join } = require('node:path');
 // One GUI owns one native menu-bar item. Core execution and safe quit continue
 // through their existing owners; restoring the window never creates a task.
 class MenuBar {
-  constructor(getWindow) {
+  constructor(getWindow, stopAndQuit = () => {}) {
     this.getWindow = getWindow; this.tray = null; this.error = null;
+    this.stopAndQuit = stopAndQuit;
     this.supported = process.platform === 'darwin'; this.closed = false;
   }
   sync(enabled) {

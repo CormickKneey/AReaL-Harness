@@ -3,6 +3,7 @@ const { createHash } = require('node:crypto');
 const { realpath, stat } = require('node:fs/promises');
 const { isAbsolute, relative, sep } = require('node:path');
 const { messageInput } = require('./media.cjs');
+const { resolveNewConversationModel } = require('@areal/workbench/model-selection');
 
 const marker = 'AREAL_TASK_DRAFT_V1';
 const operations = new Set(['taskDraftHistory', 'taskDraftStart', 'taskDraftRead', 'taskDraftSend', 'taskDraftConfirm']);
@@ -15,6 +16,7 @@ const key = (threadId, purpose) => {
 const instructions = (zone, editing = false) => `You help the user ${editing ? 'edit the selected scheduled task' : 'configure a task'}. You do NOT execute the task, access files, call tools, or claim it has been saved. Respond in the user's language. Return exactly one JSON object, without Markdown.
 If the objective or execution time is missing or ambiguous, ask one concise question: {"kind":"question","message":"..."}.
 When ready, return {"kind":"proposal","message":"...","objective":"execution instructions only, 1-4000 characters","schedule":{"at":"the civil date-time below, or the same value with its stated UTC offset","intervalSeconds":86400},"interactionMode":"interactive"}.
+${editing ? '' : 'For a new daily schedule (intervalSeconds:86400), every final proposal must include dailyStart:{"kind":"nearest"} when the user gives a daily time without an explicit first execution date. The host chooses the nearest future occurrence. If the user explicitly specifies a start date anywhere in this conversation, use dailyStart:{"kind":"explicit","source":"exact substring of the original user message specifying that start date"} and resolve that date in schedule.at. Preserve still-applicable start-date requirements and their original source across clarification turns, and repeat dailyStart in the final proposal. A date mentioned only in the task objective is not a start date. Omit dailyStart for other intervals and one-time schedules.'}
 Use the current civil time and time zone below. Chinese dates such as 2026年10月8日 are that same civil calendar, not an unsupported format. Resolve 今天, 明天, 后天 and weekday names against this calendar and clock. Never invent an execution time. Once-only schedules omit intervalSeconds. Every schedule needs an explicit time; schedule:null is invalid. If time is absent, ask; do not assume immediate execution.
 Only fixed intervals 1..31536000 seconds and one-time schedules are supported. Daily means fixed 24-hour intervals and weekly means fixed 7-day intervals. ${observesDaylightSaving(zone) ? 'This time zone observes daylight saving, so a fixed interval can move the local clock time; mention that once when proposing a daily or weekly schedule.' : 'This time zone does not observe daylight saving. A daily or weekly fixed interval keeps the same local clock time; do not mention daylight saving, GMT offsets, or fixed-interval caveats.'} Weekdays-only, monthly calendar rules, cloud execution, condition triggers are unsupported: explain and ask for a supported alternative, never silently approximate.
 Each run opens a new conversation on this desktop, using the current project configuration. Use interactive interaction; approvals and questions wait for the user. Budgets are optional: never invent them. Only for explicit user limits add limits:{tokenBudget,maxTurns,maxActiveSeconds} and limitSources:{each supplied field:exact quote from a user message}. Do not interpret task content counts as budgets.
@@ -104,6 +106,32 @@ function parseSchedule(value, zone, current) {
   }
   return schedule;
 }
+function parseDailyStart(value, userMessages) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || !['nearest', 'explicit'].includes(value.kind)
+    || Object.keys(value).some(field => !(value.kind === 'explicit' ? ['kind', 'source'] : ['kind']).includes(field))) {
+    throw new Error('每日任务缺少有效的首次日期说明，请补充描述后重新生成安排。');
+  }
+  if (value.kind === 'nearest') return { kind: 'nearest' };
+  if (typeof value.source !== 'string' || !value.source.trim()
+    || !userMessages.some(message => message.includes(value.source))) throw new Error('每日任务的首次日期缺少你的原文说明，请补充描述后重新生成安排。');
+  return { kind: 'explicit', source: value.source };
+}
+function resolveDailyStart(schedule, intent, now) {
+  if (intent.kind === 'explicit') return schedule;
+  const clock = civilTime(schedule.timeZone, new Date(schedule.at * 1000)).iso.slice(11, 19);
+  const date = civilTime(schedule.timeZone, new Date(now * 1000)).iso.slice(0, 10);
+  const day = new Date(`${date}T00:00:00Z`);
+  for (;;) {
+    const wall = `${day.toISOString().slice(0, 10)}T${clock}`;
+    const utc = Date.parse(`${wall}Z`);
+    const offsets = new Set([-86400000, 0, 86400000].map(delta => zoneOffset(schedule.timeZone, new Date(utc + delta))));
+    const candidates = [...offsets].map(offset => Date.parse(`${wall}${offset}`) / 1000)
+      .filter(at => at > now && civilTime(schedule.timeZone, new Date(at * 1000)).iso.slice(0, 19) === wall);
+    if (candidates.length) return { ...schedule, at: Math.min(...candidates) };
+    day.setUTCDate(day.getUTCDate() + 1);
+  }
+}
 function futureSchedule(schedule, now = Date.now() / 1000) {
   if (schedule.at > now) return schedule;
   if (!schedule.intervalSeconds) throw new Error('计划时间已过，请告诉我新的执行时间。');
@@ -138,6 +166,7 @@ function proposal(value, userMessages, target) {
   const objective = text(value.objective, '任务目标');
   if (!value.schedule) throw new Error('定时任务需要明确的执行时间。');
   const schedule = parseSchedule(value.schedule, value.timeZone);
+  const dailyStart = schedule.intervalSeconds === 86400 ? parseDailyStart(value.dailyStart, userMessages) : undefined;
   const limits = value.limits ?? {};
   if (!limits || typeof limits !== 'object' || Array.isArray(limits)) throw new Error('模型返回的停止条件无效。');
   const allowed = ['tokenBudget', 'maxTurns', 'maxActiveSeconds'];
@@ -148,7 +177,7 @@ function proposal(value, userMessages, target) {
       || !userMessages.some(message => message.includes(quote))) throw new Error('停止条件缺少你的明确说明，请补充后重新生成。');
   }
   return { mode: 'scheduled', objective, interactionMode: 'interactive',
-    ...(schedule ? { schedule } : {}), ...limits };
+    ...(schedule ? { schedule } : {}), ...(dailyStart ? { dailyStart } : {}), ...limits };
 }
 function parseReply(raw) {
   try { return JSON.parse(raw.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/, '$1')); }
@@ -201,12 +230,13 @@ function turnProjection(thread, turn, project, users, target, zone) {
 }
 function view(thread, project) {
   const turns = thread.turns ?? [], last = turns.at(-1), messages = [];
-  const target = targetOf(thread, project), users = turns.map(userText);
+  const target = targetOf(thread, project), users = [];
   const zone = (project.configurations?.[thread.id] ?? thread.desktop.configuration).options.appendInstructions.split('\n')[1].slice('Time zone: '.length);
   let result = null, error = '';
   const projections = new Map();
   for (const turn of turns) {
-    const user = userText(turn); if (user) messages.push({ id: `${turn.id}:user`, role: 'user', text: user });
+    const user = userText(turn); users.push(user);
+    if (user) messages.push({ id: `${turn.id}:user`, role: 'user', text: user });
     const projection = turnProjection(thread, turn, project, users, target, zone);
     projections.set(turn.id, projection);
     if (projection.message) messages.push({ id: `${turn.id}:assistant`, role: 'assistant', text: projection.message });
@@ -273,14 +303,20 @@ async function manageTaskDraft(backend, project, request) {
         const receipt = receipts.data.find(value => value.method === 'areal/thread/start' && (value.threadId || value.result?.thread?.id));
         if (receipt) started = { accepted: true, threadId: receipt.threadId ?? receipt.result.thread.id };
       }
-      let thread;
+      let thread, modelNotice;
       if (started?.accepted && started.threadId) {
         ({ thread } = await project.client.request('thread/read', { threadId: started.threadId, includeTurns: true }));
         if (await taskDirectory(project, thread.cwd) !== cwd) throw new Error('配置草稿已绑定其他工作目录，请恢复原目录或创建新草稿');
       } else {
         if (project.pending.some(entry => entry.params.requestId === request.draftId)) throw Object.assign(new Error('原配置会话创建结果尚未确认；不会重复创建。'), { submissionUnknown: true });
         await backend.resources.beforeCreate(project);
-        ({ thread } = await backend.submit(project, 'areal/thread/start', { cwd }, { requestId: request.draftId }));
+        const selection = resolveNewConversationModel(project.models, backend.providers.lastAcceptedModel);
+        const model = selection.candidate;
+        modelNotice = selection.notice;
+        ({ thread } = await backend.submit(project, 'areal/thread/start', { cwd,
+          ...(model?.providerId ? { model: { providerId: model.providerId, modelId: model.modelId } } : {}),
+          parameters: { ...model?.parameters, ...(selection.rememberedEffort != null ? { reasoningEffort: selection.rememberedEffort } : {}) },
+        }, { requestId: request.draftId }));
       }
       try {
         await backend.changeOutcomes(project, outcomes => ({ ...outcomes, [request.draftId]: { accepted: true, method: 'areal/thread/start', threadId: thread.id } }));
@@ -291,7 +327,7 @@ async function manageTaskDraft(backend, project, request) {
           maxModelRounds: 1, systemPrompt: instructions(zone, !!task), appendInstructions: `${marker}\nTime zone: ${zone}\n${workspaceContext(project, cwd)}${task ? `\n${targetPrefix}${JSON.stringify(targetContext(task))}` : ''}` } });
       } else await inspect(project, thread.id);
       await backend.openThread(project, thread.id);
-      return { threadId: thread.id };
+      return { threadId: thread.id, ...(modelNotice ? { modelNotice } : {}) };
     });
   }
   if (operation === 'taskDraftHistory') {
@@ -308,7 +344,8 @@ async function manageTaskDraft(backend, project, request) {
   if (operation === 'taskDraftRead') {
     const thread = await inspect(project, threadId), task = await committed(project, threadId, thread.turns.at(-1)?.id);
     const { projections, ...draft } = view(thread, project);
-    return { ...draft, thread: displayThread(thread, project), ...(task ? { task, proposal:null, digest:null, error:'' } : {}) };
+    const { dailyStart, ...proposal } = draft.proposal ?? {};
+    return { ...draft, ...(draft.proposal ? { proposal } : {}), thread: displayThread(thread, project), ...(task ? { task, proposal:null, digest:null, error:'' } : {}) };
   }
   return serial(project, text(threadId, '配置会话', 128), async () => {
     const thread = await inspect(project, threadId), target = targetOf(thread);
@@ -331,7 +368,7 @@ async function manageTaskDraft(backend, project, request) {
         options: { readOnly: true, toolAllowlist: [],
         maxModelRounds: 1, systemPrompt: instructions(zone, !!target),
         appendInstructions: `${marker}\nTime zone: ${zone}\n${workspaceContext(project, thread.cwd)}\nCurrent civil time: ${now.iso} (${now.chinese})\nUse this civil calendar for Chinese dates. schedule.at may be YYYY-MM-DDTHH:mm:ss without an offset; the host resolves that form in this time zone.${currentTask ? `\n${targetPrefix}${JSON.stringify(targetContext(currentTask))}` : ''}`} });
-      const result = await backend.submit(project, 'areal/turn/start', { threadId, input });
+      const result = await backend.submit(project, 'areal/turn/start', { threadId, input }, { requestId: request.requestId });
       return { threadId, turnId: result.turn?.id ?? result.turnId };
     }
     if (operation !== 'taskDraftConfirm') throw new Error('不支持的任务配置操作');
@@ -358,13 +395,14 @@ async function manageTaskDraft(backend, project, request) {
       // 用户重试复用空执行会话，以及成功响应后的重复确认去重。
       if (project.pending.some(entry => entry.params.threadId === threadId
         || entry.params.requestId === key(threadId, 'execution') || entry.params.requestId === key(threadId, 'confirm'))) throw new Error('原提交结果尚未确认，请先核对任务列表；不会重复创建。');
-      const values = { ...draft.proposal };
+      const { dailyStart, ...values } = draft.proposal;
       if (values.mode === 'scheduled') {
         if (!values.schedule.intervalSeconds) futureSchedule(values.schedule);
         await backend.resources.beforeCreate(project);
         const execution = await backend.submit(project, 'areal/thread/start', { cwd: thread.cwd }, {requestId:key(threadId,'execution')});
         values.threadId = execution.thread.id;
-        values.schedule = futureSchedule(values.schedule);
+        const now = Date.now() / 1000;
+        values.schedule = futureSchedule(dailyStart ? resolveDailyStart(values.schedule, dailyStart, now) : values.schedule, now);
       }
       const created = await backend.submit(project, 'areal/task/create', values, {requestId:key(threadId,'confirm')});
       project.model.setTask(created);

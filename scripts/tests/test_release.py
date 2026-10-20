@@ -60,10 +60,28 @@ class ReleaseTests(unittest.TestCase):
                     "files": files,
                     "profile": "release",
                     "workingTree": False,
+                    "sourceRevision": "a" * 40,
                     "prerequisites": [{"glibc": ">=2.35", "verifiedVersion": "2.35"}],
                 }
             )
         )
+        program = bundle / "bin/areal"
+        program.write_text(
+            "#!" + sys.executable + "\n"
+            "import json, os, sys\n"
+            "from pathlib import Path\n"
+            "if sys.argv[1:] == ['--version']:\n"
+            f"    print('areal {version}')\n"
+            "elif sys.argv[1:] == ['service', 'list', '--json']:\n"
+            "    path = os.environ.get('AREAL_INSTALL_FIXTURE_SERVICES')\n"
+            "    print(Path(path).read_text() if path else '[]')\n"
+            "else:\n"
+            "    sys.exit(9)\n"
+        )
+        manifest_path = bundle / "manifest.json"
+        data = json.loads(manifest_path.read_text())
+        data["files"]["bin/areal"] = installer.checksum(program)
+        manifest_path.write_text(json.dumps(data))
         if manifest_version == 2:
             path = bundle / "manifest.json"
             manifest = json.loads(path.read_text())
@@ -132,11 +150,33 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn('prefix.install "bin", "libexec", "manifest.json", "LICENSE"', text)
         self.assertNotIn("PLACEHOLDER", text)
 
+    def test_formula_platforms_and_beta_are_isolated(self):
+        for version in ["0.1.7", "0.1.7-beta.2"]:
+            mac = release.archive(self.bundle(version, "darwin/arm64"), self.root / version)
+            linux = release.archive(self.bundle(version, "linux/x86_64"), self.root / version)
+            output = self.root / (version + ".rb")
+            release.formula(mac, output, extra_archives=[linux])
+            text = output.read_text()
+            self.assertIn("on_linux do", text)
+            self.assertIn("on_macos do", text)
+            self.assertIn(hashlib.sha256(linux.read_bytes()).hexdigest(), text)
+            self.assertEqual('keg_only "the beta channel is opt-in' in text, "-beta." in version)
+            self.assertEqual("class ArealBeta" in text, "-beta." in version)
+            self.assertIn("/usr/bin/bwrap", text)
+            with self.assertRaises(ValueError):
+                release.formula(mac, output, extra_archives=[mac])
+            with self.assertRaises(ValueError):
+                release.formula(mac, output, url="file:///tmp/local", extra_archives=[linux])
+
     def test_release_rejects_dirty_or_debug_bundles(self):
         bundle = self.bundle()
         p = bundle / "manifest.json"
         data = json.loads(p.read_text())
-        for field, value in [("workingTree", True), ("profile", "debug")]:
+        for field, value in [
+            ("workingTree", True),
+            ("profile", "debug"),
+            ("sourceRevision", "unknown"),
+        ]:
             changed = {**data, field: value}
             p.write_text(json.dumps(changed))
             with self.assertRaises(ValueError):
@@ -285,7 +325,7 @@ class ReleaseTests(unittest.TestCase):
         for version in ["0.1.0", "0.1.1"]:
             archive = release.archive(
                 self.bundle(version, target, manifest_version=1 if version == "0.1.0" else 2),
-                self.root / "assets",
+                self.root / ("assets-" + version),
             )
             command = [
                 sys.executable,
@@ -311,6 +351,22 @@ class ReleaseTests(unittest.TestCase):
         command[command.index("--version") + 1] = "0.1.2"
         self.assertNotEqual(subprocess.run(command, capture_output=True).returncode, 0)
         self.assertEqual((prefix / "bin/areal").read_text(), "user-owned executable")
+
+    def test_release_outputs_are_never_overwritten(self):
+        bundle = self.bundle()
+        output = self.root / "assets"
+        archive = release.archive(bundle, output)
+        before = {p.name: p.read_bytes() for p in output.iterdir()}
+        with self.assertRaisesRegex(ValueError, "already exists"):
+            release.archive(bundle, output)
+        archive.unlink()
+        # 即使归档缺失，也不能覆盖既有摘要和来源清单。
+        with self.assertRaisesRegex(ValueError, "already exists"):
+            release.archive(bundle, output)
+        self.assertEqual(
+            {p.name: p.read_bytes() for p in output.iterdir()},
+            {name: content for name, content in before.items() if name != archive.name},
+        )
 
 
 if __name__ == "__main__":

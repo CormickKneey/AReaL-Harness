@@ -798,30 +798,31 @@ async fn tool_marker_rejects_exact_sent_token_without_replaying() {
             );
             manager.cancel("server").await;
         }
-        let calls = s.calls.lock().unwrap();
-        let rejected: Vec<_> = calls
-            .iter()
-            .filter(|(p, _, b)| {
-                p == "/mcp"
-                    && serde_json::from_str::<Value>(b)
-                        .is_ok_and(|v| v["params"]["arguments"]["reject"] == true)
-            })
-            .collect();
-        assert_eq!(rejected.len(), 1, "rejected POST must never replay");
-        assert!(
-            rejected[0]
-                .1
-                .get("authorization")
-                .is_some_and(|h| h == "Bearer fixture-old-token")
-        );
-        if concurrent_refresh {
-            assert!(calls.iter().any(|(p, h, _)| {
-                p == "/mcp"
-                    && h.get("authorization")
-                        .is_some_and(|h| h == "Bearer fixture-new-token")
-            }));
+        {
+            let calls = s.calls.lock().unwrap();
+            let rejected: Vec<_> = calls
+                .iter()
+                .filter(|(p, _, b)| {
+                    p == "/mcp"
+                        && serde_json::from_str::<Value>(b)
+                            .is_ok_and(|v| v["params"]["arguments"]["reject"] == true)
+                })
+                .collect();
+            assert_eq!(rejected.len(), 1, "rejected POST must never replay");
+            assert!(
+                rejected[0]
+                    .1
+                    .get("authorization")
+                    .is_some_and(|h| h == "Bearer fixture-old-token")
+            );
+            if concurrent_refresh {
+                assert!(calls.iter().any(|(p, h, _)| {
+                    p == "/mcp"
+                        && h.get("authorization")
+                            .is_some_and(|h| h == "Bearer fixture-new-token")
+                }));
+            }
         }
-        drop(calls);
         connections.shutdown().await.unwrap();
         s.calls.lock().unwrap().clear();
     }
@@ -970,33 +971,34 @@ async fn rejected_http_scope_upgrade_preserves_proven_grants_across_cancel_only_
         .unwrap();
     assert_eq!(pending_scopes(retry), "read write");
     manager.cancel("server").await;
-    let calls = s.calls.lock().unwrap();
-    let posts: Vec<_> = calls
-        .iter()
-        .filter(|(path, _, body)| {
-            path == "/mcp"
-                && serde_json::from_str::<Value>(body)
-                    .is_ok_and(|v| v["params"]["arguments"]["upgrade"] == true)
-        })
-        .collect();
-    assert_eq!(
-        posts.len(),
-        1,
-        "rejected HTTP POST must not replay during auth or retry"
-    );
-    assert_eq!(
-        posts[0].1.get("authorization").unwrap(),
-        "Bearer fixture-read-token"
-    );
-    assert_eq!(
-        calls
+    {
+        let calls = s.calls.lock().unwrap();
+        let posts: Vec<_> = calls
             .iter()
-            .filter(|(path, _, _)| path == "/scope-token")
-            .count(),
-        1,
-        "only initial authorization completed; no rejected token refresh"
-    );
-    drop(calls);
+            .filter(|(path, _, body)| {
+                path == "/mcp"
+                    && serde_json::from_str::<Value>(body)
+                        .is_ok_and(|v| v["params"]["arguments"]["upgrade"] == true)
+            })
+            .collect();
+        assert_eq!(
+            posts.len(),
+            1,
+            "rejected HTTP POST must not replay during auth or retry"
+        );
+        assert_eq!(
+            posts[0].1.get("authorization").unwrap(),
+            "Bearer fixture-read-token"
+        );
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|(path, _, _)| path == "/scope-token")
+                .count(),
+            1,
+            "only initial authorization completed; no rejected token refresh"
+        );
+    }
     connections.shutdown().await.unwrap();
     task.abort();
 }

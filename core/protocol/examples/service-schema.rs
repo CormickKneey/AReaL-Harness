@@ -6,6 +6,8 @@ fn main() {
             "protocolVersion": VERSION,
             "identity": schemars::schema_for!(Identity),
             "service": schemars::schema_for!(Service),
+            "capabilities": schemars::schema_for!(Capabilities),
+            "stopOperation": schemars::schema_for!(StopOperation),
             "request": schemars::schema_for!(Request),
             "response": schemars::schema_for!(Response),
             "browserBootstrap": schemars::schema_for!(BrowserBootstrap),

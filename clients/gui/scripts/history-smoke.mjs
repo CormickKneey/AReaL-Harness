@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { createServer } from "node:http";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -270,7 +270,7 @@ try {
       });
       activeCase.finish();
     } else if (name === "interrupted") {
-      await backend.command("stop", { projectId, threadId });
+      await backend.command("stop", { projectId, threadId, turnId: current().turns.at(-1).id, requestId: randomUUID() });
       activeCase.finish();
     } else activeCase.finish();
     await until(() => current().turns.at(-1).status === name, `${name} settlement`);

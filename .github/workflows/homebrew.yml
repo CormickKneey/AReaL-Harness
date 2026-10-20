@@ -1,0 +1,41 @@
+name: Sync public Homebrew tap
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Published CLI tag to retry (vX.Y.Z or vX.Y.Z-beta.N)'
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: public-homebrew-tap
+  cancel-in-progress: false
+jobs:
+  sync:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'v')
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Require existing cross-repository authorization
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$TAP_TOKEN" ]; then
+            echo '::error::Tap sync blocked: no HOMEBREW_TAP_TOKEN. An authorized maintainer must run scripts/sync-homebrew.py with existing tap write access, or approve provisioning a repository-scoped credential. Release publication does not confirm tap synchronization.'
+            exit 1
+          fi
+      - name: Synchronize the published channel
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: |
+          git clone https://github.com/areal-project/homebrew-tap.git "$RUNNER_TEMP/tap"
+          git -C "$RUNNER_TEMP/tap" config user.name 'github-actions[bot]'
+          git -C "$RUNNER_TEMP/tap" config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          gh auth setup-git
+          python3 scripts/sync-homebrew.py --tag "$RELEASE_TAG" --tap-checkout "$RUNNER_TEMP/tap" --push

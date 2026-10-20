@@ -408,10 +408,10 @@ impl Engine {
                     })
                     .collect();
                 let mut capabilities = info["capabilities"].clone();
-                if let Some(extensions) = info["capabilities"]["extensions"].as_object() {
-                    if let Some(object) = capabilities.as_object_mut() {
-                        object.extend(extensions.clone());
-                    }
+                if let Some(extensions) = info["capabilities"]["extensions"].as_object()
+                    && let Some(object) = capabilities.as_object_mut()
+                {
+                    object.extend(extensions.clone());
                 }
 
                 data.push(json!({"serverId":server.name(),"generation":server.generation(),"protocolVersion":info["protocolVersion"],"pluginId":owner.plugin,"installedDigest":owner.digest,"tools":tools,"capabilities":capabilities,"title":info["serverInfo"]["title"],"icons":info["serverInfo"]["icons"],"instructions":info["instructions"]}));
@@ -946,10 +946,10 @@ impl Engine {
         };
         let mut cleanup_error = None;
         for (uri, server) in releases {
-            if !server.is_revoked() {
-                if let Err(error) = server.unsubscribe(&uri, self.shutdown.child_token()).await {
-                    cleanup_error.get_or_insert_with(|| invalid(error));
-                }
+            if !server.is_revoked()
+                && let Err(error) = server.unsubscribe(&uri, self.shutdown.child_token()).await
+            {
+                cleanup_error.get_or_insert_with(|| invalid(error));
             }
         }
         self.app_save().await?;
@@ -962,12 +962,12 @@ impl Engine {
         self: &Arc<Self>,
         identity: String,
         thread_id: String,
-        server_id: String,
-        expected_generation: u64,
+        server_generation: (String, u64),
         kind: String,
         arguments: Value,
         request_id: String,
     ) -> Result<Value> {
+        let (server_id, expected_generation) = server_generation;
         self.app_scope(&thread_id).await?;
         let (owner, server) = self.plugin_server(&server_id, expected_generation).await?;
         let info = serde_json::to_value(server.info()).map_err(invalid)?;
@@ -1238,8 +1238,7 @@ impl Engine {
                 &turn,
                 self.shutdown.child_token(),
                 permit,
-                Some(call),
-                meta,
+                (Some(call), meta),
             );
             // App 可继续其冻结旧代；工具入口仍按实时 Store 检查撤销。
             state.active.as_mut().unwrap().registry = self

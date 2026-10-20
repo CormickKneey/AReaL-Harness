@@ -13,6 +13,7 @@ mod observations;
 mod outcome;
 mod permissions;
 mod plugin_hooks;
+mod session_name;
 mod sessions;
 mod store;
 mod task_mode;
@@ -162,6 +163,11 @@ pub enum Error {
     Storage(String),
 }
 pub type Result<T> = std::result::Result<T, Error>;
+
+struct TrustedPlugin {
+    id: String,
+    digest: String,
+}
 
 struct Active {
     registry: std::result::Result<tools::Registry, String>,

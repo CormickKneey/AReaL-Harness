@@ -499,10 +499,11 @@ pub(crate) fn parse(files: &Files, id: &str, source: &Path, cache: &Path) -> Res
         }
         let prefix = format!("{root}/");
         for p in files.keys() {
-            if let Some(rest) = p.strip_prefix(&prefix) {
-                if rest.ends_with("/SKILL.md") && rest.split('/').count() == 2 {
-                    selected.insert(p.clone(), ());
-                }
+            if let Some(rest) = p.strip_prefix(&prefix)
+                && rest.ends_with("/SKILL.md")
+                && rest.split('/').count() == 2
+            {
+                selected.insert(p.clone(), ());
             }
         }
         if overlay.get("skills").is_some() && !portable {
@@ -605,10 +606,8 @@ pub(crate) fn parse(files: &Files, id: &str, source: &Path, cache: &Path) -> Res
     } else {
         overlay.get("mcpServers").is_some() || files.contains_key(".mcp.json")
     };
-    if !portable {
-        if let Some(v) = overlay.get("mcpServers") {
-            declaration(v, files, "mcp", &mut d.diagnostics)?;
-        }
+    if !portable && let Some(v) = overlay.get("mcpServers") {
+        declaration(v, files, "mcp", &mut d.diagnostics)?;
     }
     if mcp {
         d.components.push("mcp".into());
@@ -620,7 +619,8 @@ pub(crate) fn parse(files: &Files, id: &str, source: &Path, cache: &Path) -> Res
         d.components.push("hooks".into());
         d.diagnostics.push("hooks: declarations do not execute during discovery; explicit hook definition trust is required".into());
     }
-    for (key, default, label) in [("apps", ".app.json", "apps")] {
+    {
+        let (key, default, label) = ("apps", ".app.json", "apps");
         let present = if let Some(v) = overlay.get(key) {
             declaration(v, files, label, &mut d.diagnostics)?;
             true

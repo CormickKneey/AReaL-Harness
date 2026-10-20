@@ -290,6 +290,7 @@ impl Handles {
 }
 mod agents;
 mod extensions;
+mod file_before;
 mod images;
 mod navigation;
 mod output;
@@ -986,6 +987,7 @@ impl Engine {
             call_id: call.id.clone(),
             execution: Box::new(ToolExecution {
                 result_snapshot: None,
+                file_before: None,
                 output_projection: None,
                 backend: if rejection.is_some() {
                     Some("core".into())

@@ -87,3 +87,22 @@ export const turnStatus = (status: string) =>
     failed: "失败",
     interrupted: "已停止",
   })[status] ?? status;
+
+/** Share the same saved execution projection as the pane, independent of its UI state. */
+export function trajectoryText(thread: Data, title: string): string {
+  return json({
+    format: "areal-harness-trajectory-v1",
+    title,
+    notice: "已保存的执行记录；不包含逐次模型请求的完整 I/O。",
+    threadId: thread.id,
+    parentThreadId: thread.parentThreadId ?? null,
+    turns: (thread.turns ?? []).map((turn: Data) => ({
+      id: turn.id,
+      status: turn.status,
+      model: turn.configuration?.model ?? null,
+      usage: turn.usage ?? null,
+      entries: trajectoryEntries(turn),
+      error: turn.error ?? null,
+    })),
+  });
+}

@@ -3,7 +3,7 @@
 const labels = { activeTurn: '活动轮次', resource: '未清理终端', uninspectedUnknown: '未核查结果',
   compaction: '上下文压缩', workgroup: '未结算工作组', activeGoal: '活动目标', queuedMessage: '待发消息', activeTask: '活动任务' };
 const unknown = () => ({ allowed: false, reasons: [{ code: 'unknown', count: 1 }] });
-const recoveryReads = new Set(['server', 'inspect', 'context', 'plan', 'processes', 'process', 'processOutput', 'goal', 'task', 'tasks', 'interactions', 'executions', 'execution']);
+const recoveryReads = new Set(['server', 'inspect', 'context', 'plan', 'processes', 'process', 'processOutput', 'goal', 'task', 'tasks', 'interactions', 'executions', 'execution', 'inheritedHistory']);
 const isRecoveryCommand = (name, request) => name === 'manage'
   && (recoveryReads.has(request?.operation) || request?.operation === 'toolAcknowledge');
 function decision(value) {
@@ -39,9 +39,12 @@ const blockerMessage = blockers => blockers.map(code => ({ peerGui: '请先退�
 function recoveryView(service, projects, forUpdate = true) {
   const blockers = desktopBlockers(service, forUpdate);
   const unsafe = projects.some(p => p.lifecycle ? !p.lifecycle.ifIdle.allowed
-    : !p.restartSafe || p.activeTasks || p.goalThreads?.length || p.waitingMessages);
-  return { blockers, ifIdle: !blockers.length && !unsafe && !service.busy && !service.stopReport,
-    cancel: !blockers.length && (unsafe || service.busy || !!service.stopReport), projects, service };
+    : !p.restartSafe || p.activeTasks || p.goalThreads?.length || p.waitingMessages)
+    || projects.some(p => p.tasks?.some(task => !task.paused))
+    || service.remote?.enabled === true || service.remote?.connections > 0;
+  const legacyBusy = service.lifecycle?.version !== 2 && (service.busy || !!service.stopReport);
+  return { blockers, ifIdle: !blockers.length && !unsafe && !legacyBusy,
+    cancel: !blockers.length && (unsafe || legacyBusy), projects, service };
 }
 function targets(projects) {
   return projects.map(p => ({ projectId: p.projectId, serviceId: p.serviceId ?? null, generation: p.generation ?? null }))
@@ -50,10 +53,18 @@ function targets(projects) {
 function describe(projects) {
   return projects.flatMap(p => (p.lifecycle?.ifIdle.reasons ?? []).map(r => `${p.root ?? p.projectId}：${labels[r.code] ?? '状态待核查'} ${r.count}`)).join('\n');
 }
+function assertLifecycleSupport(service, kind) {
+  const lifecycle = service?.lifecycle, capabilities = lifecycle?.capabilities;
+  if (lifecycle?.version !== 2 || typeof lifecycle.desktopGeneration !== 'string'
+    || capabilities?.request !== true || capabilities?.read !== true || capabilities?.reconcile !== true
+    || Array.isArray(capabilities.kinds) && !capabilities.kinds.includes(kind)) {
+    throw Object.assign(new Error('当前后台不支持可核查的生命周期操作。已有任务继续运行，请保留后台并检查原任务。'), { code: 'LIFECYCLE_UNSUPPORTED' });
+  }
+  return lifecycle;
+}
 class DesktopLifecycle {
-  constructor({ connection, metadata, home, notify, forUpdate = true }) {
-    this.connection = connection; this.metadata = metadata; this.home = home;
-    this.notify = notify; this.forUpdate = forUpdate;
+  constructor({ connection, metadata, home, forUpdate = true }) {
+    this.connection = connection; this.metadata = metadata; this.home = home; this.forUpdate = forUpdate;
   }
   async observe() {
     const projects = await this.connection.request('resources', { operation: 'inspect', includeTasks: true });
@@ -61,35 +72,43 @@ class DesktopLifecycle {
     return { ...recoveryView(service, projects, this.forUpdate), targets: targets(service.targets ?? projects) };
   }
   async stop({ mode = 'ifIdle', observed } = {}) {
+    const { SharedCoreBackend } = require('./service-client.cjs');
+    const backend = new SharedCoreBackend({ app: { getPath: () => this.home }, home: this.home });
+    backend.connection = this.connection; backend.metadata = this.metadata;
+    backend.status = (observed ?? await this.observe()).service;
+    backend.loadReferences(await backend.readControl());
+    return backend.stopService(this.forUpdate, { cancel: mode === 'cancel', observed });
+  }
+  async prepare({ kind, mode = 'ifIdle', observed, projectId, threadId, turnId } = {}) {
     if (!['ifIdle', 'cancel'].includes(mode)) throw new Error('无效的停止意图');
-    const before = observed ?? await this.observe();
-    if (mode === 'cancel') {
-      if (!this.notify) throw new Error('取消后台任务需要原生确认');
-      const answer = await this.notify({ type: 'warning', message: '确认取消后台任务？',
-        detail: '将取消所列工作区后台的活动执行，并暂停目标；待发送输入、安排和历史保留。UNKNOWN 或未清理资源仍可能阻止退出。\n\n'
-          + before.projects.map(p => p.root ?? p.projectId).join('\n'),
-        buttons: ['返回', '取消任务并停止'], defaultId: 0, cancelId: 0, noLink: true });
-      if (answer.response !== 1) return { kind: 'dismissed', canceled: true };
+    if (kind === 'interruptTurn') {
+      const { service } = await this.connection.request('snapshot');
+      const capability = assertLifecycleSupport(service, kind);
+      const expectedTargets = targets(service.targets ?? []).filter(target => target.projectId === projectId);
+      if (expectedTargets.length !== 1) throw Object.assign(new Error('原项目后台身份不完整，请重新核查'), { code: 'CONFIRMATION_STALE' });
+      return { kind, mode, expectedDesktopGeneration: capability.desktopGeneration, expectedTargets, threadId, turnId };
     }
+    const before = observed ?? await this.observe();
+    const capability = assertLifecycleSupport(before.service, kind);
+    if (before.blockers.length) throw Object.assign(new Error(blockerMessage(before.blockers)), { code: 'LIFECYCLE_BLOCKED' });
     const current = await this.observe();
-    if (!require('node:util').isDeepStrictEqual(before.targets, current.targets))
+    const latest = assertLifecycleSupport(current.service, kind);
+    if (capability.desktopGeneration !== latest.desktopGeneration
+      || !require('node:util').isDeepStrictEqual(before.targets, current.targets))
       throw Object.assign(new Error('后台实例或项目范围已变化，请重新确认'), { code: 'CONFIRMATION_STALE' });
     if (current.blockers.length) throw Object.assign(new Error(blockerMessage(current.blockers)), { code: 'LIFECYCLE_BLOCKED' });
-    let result;
-    try {
-      result = await this.connection.request('stopService', { protocol: this.metadata.protocol,
-        forUpdate: this.forUpdate, cancel: mode === 'cancel',
-        ...(current.service.lifecycleVersion === 1 ? { expectedTargets: current.targets } : {}) }, true);
-    } catch (error) {
-      if (error.lifecycle?.phase === 'incomplete') error.submissionUnknown = true;
-      throw error;
+    if (mode === 'cancel' || before.confirmedImpact) {
+      const impact = value => ({ remote: value.service.remote, projects: value.projects.map(project => ({
+        projectId: project.projectId, lifecycle: project.lifecycle, activeThreads: project.activeThreads,
+        goals: project.goals, tasks: project.tasks, resources: project.resources, queues: project.queues,
+        pendingRequests: project.pendingRequests,
+      })).sort((left, right) => left.projectId.localeCompare(right.projectId)) });
+      if (!require('node:util').isDeepStrictEqual(impact(before), impact(current)))
+        throw Object.assign(new Error('退出影响已变化，请重新确认当前任务'), { code: 'CONFIRMATION_STALE' });
     }
-    if (result?.stopped !== true) throw Object.assign(new Error('停止结果待核对，不会自动重发'), { submissionUnknown: true });
-    if (!Number.isSafeInteger(this.metadata.pid) || this.metadata.pid <= 1)
-      throw Object.assign(new Error('后台进程身份不完整，退出尚未确认'), { submissionUnknown: true });
-    try { await require('./service-client.cjs').waitForServiceProcessExit(this.home, this.metadata); }
-    catch (error) { error.submissionUnknown = true; throw error; }
-    return { ...result, kind: 'exited' };
+    const expectedTargets = projectId ? current.targets.filter(target => target.projectId === projectId) : current.targets;
+    if (projectId && expectedTargets.length !== 1) throw Object.assign(new Error('原项目后台身份不完整，请重新核查'), { code: 'CONFIRMATION_STALE' });
+    return { kind, mode, expectedDesktopGeneration: latest.desktopGeneration, expectedTargets };
   }
 }
-module.exports = { coreLifecycle, desktopBlockers, blockerMessage, recoveryView, targets, describe, DesktopLifecycle, isRecoveryCommand };
+module.exports = { coreLifecycle, desktopBlockers, blockerMessage, recoveryView, targets, describe, DesktopLifecycle, isRecoveryCommand, assertLifecycleSupport };

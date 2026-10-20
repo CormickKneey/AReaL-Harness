@@ -8,6 +8,8 @@
 |---|---|
 | `make verify` | Cordis pin、格式、静态检查、Rust workspace、两套 SDK、Python、文档、TUI 与统一委派 smoke |
 | `make script-test` | 启动器、Web 思考/等待/取消投影、perf 统计/证据、适配器依赖边界与文档链接/语言配对 |
+| `make upgrade-smoke` | 隔离运行真实 CLI 与离线安装器，验证独立安装升级、旧版本保留、Homebrew 保护及校验失败；合成服务记录不代表真实任务连续性 |
+| `make tui-upgrade-smoke ARGS='--old-bin-dir /absolute/old/bin --new-bin-dir /absolute/new/bin'` | 两套固定真实产物、真实新旧 TUI PTY、本地模型与 Core/Runtime，验证显式换代后旧客户端重连不会停止或降级新后台 |
 | `make test-core` / `make test-protocol` | Engine / app-server |
 | `make test-concurrency` | 并发原语 |
 | `make verify-runtime` | Runtime 单元测试与真实文件、进程、权限和关闭 smoke |
@@ -21,9 +23,11 @@
 
 真实 PTY smoke 使用终端单元格模拟器重建增量画面；宽字符同时覆盖相邻单元格，避免旧字符残留造成 Unicode 编辑结果误报。脚本单元测试覆盖该重绘边界。
 
+`tui-upgrade-smoke` 不构建或部署产物；先分别准备完整的不可变旧版与新版目录，并选择旧版不支持新版状态格式的组合。脚本隔离 home、工作区、状态和模型端点，通过真实 TUI 提交旧版与新版消息，显式重启激活新版，然后恢复仍打开的旧 TUI 并触发重连。它跨多个重试周期核对新版 Host/Core PID、generation、状态格式和后续回复。用 `--evidence /absolute/output` 保留终端画面、命令日志、源码与产物身份及清理结果；默认保存于临时目录。该检查不执行安装器，不替代 `upgrade-smoke`、安装包或真实供应商验收。
+
 macOS 原生 smoke 需要 Seatbelt，Linux 原生 smoke 需要 `/usr/bin/bwrap` 和 user namespace；两者都不能在能力缺失时回退到无沙箱执行。`outer-container-perf` 仍在受控容器中验证。默认 `cargo test` 不运行显式忽略的原生 Workgroup 和容量用例。
 
-Linux 宿主常规检查使用 `make verify CARGO_TEST_ARGS='--exclude areal-runtime-exec-native'`。原生后端测试要求 `/usr/bin/bwrap` 和 user namespace；CI 的独立任务构建 Dockerfile 的 `runtime-tests` 目标，在带 Bubblewrap 的受控容器中实际运行包含 `outer-container-perf` 的全部后端测试，不能仅排除后就视为完成验收。
+Linux 宿主常规检查使用 `make verify CARGO_TEST_ARGS='--exclude areal-runtime-exec-native'`。原生后端测试要求 `/usr/bin/bwrap` 和 user namespace；CI 的独立任务构建 Dockerfile 的 `runtime-tests` 目标，在带 Bubblewrap 的受控容器中实际运行包含 `outer-container-perf` 的全部后端测试，并启用 `areal-runtime/native-tests` 运行 daemon 的 `native_transport` 目标。该目标经私有 stdio 启动真实 daemon 和完整 Runtime bundle，使 Linux 在 daemon 旁找到 reaper；原生沙箱用例保留普通命令/Hook 并发进展和外部 writer 排他断言，四个 portable transport 用例仍属于默认测试。`make verify-native` 先构建 bundle，再在 macOS 显式运行同一原生目标。该 feature 仅选择测试目标，不改变生产行为；不能只排除 portable 宿主的原生测试就视为完成验收。
 
 ## GUI 与桌面路由门禁
 
@@ -196,3 +200,5 @@ Verify 汇总要求 host、container 和独立依赖审计全部成功。GUI gat
 从仓库根先执行 `make build` 与 `make gui-build`。`node scripts/plugin-p0-smoke.mjs` 使用真实共享 Core、CLI、认证 RPC 与本地确定性模型，验证原包发现/安装、摘要变化拒绝、共享资源边界、范围/撤权、setup 去重、丢失响应收据查询和服务重启。`pnpm --dir clients/gui test:plugins` 在隔离 Electron/Core 数据目录中完成目录→安装→setup→打开对话→停用/启用→卸载；setup 响应在 Main 到 Renderer 边界注入丢失，恢复通过真实 Core 收据，不能重放。制品目录由脚本输出，清单包含二进制和变更源码摘要。
 
 包与 Engine 集成：`cargo test --locked -p areal-plugins --test store -p areal-engine --test codex_plugins --test skills --test agents --test queue_transfer`。它们分别检查文件系统/安装事务与会话/Turn 权限和生命周期。上述检查不替代真实供应商、签名安装包、物理输入或跨平台验收，后续范围见[实施计划](codex-plugins-plan.md)。
+
+安装与更新改动：`make script-test` 包含合成完整包的安装事务回归、独立 Git 仓库的来源门禁和无 Electron 依赖的 GUI 更新控制器回归。覆盖下载中断、摘要/版本错误、运行服务保持、入口提交失败、安装互斥、数据不变、原生准备超时与受理未知不重发；模拟传输错误不代表真实签名替换。Release bundles 另运行 `scripts/install-smoke.py` 的真实共享服务保持。正式相邻版本的签名替换、重开及数据保持仍使用隔离包副本的 `test:update` 与合成 `test:history-compat`，按发行影响执行；Gatekeeper、Finder 启动和真人权限不由单元测试代替。

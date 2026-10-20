@@ -28,8 +28,8 @@ export function ConnectionMethodPicker({
     disabled: boolean;
 }) {
     return (
-        <section className="space-y-5" aria-label="选择连接方式">
-            <div className="resource-title">
+        <section className="provider-picker" aria-label="选择连接方式">
+            <div className="provider-picker-heading">
                 <Button
                     variant="ghost"
                     size="icon"
@@ -41,18 +41,18 @@ export function ConnectionMethodPicker({
                 </Button>
                 <h2>{definition.name} · 连接方式</h2>
             </div>
-            <div className="grid gap-3">
+            <div className="provider-method-list">
                 {(definition.authMethods ?? ["apiKey", "none"]).map((method: string) => (
                     <Button
                         key={method}
                         variant="outline"
                         disabled={disabled}
-                        className="h-auto justify-start whitespace-normal px-4 py-4 text-left"
+                        className="provider-method-card"
                         onClick={() => onSelect(method)}
                     >
-                        <span>
-                            <strong className="block">{methods[method]?.label ?? method}</strong>
-                            <small className="block pt-1 font-normal text-foreground-subtle">
+                        <span className="provider-method-copy">
+                            <strong>{methods[method]?.label ?? method}</strong>
+                            <small>
                                 {methods[method]?.description}
                             </small>
                         </span>

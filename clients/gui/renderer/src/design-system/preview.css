@@ -36,3 +36,10 @@
 /* 对话目录仅组合既有生产消息、输入区与资源查看器。 */
 #conversation-timeline > .design-preview-actions { margin-bottom: var(--spacing-field); }
 .design-preview-timeline-resource { min-height: 0; overflow: auto; padding: var(--spacing-field); }
+
+.design-preview[data-view="settings"] > :not(.design-preview-header):not(.design-settings-preview) { display: none; }
+.design-settings-preview { display: flex; flex-direction: column; gap: var(--spacing-section); }
+.design-settings-preview .settings-workspace { padding: 0; overflow: visible; }
+.design-settings-preview [data-settings-host] { min-width: 0; }
+.design-settings-state { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spacing-inline); }
+.design-settings-state select { color: var(--color-foreground); background: var(--color-background); border: 1px solid var(--color-border); border-radius: var(--radius-control); padding: var(--spacing-inline); }

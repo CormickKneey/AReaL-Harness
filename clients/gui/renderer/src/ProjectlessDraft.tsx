@@ -1,3 +1,4 @@
+import type { ImageAnnotationTarget } from "./imageAnnotations.js";
 import { useEffect, useState } from "react";
 import { Button } from "./components/ui/button.js";
 import { DraftComposer } from "./DraftComposer.js";
@@ -5,9 +6,10 @@ import type { Action, Data, PlatformServices, Snapshot } from "./services.js";
 import { call } from "./services.js";
 
 const key = "areal-gui:draft:projectless:new";
-export function ProjectlessDraft({ snapshot, services, action, readAction, onOpen, onPanel }: {
+export function ProjectlessDraft({ snapshot, services, action, readAction, onOpen, onPanel, onAnnotate }: {
   snapshot: Snapshot; services: PlatformServices; action: Action; readAction?: Action; onOpen: (pid: string, tid: string) => Promise<void>;
   onPanel: (panel: string) => void;
+  onAnnotate?: (target: ImageAnnotationTarget) => void;
 }) {
   const [prepared, setPrepared] = useState<Data>();
   const [error, setError] = useState("");
@@ -36,7 +38,7 @@ export function ProjectlessDraft({ snapshot, services, action, readAction, onOpe
   return <>
     {error && <p className="projectless-draft-notice text-destructive" role="alert">{error}<Button size="sm" variant="ghost" onClick={() => { setError(""); void prepare().catch(cause => setError(cause.message)); }}>重试准备</Button></p>}
     {!owner && !error && <p className="projectless-draft-notice text-foreground-subtle" role="status">正在准备新会话模型…</p>}
-    <DraftComposer project={draftOwner} draftKey={key} prepareProject={prepare} action={action} readAction={readAction} onPanel={onPanel} onOpen={async (pid, tid) => {
+    <DraftComposer onAnnotate={onAnnotate} project={draftOwner} draftKey={key} prepareProject={prepare} action={action} readAction={readAction} onPanel={onPanel} onOpen={async (pid, tid) => {
       localStorage.removeItem(`${key}:project`); localStorage.removeItem(`${key}:workspace-request`);
       await onOpen(pid, tid);
     }} />

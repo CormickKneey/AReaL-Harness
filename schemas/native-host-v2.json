@@ -361,6 +361,36 @@
               },
               {
                 "additionalProperties": false,
+                "description": "Private Core evidence read with the same access and chunk bounds as Read.",
+                "properties": {
+                  "kind": {
+                    "const": "readForHistory",
+                    "type": "string"
+                  },
+                  "maxBytes": {
+                    "format": "uint",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "offset": {
+                    "default": 0,
+                    "format": "uint64",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "path": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "path",
+                  "maxBytes"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
                 "properties": {
                   "kind": {
                     "const": "stat",

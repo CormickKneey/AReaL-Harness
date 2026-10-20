@@ -1,3 +1,4 @@
+import { respondToSessionName } from "./model-fixture.mjs";
 import WebSocket from "ws";
 // Real binaries and native sandbox, with a deterministic model HTTP fixture.
 import assert from "node:assert/strict";
@@ -145,6 +146,7 @@ const model = createServer(async (req, res) => {
     let body = "";
     for await (const chunk of req) body += chunk;
     const request = JSON.parse(body);
+    if (respondToSessionName(request, res)) return;
     modelCalls++;
     assert(request.messages[0].role === "system");
     assert(request.tools.some((tool) => tool.function.name === "read_process"));
@@ -477,6 +479,9 @@ async function start() {
     "python3",
     [
       "scripts/launch.py",
+      ...(process.env.AREAL_TEST_BIN_DIR
+        ? ["--bin-dir", resolve(process.env.AREAL_TEST_BIN_DIR)]
+        : []),
       "--sandbox-profile",
       "native",
       "--config",
@@ -685,7 +690,7 @@ try {
     3,
   );
   const stored = JSON.parse(await readFile(join(data, `${id}.json`), "utf8"));
-  assert.equal(stored.version, 14);
+  assert.equal(stored.version, 15);
   console.log("PASS model → read → patch → command → durable result");
   const created = (await server.call("thread/start", {})).thread.id;
   await server.call("turn/start", {
@@ -766,10 +771,22 @@ try {
   const callsBeforeInterrupt = modelCalls;
   await server.call("turn/interrupt", { threadId: interrupted, turnId: waitingTurn.id });
   const cancelled = await completed(server, interrupted);
-  assert.equal(cancelled.turns[0].status, "failed");
-  assert(cancelled.turns[0].items.some((item) => item.execution?.outcome === "unknown"));
+  assert.equal(cancelled.turns[0].status, "interrupted");
+  const command = cancelled.turns[0].items.find(
+    (item) => item.type === "dynamicToolCall" && item.tool === "run_command",
+  );
+  assert(command, "interrupted command must retain its original tool item");
+  assert.equal(command.execution.outcome, "failed");
+  const receipt = JSON.parse(command.contentItems.find((item) => item.type === "inputText").text);
+  assert.equal(receipt.state, "exited");
+  assert.equal(receipt.commandStatus, "terminated");
+  assert(receipt.processId, "interrupted command must retain its original process identity");
   assert.equal(modelCalls, callsBeforeInterrupt);
-  console.log("PASS interrupt automatic wait, preserve UNKNOWN and reclaim Turn scope");
+  const cleanup = await server.call("areal/server/status", {});
+  assert.equal(cleanup.runtime.activeProcesses, 0);
+  assert.deepEqual(cleanup.resources, []);
+  assert.deepEqual(cleanup.unresolvedTools, []);
+  console.log("PASS interrupt automatic wait, retain terminal receipt and confirm Runtime cleanup");
   for (const action of [
     "echo",
     "echo-large",

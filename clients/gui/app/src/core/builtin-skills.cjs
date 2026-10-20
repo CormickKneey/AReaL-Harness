@@ -55,15 +55,22 @@ async function builtinSkill(home, id) {
         await mkdir(dirname(target), { recursive: true, mode: 0o700 });
         await writeFile(target, file.bytes, { flag: 'wx', mode: file.executable ? 0o500 : 0o400 });
       }
-      await chmod(stage, 0o500);
+      // macOS rename(2) 可能拒绝移动只读目录，即使目标位于同一父目录。
       try { await rename(stage, root); }
-      catch (cause) { if (!['EEXIST', 'ENOTEMPTY'].includes(cause.code)) throw cause; }
+      catch (cause) {
+        // macOS 在其他发布者已创建只读目标目录时可能返回 EACCES。
+        if (!['EEXIST', 'ENOTEMPTY', 'EACCES'].includes(cause.code)) throw cause;
+        try { await verifiedFiles(root, manifest); }
+        catch { throw cause; }
+      }
     } finally {
       await chmod(stage, 0o700).catch(() => {});
       await rm(stage, { recursive: true, force: true });
     }
     await verifiedFiles(root, manifest);
   }
+  await chmod(root, 0o500);
+  await verifiedFiles(root, manifest);
   const body = files.find(file => file.path === 'SKILL.md').bytes.toString('utf8');
   const frontmatter = body.split(/^---\s*$/m)[1];
   const metadata = YAML.parse(frontmatter, { maxAliasCount: 0 });

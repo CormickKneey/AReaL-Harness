@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import { Check, MousePointer2, SlidersHorizontal, Square, X } from "lucide-react";
+import { MousePointer2, Square, X } from "lucide-react";
 import { Button } from "./components/ui/button.js";
+import { AnnotationNoteEditor } from "./AnnotationNoteEditor.js";
 import type { BrowserAnnotation } from "./browserAnnotations.js";
 import "./BrowserRegionAnnotation.css";
 
@@ -72,7 +73,6 @@ export function BrowserRegionAnnotation({
 }) {
     const host = useRef<HTMLDivElement>(null),
         image = useRef<HTMLImageElement>(null);
-    const input = useRef<HTMLTextAreaElement>(null);
     const start = useRef<{ x: number; y: number } | null>(null);
     const [size, setSize] = useState({ width: 0, height: 0 });
     const [dragging, setDragging] = useState(false),
@@ -91,9 +91,6 @@ export function BrowserRegionAnnotation({
         measure();
         return () => observer.disconnect();
     }, [bitmapWidth, bitmapHeight]);
-    useLayoutEffect(() => {
-        if (draft.region && !busy && !dragging) input.current?.focus();
-    }, [!!draft.region, busy, details, dragging]);
     const point = (clientX: number, clientY: number) => {
         const bounds = image.current?.getBoundingClientRect();
         if (!bounds?.width || !bounds.height) return null;
@@ -250,132 +247,22 @@ export function BrowserRegionAnnotation({
                             {nextNumber}
                         </span>
                         {!dragging && (
-                            <div
-                                className={`browser-annotation-editor ${details ? "expanded" : ""}`}
-                                role="dialog"
-                                aria-label="编辑当前标注"
+                            <AnnotationNoteEditor
+                                number={nextNumber}
+                                comment={draft.comment}
+                                busy={busy}
+                                expanded={details}
+                                onExpandedChange={setDetails}
+                                valid={!!region.width && !!region.height}
+                                details={draft.element ? `${draft.element.role} · ${draft.element.name}` : "区域标注"}
                                 style={{
                                     left: editorLeft,
-                                    top: Math.max(
-                                        4,
-                                        Math.min(
-                                            anchor.y * scale + (editorBelow ? 16 : -20),
-                                            size.height - (details ? 300 : 110),
-                                        ),
-                                    ),
+                                    top: Math.max(4, Math.min(anchor.y * scale + (editorBelow ? 16 : -20), size.height - (details ? 300 : 110))),
                                 }}
-                            >
-                                <div className="browser-annotation-editor-row">
-                                    <button
-                                        type="button"
-                                        aria-label="展开批注编辑"
-                                        aria-expanded={details}
-                                        onClick={() => setDetails(!details)}
-                                    >
-                                        <SlidersHorizontal size={15} />
-                                    </button>
-                                    {!details ? (
-                                        <textarea
-                                            ref={input}
-                                            rows={1}
-                                            aria-label="标注意见"
-                                            placeholder={`批注 ${nextNumber}`}
-                                            maxLength={4000}
-                                            value={draft.comment}
-                                            disabled={busy}
-                                            onChange={(event) =>
-                                                onChange({ ...draft, comment: event.target.value })
-                                            }
-                                            onKeyDown={(event) => {
-                                                if (
-                                                    event.key === "Enter" &&
-                                                    !event.shiftKey &&
-                                                    !event.nativeEvent.isComposing
-                                                ) {
-                                                    event.preventDefault();
-                                                    confirm();
-                                                }
-                                            }}
-                                        />
-                                    ) : (
-                                        <span>批注 {nextNumber}</span>
-                                    )}
-                                    {!details && (
-                                        <button
-                                            type="button"
-                                            className="browser-annotation-confirm"
-                                            aria-label="加入聊天草稿"
-                                            title="确认批注，加入 Composer"
-                                            disabled={
-                                                busy ||
-                                                !region.width ||
-                                                !region.height ||
-                                                !draft.comment.trim()
-                                            }
-                                            onClick={confirm}
-                                        >
-                                            <Check size={14} />
-                                        </button>
-                                    )}
-                                </div>
-                                {details && (
-                                    <>
-                                        <small>
-                                            {draft.element
-                                                ? `${draft.element.role} · ${draft.element.name}`
-                                                : "区域标注"}
-                                        </small>
-                                        <textarea
-                                            ref={input}
-                                            aria-label="标注意见"
-                                            value={draft.comment}
-                                            disabled={busy}
-                                            maxLength={4000}
-                                            placeholder="描述想调整的内容…"
-                                            onChange={(event) =>
-                                                onChange({ ...draft, comment: event.target.value })
-                                            }
-                                            onKeyDown={(event) => {
-                                                if (
-                                                    event.key === "Enter" &&
-                                                    (event.metaKey || event.ctrlKey) &&
-                                                    !event.nativeEvent.isComposing
-                                                ) {
-                                                    event.preventDefault();
-                                                    confirm();
-                                                }
-                                            }}
-                                        />
-                                        <div className="browser-annotation-editor-actions">
-                                            <Button
-                                                type="button"
-                                                size="sm"
-                                                variant="ghost"
-                                                disabled={busy}
-                                                onClick={() =>
-                                                    onChange({
-                                                        ...draft,
-                                                        region: null,
-                                                        element: undefined,
-                                                        comment: "",
-                                                    })
-                                                }
-                                            >
-                                                取消此条
-                                            </Button>
-                                            <button
-                                                type="button"
-                                                className="browser-annotation-confirm"
-                                                aria-label="加入聊天草稿"
-                                                disabled={busy || !draft.comment.trim()}
-                                                onClick={confirm}
-                                            >
-                                                <Check size={14} />
-                                            </button>
-                                        </div>
-                                    </>
-                                )}
-                            </div>
+                                onChange={(comment) => onChange({ ...draft, comment })}
+                                onConfirm={confirm}
+                                onCancel={() => onChange({ ...draft, region: null, element: undefined, comment: "" })}
+                            />
                         )}
                     </>
                 )}

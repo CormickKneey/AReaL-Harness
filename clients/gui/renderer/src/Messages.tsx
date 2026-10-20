@@ -4,22 +4,25 @@ import { UnknownToolInspection } from "./UnknownToolInspection.js";
 import { TurnNavigation } from "./TurnNavigation.js";
 import { executionOutcome, executionSegments, goalContinuationLabel, turnFailureMessage } from "./conversationPresentation.js";
 import { TurnProgress } from "./TurnProgress.js";
-import { TurnElapsed, completedTimeLabel } from "./TurnElapsed.js";
+import { TurnElapsed } from "./TurnElapsed.js";
 import { ForkIcon, MoreOptionsIcon } from "./interfaceIcons.js";
 import { UserPromptEdit } from "./UserPromptEdit.js";
 import { isOrdinaryConversation, interruptionLabel } from "./ordinaryConversation.js";
 import { MessageActions } from "./MessageActions.js";
 import { CollapsibleText } from "./CollapsibleText.js";
+import { UserFeedback } from "./UserFeedback.js";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./components/ui/dropdown-menu.js";
 import { TurnHookStats } from "./TurnHookStats.js";
 import { ToolEvent } from "./ToolEvent.js";
-import { TurnExecution } from "./TurnExecution.js";
-import { Fragment, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { TurnActivity, TurnExecution } from "./TurnExecution.js";
+import { Fragment, useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { TimelineBottomButton } from "./TimelineBottomButton.js";
 import { MessageResponse } from "./components/ai-elements/message.js";
 import { SentAttachment } from "./MessageAttachment.js";
 import { sentReviewFeedback } from "./reviewComments.js";
 import { SentBrowserAnnotations } from "./BrowserAnnotationAttachments.js";
+import { sentImageAnnotations } from "./imageAnnotations.js";
+import { ImageAnnotationList } from "./ImageAnnotationViews.js";
 import { sentBrowserAnnotations } from "./browserAnnotations.js";
 import { SentReviewComments } from "./ReviewCommentViews.js";
 import { TurnFileSummary } from "./TurnFileSummary.js";
@@ -52,8 +55,14 @@ export function Messages({
   onFork,
   onSideSelection,
   responseActions,
-  reserveResponseSpace = true,
+  embedded = false,
+  readOnly = false,
+  afterTurns,
+  reserveResponseSpace = !embedded,
 }: {
+  embedded?: boolean;
+  readOnly?: boolean;
+  afterTurns?: ReactNode;
   reserveResponseSpace?: boolean;
   beforeTurns?: ReactNode;
   onAgent?: (id: string) => void;
@@ -73,7 +82,7 @@ export function Messages({
   const thread: Data = { ...localThread, turns: [...inherited.turns, ...(localThread.turns ?? [])] };
   const inheritedIds = new Set(inherited.turns.map(turn => turn.id));
   const ordinary = isOrdinaryConversation(localThread, project.configurations?.[localThread.id]);
-  const editable = ordinary ? (localThread.turns ?? []).flatMap((turn: Data) => turn.continuedFromTurnId || goalContinuationLabel(turn) ? [] : (turn.items ?? []).filter((item: Data) => item.type === "userMessage")).at(-1)?.id : undefined;
+  const editable = ordinary && !readOnly ? (localThread.turns ?? []).flatMap((turn: Data) => turn.continuedFromTurnId || goalContinuationLabel(turn) ? [] : (turn.items ?? []).filter((item: Data) => item.type === "userMessage")).at(-1)?.id : undefined;
   const responseSpace = useRef<HTMLDivElement>(null);
   const container = useRef<HTMLDivElement>(null);
   const follow = useRef(true);
@@ -157,6 +166,10 @@ export function Messages({
     reservation.current = undefined;
     if (responseSpace.current) responseSpace.current.style.height = "0px";
   };
+  const readHere = () => {
+    follow.current = false;
+    rememberReading();
+  };
   const updateReading = () => {
     const element = container.current;
     if (!element) return;
@@ -192,17 +205,15 @@ export function Messages({
     container.current?.scrollTo({ top: container.current.scrollHeight });
     updateReading();
   };
+  const renderImage = useCallback((uri: string, name: string) => /^areal:\/\/blob\/[A-Za-z0-9_-]+$/.test(uri)
+    ? <SentAttachment part={{ type: "image", uri, name: name || "回复图片" }} projectId={project.id} threadId={thread.id} action={action} /> : null, [project.id, thread.id, action]);
   const renderAgentMessage = (entry: Data, turn: Data, deferActions = false) => !entry.text?.trim() ? null : <div className={`assistant-message${deferActions ? " assistant-message-final" : ""}`} data-message-phase={entry.phase ?? "legacy"} data-side-item-id={entry.id} key={entry.id}>
-    {entry.phase === "commentary" && (turn.status !== "inProgress" || entry.id !== turn.items?.findLast((item: Data) => ["agentMessage", "dynamicToolCall", "userMessage", "agentMedia"].includes(item.type))?.id)
-      ? <CollapsibleText onExpandedChange={() => { follow.current = false; releaseResponseSpace(); rememberReading(); }}>
-        <MessageResponse className="conversation-markdown" preserveLineBreaks theme={dark ? "dark" : "light"} onOpenExternalUrl={onLink} onOpenFileLink={onFile}>{entry.text}</MessageResponse>
-      </CollapsibleText>
-      : <MessageResponse className="conversation-markdown" preserveLineBreaks streaming={turn.status === "inProgress"} theme={dark ? "dark" : "light"} onOpenExternalUrl={onLink} onOpenFileLink={onFile}>{entry.text}</MessageResponse>}
+    <MessageResponse className="conversation-markdown" preserveLineBreaks streaming={turn.status === "inProgress" && (entry.phase !== "commentary" || entry.id === turn.items?.findLast((item: Data) => ["agentMessage", "dynamicToolCall", "userMessage", "agentMedia"].includes(item.type))?.id)} theme={dark ? "dark" : "light"} onOpenExternalUrl={onLink} onOpenFileLink={onFile} onRenderImage={renderImage} webPreviews>{entry.text}</MessageResponse>
     {!deferActions && entry.phase !== "commentary" && turn.status !== "inProgress" && <MessageActions text={entry.text} />}
   </div>;
   useLayoutEffect(() => {
     const element = container.current, spacer = responseSpace.current;
-    if (!element || !spacer) return;
+    if (embedded || !element || !spacer) return;
     const previous = seenTurn.current;
     const switched = activeOwner.current !== owner;
     const remembered = readingViews.get(owner);
@@ -275,33 +286,33 @@ export function Messages({
     element.addEventListener("wheel", wheel, { passive: false });
     // File summaries, disclosures and Markdown/media resize independently of
     // Core snapshots. Reuse this reading owner; no new store or execution loop.
-    let frame: number | undefined;
-    const resize = new ResizeObserver(() => {
-      frame ??= requestAnimationFrame(() => { frame = undefined; layout(); });
-    });
+    // Resize notifications run before paint; a new frame exposes the old tail.
+    const resize = new ResizeObserver(layout);
     resize.observe(element);
     if (element.firstElementChild) resize.observe(element.firstElementChild);
     return () => {
       resize.disconnect();
-      if (frame !== undefined) cancelAnimationFrame(frame);
       element.removeEventListener("wheel", wheel);
     };
   }, [owner, latestTurnId, reserveResponseSpace]);
   return (
-    <div className="messages-shell">
-    <TurnNavigation turns={thread.turns ?? []} container={container} onNavigate={() => {
+    <div className={embedded ? "messages-embedded" : "messages-shell"}>
+    {!embedded && <TurnNavigation key={owner} turns={thread.turns ?? []} container={container} onNavigate={() => {
       follow.current = false;
       releaseResponseSpace();
       rememberReading();
-    }} />
+    }} />}
     <div
-      className="messages"
+      className={embedded ? "messages-embedded-content" : "messages"}
       ref={container}
-      onScroll={updateReading}
+      onScroll={embedded ? undefined : updateReading}
       onMouseUp={captureSideSelection}
-
+      onClickCapture={event => {
+        const control = event.target instanceof Element ? event.target.closest("button[aria-expanded], summary") : null;
+        if (control && event.currentTarget.contains(control) && control.closest(".turn-progress, .turn-execution")) readHere();
+      }}
     >
-      <div className="message-column">
+      <div className={embedded ? "message-embedded-column" : "message-column"}>
         {beforeTurns}
         {inherited.loading && <p role="status">正在加载继承历史…</p>}
         {inherited.error && <p role="alert">继承历史读取失败：{inherited.error}</p>}
@@ -328,14 +339,18 @@ export function Messages({
               setForkError({ turnId: turn.id, message });
             }).finally(() => setForking(false));
           };
-          const forkControls = canFork ? <><button type="button" className="turn-fork-trigger" aria-label="从此轮创建聊天分支" title={afterReason || "从这里创建聊天分支"} disabled={forking || !!afterReason} onClick={event => forkAt("after", event.currentTarget)}><ForkIcon /><span>分支</span></button><DropdownMenu>
+          const canAskSelection = !!onSideSelection && selectedSideText?.owner === selectionOwner && selectedSideText.turnId === turn.id;
+          const forkControls = canFork || canAskSelection ? <>{canFork && <button type="button" className="turn-fork-trigger" aria-label="从此轮创建聊天分支" title={afterReason || "从这里创建聊天分支"} disabled={forking || !!afterReason} onClick={event => forkAt("after", event.currentTarget)}><ForkIcon /><span>分支</span></button>}<DropdownMenu>
               <DropdownMenuTrigger render={<button type="button" className="icon-button" disabled={forking} aria-label={`轮次操作 ${turnIndex + 1}`}><MoreOptionsIcon /></button>} />
               <DropdownMenuContent align="end">
-                <DropdownMenuItem disabled={!!afterReason} title={afterReason || undefined} onClick={() => forkAt("after")}>在此轮之后分支</DropdownMenuItem>
-                {afterReason && <p className="px-2 text-xs text-muted-foreground">{afterReason}</p>}
-                <DropdownMenuItem disabled={!!beforeReason} title={beforeReason || undefined} onClick={() => forkAt("before")}>在此轮之前分支</DropdownMenuItem>
-                {beforeReason && <p className="px-2 text-xs text-muted-foreground">{beforeReason}</p>}
-                {inspectTurn && <DropdownMenuItem onClick={() => document.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(inspectTurn)}"]`)?.scrollIntoView({ block: "center" })}>查看来源轮次的核查入口</DropdownMenuItem>}
+                {canAskSelection && <DropdownMenuItem onClick={() => void askAboutSelection()}>在旁路中询问所选内容</DropdownMenuItem>}
+                {canFork && <>
+                  <DropdownMenuItem disabled={!!afterReason} title={afterReason || undefined} onClick={() => forkAt("after")}>在此轮之后分支</DropdownMenuItem>
+                  {afterReason && <p className="px-2 text-xs text-muted-foreground">{afterReason}</p>}
+                  <DropdownMenuItem disabled={!!beforeReason} title={beforeReason || undefined} onClick={() => forkAt("before")}>在此轮之前分支</DropdownMenuItem>
+                  {beforeReason && <p className="px-2 text-xs text-muted-foreground">{beforeReason}</p>}
+                  {inspectTurn && <DropdownMenuItem onClick={() => document.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(inspectTurn)}"]`)?.scrollIntoView({ block: "center" })}>查看来源轮次的核查入口</DropdownMenuItem>}
+                </>}
               </DropdownMenuContent>
             </DropdownMenu></> : null;
           const segments = executionSegments(turn.items ?? [], turn.status);
@@ -359,7 +374,10 @@ export function Messages({
             const progress = item.type !== "questionAnswer" && item.type !== "userMessage" && item.type !== "agentMedia" && (item.type !== "agentMessage" || item.phase === "commentary" || (!!legacyReply && item.id !== legacyReply.id));
             const previous = groups.at(-1);
             if (progress && previous?.progress) previous.entries.push({ item, index });
-            else groups.push({ id: item.id, progress, entries: [{ item, index }] });
+            // An earlier empty commentary can become visible after the reader
+            // opens tools. Anchor its group to the preceding reading boundary
+            // so that insertion retains both disclosure levels.
+            else groups.push({ id: progress ? `progress:${previous?.id ?? turn.id}` : item.id, progress, entries: [{ item, index }] });
           });
           // Stop is a Core terminal state, not a completed response. Keep its
           // process text inspectable and put the state before that content.
@@ -398,9 +416,10 @@ export function Messages({
                 const appContent = content.filter((part: Data) => part.type === "text" && part.mcpContent);
                 const text = content.filter((part: Data) => part.type === "text" && !part.mcpContent).map((part: Data) => part.text ?? "").join("\n");
                 const feedback = sentReviewFeedback(text);
-                const attachments = content.filter((part: Data) => part.type !== "text");
+                const attachments: Data[] = content.filter((part: Data) => part.type !== "text");
                 const browserFeedback = sentBrowserAnnotations(feedback.text, attachments);
-                const ordinaryAttachments = attachments.filter((part: Data) => !browserFeedback.notes.some(note => note.imageUri === (part.url ?? part.uri)));
+                const imageFeedback = sentImageAnnotations(browserFeedback.text, attachments);
+                const ordinaryAttachments = attachments.map((part: Data, index: number) => ({ part, index })).filter(({ part }) => !browserFeedback.notes.some(note => note.imageUri === (part.url ?? part.uri)));
                 return (
                   <div className="user-message" data-side-item-id={item.id} key={item.id}>
                     <div className="user-message-content">
@@ -408,16 +427,19 @@ export function Messages({
                       {appContent.length>0&&<div className="user-attachments" aria-label="应用内容">{appContent.map((part:Data,index:number)=><McpContentLabel key={index} block={part.mcpContent}/>)}</div>}
                       <SentBrowserAnnotations notes={browserFeedback.notes} attachments={attachments} projectId={project.id} threadId={thread.id} action={action} />
                       {ordinaryAttachments.length > 0 ? <div className="user-attachments" data-testid="user-attachments">
-                        {ordinaryAttachments.map((part: Data, i: number) => <SentAttachment key={part.url ?? part.uri ?? i}
-                          part={part} projectId={project.id} threadId={thread.id} action={action} />)}
+                        {ordinaryAttachments.map(({ part, index }) => {
+                          const note = imageFeedback.notes.find(note => note.attachmentIndex === index);
+                          return <div key={`${index}:${part.url ?? part.uri}`} className="flex flex-col gap-2"><SentAttachment
+                            part={part} annotation={note} projectId={project.id} threadId={thread.id} action={action} />{note && <ImageAnnotationList note={note} />}</div>;
+                        })}
                       </div> : null}
-                      {browserFeedback.text.trim() ? <div className="user-bubble">
+                      {imageFeedback.text.trim() ? <div className="user-bubble">
                         <CollapsibleText key={`${owner}:${item.id}`} onExpandedChange={() => {
                           follow.current = false;
                           releaseResponseSpace();
                           rememberReading();
                         }}>
-                        <MessageResponse className="conversation-markdown user-message-body" preserveLineBreaks theme={dark ? "dark" : "light"} onOpenExternalUrl={onLink} onOpenFileLink={onFile}>{browserFeedback.text}</MessageResponse>
+                        <MessageResponse className="conversation-markdown user-message-body" preserveLineBreaks theme={dark ? "dark" : "light"} onOpenExternalUrl={onLink} onOpenFileLink={onFile}>{imageFeedback.text}</MessageResponse>
                         </CollapsibleText>
                       </div> : null}
                       {(text.trim() || item.id === editable) && <MessageActions text={text}>{item.id === editable && <UserPromptEdit key={`${owner}:${item.id}`} project={project} thread={localThread} item={item} action={action} />}</MessageActions>}
@@ -431,7 +453,7 @@ export function Messages({
                   name: item.modality === "image" ? "生成的图片" : item.modality === "audio" ? "生成的音频" : "生成的文件" }}
                   projectId={project.id} threadId={thread.id} action={action} />
               </div>;
-              return <TurnExecution key={item.id} active={index === segments.length - 1} items={item.items} turn={turn} project={project} threadId={thread.id}
+              return <TurnExecution key={item.id} items={item.items} turn={turn} project={project} threadId={thread.id}
                 hasTurnSummary={group.progress && turn.status === "completed" && hasReadingSummary}
                 renderItem={(entry: Data, disclosure) => {
                   if (entry.type === "dynamicToolCall") return <div data-side-item-id={entry.id} key={entry.id}><ToolEvent item={entry} {...disclosure} onFile={onFile} onAgent={isInherited ? undefined : onAgent} agents={isInherited ? undefined : project.state?.threads} turnId={turn.id} action={action} projectId={project.id} threadId={thread.id} readTurnReview={turn.status === "completed" ? readTurnReview : undefined} /></div>;
@@ -441,24 +463,22 @@ export function Messages({
             });
             return <Fragment key={group.id}>
               {hasInterruption && groupIndex === stopHeaderIndex && stopHeading}
-              {group.progress ? <TurnProgress summaryAvailable={turn.status === "completed" && hasReadingSummary}
-                label={(groupIndex === firstProgress ? completedTimeLabel(turn) : undefined) ?? (legacyReply ? "早前消息与活动" : "本轮过程")}
+              {group.progress ? <TurnProgress summaryAvailable
+                turn={groupIndex === firstProgress ? turn : undefined} connected={!!project.state?.connected}
+                label={legacyReply ? "早前消息与活动" : "本轮过程"}
                 settled={turn.status === "completed" && hasReadingSummary && !outcome.unfinished && !outcome.failures && !pendingInput}
                 {...outcome}>{contents}</TurnProgress> : contents}
               {group.entries.some(({ item }) => item === initialUser) &&
-                (turn.status !== "completed" || firstProgress < 0 || !hasReadingSummary) &&
+                firstProgress < 0 &&
                 <TurnElapsed turn={turn} connected={!!project.state?.connected} />}
             </Fragment>;
             })}
             {!isInherited && (turn.items ?? []).filter((item: Data) => item.type === "dynamicToolCall").map((item: Data) =>
-              <UnknownToolInspection key={`${project.id}:${thread.id}:${item.id}`} item={item} project={project} thread={thread} action={action} />)}
-            {hasFinal && firstProgress < 0 && turn.status === "completed" && completedTimeLabel(turn) && <p className="turn-timing">{completedTimeLabel(turn)}</p>}
+              <UnknownToolInspection key={`${project.id}:${thread.id}:${item.id}`} item={item} project={readOnly ? { ...project, state: { ...project.state, connected: false } } : project} thread={thread} action={action} />)}
             <TurnFileSummary turn={turn} readTurnReview={readTurnReview} onFile={onFile} onReview={onReview} />
-            {responseMessage && turn.status !== "inProgress" && <MessageActions text={responseMessage.text}><TurnHookStats turn={turn} />{forkControls}{responseActions?.(responseMessage)}</MessageActions>}
+            {responseMessage && turn.status !== "inProgress" && <MessageActions text={responseMessage.text}><TurnHookStats turn={turn} />{forkControls}{responseActions?.(responseMessage)}{!isInherited && !readOnly && <UserFeedback project={project} thread={localThread} turn={turn} item={responseMessage} action={action} dark={dark} />}</MessageActions>}
+            {canAskSelection && (!responseMessage || turn.status === "inProgress") && <div className="message-actions">{forkControls}</div>}
             {canFork && forkError?.turnId === turn.id && <p role="alert" className="notice">{forkError?.message}</p>}
-            {turn.status === "inProgress" && (!segments.length || ["userMessage", "agentMessage", "agentMedia"].includes(segments.at(-1)?.type)) && (
-              <TurnExecution items={[]} turn={turn} project={project} threadId={thread.id} renderItem={() => null} />
-            )}
             {hasInterruption && stopHeaderIndex < 0 && stopHeading}
             {turn.status !== "inProgress" && !hasInterruption && !(turn.status === "completed" && hasReadingSummary) && (
               <div className="turn-status">
@@ -472,13 +492,14 @@ export function Messages({
             )}
             {!finalMessage && turn.status !== "inProgress" && turn.items?.some((item: Data) => item.type === "dynamicToolCall" && item.execution?.hooks?.length) &&
               <div className="message-actions"><TurnHookStats turn={turn} /></div>}
+            <TurnActivity turn={turn} project={project} threadId={thread.id} />
           </section>;
         })}
-        <div ref={responseSpace} className="message-response-space" aria-hidden="true" />
+        {afterTurns}
       </div>
+      {!embedded && <div ref={responseSpace} className="message-response-space" aria-hidden="true" />}
     </div>
-    {selectedSideText?.owner === selectionOwner && <button type="button" className="side-selection-action" onClick={() => void askAboutSelection()}>在旁路中询问所选内容</button>}
-    {readingHistory && <TimelineBottomButton onClick={returnToBottom} />}
+    {!embedded && readingHistory && <TimelineBottomButton onClick={returnToBottom} />}
     </div>
   );
 }

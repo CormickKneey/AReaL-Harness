@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { stageCoreApp } from "./stage-app.mjs";
 import { stageMacOSService } from "./stage-macos-service.mjs";
+import { buildMacOSDmg } from "./macos-dmg.mjs";
 const gui = fileURLToPath(new URL("..", import.meta.url));
 const root = resolve(gui, "../..");
 const require = createRequire(join(gui, "app/package.json"));
@@ -126,12 +127,16 @@ if (!unsignedLocal) {
 verifyCoreBundle(join(app, "Contents/Resources"), { hashes: true });
 const archive = join(output, "AReaL-Harness-GUI-mac-arm64.zip");
 execFileSync("/usr/bin/ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", app, archive]);
+const dmg = !unsignedLocal && !release ? await buildMacOSDmg({
+  app, destination: join(output, "AReaL-Harness-GUI-mac-arm64.dmg"), volumeName: "AReaL Harness Preview",
+}) : undefined;
 await writeFile(
   join(output, "package-evidence.json"),
   JSON.stringify(
     {
       app,
       archive,
+      dmg,
       dependencies,
       backgroundService,
       builder: {
@@ -149,4 +154,4 @@ await writeFile(
     2,
   ),
 );
-console.log(JSON.stringify({ app, archive, evidence: join(output, "package-evidence.json") }));
+console.log(JSON.stringify({ app, archive, dmg, evidence: join(output, "package-evidence.json") }));

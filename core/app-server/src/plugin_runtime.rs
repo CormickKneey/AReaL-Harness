@@ -173,8 +173,7 @@ async fn dispatch_inner(
                 .mcp_extension_call(
                     identity.into(),
                     p.thread_id,
-                    p.server_id,
-                    p.expected_generation,
+                    (p.server_id, p.expected_generation),
                     p.kind,
                     p.arguments,
                     p.request_id,

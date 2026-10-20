@@ -65,9 +65,15 @@ else:
 """)
             cargo.chmod(0o755)
             result = subprocess.run(
-                ["make", "desktop-schemas"], cwd=root, capture_output=True,
-                env={**os.environ, "PATH": str(binary) + os.pathsep + os.environ["PATH"],
-                     "SCHEMA_FIXTURE": mode}, check=False,
+                ["make", "desktop-schemas"],
+                cwd=root,
+                capture_output=True,
+                env={
+                    **os.environ,
+                    "PATH": str(binary) + os.pathsep + os.environ["PATH"],
+                    "SCHEMA_FIXTURE": mode,
+                },
+                check=False,
             )
             contents = {name: (schemas / name).read_bytes() for name in names}
             remaining = sorted(p.name for p in schemas.iterdir())

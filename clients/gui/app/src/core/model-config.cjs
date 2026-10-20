@@ -74,7 +74,7 @@ class ModelConfiguration {
     return current;
   }
   async credential(value, { privateKey = false } = {}) {
-    if (typeof value !== 'string' || value.length > (privateKey ? 32768 : 16384) || value.includes('\0') || (!privateKey && /[\r\n]/.test(value))) throw new Error('凭据格式无效');
+    if (typeof value !== 'string' || value.length > (privateKey ? 32768 : 16384) || value.includes('\0') || (!privateKey && /[^\x20-\x7e]/.test(value))) throw new Error('凭据格式无效');
     if (!value.trim()) return undefined;
     if (!this.encryption?.isEncryptionAvailable() || this.encryption.getSelectedStorageBackend?.() === 'basic_text') throw new Error('系统安全存储不可用，API Key 未保存');
     const reference = `AREAL_CREDENTIAL_${randomUUID().replaceAll('-', '')}`;
@@ -89,6 +89,10 @@ class ModelConfiguration {
     try { return this.encryption.decryptString(Buffer.from(encrypted, 'base64')); }
     catch { throw new Error('无法读取已保存的 API Key，请解锁系统钥匙串或重新填写密钥'); }
   }
+  credentialsFor(snapshot) {
+    const references = new Set(snapshot.data.map(item => item.apiKeyEnv).filter(reference => reference?.startsWith('AREAL_CREDENTIAL_') && Object.hasOwn(this.vault.keys, reference)));
+    return Object.fromEntries([...references].map(reference => [reference, this.key({ apiKeyEnv: reference })]));
+  }
   environment() {
     // Frozen thread/queue configurations can still reference a retired key.
     return Object.fromEntries(Object.keys(this.vault.keys).map(reference => [reference, this.key({ apiKeyEnv: reference })]));
@@ -96,8 +100,8 @@ class ModelConfiguration {
   public() {
     const value = this.value;
     return { ...value, data: value.data.map(item => ({ ...item, protocol: item.protocol === 'chat-completions' ? 'chatCompletions' : item.protocol, baseUrl: baseUrl(item.endpoint) })),
-      projects: [...this.backend.projects.values()].map(project => ({ projectId: project.id, root: project.root, connected: !!project.client?.ready, applied: !!project.client?.ready && project.providerRevision === value.revision })),
-      pendingApply: [...this.backend.projects.values()].some(project => project.service && project.providerRevision !== value.revision) };
+      projects: [...this.backend.projects.values()].map(project => ({ projectId: project.id, root: project.root, connected: !!project.client?.ready, applied: !!project.client?.ready && !project.providerError && !this.backend.providers?.pendingApplications?.has(project.id) && project.providerRevision === value.revision, error: project.providerError ?? null })),
+      pendingApply: [...this.backend.projects.values()].some(project => project.service && (project.providerRevision !== value.revision || project.providerError || this.backend.providers?.pendingApplications?.has(project.id))) };
   }
 }
 module.exports = { ModelConfiguration, protocolToCore, baseUrl };

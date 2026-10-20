@@ -1,6 +1,9 @@
 //! 可信桌面 Main 可直接 exec 此 JSON 入口；浏览器只访问 Core HTTP/WS。
 use anyhow::{Result, ensure};
-use areal_local_service::{LaunchSpec, LocalArgs};
+use areal_local_service::{
+    LaunchSpec, LocalArgs,
+    gui_owner::{self, GuiLifetime},
+};
 use clap::Subcommand;
 use std::path::PathBuf;
 
@@ -32,6 +35,9 @@ pub enum ServiceCommand {
     Ensure {
         #[command(flatten)]
         local: Box<LocalArgs>,
+        /// 复用兼容实例或启动新实例；配置变化需要显式 lifecycle 操作。
+        #[arg(long)]
+        no_auto_restart: bool,
         #[arg(long)]
         json: bool,
     },
@@ -45,6 +51,25 @@ pub enum ServiceCommand {
         #[arg(long)]
         json: bool,
     },
+    Capabilities {
+        #[command(flatten)]
+        target: ServiceTarget,
+        #[arg(long)]
+        expected_generation: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// 只读原停止操作；不存在回执不能证明请求没有被受理。
+    Operation {
+        #[command(flatten)]
+        target: ServiceTarget,
+        #[arg(long)]
+        expected_generation: String,
+        #[arg(long)]
+        request_id: String,
+        #[arg(long)]
+        json: bool,
+    },
     /// 默认拒绝停止仍在工作的实例；--cancel 显式取消并结算。
     Stop {
         #[command(flatten)]
@@ -54,6 +79,8 @@ pub enum ServiceCommand {
         /// 仅停止已确认的 generation；实例换代时拒绝。
         #[arg(long)]
         expected_generation: Option<String>,
+        #[arg(long, requires = "expected_generation")]
+        request_id: Option<String>,
         #[arg(long)]
         json: bool,
     },
@@ -78,30 +105,96 @@ pub enum ServiceCommand {
 }
 
 pub async fn execute(command: ServiceCommand) -> Result<()> {
+    let lifetime = GuiLifetime::from_env()?;
+    let owner = gui_owner::from_env()?;
+    ensure!(
+        lifetime.is_none() || owner.is_some(),
+        "GUI lifetime requires an application owner"
+    );
     let root = areal_local_service::home()?;
     let value = match command {
-        ServiceCommand::Ensure { local, .. } => {
-            serde_json::to_value(areal_local_service::ensure(&LaunchSpec::resolve(&local)?).await?)?
+        ServiceCommand::Ensure {
+            local,
+            no_auto_restart,
+            ..
+        } => {
+            let mut spec = LaunchSpec::resolve(&local)?;
+            spec.owner = owner.clone();
+            serde_json::to_value(if owner.is_some() {
+                areal_local_service::ensure_with_lifetime(
+                    &spec,
+                    lifetime.as_ref().ok_or_else(|| {
+                        anyhow::anyhow!("GUI ensure requires an inherited lifetime descriptor")
+                    })?,
+                    no_auto_restart,
+                )
+                .await?
+            } else if no_auto_restart {
+                areal_local_service::ensure_without_restart(&spec).await?
+            } else {
+                areal_local_service::ensure(&spec).await?
+            })?
         }
         ServiceCommand::List { .. } => {
             serde_json::to_value(areal_local_service::list(&root).await?)?
         }
-        ServiceCommand::Status { target, .. } => serde_json::to_value(
-            areal_local_service::status(&root, &target.resolve(&root).await?).await?,
+        ServiceCommand::Status { target, .. } => {
+            let service = areal_local_service::status(&root, &target.resolve(&root).await?).await?;
+            if let Some(owner) = &owner {
+                gui_owner::check(Some(owner), service.owner.as_ref())?;
+            }
+            serde_json::to_value(service)?
+        }
+        ServiceCommand::Capabilities {
+            target,
+            expected_generation,
+            ..
+        } => serde_json::to_value(
+            areal_local_service::capabilities(
+                &root,
+                &target.resolve(&root).await?,
+                &expected_generation,
+            )
+            .await?,
         )?,
+        ServiceCommand::Operation {
+            target,
+            expected_generation,
+            request_id,
+            ..
+        } => {
+            serde_json::json!({"operation": areal_local_service::operation(
+                &root, &target.resolve(&root).await?, &expected_generation, &request_id,
+            ).await?})
+        }
         ServiceCommand::Stop {
             target,
             cancel,
             expected_generation,
+            request_id,
             ..
         } => {
             let id = target.resolve(&root).await?;
-            let service = if let Some(generation) = expected_generation {
-                areal_local_service::stop_with_generation(&root, &id, cancel, &generation).await?
+            if let Some(request_id) = request_id {
+                serde_json::to_value(
+                    areal_local_service::stop_operation(
+                        &root,
+                        &id,
+                        expected_generation.as_deref().unwrap(),
+                        &request_id,
+                        cancel,
+                    )
+                    .await?,
+                )?
             } else {
-                areal_local_service::stop(&root, &id, cancel).await?
-            };
-            serde_json::to_value(service)?
+                let service = if let Some(generation) = expected_generation {
+                    areal_local_service::stop_with_generation(&root, &id, cancel, &generation)
+                        .await?
+                } else {
+                    areal_local_service::stop(&root, &id, cancel).await?
+                };
+                serde_json::to_value(service)?
+            }
         }
         ServiceCommand::Restart { local, cancel, .. } => serde_json::to_value(
             areal_local_service::restart(&LaunchSpec::resolve(&local)?, cancel).await?,

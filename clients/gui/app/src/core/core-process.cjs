@@ -2,11 +2,14 @@
 
 const { spawn } = require('node:child_process');
 const { isAbsolute } = require('node:path');
+const { scrubOwnerEnvironment } = require('./application-owner.cjs');
 
 // 系统 Python 保留原生 Core 的父进程；不使用 shell，也不改变可信调用方的 argv/env。
 const bridge = `import os,signal,subprocess,sys,time
 owner=os.getppid()
-p=subprocess.Popen(sys.argv[1:])
+lifetime=os.environ.get('AREAL_GUI_LIFETIME_FD')
+p=subprocess.Popen(sys.argv[1:],pass_fds=(4,) if lifetime=='4' else ())
+if lifetime=='4': os.close(4)
 def forward(s,f):
     try: p.send_signal(s)
     except ProcessLookupError: pass
@@ -31,9 +34,17 @@ sys.exit(r)
 
 function spawnCore(binary, args, options = {}) {
   if (!isAbsolute(binary) || !Array.isArray(args) || args.some(arg => typeof arg !== 'string')) throw new TypeError('Core 调用必须使用可信绝对路径和独立参数');
-  const stdio = ['pipe', 'pipe', 'pipe'];
-  if (process.platform !== 'darwin') return spawn(binary, args, { ...options, stdio });
-  const child = spawn('/usr/bin/python3', ['-I', '-S', '-c', bridge, binary, ...args], { ...options, detached: true, stdio: [...stdio, 'pipe'] });
+  const { applicationOwner, ...launch } = options;
+  const env = scrubOwnerEnvironment(options.env);
+  if (applicationOwner) { env.AREAL_GUI_OWNER = JSON.stringify(applicationOwner); env.AREAL_GUI_LIFETIME_FD = '4'; }
+  const stdio = ['pipe', 'pipe', 'pipe', process.platform === 'darwin' ? 'pipe' : 'ignore', ...(applicationOwner ? ['pipe'] : [])];
+  if (process.platform !== 'darwin') {
+    const child = spawn(binary, args, { ...launch, env, stdio });
+    if (applicationOwner) child.ownerLifetime = child.stdio[4];
+    return child;
+  }
+  const child = spawn('/usr/bin/python3', ['-I', '-S', '-c', bridge, binary, ...args], { ...launch, env, detached: true, stdio });
+  if (applicationOwner) child.ownerLifetime = child.stdio[4];
   let pid, buffer = '', settled = false, bridgeExited = false;
   const killBridge = child.kill.bind(child);
   child.kill = (signal = 'SIGTERM') => {
@@ -102,7 +113,16 @@ function executeCore(binary, args, options = {}) {
     child.once('error', error => { failure ??= error; });
     child.stdin.on('error', error => { if (error.code !== 'EPIPE') stop(error); });
     child.stdin.end(input);
-    child.once('close', (code, exitSignal) => {
+    const exited = new Promise(resolveExit => {
+      child.once('exit', (code, exitSignal) => resolveExit({ code, exitSignal }));
+      child.once('error', () => resolveExit({ code: child.exitCode, exitSignal: child.signalCode }));
+    });
+    const drained = stream => new Promise(resolveDrain => {
+      if (stream.readableEnded || stream.destroyed) { resolveDrain(); return; }
+      stream.once('end', resolveDrain); stream.once('close', resolveDrain); stream.once('error', resolveDrain);
+    });
+    // owner 写端独立于短命 CLI，不能等待包含此管道的 child close。
+    void Promise.all([exited, drained(child.stdout), drained(child.stderr)]).then(([{ code, exitSignal }]) => {
       clearTimeout(timer); clearTimeout(escalation); signal?.removeEventListener('abort', aborted);
       const value = { stdout: Buffer.concat(stdout).toString('utf8'), stderr: Buffer.concat(stderr).toString('utf8') };
       if (!failure && (code !== 0 || exitSignal)) failure = new Error(`Core 进程退出：${exitSignal ?? code}`);

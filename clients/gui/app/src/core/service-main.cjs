@@ -4,12 +4,13 @@ const startupTraceService = startupTrace('service.startup', { servicePid: proces
 startupTraceService.advance('imports');
 const { app, safeStorage, dialog, Notification, powerSaveBlocker } = require('electron');
 const childProcess = require('node:child_process');
+const { randomUUID } = require('node:crypto');
 const { mkdir, realpath, writeFile, rename, readFile, rm } = require('node:fs/promises');
 const { join } = require('node:path');
 const { CoreBackend } = require('./backend.cjs');
 const { DesktopService, PROTOCOL } = require('./service-protocol.cjs');
 const { configureUserData, serviceHome, serviceOptions, serviceIdentity } = require('./service-config.cjs');
-const { ServiceConnection } = require('./service-client.cjs');
+const { ServiceConnection, waitForServiceProcessExit } = require('./service-client.cjs');
 const { createResourceRecovery } = require('./resource-recovery.cjs');
 const { BackgroundNotifications } = require('./notifications.cjs');
 const { SharedPowerMonitor } = require('./power.cjs');
@@ -21,6 +22,9 @@ app.setName('AReaL Harness GUI');
 const guiUserData = configureUserData(app);
 let backend, service, descriptor, home, power;
 let exiting = false;
+let applicationLifetime;
+const { parseOwner, watchApplicationLifetime, scrubOwnerEnvironment } = require('./application-owner.cjs');
+
 async function finish() {
   if (exiting) return; exiting = true;
   power?.close();
@@ -31,6 +35,7 @@ async function finish() {
       if (JSON.parse(await readFile(path, 'utf8')).token === descriptor.token) await rm(path);
     } catch (e) { if (e.code !== 'ENOENT') console.error('后台连接元数据清理失败'); }
   }
+  applicationLifetime?.destroy();
   app.exit(0);
 }
 async function start() {
@@ -42,21 +47,30 @@ async function start() {
     try {
       const metadata = JSON.parse(await readFile(join(serviceHome(app), 'service.json'), 'utf8'));
       await connection.connect(metadata);
+      let packet = await connection.request('hello', { protocol: PROTOCOL, identity: metadata.identity });
+      if (packet.service.lifecycle?.version !== 2 || packet.service.lifecycle.capabilities?.request !== true)
+        throw Object.assign(new Error('原 Desktop 不支持持久生命周期操作，请使用其支持的安全管理入口'), { code: 'LIFECYCLE_UNSUPPORTED' });
       if (recover) {
-        // Recovery uses the existing v1 service's identity only for its narrow
-        // resource API. The GUI still requires its own build identity to attach.
-        await connection.request('hello', { protocol: PROTOCOL, identity: metadata.identity });
         await app.whenReady();
         await createResourceRecovery({
           backend: { resources: request => connection.request('resources', request, request.operation !== 'inspect') },
           notify: options => dialog.showMessageBox(options),
         })();
+        packet = await connection.request('snapshot');
       }
-      await connection.request('stopService', { protocol: PROTOCOL }, true);
+      const receipt = await connection.request('lifecycleRequest', { protocol: PROTOCOL, requestId: randomUUID(), kind: 'stopDesktop', mode: 'ifIdle',
+        expectedDesktopGeneration: packet.service.lifecycle.desktopGeneration, expectedTargets: packet.service.targets }, true);
+      if (receipt.desktopExit !== 'requested') throw Object.assign(new Error('后台停止尚未完成，请检查原生命周期请求'), { lifecycle: receipt });
+      await waitForServiceProcessExit(serviceHome(app), metadata);
     } finally { connection.close(); }
     startupTraceService.finish('skipped');
     app.exit(0); return;
   }
+  parseOwner(process.env.AREAL_GUI_OWNER);
+  applicationLifetime = watchApplicationLifetime(() => {
+    for (const entry of backend?.ownedEngines?.values() ?? []) for (const lifetime of entry.lifetimes ?? []) lifetime.destroy();
+    app.exit(1);
+  });
   startupTraceService.advance('prepare_home');
   const options = serviceOptions(app);
   await mkdir(options.home, { recursive: true, mode: 0o700 });
@@ -84,7 +98,7 @@ async function start() {
   await backend.init();
   startupTraceService.advance('service_identity');
   const notifications = new BackgroundNotifications(Notification, () => {
-    const env = { ...process.env, AREAL_BACKEND: 'areal', AREAL_CORE_HOME: home, AREAL_GUI_USER_DATA: guiUserData };
+    const env = { ...scrubOwnerEnvironment(), AREAL_BACKEND: 'areal', AREAL_CORE_HOME: home, AREAL_GUI_USER_DATA: guiUserData };
     delete env.ELECTRON_RUN_AS_NODE;
     const child = childProcess.spawn(desktopExecutables({ packaged: app.isPackaged }).gui, app.isPackaged ? [] : [app.getAppPath()], {
       detached: true, stdio: 'ignore', env, windowsHide: false,

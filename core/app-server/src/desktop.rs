@@ -519,7 +519,7 @@ async fn dispatch_inner(
         }
         "areal/model/list" => {
             let _: ModelList = parse(params)?;
-            Ok(engine.model_catalog())
+            Ok(engine.model_catalog().await)
         }
         "areal/server/drain" => {
             #[derive(Deserialize)]

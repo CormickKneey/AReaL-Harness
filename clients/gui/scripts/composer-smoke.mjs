@@ -1,8 +1,10 @@
+import { assertApplicationStopped } from "./application-cleanup.mjs";
+import { respondToSessionName } from "./model-fixture.mjs";
 import { captureSmokeFailure, resizeConversation, selectConversation } from "./smoke-navigation.mjs";
 import assert from "node:assert/strict";
 
 import { createRequire } from "node:module";
-import { mkdtemp, mkdir, writeFile, readFile, rename } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rename, unlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
@@ -10,6 +12,9 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const desktop = join(gui, "app");
+const skillsRegression = process.env.AREAL_COMPOSER_SKILLS_REGRESSION === "1";
+assert.ok(!skillsRegression || !process.env.AREAL_GUI_EXECUTABLE, "Skills barriers require the source Electron fixture");
+let launchApp = desktop;
 const require = createRequire(join(desktop, "package.json"));
 const { _electron: electron } = require("playwright-core");
 const root = resolve(gui, "../..");
@@ -59,6 +64,10 @@ await writeFile(
       { id: "fixture-two", revision: "v2", root: secondSkill },
     ],
     profiles: [
+      ...(skillsRegression ? [{
+        id: "standard", revision: "v2", displayName: "标准二", instructions: "Complete the task",
+        skills: [{ id: "fixture-two", revision: "v2" }],
+      }] : []),
       {
         id: "standard",
         revision: "v1",
@@ -79,6 +88,7 @@ const server = createServer(async (req, res) => {
   let raw = "";
   for await (const chunk of req) raw += chunk;
   const body = JSON.parse(raw);
+  if (respondToSessionName(body, res)) return;
   received.push(body);
   res.writeHead(200, { "Content-Type": "text/event-stream" });
   res.end(
@@ -106,6 +116,40 @@ const env = {
 };
 delete env.AREAL_CORE_WORKSPACE;
 if (process.env.AREAL_GUI_EXECUTABLE) delete env.AREAL_CORE_BIN;
+const labelsControl = join(scratch, "labels-control.json");
+const labelsTrace = join(scratch, "labels-trace.jsonl");
+const labelGates = [];
+if (skillsRegression) {
+  launchApp = join(scratch, "app");
+  await mkdir(launchApp);
+  await writeFile(join(launchApp, "package.json"), JSON.stringify({ name: "composer-skills-fixture", main: "bootstrap.cjs" }));
+  await writeFile(join(launchApp, "bootstrap.cjs"), `
+const { CoreBackend } = require(${JSON.stringify(join(desktop, "src/core/backend.cjs"))});
+const { ScopedResources } = require(${JSON.stringify(join(desktop, "src/core/scoped-resources.cjs"))});
+const { existsSync, readFileSync, appendFileSync } = require("node:fs");
+const execute = CoreBackend.prototype.executeCommand;
+const skills = ScopedResources.prototype.skills;
+const trace = value => appendFileSync(${JSON.stringify(labelsTrace)}, JSON.stringify(value) + "\\n");
+ScopedResources.prototype.skills = async function(request) {
+  if (existsSync(${JSON.stringify(labelsControl)})) {
+    const plan = JSON.parse(readFileSync(${JSON.stringify(labelsControl)}, "utf8"));
+    trace({ kind: "labels_begin", plan: plan.id, scope: request.scope, projectId: request.projectId });
+    while (plan.gate && existsSync(plan.gate)) await new Promise(resolve => setTimeout(resolve, 20));
+    trace({ kind: "labels_end", plan: plan.id, scope: request.scope, failed: !!plan.failure });
+    if (plan.failure) throw new Error("optional source fixture failure");
+    return { revision: 1, data: plan[request.scope] || [] };
+  }
+  return skills.call(this, request);
+};
+CoreBackend.prototype.executeCommand = async function(name, request, context) {
+  const result = await execute.call(this, name, request, context);
+  if (name === "manage" && request.operation === "skills")
+    trace({ kind: "core_catalog", projectId: request.projectId, profile: request.agentProfile, rows: result.data.map(row => ({ id: row.id, revision: row.revision, available: row.available })) });
+  return result;
+};
+require(${JSON.stringify(join(desktop, "src/main.cjs"))});
+`);
+}
 let app,
   page,
   passed = false;
@@ -113,8 +157,11 @@ const errors = [],
   frames = [],
   checks = [];
 const pasteEvidence = { uploadedFile: null, folded: [] };
+const skillCatalogEvents = [];
 const button = (name) => page.getByRole("button", { name, exact: true });
 const state = () => page.evaluate(() => window.arealDesktop.snapshot());
+const project = (snapshot) =>
+  snapshot.projects.find((p) => p.root === workspace && !p.projectless);
 async function call(name, params) {
   const result = await page.evaluate(
     async ({ name, params }) => window.arealDesktop.command(name, params),
@@ -162,7 +209,7 @@ async function shot(name) {
 async function launch() {
   app = await electron.launch({
     executablePath: process.env.AREAL_GUI_EXECUTABLE || require("electron"),
-    args: process.env.AREAL_GUI_EXECUTABLE ? [] : [desktop],
+    args: process.env.AREAL_GUI_EXECUTABLE ? [] : [launchApp],
     env,
     timeout: 120000,
   });
@@ -172,6 +219,11 @@ async function launch() {
   page = await app.firstWindow();
   page.setDefaultTimeout(15000);
   page.on("pageerror", (e) => errors.push(e.message));
+  page.on("console", message => {
+    const output = message.text();
+    if (!output.startsWith("[composer-skills] ")) return;
+    skillCatalogEvents.push(JSON.parse(output.slice("[composer-skills] ".length)));
+  });
   await page.locator("[data-testid=areal-workbench]").waitFor({ timeout: 120000 });
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1440, 960));
 }
@@ -205,8 +257,21 @@ try {
   }, workspace);
   await button("不在项目中工作").click();
   await page.getByRole("menuitem", { name: "新建项目", exact: true }).click();
-  await until((s) => s.projects[0]?.state?.connected, "project ready");
-  const pid = (await state()).projects[0].id;
+  await until((s) => project(s)?.state?.connected, "project ready");
+  const pid = project(await state()).id;
+  const selectFixtureProfile = async (revision = "v1") => {
+    await page.waitForFunction((id) => {
+      const workbench = document.querySelector('[data-testid="areal-workbench"]');
+      return workbench?.dataset.projectId === id && !workbench.dataset.threadId;
+    }, pid);
+    assert(project(await state()).profiles.some((p) => p.id === "standard" && p.revision === revision));
+    await page.evaluate(({ id, revision }) => {
+      const key = `areal-gui:draft:${id}:new`;
+      localStorage.setItem(`${key}:profile`, JSON.stringify({ id: "standard", revision }));
+      window.dispatchEvent(new CustomEvent("areal-draft-change", { detail: key }));
+    }, { id: pid, revision });
+  };
+  await selectFixtureProfile();
   await call("manage", {
     projectId: pid,
     operation: "providerSave",
@@ -221,7 +286,7 @@ try {
     },
   });
   await until(
-    (s) => s.projects[0].models.some((model) => model.modelId === "fixture-alt"),
+    (s) => project(s).models.some((model) => model.modelId === "fixture-alt"),
     "provider catalog",
   );
   const input = () => page.locator("[data-testid=chat-input]");
@@ -239,12 +304,86 @@ try {
     await button("发送").click();
     await until(
       (s) =>
-        Object.values(s.projects[0].state.threads).some(
+        Object.values(project(s).state.threads).some(
           (t) => t.turns?.at(-1)?.status === "completed",
         ) && received.length > count,
       "send completed",
     );
   };
+  if (skillsRegression) {
+    const trace = async () => (await readFile(labelsTrace, "utf8").catch(error => {
+      if (error.code === "ENOENT") return "";
+      throw error;
+    })).trim().split("\n").filter(Boolean).map(line => JSON.parse(line));
+    const plan = async (id, extra = {}) => {
+      const gate = join(scratch, `labels-${id}.gate`);
+      labelGates.push(gate);
+      await writeFile(gate, "held");
+      await writeFile(labelsControl, JSON.stringify({ id, gate, ...extra }));
+      return gate;
+    };
+    const source = () => page.getByRole("option", { name: /Second source/ }).locator(".composer-catalog-source");
+    const settled = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const firstGate = await plan("held", { project: [{ id: "fixture-skill", revision: "v1" }], user: [{ id: "fixture-two", revision: "v2" }] });
+    await input().fill("来源阻塞时保留正文");
+    await input().click();
+    await button("添加功能与 Skills").click();
+    await until(async () => (await trace()).filter(row => row.kind === "labels_begin" && row.plan === "held").length === 2, "both source labels held after the real Core catalog");
+    const core = (await trace()).filter(row => row.kind === "core_catalog" && row.profile?.revision === "v1").at(-1);
+    assert.deepEqual(core.rows.filter(row => row.available).map(({ id, revision }) => ({ id, revision })).sort((a, b) => a.id.localeCompare(b.id)), [
+      { id: "fixture-skill", revision: "v1" }, { id: "fixture-two", revision: "v2" },
+    ]);
+    const first = page.getByRole("option", { name: /Deterministic test skill/ });
+    await first.waitFor({ timeout: 3000 });
+    assert.notEqual(await first.getAttribute("aria-disabled"), "true", "Core skill is selectable while optional source labels are held");
+    assert.equal(await first.locator(".composer-catalog-source").textContent(), "任务配置 · fixture-skill");
+    await first.click();
+    assert.equal(await tags().count(), 1);
+    assert.equal(await input().textContent(), "来源阻塞时保留正文");
+    assert.equal(received.length, 0);
+    await unlink(firstGate);
+    await until(async () => (await trace()).filter(row => row.kind === "labels_end" && row.plan === "held").length === 2, "held labels released");
+    await openCatalog();
+    await until(async () => await source().textContent() === "个人", "released labels enrich current Core rows");
+    await settled();
+    const beforeClose = (await trace()).length;
+    await button("添加功能与 Skills").click();
+    await page.getByTestId("composer-catalog").waitFor({ state: "detached" });
+    await settled();
+    assert.equal((await trace()).length, beforeClose, "closing the catalog does not refresh Core or source labels");
+    checks.push("Core Skills remain selectable with source labels held; source labels later enrich rows; closing performs no refresh");
+
+    const failedGate = await plan("failure", { failure: true });
+    await openCatalog();
+    await unlink(failedGate);
+    await until(async () => (await trace()).filter(row => row.kind === "labels_end" && row.plan === "failure").length === 2, "source failures returned");
+    await settled();
+    assert.equal(await page.getByRole("option", { name: /Deterministic test skill/ }).count(), 1);
+    assert.equal(await source().textContent(), "任务配置 · fixture-two");
+    assert.equal(await page.getByTestId("composer-catalog").getByRole("alert").count(), 0, "optional source failure preserves authoritative skills without catalog error");
+    await page.getByLabel("搜索功能与 Skills").press("Escape");
+
+    const staleGate = await plan("stale", { project: [{ id: "fixture-two", revision: "v2" }] });
+    await openCatalog();
+    await until(async () => (await trace()).filter(row => row.kind === "labels_begin" && row.plan === "stale").length === 2, "old profile labels held");
+    await writeFile(labelsControl, JSON.stringify({ id: "current", user: [{ id: "fixture-two", revision: "v2" }] }));
+    await selectFixtureProfile("v2");
+    await until(async () => (await trace()).some(row => row.kind === "core_catalog" && row.profile?.revision === "v2"), "real Core returns the v2 profile catalog");
+    await until(async () => await source().textContent() === "个人", "current profile source labels applied");
+    assert.equal(await page.getByRole("option", { name: /Deterministic test skill/ }).count(), 0);
+    await unlink(staleGate);
+    await until(async () => (await trace()).filter(row => row.kind === "labels_end" && row.plan === "stale").length === 2, "old profile labels released");
+    await settled();
+    assert.equal(await source().textContent(), "个人", "old profile label response cannot overwrite the current catalog identity");
+    assert.equal(await page.getByRole("option", { name: /Deterministic test skill/ }).count(), 0);
+    assert.equal(await tags().count(), 1, "profile changes preserve the selected skill identity");
+    assert.equal(await input().textContent(), "来源阻塞时保留正文");
+    await page.getByLabel("搜索功能与 Skills").press("Escape");
+    await page.getByRole("button", { name: /移除技能/ }).click();
+    await selectFixtureProfile();
+    await input().fill("");
+    checks.push("source failure preserves Core availability; late labels cannot overwrite a different profile revision; selected skill and body remain intact");
+  }
   // 由 Chromium 驱动真实组词事件；候选中间态不能保存到草稿或触发发送。
   const checkComposition = async (draftKey, label) => {
     await input().fill("");
@@ -389,7 +528,7 @@ try {
   assert.equal(await input().textContent(), "正文保留");
   await chooseFirst();
   assert.equal(await tags().count(), 2);
-  assert.equal((await state()).projects[0].summaries?.length ?? 0, 0);
+  assert.equal(project(await state()).summaries?.length ?? 0, 0);
   await input().fill("正文保留 /fixture");
   await page.getByRole("listbox", { name: "功能与 Skills" }).waitFor();
   await input().press("ArrowDown");
@@ -487,7 +626,9 @@ try {
   await slider.press("Escape");
   await sendAndWait();
   const tid = await page.locator("[data-testid=areal-workbench]").getAttribute("data-thread-id");
-  const current = (s) => s.projects[0].state.threads[tid];
+  assert.equal(project(await state()).configurations[tid].profile.id, "standard");
+  assert.equal(project(await state()).configurations[tid].profile.revision, "v1");
+  const current = (s) => project(s).state.threads[tid];
   const sentBody = received.at(-1);
   assert.equal(sentBody.model, "fixture-alt");
   assert.equal(sentBody.reasoning_effort, "high");
@@ -495,7 +636,7 @@ try {
   assert.ok(sentText.includes("PAGED_SKILL_END"));
   assert.ok(sentText.includes("SECOND_SKILL_CONTENT"));
   assert.ok(sentText.includes("正文保留"));
-  await until((s) => !s.projects[0].pending.length, "submission settled");
+  await until((s) => !project(s).pending.length, "submission settled");
   assert.equal(await tags().count(), 0);
   checks.push(
     "real paged Core Skill read (multibyte >8192 bytes) reaches model request; two-tier real model/effort selection reaches provider",
@@ -514,9 +655,10 @@ try {
         !document.querySelector('[data-testid="areal-workbench"]')?.dataset.threadId,
       );
       await input().waitFor();
+      await selectFixtureProfile();
     }
     let pasteTid = newDraft ? null : tid;
-    const pasteThread = (s) => s.projects[0].state.threads[pasteTid];
+    const pasteThread = (s) => project(s).state.threads[pasteTid];
     assert.equal(
       await page.getByText("model does not support File input", { exact: true }).count(),
       0,
@@ -560,7 +702,7 @@ try {
         }
         return received.length === beforePaste.requests + 1 &&
           pasteThread(s)?.turns.length === beforePaste.turns + 1 &&
-          pasteThread(s)?.turns.at(-1)?.status === "completed" && !s.projects[0].pending.length;
+          pasteThread(s)?.turns.at(-1)?.status === "completed" && !project(s).pending.length;
       },
       `${label}: folded paste direct Send completes as Text`,
     );
@@ -627,7 +769,7 @@ try {
   await button("移除附件 粘贴的文本.txt").click();
   checks.push("real text/plain picker file keeps File modality, uploaded bytes and draft on Core refusal");
   await sendAndWait();
-  await until((s) => current(s).turns.at(-1)?.status === "completed" && !s.projects[0].pending.length,
+  await until((s) => current(s).turns.at(-1)?.status === "completed" && !project(s).pending.length,
     "explicit text retry after removing the real file");
   await page.waitForFunction(() => document.querySelector('[data-testid="chat-input"]')?.textContent === "");
   assert.equal(current(await state()).turns.at(-1).items.find(item => item.type === "userMessage").content[0].text, fileDraft);
@@ -637,7 +779,8 @@ try {
   for (const theme of ["dark", "light"]) {
     await button("设置").click();
     await button("外观").click();
-    await button(theme === "dark" ? "深色" : "浅色").click();
+    await page.getByRole("combobox", { name: "界面主题", exact: true }).click();
+    await page.getByRole("option", { name: theme === "dark" ? "深色" : "浅色", exact: true }).click();
     await page.waitForFunction(
       (theme) => document.documentElement.classList.contains(`theme-areal-${theme}`) &&
         document.documentElement.classList.contains("dark") === (theme === "dark"),
@@ -650,7 +793,7 @@ try {
     await input().press("Enter");
     await until(
       (s) => received.length > requestCount &&
-        current(s).turns.at(-1)?.status === "completed" && !s.projects[0].pending.length,
+        current(s).turns.at(-1)?.status === "completed" && !project(s).pending.length,
       `${theme}: Enter send completed`,
     );
     await page.waitForFunction(() => {
@@ -696,7 +839,7 @@ try {
   await rename(join(skill, "SKILL.unavailable"), join(skill, "SKILL.md"));
   await sendAndWait();
   await until(
-    (s) => current(s).turns.at(-1)?.status === "completed" && !s.projects[0].pending.length,
+    (s) => current(s).turns.at(-1)?.status === "completed" && !project(s).pending.length,
     "second send",
   );
   checks.push(
@@ -713,7 +856,7 @@ try {
   await slider.fill("2");
   await slider.press("Escape");
   await until(
-    (s) => s.projects[0].configurations[tid]?.parameters.reasoningEffort === "low",
+    (s) => project(s).configurations[tid]?.parameters.reasoningEffort === "low",
     "existing effort configured",
   );
   await input().fill("已有模型设置");
@@ -722,6 +865,7 @@ try {
   checks.push("existing Composer inline Goal toggle; model effort configuration and request");
   // 新目标只消费目标正文；技能和文件留在新聊天。
   await button("新聊天").click();
+  await selectFixtureProfile();
   await chooseFirst();
   await page.locator("input[type=file]").setInputFiles({
     name: "goal-note.txt",
@@ -738,11 +882,11 @@ try {
     clipboardData.setData("text/plain", text);
     element.dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
   }, foldedGoal);
-  await button("移除附件 粘贴的文本.txt").waitFor();
+  await button("移除附件 完成").waitFor();
   assert.equal(await input().textContent(), "");
   await button("开始目标").click();
   await until(
-    (s) => Object.values(s.projects[0].state.threads).some((t) => t.goals?.goal),
+    (s) => Object.values(project(s).state.threads).some((t) => t.goals?.goal),
     "goal created",
   );
   await page.getByRole("button", { name: "移除附件 goal-note.txt" }).waitFor();
@@ -750,10 +894,10 @@ try {
   const goalTid = await page
     .locator("[data-testid=areal-workbench]")
     .getAttribute("data-thread-id");
-  assert.equal((await state()).projects[0].state.threads[goalTid].goals.goal.objective, foldedGoal);
-  assert.equal(await button("移除附件 粘贴的文本.txt").count(), 0);
+  assert.equal(project(await state()).state.threads[goalTid].goals.goal.objective, foldedGoal);
+  assert.equal(await button("移除附件 完成").count(), 0);
   await until(
-    (s) => s.projects[0].state.threads[goalTid]?.goals?.goal?.status !== "active",
+    (s) => project(s).state.threads[goalTid]?.goals?.goal?.status !== "active",
     "goal settles without progress",
   );
   await shot("04-inline-goal");
@@ -793,19 +937,14 @@ try {
   );
   throw error;
 } finally {
+  for (const gate of labelGates) await unlink(gate).catch(error => {
+    if (error.code !== "ENOENT") console.error("Source label barrier cleanup:", error.message);
+  });
+  const stoppingAdapter = await readFile(join(scratch, "core/service.json"), "utf8").then(JSON.parse).catch(error => { if (error.code === "ENOENT") return null; throw error; });
   await quit();
   try {
-    const { ServiceConnection } = require(join(desktop, "src/core/service-client.cjs"));
-    const connection = new ServiceConnection();
-    try {
-      await connection.connect(
-        JSON.parse(await readFile(join(scratch, "core/service.json"), "utf8")),
-      );
-      await connection.request("stopService", { protocol: "areal.desktop-service.v1" }, true);
-      checks.push("explicit safe service stop completes");
-    } finally {
-      connection.close();
-    }
+    await assertApplicationStopped(binary, env, stoppingAdapter);
+    checks.push("application quit stops the isolated adapter and all Core generations, including projectless");
   } catch (error) {
     console.error("Adapter fixture cleanup:", error.message);
     if (passed) {
@@ -874,6 +1013,9 @@ try {
         platform: process.platform,
         arch: process.arch,
         runtime: "real Electron + real Rust Core/Runtime + deterministic local HTTP/SSE model",
+        skillsRegression,
+        labelsTrace: skillsRegression ? labelsTrace : undefined,
+        skillCatalogEvents,
         nativeDialogs: "project picker and archive/quit confirmations injected",
         scratch,
         frames,

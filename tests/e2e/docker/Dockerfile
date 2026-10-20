@@ -22,8 +22,8 @@ RUN cargo build --locked --profile "${BUILD_PROFILE}" -p areal-runtime -p areal-
 FROM runtime-builder AS runtime-tests
 
 RUN apk add --no-cache bubblewrap python3 coreutils
-RUN cargo test --locked --profile ci -p areal-runtime-exec-native --no-run
-CMD ["cargo", "test", "--offline", "--locked", "--profile", "ci", "-p", "areal-runtime-exec-native"]
+RUN cargo test --locked --profile ci -p areal-runtime-exec-native -p areal-runtime --features areal-runtime/native-tests --no-run
+CMD ["cargo", "test", "--offline", "--locked", "--profile", "ci", "-p", "areal-runtime-exec-native", "-p", "areal-runtime", "--features", "areal-runtime/native-tests"]
 
 FROM ${BASE_IMAGE}
 

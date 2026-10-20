@@ -1,1 +1,5 @@
-[{ "id": "111111111111111111111111", "root": "/history-compat-fixture" }]
+[
+  { "id": "111111111111111111111111", "root": "/history-compat-fixture" },
+  { "id": "333333333333333333333333", "root": "/history-compat-unstarted-fixture" },
+  { "id": "444444444444444444444444", "root": "/history-compat-empty-fixture" }
+]

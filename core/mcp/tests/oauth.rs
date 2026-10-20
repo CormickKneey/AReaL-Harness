@@ -393,16 +393,17 @@ async fn refresh_rejection_and_provider_failure_do_not_submit_mcp_or_leak_errors
         assert!(error.is::<areal_mcp::AuthenticationFailed>());
         assert!(!format!("{error:?}").contains("private"));
         assert!(!error.to_string().contains("UNKNOWN"));
-        let records = s.requests.lock().unwrap();
-        assert_eq!(
-            records
-                .iter()
-                .filter(|r| r.contains("grant_type=refresh_token"))
-                .count(),
-            1
-        );
-        assert_eq!(records.iter().filter(|r| r.starts_with("/mcp ")).count(), 0);
-        drop(records);
+        {
+            let records = s.requests.lock().unwrap();
+            assert_eq!(
+                records
+                    .iter()
+                    .filter(|r| r.contains("grant_type=refresh_token"))
+                    .count(),
+                1
+            );
+            assert_eq!(records.iter().filter(|r| r.starts_with("/mcp ")).count(), 0);
+        }
         assert!(matches!(
             manager.status("server").await,
             Some(AuthStatus::Failed)
