@@ -165,10 +165,12 @@ test("new connection discovers models before persistence and leaves default choi
     assert.equal(request.operation, "discover");
     assert.equal(provider.endpoint, "http://fixture.invalid/v1/chat/completions");
     assert.equal(f.calls.some(v => v[0] === "write"), false);
-    return { models: ["remote-first", "remote-second", "remote-first"] };
+    return { models: ["remote-first", "remote-second", "remote-first"], modelParameters: { "remote-first": { contextWindowTokens: 500000 } } };
   };
   const result = await f.service.command(f.request);
   assert.deepEqual(result.data.at(-1).models.map(m => m.id), ["remote-first", "remote-second"]);
+  assert.deepEqual(result.data.at(-1).models[0].parameters, { contextWindowTokens: 500000 });
+  assert.deepEqual(result.data.at(-1).models[1].parameters, {});
   assert.equal(result.defaultModel, null);
   assert.equal(result.pendingApply, false);
   assert.ok(f.project.models.some(m => m.id === "remote-second"));
@@ -284,4 +286,18 @@ test("the original terminal applied record wins over an explicit RPC refusal", a
   assert.equal(f.project.models[0].id, "new-model");
   assert.equal(f.service.pendingApplications.size, 0);
   assert.equal(f.calls.filter(v => v[0] === "write").length, 1);
+});
+
+
+test("discovery preserves endpoint context without using maximum opt-in capacity", async () => {
+  const f = fixture();
+  f.service.network = async () => ({ fetch: async () => Response.json({ data: [
+    { id: "openai/gpt-6.1-sol", context_window: 500000, max_context_window: 872000 },
+    { id: "bad", context_window: "1050000" },
+    { id: "negative", context_window: -1 },
+    { id: "maximum-only", max_context_window: 872000 },
+  ] }) });
+  const result = await f.service.testConnection(f.service.config.value.data[0], { operation: "discover" });
+  assert.deepEqual(result.models, ["openai/gpt-6.1-sol", "bad", "negative", "maximum-only"]);
+  assert.deepEqual(result.modelParameters, { "openai/gpt-6.1-sol": { contextWindowTokens: 500000 } });
 });

@@ -58,9 +58,9 @@ test("account catalog shares fetch, retains order, filters hidden models and tra
       await new Promise((resolve) => setImmediate(resolve));
       return Response.json({
         models: [
-          { slug: "b", visibility: "list", display_name: "B" },
+          { slug: "b", visibility: "list", display_name: "B", context_window: 500000, max_context_window: 872000 },
           { slug: "hidden", visibility: "hide" },
-          { slug: "a", visibility: "list" },
+          { slug: "a", visibility: "list", context_window: -1 },
           { slug: "b", visibility: "list" },
         ],
       });
@@ -73,6 +73,8 @@ test("account catalog shares fetch, retains order, filters hidden models and tra
     results[0].map((m) => m.id),
     ["b", "a"],
   );
+  assert.deepEqual(results[0][0].parameters, { contextWindowTokens: 500000 });
+  assert.equal(results[0][1].parameters?.contextWindowTokens, undefined);
   assert.equal(catalog.metadata().source, "account");
   assert.equal(catalog.metadata().fresh, true);
   now += 101;
