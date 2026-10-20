@@ -70,7 +70,7 @@ const launch = async () => {
   app = await electron.launch({ executablePath: require('electron'), args: [application.path], env, timeout: 120000 }); processHandle = app.process();
   page = await app.firstWindow(); page.setDefaultTimeout(20000); page.on('pageerror', error => errors.push(error.stack));
   await page.getByTestId('areal-workbench').waitFor({ timeout: 120000 }); await until(async () => (await state()).connection?.state === 'ready', 'application ready');
-  await app.evaluate(({ dialog }) => { dialog.showMessageBox = async (...args) => ({ response: ['确认取消后台任务？', '停止任务并退出应用？'].includes(args.at(-1).message) ? 1 : args.at(-1).cancelId ?? 0 }); });
+  await app.evaluate(({ dialog }) => { dialog.showMessageBox = async (...args) => ({ response: ['确认取消后台任务？', '退出 AReaL Harness？'].includes(args.at(-1).message) ? 1 : args.at(-1).cancelId ?? 0 }); });
 };
 const stop = async () => {
   if (!app) return;

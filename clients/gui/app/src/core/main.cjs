@@ -101,7 +101,7 @@ function requestQuit(intent = 'application') {
       throw Object.assign(new Error('原后台属于其他应用会话，请先从其原入口安全退出，再重试安装'), { code: 'APPLICATION_OWNER_MISMATCH' });
     if (!backend.foreignOwner && !backend.serviceExited && (backend.status.connected || backend.metadata || backend.desktopLifetimes.size)) {
       const result = await recoverConnectedService({ backend,
-        notify: options => dialog.showMessageBox(window, options), purpose: intent === 'install' ? 'update' : 'quit', forUpdate: intent === 'install' });
+        notify: options => process.platform === 'darwin' && intent !== 'install' ? dialog.showMessageBox(options) : dialog.showMessageBox(window, options), purpose: intent === 'install' ? 'update' : 'quit', forUpdate: intent === 'install' });
       if (result.stopped !== true) {
         if (!result.canceled) backend.reportLifecycleError(new Error('应用后台停止尚未完成，请检查原请求与阻塞事项。'));
         return result;

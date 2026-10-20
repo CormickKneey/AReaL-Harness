@@ -94,7 +94,7 @@ Browser 工具在每次新用户请求中先 `describe`，再重新观察，拒�
 
 `AREAL_REOPEN_FORCE_GUI=1` 配合 `test:service-reopen` 强制结束隔离 Main，验证 owner 管道回收原引擎，随后新应用会话从原历史恢复。新代际不重放中断输入。`test:desktop-exit` 分别验证 Main、Desktop 强退和测试 runner 失败、SIGTERM、SIGKILL 的清理。浏览器与动态 ToolHost 的真实强退 UNKNOWN 仍需专项验收，既有宿主丢失与 generation 失效契约保持不变。
 
-关闭窗口只隐藏界面，GUI 仍持有单实例锁；再次启动或从 Dock 激活会唤回原窗口。应用菜单、菜单栏和后台设置的“退出 AReaL Harness”（⌘Q / Ctrl+Q）共用安全退出。应用拥有 Desktop、每项目 Host、Core、Runtime 和监督桥，窗口不拥有引擎。有活动任务时列出影响，允许取消退出或停止任务并退出。只有原引擎物理清理和 Desktop 退出已确认后才退出 Main。部分停止、结果未知或清理未完成保留恢复入口，不自动重复停止。退出后安排不再触发，手机入口断开；安排定义、历史与草稿保留。CLI 与其他 GUI profile 保持独立。
+关闭窗口只隐藏界面，GUI 仍持有单实例锁；再次启动或从 Dock 激活会唤回原窗口。应用菜单、菜单栏和后台设置的“退出 AReaL Harness”（⌘Q / Ctrl+Q）共用安全退出。应用拥有 Desktop、每项目 Host、Core、Runtime 和监督桥，窗口不拥有引擎。有活动任务、已启用的定时安排或手机入口时，原生确认简要提示退出影响，提供“取消”和“退出”。只有原引擎物理清理和 Desktop 退出已确认后才退出 Main。部分停止、结果未知或清理未完成保留恢复入口，不自动重复停止。退出后安排不再触发，手机入口断开；安排定义、历史与草稿保留。CLI 与其他 GUI profile 保持独立。
 
 `AREAL_CORE_BIN=/absolute/fixed-slot/areal pnpm --dir clients/gui run test:desktop-exit` 在隔离 Electron/Core/Runtime 中核对窗口重开、普通退出的取消与确认、隐藏项目引擎清理、独立 CLI 和其他 GUI profile、Main/Desktop 强退及 runner 清理。目录选择和原生确认由 fixture 应答。指定 `AREAL_GUI_EXECUTABLE` 可使用私有安装包，runner 强退夹具仍限源码入口；这不替代物理快捷键或 Finder 安装验收。
 
