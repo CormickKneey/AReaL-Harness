@@ -23,8 +23,10 @@ impl Engine {
         };
         let context_usage = self.context_usage(&cell, &thread).await.map_err(invalid)?;
         let mut budget = match &context_usage {
-            areal_protocol::context::ContextUsage::Ready { budget, .. } => Some(json!({"windowTokens":budget.window_tokens,"outputReserveTokens":budget.output_reserve_tokens,"inputLimitTokens":budget.input_limit_tokens,"windowSource":budget.window_source})),
-            areal_protocol::context::ContextUsage::Unavailable { budget, .. } => budget.as_ref().map(|budget| json!({"windowTokens":budget.window_tokens,"outputReserveTokens":budget.output_reserve_tokens,"inputLimitTokens":budget.input_limit_tokens,"windowSource":budget.window_source})),
+            areal_protocol::context::ContextUsage::Ready { budget, .. } => Some(json!(budget)),
+            areal_protocol::context::ContextUsage::Unavailable { budget, .. } => {
+                budget.as_ref().map(|budget| json!(budget))
+            }
         };
         let session_usage = self.session_usage(&thread).await.map_err(invalid)?;
         let messages = history(&thread, &self.store).map_err(invalid)?;

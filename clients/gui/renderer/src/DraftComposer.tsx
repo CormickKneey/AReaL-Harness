@@ -98,7 +98,10 @@ export function DraftComposer({
     ? `${chosenProfile.model.providerId}/${chosenProfile.model.modelId}` : initialModel ? modelValue(initialModel) : "");
   const currentModel = project.models.find((item: Data) => modelValue(item) === effectiveModel);
   const rememberedEffort = !chosenProfile?.model && model === null ? initialSelection.rememberedEffort : undefined;
-  const effort = efforts[effectiveModel] ?? rememberedEffort ?? currentModel?.parameters?.reasoningEffort ?? "";
+  const preferredEffort = efforts[effectiveModel] ?? rememberedEffort ?? currentModel?.parameters?.reasoningEffort ?? "";
+  const effort = currentModel?.capabilities?.reasoning === false
+    || (currentModel?.reasoningEffortOptions && preferredEffort && !currentModel.reasoningEffortOptions.includes(preferredEffort))
+    ? "" : preferredEffort;
   const preferenceNotice = model === null && !chosenProfile?.model
     ? initialSelection.notice === "model-unavailable" ? "上次使用的模型当前不可用，已显示备用默认模型，请确认后发送。"
       : initialSelection.notice === "effort-unsupported" ? "上次使用的思考强度当前不受支持，已使用模型默认值。" : ""
@@ -179,10 +182,18 @@ export function DraftComposer({
         if (selectedSkills.some(skill => !(available.data ?? []).some((item: Data) => item.available && item.id === skill.id && item.revision === skill.revision)))
           throw new Error("当前任务配置未提供所选 Skill 的确切版本，草稿已保留。");
       }
+      const parameters = { ...currentModel.parameters };
+      if (chosenModel.capabilities?.reasoning === false) {
+        delete parameters.reasoningEffort;
+        delete parameters.reasoningSummary;
+      } else {
+        delete parameters.reasoningEffort;
+        if (effort) parameters.reasoningEffort = effort;
+      }
       creationAttempted = true;
       const result = await action("create", {
         projectId: owner.id,
-        parameters: { ...currentModel.parameters, ...(effort ? { reasoningEffort: effort } : {}) },
+        parameters,
         ...(profileSelection && profile
           ? { profile: { id: profile.id, revision: profile.revision } }
           : {}),

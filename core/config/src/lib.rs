@@ -160,6 +160,8 @@ pub enum ModelProtocolConfig {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SelectedModelConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<models::ModelCapabilities>,
     pub provider: String,
     pub name: String,
     pub endpoint: String,

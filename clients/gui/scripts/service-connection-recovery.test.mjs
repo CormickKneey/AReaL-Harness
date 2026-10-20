@@ -279,8 +279,9 @@ test('subscription refresh unknown retains only its dispatched provider request 
   });
   assert.equal(f.calls.some(call => call.method === 'areal/turn/submit'), false, 'preflight failure never dispatches the turn');
   assert.deepEqual(f.project.pending, [providerRequest], 'the known-unsent turn must not become an unrecoverable unknown request');
-  assert.equal(failure.submissionUnknown, true);
-  assert.equal(failure.requestId, providerRequest.params.requestId, 'unknown state belongs to the actual provider mutation');
+  assert.notEqual(failure.submissionUnknown, true, 'known-unsent draft must remain editable after nested provider uncertainty');
+  assert.equal(failure.requestId, undefined, 'provider receipt ID must not become the message pending ID');
+  assert.match(failure.message, /尚未发送/);
   assert.deepEqual(JSON.parse(await readFile(join(f.home, 'p-pending.json'), 'utf8')), [providerRequest]);
   assert.deepEqual(f.project.outcomes, {}, 'a failed preflight cannot fabricate turn acceptance');
 

@@ -12,7 +12,7 @@ One allocator plans complete requests, retaining the latest real user request an
 
 | Setting | Behavior |
 |---|---|
-| `model.context_window_tokens` | Declares the actual window, ahead of the known-model default and the global 131072-token fallback |
+| `model.context_window_tokens` | Sets the user working budget, capped by a service-reported window when available |
 | `model.max_output_tokens` | Common setting; overridable per-model HTTP request default of 16384, strictly positive |
 | `context.mode` | Keep auto / manual / disabled |
 | `context.target_tokens`, `context.recent_tokens` | Automatic target/recent defaults are 0; positive legacy values remain compatibility boundary preferences with source diagnostics |
@@ -25,7 +25,9 @@ Do not add a retained-input quota setting. Common settings are window, output an
 
 ## Known model windows
 
-Explicit thread, model and provider settings take precedence over Core's exact-ID default table. Provider discovery retains an endpoint's `context_window` as `contextWindowTokens`; it does not substitute the optional `max_context_window`. This matters for subscriptions and gateways whose effective window differs from the public API. The standalone TOML setting is `model.context_window_tokens`. Defaults do not change the output cap or rewrite configuration. Unknown or renamed IDs retain the global fallback.
+The service-reported window and the user's working budget are retained separately. Account `context_window` is the currently reported window; optional `max_context_window` does not replace it. The working window is the smaller of the reported window and an explicit user budget. The UI shows the report source, reported capacity, and user budget separately. Accounts without a reported window use the global fallback, never the public API's model-name defaults. Custom endpoints use exact-ID defaults only when neither a report nor a user budget is available. Unknown IDs use the global fallback.
+
+An idle conversation's context query projects the next new request. At admission, reported capacity and model capabilities refresh only when provider identity, endpoint, protocol, and credential reference match. Historical Turns, active Turns, and already accepted queue items retain their frozen snapshots. Capacity updates do not switch accounts or rebind endpoints. User budgets still use `model.context_window_tokens` in standalone TOML and `contextWindowTokens` in desktop parameters. Legacy snapshots cannot distinguish an automatically filled window from an equal explicit budget. Saved window parameters are conservatively retained as budgets, so a larger report cannot silently increase them. New snapshots retain budgets and reports separately.
 
 The defaults were checked on 2026-10-20. Exact supported IDs are owned by `core/engine/src/model/context_windows.rs`.
 

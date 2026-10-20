@@ -904,6 +904,28 @@ fn known_context_capacities_preserve_explicit_overrides_and_unknown_models() {
 
 #[tokio::test]
 async fn explicit_model_capabilities_control_catalog_admission_and_wire() {
+    async fn request_for(
+        rx: &mut tokio::sync::mpsc::UnboundedReceiver<Value>,
+        prompt: &str,
+    ) -> Value {
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                let body = rx.recv().await.unwrap();
+                if body["messages"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .rev()
+                    .find(|message| message["role"] == "user")
+                    .is_some_and(|message| message["content"] == prompt)
+                {
+                    return body;
+                }
+            }
+        })
+        .await
+        .unwrap()
+    }
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let app=Router::new().route("/",post(move |Json(request):Json<Value>| { let tx=tx.clone(); async move {let tool_disabled=request.get("tools").is_none();tx.send(request).unwrap(); ([("content-type","text/event-stream")],if tool_disabled {"data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"forbidden\",\"type\":\"function\",\"function\":{\"name\":\"shell\",\"arguments\":\"{}\"}}]},\"finish_reason\":null}]}\n\ndata: [DONE]\n\n"} else {"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"})}}));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -953,7 +975,7 @@ async fn explicit_model_capabilities_control_catalog_admission_and_wire() {
             .iter()
             .any(|item| matches!(item, Item::DynamicToolCall { .. }))
     );
-    let body = rx.recv().await.unwrap();
+    let body = request_for(&mut rx, "plain").await;
     assert_eq!(body["model"], "opaque");
     assert!(body.get("tools").is_none());
     assert!(body.get("reasoning_effort").is_none());
@@ -961,7 +983,7 @@ async fn explicit_model_capabilities_control_catalog_admission_and_wire() {
     provider["modelCapabilities"]["opaque"] =
         json!({"tools":true,"vision":true,"reasoning":true,"reasoningEffortOptions":["low","max"]});
     engine
-        .upsert_provider(serde_json::from_value(provider).unwrap(), 1)
+        .upsert_provider(serde_json::from_value(provider.clone()).unwrap(), 1)
         .await
         .unwrap();
     engine
@@ -969,7 +991,7 @@ async fn explicit_model_capabilities_control_catalog_admission_and_wire() {
         .await
         .unwrap();
     engine.wait(&thread.id).await.unwrap();
-    let body = rx.recv().await.unwrap();
+    let body = request_for(&mut rx, "reason").await;
     assert_eq!(body["reasoning_effort"], "max");
     assert!(
         body["tools"]
@@ -985,6 +1007,92 @@ async fn explicit_model_capabilities_control_catalog_admission_and_wire() {
         .unwrap();
     assert_eq!(item["reasoningEffortOptions"], json!(["low", "max"]));
     assert!(item["input"].as_array().unwrap().contains(&json!("image")));
+    let fallback = json!(["none", "minimal", "low", "medium", "high", "xhigh"]);
+    assert_eq!(catalog["data"][0]["reasoningEffortOptions"], fallback);
+    for (revision, options) in [(2, None), (3, Some(json!([])))] {
+        let capabilities = provider["modelCapabilities"]["opaque"]
+            .as_object_mut()
+            .unwrap();
+        capabilities.remove("reasoningEffortOptions");
+        if let Some(options) = options {
+            capabilities.insert("reasoningEffortOptions".into(), options);
+        }
+        engine
+            .upsert_provider(serde_json::from_value(provider.clone()).unwrap(), revision)
+            .await
+            .unwrap();
+        let catalog = engine.model_catalog().await;
+        let item = catalog["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["providerId"] == "custom")
+            .unwrap();
+        assert_eq!(item["reasoningEffortOptions"], fallback);
+        assert_eq!(item["available"], true);
+        let prompt = format!("default efforts {revision}");
+        engine
+            .start(&thread.id, vec![Input::text(&prompt)])
+            .await
+            .unwrap();
+        engine.wait(&thread.id).await.unwrap();
+        assert_eq!(
+            request_for(&mut rx, &prompt).await["reasoning_effort"],
+            "max"
+        );
+    }
+    provider["parameters"]["reasoningEffort"] = json!("high");
+    provider["modelParameters"] = json!({"opaque":{"reasoningEffort":"low"}});
+    provider["modelCapabilities"]["opaque"]["reasoningEffortOptions"] = json!(["low"]);
+    engine
+        .upsert_provider(serde_json::from_value(provider.clone()).unwrap(), 4)
+        .await
+        .unwrap();
+    let selected = engine.create("/workspace".into()).await.unwrap();
+    let configuration = engine.configure_thread(serde_json::from_value(json!({"threadId":selected.id,"expectedRevision":1,"model":{"providerId":"custom","modelId":"opaque"},"parameters":{}})).unwrap()).await.unwrap();
+    assert_eq!(
+        configuration.parameters.reasoning_effort.as_deref(),
+        Some("low")
+    );
+    engine
+        .start(&selected.id, vec![Input::text("model default wins")])
+        .await
+        .unwrap();
+    engine.wait(&selected.id).await.unwrap();
+    assert_eq!(
+        request_for(&mut rx, "model default wins").await["reasoning_effort"],
+        "low"
+    );
+    for (key, invalid) in [
+        ("contextWindowTokens", json!(0)),
+        ("temperature", json!(3.0)),
+        ("reasoningEffort", json!("invalid")),
+    ] {
+        for model_override in [false, true] {
+            let mut invalid_provider = provider.clone();
+            if model_override {
+                invalid_provider["modelParameters"]["opaque"][key] = invalid.clone();
+            } else {
+                invalid_provider["parameters"][key] = invalid.clone();
+            }
+            assert!(
+                engine
+                    .upsert_provider(serde_json::from_value(invalid_provider).unwrap(), 5)
+                    .await
+                    .is_err()
+            );
+        }
+    }
+    for mapping in ["modelParameters", "modelCapabilities"] {
+        let mut invalid_provider = provider.clone();
+        invalid_provider[mapping]["unknown"] = provider[mapping]["opaque"].clone();
+        assert!(
+            engine
+                .upsert_provider(serde_json::from_value(invalid_provider).unwrap(), 5)
+                .await
+                .is_err()
+        );
+    }
     engine.shutdown().await;
     server.abort();
 }

@@ -792,6 +792,17 @@ fn configured_models(
             credential_ref: reference,
             models,
             model_parameters: std::collections::BTreeMap::new(),
+            model_capabilities: item
+                .models
+                .iter()
+                .filter_map(|model| {
+                    model
+                        .capabilities
+                        .as_ref()
+                        .map(|capabilities| (model.id.clone(), model_capabilities(capabilities)))
+                })
+                .collect(),
+            context_source: None,
             parameters: parameters(&item.parameters),
         });
         for model in &item.models {
@@ -877,5 +888,16 @@ mod experiment_tests {
             );
             assert!(limits.command_stdin_closed);
         }
+    }
+}
+
+fn model_capabilities(
+    value: &areal_config::models::ModelCapabilities,
+) -> areal_protocol::desktop::ModelCapabilityConfig {
+    areal_protocol::desktop::ModelCapabilityConfig {
+        tools: value.tools,
+        vision: value.vision,
+        reasoning: value.reasoning,
+        reasoning_effort_options: value.reasoning_effort_options.clone(),
     }
 }

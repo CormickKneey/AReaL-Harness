@@ -71,6 +71,8 @@ test("service definition identity never becomes a saved connection identity", ()
     models: [{ id: "fixture-model" }],
   };
   const draft = newConnectionDraft(definition, "apiKey", "revision");
+  assert.deepEqual(draft.models[0].capabilities, { tools: true, vision: false, reasoning: false });
+  assert.equal(definition.models[0].capabilities, undefined, "defaults must not mutate the shared provider template");
   assert.equal(draft.id, undefined);
   assert.equal(draft.definitionId, "fixture-definition");
   assert.equal(

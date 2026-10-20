@@ -114,12 +114,24 @@ impl Engine {
         input: Vec<Input>,
         skill: Option<&areal_protocol::desktop::VersionRef>,
     ) -> Result<(Thread, Turn)> {
+        let configuration = self.next_request_configuration(
+            thread
+                .desktop
+                .as_ref()
+                .map(|d| d.configuration.clone())
+                .unwrap_or_default(),
+        );
+        self.prepare_turn_from_configuration(thread, input, skill, configuration)
+    }
+
+    pub(super) fn prepare_turn_from_configuration(
+        &self,
+        thread: &Thread,
+        input: Vec<Input>,
+        skill: Option<&areal_protocol::desktop::VersionRef>,
+        mut configuration: areal_protocol::desktop::EffectiveConfig,
+    ) -> Result<(Thread, Turn)> {
         self.validate_uploads(thread, &input)?;
-        let mut configuration = thread
-            .desktop
-            .as_ref()
-            .map(|d| d.configuration.clone())
-            .unwrap_or_default();
         if let Some(skill) = skill {
             configuration.selected_skills = Some(vec![skill.clone()]);
         } else {

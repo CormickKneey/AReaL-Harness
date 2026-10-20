@@ -216,12 +216,13 @@ async function verifyAccountCapacity() {
     const cappedBudget = (await showContext(id)).contextUsage.budget;
     assert.equal(cappedBudget.windowTokens, 500000); assert.equal(cappedBudget.reportedWindowTokens, 500000); assert.equal(cappedBudget.userBudgetTokens, 900000); assert.equal(cappedBudget.windowSource, 'account');
     const popover = page.getByTestId('context-popover');
-    await popover.getByText(/账号报告/).waitFor(); await popover.getByText(/用户预算/).waitFor();
+    await popover.getByText(/账号报告/).waitFor(); await popover.getByText('用户预算 900K', { exact: true }).waitFor();
+    await popover.getByText('用户预算超出报告容量，按报告容量计算。', { exact: true }).waitFor();
     await page.screenshot({ path: join(scratch, '11-account-caps-user-budget.png') }); await dismissPopovers();
     await call('configure', { projectId, threadId: id, parameters: { contextWindowTokens: 64000 } });
     const userBudget = (await showContext(id)).contextUsage.budget;
     assert.equal(userBudget.windowTokens, 64000); assert.equal(userBudget.reportedWindowTokens, 500000); assert.equal(userBudget.userBudgetTokens, 64000); assert.equal(userBudget.windowSource, 'user');
-    await popover.getByText(/用户预算/).waitFor(); await page.screenshot({ path: join(scratch, '12-user-budget.png') }); await dismissPopovers();
+    await popover.getByText('用户预算 64K', { exact: true }).waitFor(); await page.screenshot({ path: join(scratch, '12-user-budget.png') }); await dismissPopovers();
     const missing = await call('create', { projectId, profile: { id: 'standard', revision: 'v1' }, model: { providerId: account.id, modelId: 'gpt-6-sol' } });
     await selectConversation(page, missing.threadId);
     const fallbackBudget = (await showContext(missing.threadId)).contextUsage.budget;
@@ -328,11 +329,12 @@ try {
   }
   await page.getByTestId('chat-input').fill('USAGE_CANCEL'); await page.getByRole('button', { name: '发送', exact: true }).click();
   await until(() => !!held, 'cancel stream began');
-  setTimeout(() => held?.(), 250);
+  const cancellationReply = delay(250).then(() => held?.());
   await page.getByRole('button', { name: '暂停执行', exact: true }).click();
   await until(s => thread(s, source)?.turns?.at(-1)?.status === 'interrupted', 'cancel settled');
   const cancelled = thread(await state(), source).turns.at(-1);
   assert.equal(cancelled.usage.inputTokens, 120); assert.equal(cancelled.generation.measuredRequests, 0); assert.equal(cancelled.generation.usageRequests, 1);
+  await cancellationReply;
   await page.getByTestId('chat-input').fill('USAGE_LIVE');
   await page.getByRole('button', { name: '发送', exact: true }).click();
   await until(() => !!held, 'live content is held before provider usage');

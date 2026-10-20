@@ -26,7 +26,7 @@ const CONTEXT_WINDOWS: &[(&str, usize)] = &[
     ("glm-5", 200_000),
 ];
 
-pub(super) fn known_context_window(model_id: &str) -> Option<usize> {
+pub(crate) fn known_context_window(model_id: &str) -> Option<usize> {
     CONTEXT_WINDOWS
         .iter()
         .find_map(|(id, tokens)| (*id == model_id).then_some(*tokens))

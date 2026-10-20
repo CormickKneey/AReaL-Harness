@@ -72,16 +72,28 @@ fn group(parts: Vec<ContextPart>) -> Vec<ContextPart> {
 
 fn budget(limits: &Limits, model: &dyn Model) -> anyhow::Result<ContextBudget> {
     let resolved = context::ContextBudget::resolve(limits, model)?;
+    let capabilities = model.capabilities();
+    let metadata = capabilities.context_window;
     Ok(ContextBudget {
         window_tokens: resolved.window,
         output_reserve_tokens: resolved.reserve,
         input_limit_tokens: resolved.input_limit,
-        window_source: if model.capabilities().context_window_tokens.is_some() {
-            "model"
-        } else {
-            "fallback"
-        }
-        .into(),
+        window_source: metadata.as_ref().map(|window| window.source).unwrap_or(
+            if capabilities.context_window_tokens.is_some() {
+                areal_protocol::context::ContextWindowSource::ModelDefault
+            } else {
+                areal_protocol::context::ContextWindowSource::Fallback
+            },
+        ),
+        reported_window_tokens: metadata
+            .as_ref()
+            .and_then(|window| window.reported_window_tokens),
+        reported_window_source: metadata
+            .as_ref()
+            .and_then(|window| window.reported_window_source),
+        user_budget_tokens: metadata
+            .as_ref()
+            .and_then(|window| window.user_budget_tokens),
     })
 }
 
@@ -120,17 +132,19 @@ impl Engine {
                 .and_then(|turn| turn.configuration.clone())
                 .unwrap_or_default()
         } else {
-            thread
-                .desktop
-                .as_ref()
-                .map(|desktop| desktop.configuration.clone())
-                .or_else(|| {
-                    thread
-                        .turns
-                        .last()
-                        .and_then(|turn| turn.configuration.clone())
-                })
-                .unwrap_or_default()
+            self.next_request_configuration(
+                thread
+                    .desktop
+                    .as_ref()
+                    .map(|desktop| desktop.configuration.clone())
+                    .or_else(|| {
+                        thread
+                            .turns
+                            .last()
+                            .and_then(|turn| turn.configuration.clone())
+                    })
+                    .unwrap_or_default(),
+            )
         }
     }
 
@@ -424,7 +438,22 @@ impl Engine {
         {
             let mut current = self.freeze_configuration(configuration.clone());
             current.revision = previous.revision;
-            if &current != previous {
+            let mut previous = previous.clone();
+            for value in [&mut current, &mut previous] {
+                value.context_window = None;
+                value.parameters.context_window_tokens = None;
+                if let Some(provider) = &mut value.provider {
+                    provider.context_source = None;
+                    provider.parameters.context_window_tokens = None;
+                    for parameters in provider.model_parameters.values_mut() {
+                        parameters.context_window_tokens = None;
+                    }
+                    provider
+                        .model_parameters
+                        .retain(|_, parameters| *parameters != Default::default());
+                }
+            }
+            if current != previous {
                 return Ok(ContextUsage::Unavailable {
                     basis,
                     budget: Some(budget),

@@ -33,7 +33,7 @@ export function newConnectionDraft(definition, authentication, revision) {
     authentication,
     enabled: true,
     parameters: {},
-    models: structuredClone(definition.models ?? []),
+    models: structuredClone(definition.models ?? []).map(model => ({ ...model, capabilities: model.capabilities ?? { tools: true, vision: false, reasoning: false } })),
     basedOnRevision: revision,
   };
 }

@@ -408,6 +408,8 @@ impl Model for FileModel {
     }
     fn capabilities(&self) -> model::ModelCapabilities {
         model::ModelCapabilities {
+            declared: None,
+            context_window: None,
             input: vec![
                 areal_protocol::Modality::Text,
                 areal_protocol::Modality::File,

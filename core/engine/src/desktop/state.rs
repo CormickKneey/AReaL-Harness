@@ -1008,6 +1008,19 @@ impl Engine {
         config: &EffectiveConfig,
         desktop_enabled: bool,
     ) -> Vec<Value> {
+        let declared = match (&config.model, &config.provider) {
+            (Some(model), Some(provider)) => {
+                provider.model_capabilities.get(&model.model_id).cloned()
+            }
+            (None, None) => self
+                .default_model_for(config)
+                .ok()
+                .and_then(|model| model.capabilities().declared),
+            _ => None,
+        };
+        if declared.is_some_and(|capabilities| !capabilities.tools) {
+            return Vec::new();
+        }
         let goal_enabled = cell.goal_role.load(Ordering::Acquire) != 0;
         let exclusive = cell.exclusive_writer;
         let bindings = cell.bindings.read().await;

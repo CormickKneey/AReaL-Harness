@@ -12,7 +12,7 @@ Core 负责完整请求预算、压缩与持久历史。[Core 契约](../api/cor
 
 | 配置 | 行为 |
 |---|---|
-| `model.context_window_tokens` | 声明实际窗口，优先于已知模型默认值与全局 131072 token 兜底 |
+| `model.context_window_tokens` | 设置用户工作预算；有服务报告时取两者较小值 |
 | `model.max_output_tokens` | 常用配置；单次 HTTP 请求默认 16384，可按模型覆盖，必须为正数 |
 | `context.mode` | 保留 auto / manual / disabled |
 | `context.target_tokens`、`context.recent_tokens` | 目标与近期默认均为 0（自动）；显式正数保留为兼容边界偏好并报告来源 |
@@ -25,7 +25,9 @@ Core 负责完整请求预算、压缩与持久历史。[Core 契约](../api/cor
 
 ## 已知模型窗口
 
-未显式配置线程、模型或供应商窗口时，Core 按完整模型 ID 查找默认容量。该表是本地默认值，不保证具体端点能力。代理或订阅可能限制更小窗口，应在供应商或模型参数中配置 `contextWindowTokens`；独立 TOML 对应 `model.context_window_tokens`。模型发现保留端点的 `context_window`，写为 `contextWindowTokens`，不拿可选的 `max_context_window` 代替默认容量。默认表不修改输出上限或已保存配置。未知或重命名模型继续使用全局兜底，不按型号前缀猜测容量。
+服务报告窗口与用户工作预算分别保留。账号目录的 `context_window` 是当前报告窗口，不拿可选的 `max_context_window` 替代。工作窗口取报告值与显式用户预算的较小值；界面同时显示报告来源、报告容量和用户预算。账号未报告容量时使用全局兜底，不套用公开 API 的按名称默认值。自定义端点没有报告或用户预算时，才查完整模型 ID 默认表，未知 ID 使用全局兜底。
+
+空闲会话的上下文查询投影下一次新请求的容量。新请求受理时，仅在供应商身份、端点、协议和凭据引用一致时更新报告容量及模型能力；已有历史、活动轮次和已受理队列保持冻结快照。不会为更新容量而切换账号或重绑定端点。独立 TOML 的用户预算仍使用 `model.context_window_tokens`，桌面参数使用 `contextWindowTokens`。 旧快照无法区分自动填充的窗口与同值的人工预算，因此保守保留已经保存的窗口参数作为预算，不因报告容量增加而放大。新快照将预算和报告分别保存。
 
 以下默认值于 2026-10-20 核对官方文档。实际支持的精确 ID 以 `core/engine/src/model/context_windows.rs` 为准。
 

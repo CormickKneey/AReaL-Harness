@@ -60,7 +60,36 @@ pub struct ContextBudget {
     pub window_tokens: usize,
     pub output_reserve_tokens: usize,
     pub input_limit_tokens: usize,
-    pub window_source: String,
+    pub window_source: ContextWindowSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reported_window_tokens: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reported_window_source: Option<ContextWindowSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_budget_tokens: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum ContextWindowSource {
+    Account,
+    Provider,
+    User,
+    ModelDefault,
+    Fallback,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ContextWindow {
+    pub window_tokens: usize,
+    pub source: ContextWindowSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reported_window_tokens: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reported_window_source: Option<ContextWindowSource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_budget_tokens: Option<usize>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]

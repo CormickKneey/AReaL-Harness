@@ -249,6 +249,16 @@ pub struct ModelRef {
     pub model_id: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ModelCapabilityConfig {
+    pub tools: bool,
+    pub vision: bool,
+    pub reasoning: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort_options: Option<Vec<String>>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Provider {
@@ -259,6 +269,10 @@ pub struct Provider {
     pub models: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub model_parameters: BTreeMap<String, ModelParameters>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub model_capabilities: BTreeMap<String, ModelCapabilityConfig>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_source: Option<super::context::ContextWindowSource>,
     #[serde(default)]
     pub credential_ref: Option<String>,
     #[serde(default)]
@@ -314,6 +328,8 @@ pub struct ClientOptions {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EffectiveConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<super::context::ContextWindow>,
     /// Core-owned scope marker; legacy snapshots conservatively keep explicit scope.
     #[serde(default)]
     pub allow_plugin_skills: bool,
@@ -343,6 +359,7 @@ pub struct EffectiveConfig {
 impl Default for EffectiveConfig {
     fn default() -> Self {
         Self {
+            context_window: None,
             allow_plugin_skills: false,
             plugin_skills: None,
             default_model_revision: None,

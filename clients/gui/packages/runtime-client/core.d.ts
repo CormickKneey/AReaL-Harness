@@ -30,7 +30,7 @@ export type ContextPart = { kind: ContextPartKind; name: string; estimatedTokens
 export type InstructionAttribution = { sha256: string; parts: ContextPart[] };
 export type TurnUsage = { usage?: ModelUsage | null; generation?: GenerationStats | null; instructionAttribution?: InstructionAttribution | null };
 export type ContextBasis = { provider: string; model: string; configurationRevision: number; defaultModelRevision: string | null; turnId: string | null };
-export type ContextBudget = { windowTokens: number; outputReserveTokens: number; inputLimitTokens: number; windowSource: string };
+export type ContextBudget = { windowTokens: number; outputReserveTokens: number; inputLimitTokens: number; windowSource: 'account' | 'provider' | 'user' | 'modelDefault' | 'fallback' | 'model'; reportedWindowTokens?: number; reportedWindowSource?: 'account' | 'provider'; userBudgetTokens?: number };
 export type ContextUsage =
   | { kind: 'ready'; basis: ContextBasis; budget: ContextBudget; scope: { kind: 'assembledRequest'; sequence: number } | { kind: 'recordedHistory' }; estimate: { tokens: number; parts: ContextPart[] } }
   | { kind: 'unavailable'; basis: ContextBasis; budget: ContextBudget | null; reason: 'awaitingRequest' | 'modelUnavailable' | 'instructionBasisChanged' };

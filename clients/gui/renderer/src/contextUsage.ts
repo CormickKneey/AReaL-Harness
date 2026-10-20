@@ -17,7 +17,16 @@ function part(value: unknown): ContextPart {
 }
 function budget(value: unknown): ContextBudget {
   const b = object(value);
-  return { windowTokens: count(b.windowTokens), outputReserveTokens: count(b.outputReserveTokens), inputLimitTokens: count(b.inputLimitTokens), windowSource: text(b.windowSource) };
+  const windowSource = b.windowSource;
+  if (windowSource !== "account" && windowSource !== "provider" && windowSource !== "user" && windowSource !== "modelDefault" && windowSource !== "fallback" && windowSource !== "model") throw new Error("上下文容量来源无效");
+  const reportedWindowSource = b.reportedWindowSource;
+  if (reportedWindowSource != null && reportedWindowSource !== "account" && reportedWindowSource !== "provider") throw new Error("上下文报告来源无效");
+  return {
+    windowTokens: count(b.windowTokens), outputReserveTokens: count(b.outputReserveTokens), inputLimitTokens: count(b.inputLimitTokens), windowSource,
+    ...(b.reportedWindowTokens == null ? {} : { reportedWindowTokens: count(b.reportedWindowTokens) }),
+    ...(reportedWindowSource == null ? {} : { reportedWindowSource }),
+    ...(b.userBudgetTokens == null ? {} : { userBudgetTokens: count(b.userBudgetTokens) }),
+  };
 }
 function basis(value: unknown): ContextBasis {
   const b = object(value);
@@ -61,7 +70,11 @@ export function useContextUsage(project: Data, thread: Data | undefined, action:
   const sequence = useRef(0), inFlight = useRef<{ version: string; request: number } | null>(null);
   const last = thread?.turns?.at(-1), config = project.configurations?.[thread?.id ?? ""] ?? thread?.desktop?.configuration;
   const active = last?.status === "inProgress";
-  const version = JSON.stringify([project.id, project.state?.connected, project.core?.instanceId, thread?.id, config?.revision, config?.model, config?.resolvedParameters, thread?.updatedAt, last?.id, last?.status, last?.items?.length, thread?.contextCheckpoint?.compactions, thread?.toolsetRevision, project.core?.connectionGeneration]);
+  const selectedModel = project.models?.find((model: Data) => config?.model
+    ? model.providerId === config.model.providerId && model.modelId === config.model.modelId
+    : !model.providerId);
+  const modelCapacity = selectedModel && [selectedModel.providerRevision, selectedModel.contextWindowTokens, selectedModel.effectiveContextWindowTokens, selectedModel.reportedWindowTokens, selectedModel.reportedWindowSource, selectedModel.userBudgetTokens, selectedModel.windowSource];
+  const version = JSON.stringify([project.id, project.state?.connected, project.core?.instanceId, thread?.id, config?.revision, config?.model, config?.resolvedParameters, modelCapacity, thread?.updatedAt, last?.id, last?.status, last?.items?.length, thread?.contextCheckpoint?.compactions, thread?.toolsetRevision, project.core?.connectionGeneration]);
   const current = useRef(version); current.current = version;
   const read = useCallback(async () => {
     if (!thread?.id || !project.state?.connected) return;

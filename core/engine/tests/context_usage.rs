@@ -422,5 +422,45 @@ async fn account_report_caps_user_budget_and_missing_report_uses_fallback() {
             }
         );
     }
+    let legacy = engine.create("/workspace".into()).await.unwrap();
+    engine.configure_thread(serde_json::from_value(json!({"threadId":legacy.id,"expectedRevision":1,"model":{"providerId":"account","modelId":"gpt-6.1-sol"},"parameters":{"contextWindowTokens":500000}})).unwrap()).await.unwrap();
+    engine.shutdown().await;
+    drop(engine);
+    let path = data.path().join(format!("{}.json", legacy.id));
+    let mut record: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    record["thread"]["desktop"]["configuration"]
+        .as_object_mut()
+        .unwrap()
+        .remove("contextWindow");
+    std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+    let engine = Engine::open(
+        data.path(),
+        Arc::new(UsageModel),
+        Limits {
+            watchdog_disable: true,
+            ..Limits::default()
+        },
+    )
+    .unwrap();
+    let mut provider = record["thread"]["desktop"]["configuration"]["provider"].clone();
+    provider["modelParameters"]["gpt-6.1-sol"]["contextWindowTokens"] = json!(1000000);
+    engine
+        .upsert_provider(serde_json::from_value(provider).unwrap(), 1)
+        .await
+        .unwrap();
+    let context = engine.context_read(&legacy.id, 0, 16).await.unwrap();
+    assert_eq!(context["budget"]["windowTokens"], 500000);
+    assert_eq!(context["budget"]["reportedWindowTokens"], 1000000);
+    assert_eq!(context["budget"]["userBudgetTokens"], 500000);
+    assert_eq!(context["budget"]["windowSource"], "user");
+    let next = engine
+        .start(&legacy.id, vec![Input::text("preserve saved budget")])
+        .await
+        .unwrap();
+    assert_eq!(
+        next.configuration.unwrap().parameters.context_window_tokens,
+        Some(500000)
+    );
+    engine.wait(&legacy.id).await.unwrap();
     engine.shutdown().await;
 }

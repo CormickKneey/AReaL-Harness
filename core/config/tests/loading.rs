@@ -1304,4 +1304,9 @@ fn model_capabilities_preserve_explicit_false_and_reasoning_options() {
         write(&mut i, &text.replace("['low','max']", invalid));
         assert!(load_config(&i).is_err());
     }
+    write(&mut i, &text.replace("['low','max']", "[]"));
+    assert_eq!(
+        load_config(&i).unwrap().model.reasoning_effort.as_deref(),
+        Some("max")
+    );
 }

@@ -24,13 +24,28 @@ function modelParameters(raw = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('模型参数无效');
   const rules = { temperature: v => Number.isFinite(v) && v >= 0 && v <= 2, maxOutputTokens: v => Number.isSafeInteger(v) && v > 0,
     contextWindowTokens: validContextWindow,
-    reasoningEffort: v => ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'].includes(v) };
+    reasoningEffort: v => ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(v) };
   const result = {};
   for (const [name, value] of Object.entries(raw)) {
     if (!Object.hasOwn(rules, name) || value !== null && !rules[name](value)) throw new Error('模型参数无效');
     if (value !== null) result[name] = value;
   }
   return result;
+}
+
+function modelCapabilities(raw) {
+  if (raw === undefined) return undefined;
+  const fields = ['tools', 'vision', 'reasoning', 'reasoningEffortOptions'];
+  const efforts = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)
+    || Object.keys(raw).some(field => !fields.includes(field))
+    || ['tools', 'vision', 'reasoning'].some(field => typeof raw[field] !== 'boolean')
+    || raw.reasoningEffortOptions !== undefined && (!Array.isArray(raw.reasoningEffortOptions)
+      || raw.reasoningEffortOptions.some(value => !efforts.includes(value))
+      || new Set(raw.reasoningEffortOptions).size !== raw.reasoningEffortOptions.length))
+    throw new Error('模型能力配置无效');
+  return { tools: raw.tools, vision: raw.vision, reasoning: raw.reasoning,
+    ...(raw.reasoningEffortOptions !== undefined ? { reasoningEffortOptions: [...raw.reasoningEffortOptions] } : {}) };
 }
 
 /** Core-owned metadata, with desktop-only encrypted credentials and OAuth. */
@@ -223,7 +238,7 @@ class AppProviders {
       if (!current()) { trace.finish('degraded'); return; }
       const models = status.models ?? service.models;
       const contexts = Object.fromEntries(models.filter(m => validContextWindow(m.parameters?.contextWindowTokens)).map(m => [m.id, { contextWindowTokens: m.parameters.contextWindowTokens }]));
-      const desired = { id: service.id ?? 'areal_openai', protocol: 'responses', endpoint: service.endpoint, credentialRef: service.id ?? 'areal_openai', models: models.map(m => m.id),
+      const desired = { id: service.id ?? 'areal_openai', contextSource: 'account', protocol: 'responses', endpoint: service.endpoint, credentialRef: service.id ?? 'areal_openai', models: models.map(m => m.id),
         ...(Object.keys(contexts).length ? { modelParameters: contexts } : {}), parameters: {} };
       trace.advance('provider_upsert');
       if (!existing || !isDeepStrictEqual(existing.modelParameters ?? {}, contexts) || Object.entries(desired).some(([k,v]) => k !== 'modelParameters' && JSON.stringify(existing[k]) !== JSON.stringify(v)))
@@ -318,7 +333,7 @@ class AppProviders {
         const endpoint = previous && raw.baseUrl === endpointBase(previous.endpoint) && protocol === previous.protocol
           ? previous.endpoint : connection(raw.baseUrl, raw.protocol).endpoint;
         if (!Array.isArray(raw.models)) throw new Error('请填写模型列表');
-        const models = raw.models.map(m => ({ id: m.id?.trim(), enabled: m.enabled !== false, ...(m.displayName?.trim() ? { displayName: m.displayName.trim() } : {}), parameters: modelParameters(m.parameters) }));
+        const models = raw.models.map(m => ({ id: m.id?.trim(), enabled: m.enabled !== false, ...(m.displayName?.trim() ? { displayName: m.displayName.trim() } : {}), parameters: modelParameters(m.parameters), ...(m.capabilities !== undefined ? { capabilities: modelCapabilities(m.capabilities) } : {}) }));
         const item = { id: previous?.id ?? `app_${randomUUID().replaceAll('-', '')}`, name: raw.name.trim(), endpoint, protocol, models, parameters: modelParameters(raw.parameters), enabled: raw.enabled !== false,
           ...(previous?.apiKeyEnv ? { apiKeyEnv: previous.apiKeyEnv } : {}) };
         if (request.authentication === 'none') delete item.apiKeyEnv;
@@ -331,7 +346,7 @@ class AppProviders {
         if (request.discoverModels && !previous && item.enabled && item.models.length === 0) {
           const catalog = await this.testConnection(item, { operation: 'discover' });
           if (!catalog.models.length) throw new Error('服务未提供模型，请手动添加后保存。');
-          item.models = [...new Set(catalog.models)].map(id => ({ id, enabled: true, parameters: !item.parameters.contextWindowTokens && Object.hasOwn(catalog.modelParameters ?? {}, id) ? catalog.modelParameters[id] : {} }));
+          item.models = [...new Set(catalog.models)].map(id => ({ id, enabled: true, capabilities: { tools: true, vision: false, reasoning: false }, parameters: !item.parameters.contextWindowTokens && Object.hasOwn(catalog.modelParameters ?? {}, id) ? catalog.modelParameters[id] : {} }));
         }
         next.data = previous ? next.data.map(p => p.id === item.id ? item : p) : [...next.data, item];
       }

@@ -159,6 +159,10 @@ async function closeGui() {
   app = undefined;
 }
 async function verifyModelCapabilities() {
+  await page.waitForFunction(async () => {
+    const reply = await window.arealDesktop.command("serviceStatus", {});
+    return reply.ok && !reply.value.busy && !reply.value.activeCommands && !reply.value.starting && !reply.value.providerUpdating;
+  });
   const previous = await call("providers", { operation: "list" });
   const seeded = await call("providers", { operation: "saveAndApply", expectedRevision: previous.revision, authentication: "none", provider: {
     name: "Capabilities", baseUrl: `http://127.0.0.1:${server.address().port}/v1`, protocol: "chatCompletions", enabled: true, parameters: {},
@@ -196,7 +200,7 @@ async function verifyModelCapabilities() {
   const catalogModel = snapshot => fixtureProject(snapshot).models.find(model => model.modelId === "capability-model");
   assert.deepEqual(catalogModel(await state()).reasoningEffortOptions, []);
   await button("返回应用").click(); await createProjectConversation(page, "workspace");
-  await button("模型").click(); await button("选择模型").click();
+  await button("模型").click();
   await page.getByRole("radio", { name: "Capability model", exact: true }).click(); await page.keyboard.press("Escape");
   const send = async (text, expected) => {
     const before = modelRequests.length;
@@ -266,6 +270,11 @@ async function verifyModelCapabilities() {
   await send("Disabling reasoning removes a prior selected effort", { model: "capability-model", effort: null, hasEffort: false });
   checks.push("custom model defaults, paired budget fields, persisted capabilities, configured effort subset, empty-list fallback, and reasoning disablement govern actual Core requests");
   await button("模型").click(); await button("配置模型").click();
+  await page.locator(".provider-catalog-row").filter({ hasText: "Capabilities" }).waitFor();
+  await page.waitForFunction(async () => {
+    const reply = await window.arealDesktop.command("serviceStatus", {});
+    return reply.ok && !reply.value.busy && !reply.value.activeCommands && !reply.value.starting && !reply.value.providerUpdating;
+  });
   const current = await call("providers", { operation: "list" });
   await call("providers", { operation: "removeAndApply", id: provider.id, expectedRevision: current.revision });
   await button("刷新供应商").click();

@@ -90,13 +90,15 @@ thread/configure 使用 expectedRevision，仅空闲且不压缩时生效。rese
 
 `areal/thread/start` 使用 `{requestId,agentProfile:{id,revision},cwd?,model?,parameters?,dynamicTools?}` 创建按指定 Profile 冻结配置的 Thread。客户端可以用 `--agent id@revision` 传入同一引用；不需要再指定 Workflow。Profile 的 `workflow` 字段是 Agent 属性，创建 Thread 时自动启动一次并在快照 `desktop.workflowRun` 中记录 Workgroup ID 与启动状态；实时状态通过 Workgroup API 查询。相同 requestId 重试和恢复 Thread 不会重复启动；绑定 Workflow 的 Profile 只能在创建 Thread 时选择，不能通过 `thread/configure` 切换。没有 Workflow 的 Profile 不要求 Workgroup policy，仍可使用其 `toolAllowlist` 允许的工具。
 
-`areal/provider/upsert` 接受可选 `Provider.modelParameters`，以目录中的模型 ID 映射既有 `ModelParameters`。原 `models` 仍为字符串数组。未知映射键或无效参数拒绝整次更新。有效参数依次采用显式 Thread 配置、已配置模型默认、Provider 模型元数据、Provider 全局默认。选定的 Provider 快照保留该元数据；省略映射保持原契约。端点 `context_window` 表示默认容量，`max_context_window` 不会自动启用更大窗口。
+`areal/provider/upsert` 接受可选 `Provider.modelParameters`，以目录中的模型 ID 映射既有 `ModelParameters`。原 `models` 仍为字符串数组。未知映射键或无效参数拒绝整次更新。生成参数依次采用显式 Thread 配置、已配置模型默认、Provider 模型元数据、Provider 全局默认；上下文报告与用户预算按下文单独解析。选定的 Provider 快照保留该元数据；省略映射保持原契约。端点 `context_window` 表示默认容量，`max_context_window` 不会自动启用更大窗口。 `contextSource:"account"` 标明账号目录，其余报告默认为 `provider`。
+
+自定义模型可声明可选 `capabilities:{tools,vision,reasoning,reasoningEffortOptions?}`，经 `Provider.modelCapabilities` 按模型 ID 传入；未知模型键或无效声明拒绝更新。省略声明保留原协议行为。关闭工具后不发送工具定义，也不受理返回的工具调用；关闭视觉后拒绝图片输入；关闭推理后不发送推理参数。`reasoningEffortOptions` 为不重复的允许值子集，可选 `none/minimal/low/medium/high/xhigh/max`。空列表或省略采用原有六档，关闭推理时目录选项为空。
 
 `areal/model/list` 的每项 `parameters` 是 Core 按模型默认、Provider 默认合并的参数；`isDefault` 标识新会话的服务默认选择。显式 Profile 模型仍优先于全局默认。Composer 在发送前显示具体模型与有效思考强度，完全未设置强度时显示“供应商默认”，显式 `none` 显示“无”。“使用模型默认”只清除当前强度覆盖，不绕过模型或 Provider 已保存的默认值。新会话只保留本次未发送草稿的选择，创建成功后清除；历史使用会话当前已保存的选择，已有 Turn 快照不变。
 
 `areal/model/list` 还返回本实例的 `lastAcceptedModel`（无记录时为 null）：`{acceptedAt,model,modelId,reasoningEffort}`。`acceptedAt` 为 Core 受理时间（Unix 微秒），`model` 为供应商模型引用或隐式服务默认的 null，`modelId` 为实际模型名；`reasoningEffort=null` 与显式 `"none"` 不同。用户主会话的 `areal/turn/submit` 及显式 `areal/turn/start|enqueue` 将记录与受理收据写入同一 Thread 快照，并在响应/原收据中返回该字段。重复查询不刷新时间，后台执行不更新。桌面服务按时间汇总各项目的记录，持久保存新会话偏好；它不是已有会话配置的所有者。
 
-可选 `parameters.reasoningSummary` 接受 `auto` / `concise` / `detailed`，仅用于 Responses，按 Provider 默认 → Thread 参数合并；Provider/服务默认与 Thread 都未配置时不启用摘要请求。`areal/model/list.parameterCapabilities` 只在 Responses Provider 下包含 `reasoningSummary`，表示适配器支持传参，不保证供应商的每个模型都支持所选模式。`areal/model/list.reasoningEffortOptions` 返回现有 HTTP 适配器允许的 `none/minimal/low/medium/high/xhigh`（其他适配器为空），同样不保证远端每个模型都支持。Composer 从目录读取这些选项，通过原会话配置提交参数。事件与分段规则见 [Core 思考进度](core.md#思考进度)。
+可选 `parameters.reasoningSummary` 接受 `auto` / `concise` / `detailed`，仅用于 Responses，按 Provider 默认 → Thread 参数合并；Provider/服务默认与 Thread 都未配置时不启用摘要请求。`areal/model/list.parameterCapabilities` 只在 Responses Provider 下包含 `reasoningSummary`，表示适配器支持传参，不保证供应商的每个模型都支持所选模式。`areal/model/list.reasoningEffortOptions` 返回自定义能力声明的允许值，未声明时返回现有 HTTP 适配器允许的 `none/minimal/low/medium/high/xhigh`（其他适配器为空），同样不保证远端每个模型都支持。Composer 从目录读取这些选项，通过原会话配置提交参数。事件与分段规则见 [Core 思考进度](core.md#思考进度)。
 
 options.readOnly 收窄 Scope 写根和网络；toolAllowlist 收窄 Profile；preapprovedTools 不能取消部署强制审批，且只匹配当前工具名；预批准读取工具不会豁免它触发的 hook。maxModelRounds 为 1–1024，最后一轮仅交接，不等于团队请求预算。Profile/Workflow 定义使用不可变 id/revision；Skill 引用不冻结资源内容，见下文。
 
@@ -182,7 +184,7 @@ GUI 的 `tasks` 只读命令支持 `operation: list | inbox`、可选 `projectId
 
 `task/create/list/read/pause/resume/cancel/subscribe/unsubscribe`、`channel/read/reply`、`inbox/list` 构成独立于 Thread 的任务控制与通信 API，详见 [Task 契约](tasks.md)。task/updated 通知携带 Task 投影和 channelSequence；客户端通过分页频道读取维护消息。server/status 与 drain 的 activeTasks 统计需要结算的任务工作：定时任务只在 Run 排队、执行、等待输入或子任务时计入，不计仅等待下一次触发的安排；暂停后仍在运行的定时 Run 继续计入。空闲定时安排可安全重启，保留时间、启用状态和历史。GUI/TUI/WebUI 可共享同一 Inbox；现有会话交互面板仍处理同步问题和审批。
 
-可选 `parameters.contextWindowTokens`（1–2000000）声明模型容量，保存在模型默认参数与 Thread 覆盖中。`areal/model/list.contextWindowTokens` 未声明时仍为 null，`effectiveContextWindowTokens` 包含全局兜底。上下文检查增加 budget 字段 windowTokens、outputReserveTokens、inputLimitTokens、targetTokens、windowSource（model/fallback）。模型配置或凭据不可用时仍可查看上下文，budget 返回 null。这些元数据控制本地预检，不改变供应商模型容量。
+可选 `parameters.contextWindowTokens`（1–2000000）设置用户工作预算。Provider 模型元数据保留服务报告窗口，实际工作窗口取两者较小值。上下文 budget 返回 `windowTokens`、`outputReserveTokens`、`inputLimitTokens`、`windowSource`，以及可选的 `reportedWindowTokens`、`reportedWindowSource`、`userBudgetTokens`。实际来源为 `account/provider/user/modelDefault/fallback`；报告来源仅为 `account/provider`。用户预算较小时仍保留原报告来源。订阅缺少报告时使用系统兜底，不采用公开 API 型号默认值。旧记录缺少新增字段时仍可读取。模型配置或凭据不可用时仍可查看上下文，budget 返回 null。这些值控制本地预检，不扩大供应商能力。
 
 <a id="turn-fork-开发预览"></a>
 
