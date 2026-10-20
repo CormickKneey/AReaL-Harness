@@ -851,6 +851,7 @@ try {
   checks.push("AC74: real Core modality refusal preserves the main draft and attachment without a Turn/request; Side history and error state remain independent");
   const late = await send(lateSentinel, sourceThreadId);
   assert.ok(late.turnId);
+  await openSideContext(sidePane);
   assert.match(await sidePane.innerText(), /来源已推进/);
   const previousSideTurns = project(await state()).state.threads[sideThreadId].turns.length;
   const followStart = requests.length;
@@ -1014,17 +1015,36 @@ try {
   checks.push("AC34/50/72: visible single-slot waiting, independent Side Stop and source Stop, no deadlock or cancellation cascade");
   await showSideConversation();
   const beforeDisconnect = project(await state());
-  await app.evaluate(() => globalThis.__scfConnection.socket.terminate());
-  await until(s => s.connection?.state === "unavailable", "GUI-to-Core transport disconnect");
-  await openSideContext(sidePane);
-  await sidePane.getByText(/^来源：.*来源当前状态未知/).waitFor();
-  await page.getByRole("button", { name: "重新连接后台" }).click();
-  const reconnected = await until(s => s.connection?.state === "ready" && project(s)?.state?.connected &&
-    project(s)?.state?.threads?.[sourceThreadId]?.turns?.length === beforeDisconnect.state.threads[sourceThreadId].turns.length &&
-    project(s)?.state?.threads?.[sideThreadId]?.turns?.length === beforeDisconnect.state.threads[sideThreadId].turns.length,
-  "GUI-to-Core reconnection and authoritative source/Side snapshot");
-  assert.equal(project(reconnected).state.threads[sideThreadId].conversation.origin.sourceThreadId, sourceThreadId);
-  assert.equal(project(reconnected).state.threads[sourceThreadId].conversation?.kind ?? "main", "main");
+  // 保持本次真实断线，避免 500ms 被动重连抢在 React/Playwright 的离线断言之前完成。
+  try {
+    await app.evaluate(({ app }, connectionPath) => {
+      const read = process.getBuiltinModule("module").createRequire(app.getAppPath() + "/package.json");
+      const { SharedCoreBackend } = read(connectionPath);
+      const original = SharedCoreBackend.prototype.scheduleReconnect;
+      const connection = globalThis.__scfConnection;
+      let disconnectedBackend;
+      SharedCoreBackend.prototype.scheduleReconnect = function () {
+        if (this.connection === connection) disconnectedBackend = this;
+        // 手动重连会替换 connection；该后端仍不能靠被动重试掩盖手动恢复失败。
+        if (this !== disconnectedBackend) return original.call(this);
+      };
+      globalThis.__scfRestoreReconnect = () => { SharedCoreBackend.prototype.scheduleReconnect = original; };
+      connection.socket.terminate();
+    }, join(desktop, "src/core/service-client.cjs"));
+    await until(s => s.connection?.state === "unavailable" && project(s)?.state?.connected === false,
+      "GUI-to-Core transport disconnect and disconnected project projection");
+    await openSideContext(sidePane);
+    await sidePane.getByText(/^来源：.*来源当前状态未知/).waitFor();
+    await page.getByRole("button", { name: "重新连接后台" }).click();
+    const reconnected = await until(s => s.connection?.state === "ready" && project(s)?.state?.connected &&
+      project(s)?.state?.threads?.[sourceThreadId]?.turns?.length === beforeDisconnect.state.threads[sourceThreadId].turns.length &&
+      project(s)?.state?.threads?.[sideThreadId]?.turns?.length === beforeDisconnect.state.threads[sideThreadId].turns.length,
+    "GUI-to-Core manual reconnection and authoritative source/Side snapshot");
+    assert.equal(project(reconnected).state.threads[sideThreadId].conversation.origin.sourceThreadId, sourceThreadId);
+    assert.equal(project(reconnected).state.threads[sourceThreadId].conversation?.kind ?? "main", "main");
+  } finally {
+    await app.evaluate(() => { globalThis.__scfRestoreReconnect?.(); delete globalThis.__scfRestoreReconnect; });
+  }
   checks.push("AC49: real GUI transport disconnect/reconnect restored distinct source and Side identities without duplicate Turns");
   // 重启使用同一隔离状态目录，并另行标记第二段连续录屏。
   const preRestart = { sourceTurns: project(await state()).state.threads[sourceThreadId].turns.length,
