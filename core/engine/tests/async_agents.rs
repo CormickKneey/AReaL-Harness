@@ -159,8 +159,9 @@ async fn runtime() -> (Arc<Client>, tokio::task::JoinHandle<()>) {
             let method = req["method"].as_str().unwrap();
             let result = match method {
                 "connection.open" => {
-                    json!({"protocolVersion":"areal.runtime.v0","runtimeEpoch":epoch,"connectionId":"fixture","rootScopeId":root,"capabilities":{"methods":["fs.execute"]}})
+                    json!({"protocolVersion":"areal.runtime.v0","runtimeEpoch":epoch,"connectionId":"fixture","rootScopeId":root,"capabilities":{"methods":["scope.check","fs.execute"]}})
                 }
+                "scope.check" => json!({"available":true}),
                 "scope.create" | "scope.revoke" | "scope.waitClosed" => {
                     json!({"scopeId":root,"parentScopeId":null,"state":if method=="scope.waitClosed" {"closed"}else{"active"},"owner":{"taskId":"fixture"},"readRoots":["workspace://repo"],"writeRoots":["workspace://repo"],"network":"deny","limits":{"wallTimeMs":10000,"outputBytes":8388608,"maxProcesses":4},"activeProcesses":0,"outputBytes":0,"cleanupError":null})
                 }

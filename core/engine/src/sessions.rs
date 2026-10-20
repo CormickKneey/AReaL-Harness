@@ -29,7 +29,7 @@ impl Engine {
     pub async fn create(self: &Arc<Self>, cwd: String) -> Result<Thread> {
         self.mutate(move |engine| async move {
             engine
-                .create_inner(cwd, None, None, Vec::new(), None, None)
+                .create_inner(cwd, None, None, Vec::new(), None, None, false)
                 .await
                 .map(|(thread, _)| thread)
         })
@@ -44,7 +44,7 @@ impl Engine {
     ) -> Result<Thread> {
         self.mutate(move |engine| async move {
             engine
-                .create_inner(cwd, None, None, definitions, Some(host), None)
+                .create_inner(cwd, None, None, definitions, Some(host), None, false)
                 .await
                 .map(|(thread, _)| thread)
         })
@@ -77,6 +77,8 @@ impl Engine {
         Ok(())
     }
 
+    // TaskRun 的独立 Session 也需复用创建与回滚边界，预检不能延后到首个工具。
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn create_inner(
         self: &Arc<Self>,
         cwd: String,
@@ -85,6 +87,7 @@ impl Engine {
         dynamic_tools: Vec<areal_protocol::ToolDefinition>,
         host: Option<Arc<dyn tools::DynamicToolHost>>,
         desktop: Option<areal_protocol::desktop::DesktopState>,
+        check_execution: bool,
     ) -> Result<(Thread, Option<Turn>)> {
         let _admission = self.tasks.token();
         if !self.accepting_work() {
@@ -234,13 +237,39 @@ impl Engine {
             }
         }
         let mut scratch_reservation = PendingScratch(None);
-        if research {
-            let scratch = self
-                .command_scratch(&cell)
-                .ok_or_else(|| Error::Invalid("research agent scratch unavailable".into()))?;
+        let scratch = self.command_scratch(&cell);
+        if research && scratch.is_none() {
+            return Err(Error::Invalid("research agent scratch unavailable".into()));
+        }
+        if (research || check_execution || (parent.is_some() && initial.is_some()))
+            && let Some(scratch) = scratch
+        {
             std::fs::create_dir(&scratch)
                 .map_err(|e| Error::Storage(format!("create private agent scratch: {e}")))?;
             scratch_reservation.0 = Some(scratch);
+        }
+        if (check_execution || (parent.is_some() && initial.is_some()))
+            && let Some(runtime) = &self.runtime
+        {
+            // 子任务先证明收窄后的执行路径可用，再持久化和发送首个模型请求。
+            // 这是只读能力查询；拒绝不创建执行，也不改变父任务的权限和可用性。
+            let permissions = self.active_permissions(&cell).await.map_err(|error| {
+                Error::Invalid(format!("child scope preparation failed: {error}"))
+            })?;
+            let checked = runtime.client.check_scope(areal_runtime_protocol::CheckScope {
+                parent_scope_id: runtime.command_scope.as_ref().map_or_else(
+                    || runtime.client.info().root_scope_id.clone(),
+                    |scope| scope.scope_id.clone(),
+                ),
+                permissions,
+            }).await.map_err(|error| Error::Invalid(format!(
+                "child execution unavailable before model start: {error}; continue in the parent or use a deployment that supports this scope; do not widen permissions or retry unchanged"
+            )))?;
+            if !checked.available {
+                return Err(Error::Invalid(
+                    "child execution scope is unavailable; no child was started".into(),
+                ));
+            }
         }
         let mut guard = cell.state.lock().await;
         {
@@ -419,6 +448,7 @@ impl Engine {
         }
         let execution_policy = areal_protocol::delegation::ChildExecutionPolicy {
             exclusive_write: request.workspace_mode.as_deref() == Some("sharedWrite"),
+            ..Default::default()
         };
         self.mutate(move |engine| async move {
             engine
@@ -457,7 +487,11 @@ impl Engine {
                     Some(&parent_turn),
                     Some(&request),
                     max_model_rounds,
-                    areal_protocol::delegation::ChildExecutionPolicy { exclusive_write },
+                    areal_protocol::delegation::ChildExecutionPolicy {
+                        exclusive_write,
+                        deferred_write: !exclusive_write
+                            && request.workspace_mode.as_deref() == Some("sharedWrite"),
+                    },
                 )
                 .await
         })
@@ -494,7 +528,7 @@ impl Engine {
         model_parent_turn: Option<&str>,
         request: Option<&areal_protocol::desktop::AgentSpawn>,
         max_model_rounds: Option<usize>,
-        execution_policy: areal_protocol::delegation::ChildExecutionPolicy,
+        mut execution_policy: areal_protocol::delegation::ChildExecutionPolicy,
     ) -> Result<(Thread, Turn)> {
         let parent = self.cell(parent_id).await?;
         let mut state = parent.state.lock().await;
@@ -515,6 +549,18 @@ impl Engine {
         }
         let token = active.cancel.child_token();
         let mut configuration = self.child_configuration(&state.thread, request)?;
+        // 父配置或可信 Profile 的只读限制不能被继承模式解除。
+        if configuration
+            .as_ref()
+            .is_some_and(|config| config.read_only)
+        {
+            execution_policy.deferred_write = false;
+        }
+        if execution_policy.deferred_write {
+            configuration.get_or_insert_with(Default::default).instructions.push_str(
+                "\nThis is an inspection/report task. It inherits the parent's execution permissions, not a separate read-only OS sandbox. Do not modify source: those capabilities are not authorization to expand your assigned task. Use file reads and search where sufficient; commands and ambient tools may acquire an exclusive workspace lease. Return findings and evidence."
+            );
+        }
         if let Some(max) = max_model_rounds {
             let config = configuration.get_or_insert_with(Default::default);
             if max == 0
@@ -581,6 +627,7 @@ impl Engine {
                     execution_policy,
                     ..Default::default()
                 }),
+                false,
             )
             .await?;
         let turn = turn.expect("child creation includes its initial turn");

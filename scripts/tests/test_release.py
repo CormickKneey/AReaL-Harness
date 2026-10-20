@@ -35,6 +35,48 @@ class ReleaseTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
 
+    def private_shell(self, repository):
+        directory = repository / "target/debug/shells"
+        directory.mkdir(parents=True)
+        lock = repository / "runtime/host-tools/bash.lock.json"
+        lock.parent.mkdir(parents=True)
+        lock.write_text(json.dumps({"version": "5.3.20", "minimumMacOSVersion": "15.0"}))
+        builder = repository / "scripts/prepare-runtime-shell.py"
+        builder.parent.mkdir(parents=True)
+        builder.write_text("fixture build instructions")
+        for name in ["bash", "sh"]:
+            (directory / name).write_bytes(b"signed private shell")
+        (directory / "COPYING").write_text("fixture GPL license")
+        (directory / "corresponding-source.tar.gz").write_bytes(b"fixture complete source")
+        (directory / "build.json").write_text(
+            json.dumps(
+                {
+                    "lockSha256": hashlib.sha256(lock.read_bytes()).hexdigest(),
+                    "builderSha256": hashlib.sha256(builder.read_bytes()).hexdigest(),
+                    "binarySha256": hashlib.sha256((directory / "bash").read_bytes()).hexdigest(),
+                    "sourceSha256": hashlib.sha256(
+                        (directory / "corresponding-source.tar.gz").read_bytes()
+                    ).hexdigest(),
+                    "version": "5.3.20",
+                    "minimumMacOSVersion": "15.0",
+                    "license": "GPL-3.0-or-later",
+                }
+            )
+        )
+        return directory
+
+    def test_private_shell_package_rejects_missing_sources_and_changed_build_inputs(self):
+        repository = self.root / "shell-repository"
+        directory = self.private_shell(repository)
+        package.private_shell_info(repository, repository / "target/debug")
+        (directory / "corresponding-source.tar.gz").write_bytes(b"tampered")
+        with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+            package.private_shell_info(repository, repository / "target/debug")
+        (directory / "corresponding-source.tar.gz").write_bytes(b"fixture complete source")
+        (repository / "scripts/prepare-runtime-shell.py").write_text("changed compiler inputs")
+        with self.assertRaisesRegex(ValueError, "build inputs changed"):
+            package.private_shell_info(repository, repository / "target/debug")
+
     def bundle(self, version="0.1.0", target="linux/x86_64", manifest_version=1):
         bundle = self.root / (version + target.replace("/", "-"))
         bundle.mkdir()
@@ -248,6 +290,7 @@ class ReleaseTests(unittest.TestCase):
         names = ["areal", "areal-runtime", "areal-runtime-fs"]
         for name in names:
             (source / name).write_bytes(b"signed build artifact: " + name.encode())
+        self.private_shell(repository)
 
         def metadata(command, **kwargs):
             if command[-1] == "build-info":
@@ -294,7 +337,13 @@ class ReleaseTests(unittest.TestCase):
                     manifest = json.loads((destination / "manifest.json").read_text())
                     self.assertEqual(manifest["apiVersion"], "fixture-api-v1")
                     self.assertEqual(manifest["stateVersion"], 42)
-                    self.assertEqual(len(calls), len(names))
+                    self.assertEqual(len(calls), len(names) + 2)
+                    self.assertEqual(
+                        manifest["thirdPartyComponents"][0]["license"], "GPL-3.0-or-later"
+                    )
+                    self.assertTrue(
+                        (destination / "libexec/areal/shells/corresponding-source.tar.gz").is_file()
+                    )
                     for name in names:
                         relative = Path("bin" if name == "areal" else "libexec/areal") / name
                         original = (source / name).read_bytes()

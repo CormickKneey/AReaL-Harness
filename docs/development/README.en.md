@@ -33,6 +33,8 @@ make build
 
 Binary-only changes automatically restart an idle shared service, so manual restarts are not needed after every build. For configuration conflicts, use the complete restart command in the diagnostic. Wait for background work to settle; add `--cancel` only when cancellation is intended. If switching versions frequently, use a separate external directory for development, such as `--data-dir /tmp/areal-dev-state`, on both startup and restart; it has separate history. See [local service compatibility](../api/local-service.en.md#identity-compatibility-and-history).
 
+On macOS, `make build/release` also builds standalone Bash from SHA-256-pinned sources and patches, caching it under `target/runtime-shell` and copying it to `target/<profile>/shells`. The first build requires network access, a C compiler and Python 3.11+ with tar data-filter support. `cargo build` alone does not produce these complete Runtime assets. Tasks never download a shell or replace system programs. This separate component retains GPL-3.0-or-later licensing and complete corresponding source; the project Rust code remains Apache-2.0. See [release requirements](releasing.en.md).
+
 ## Checks
 
 | Change | Command |
@@ -43,6 +45,7 @@ Binary-only changes automatically restart an idle shared service, so manual rest
 | Regular regression | `make verify` |
 | Native integration | `make verify-harness`, including regular regression |
 | Unified delegation integration | `make unified-execution-smoke`: real Runtime candidate composition, delivery receipts, parent ownership, cancellation, and recovery; included in `make harness-smoke` / `make verify-native`; Linux CI runs it in the supported container with Bubblewrap user namespaces, while `make verify` remains portable |
+| Child permission integration | `make delegation-permissions-smoke`: real Runtime enforced read-only, early rejection when unavailable, explicit inherited reads, and parent/child read cooperation; scripted model, no capability score; included in `make harness-smoke` |
 | CI native delta | `make verify-native`, native backend and Harness integration smoke only |
 | Capacity | `make capacity`, run separately |
 | Documentation only | `python3 scripts/check-docs.py`; also compare commands with implementation |
@@ -54,6 +57,8 @@ To test from a fixed artifact path, build and deploy Core and Runtime from the s
 `make integration-boundaries` checks that the product, release entry points and default Make dependency graph do not load optional platform adapters; `make script-test` includes it.
 
 See [testing](testing.en.md) for coverage. Pass arguments with `make tui ARGS='--prompt hello'`. `make release` writes to `target/release`; `make docs` generates Rust API documentation.
+
+For request-projection changes, also run `cargo test --locked -p areal-engine --test runtime_context_projection --test http_model` to check chronology, counters and guidance changes, guidance restoration after compaction, original user/tool content, provider reasoning and default protocol behavior. Validate this separately from capture coverage above: a stable prefix or fewer bytes cannot replace actual returned tokens, task acceptance and source-isolated comparisons.
 
 `python3 scripts/tui-local-smoke.py` injects an invalid trajectory destination in an isolated real owned TUI/Runtime. It verifies that the warning does not hide request status while multi-turn, tool, cancellation, and recovery interactions continue; no export worker starts. This check is included in `make harness-smoke`. See [GUI validation](../../clients/gui/README.en.md#lifecycle) for polling, protocol projection, and actual interface checks.
 

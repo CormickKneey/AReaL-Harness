@@ -9,6 +9,11 @@ use std::{
 
 const ENV: &[(&str, &str, &str)] = &[
     (
+        "AREAL_HARNESS_INSPECTION_PERMISSIONS",
+        "",
+        "delegation.inspection_permissions",
+    ),
+    (
         "AREAL_HARNESS_SUMMARY_REASONING_EFFORT",
         "",
         "model.summary_reasoning_effort",
@@ -421,6 +426,13 @@ pub(crate) fn valid(field: &str, entry: &Entry) -> Result<()> {
                 return Err(reject("boolean must be 0/1 or false/true"));
             }
         }
+        "inspection_permissions" => {
+            if !matches!(value.as_str(), "read-only" | "inherit") {
+                return Err(reject(
+                    "inspection permissions must be read-only or inherit",
+                ));
+            }
+        }
         "max_request_bytes" => {
             if value
                 .parse::<usize>()
@@ -612,6 +624,7 @@ pub(crate) fn load_mode(
     let catalog_managed = file.values.contains_key("model.catalog_version");
     let mut values = BTreeMap::new();
     for (field, value) in [
+        ("delegation.inspection_permissions", "read-only"),
         ("permissions.mode", "YOLO"),
         ("permissions.allow", "[]"),
         ("permissions.ask", "[]"),
@@ -910,6 +923,10 @@ pub(crate) fn load_mode(
     sources.insert("home".into(), home_source);
     sources.insert("config_file".into(), selected_source);
     let result = ResolvedCoreConfig {
+        inspection_permissions: match values["delegation.inspection_permissions"].value.as_str() {
+            "inherit" => InspectionPermissions::Inherit,
+            _ => InspectionPermissions::ReadOnly,
+        },
         trajectory: TrajectoryConfig::resolve(
             &values,
             trajectory_source_id,

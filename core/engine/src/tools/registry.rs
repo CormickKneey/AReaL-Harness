@@ -315,7 +315,11 @@ impl Registry {
                         input_schema: f["parameters"].clone(),
                         output_schema: None,
                     },
-                    Backend::Builtin,
+                    if f["name"] == "task_state" {
+                        Backend::Core
+                    } else {
+                        Backend::Builtin
+                    },
                 )?;
             }
         }
@@ -437,8 +441,10 @@ impl Registry {
     pub fn research_only(mut self) -> Self {
         self.tools.retain(|name, tool| {
             matches!(tool.backend, Backend::Builtin)
-                || (matches!(name.as_str(), "read_tool_result" | "read_history")
-                    && matches!(tool.backend, Backend::Core))
+                || (matches!(
+                    name.as_str(),
+                    "read_tool_result" | "read_history" | "task_state"
+                ) && matches!(tool.backend, Backend::Core))
         });
         self.order.retain(|name| self.tools.contains_key(name));
         self

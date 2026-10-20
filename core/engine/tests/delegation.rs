@@ -1,6 +1,6 @@
 use areal_engine::{
     Engine, Limits,
-    model::{Message, Model, ModelEvent, ModelStream},
+    model::{Message, Model, ModelEvent, ModelStream, RequestPurpose},
     tools::RuntimeConfig,
     workgroup::{
         self, Check, Executor,
@@ -8,7 +8,7 @@ use areal_engine::{
         tree::{self, File, Tree},
     },
 };
-use areal_protocol::{Input, delegation::DelegationRequest};
+use areal_protocol::{Input, Item, ToolOutcome, TurnStatus, delegation::DelegationRequest};
 use areal_runtime_client::Client;
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -33,6 +33,8 @@ struct ModelFixture {
     release: Semaphore,
     read_execution: std::sync::Mutex<Option<String>>,
     root_calls: AtomicUsize,
+    child_requests: AtomicUsize,
+    advertised_tools: std::sync::Mutex<Vec<Vec<Value>>>,
 }
 #[async_trait]
 impl Model for ModelFixture {
@@ -46,10 +48,38 @@ impl Model for ModelFixture {
     fn name(&self) -> &str {
         "unified-delegation"
     }
+    async fn chat_limited(
+        &self,
+        messages: Vec<Message>,
+        tools: Vec<Value>,
+        _: RequestPurpose,
+        cap: Option<u64>,
+    ) -> anyhow::Result<ModelStream> {
+        use futures_util::StreamExt;
+        self.advertised_tools.lock().unwrap().push(tools);
+        // 固定响应也遵守 Goal 的输出预算，并提供已知用量，避免夹具先触发未知计量。
+        let tokens = if messages.iter().any(|m| m.text_content() == "long-child") {
+            6000
+        } else {
+            16
+        };
+        anyhow::ensure!(cap.is_none_or(|cap| cap >= tokens), "fixture output budget");
+        Ok(Box::pin(self.stream(messages).await?.chain(
+            futures_util::stream::once(async move {
+                Ok(ModelEvent::Usage(areal_protocol::ModelUsage {
+                    input_tokens: 1,
+                    cached_input_tokens: 0,
+                    output_tokens: tokens,
+                }))
+            }),
+        )))
+    }
     async fn stream(&self, messages: Vec<Message>) -> anyhow::Result<ModelStream> {
-        let root = messages
-            .iter()
-            .any(|message| message.role == "user" && message.text_content() == "root");
+        let root = messages.iter().any(|message| {
+            message.role == "user"
+                && (message.text_content() == "root"
+                    || message.text_content().contains("TASK_SCOPE_ROOT"))
+        });
         if root {
             self.started.add_permits(1);
             self.release.acquire().await?.forget();
@@ -65,6 +95,8 @@ impl Model for ModelFixture {
                     _ => vec![],
                 })));
             }
+        } else {
+            self.child_requests.fetch_add(1, Ordering::SeqCst);
         }
         if messages
             .iter()
@@ -143,7 +175,16 @@ impl Executor for WorkerFixture {
     }
 }
 
-async fn runtime(workspace: std::path::PathBuf) -> (Arc<Client>, tokio::task::JoinHandle<()>) {
+#[derive(Default)]
+struct ScopeFixture {
+    unavailable: AtomicBool,
+    checks: std::sync::Mutex<Vec<Value>>,
+}
+
+async fn runtime_with_scope(
+    workspace: std::path::PathBuf,
+    scopes: Arc<ScopeFixture>,
+) -> (Arc<Client>, tokio::task::JoinHandle<()>) {
     let (pipe, peer) = tokio::io::duplex(65536);
     let (read, write) = tokio::io::split(pipe);
     let (reader, mut writer) = tokio::io::split(peer);
@@ -157,10 +198,18 @@ async fn runtime(workspace: std::path::PathBuf) -> (Arc<Client>, tokio::task::Jo
             let method = request["method"].as_str().unwrap();
             let result = match method {
                 "connection.open" => {
-                    json!({"protocolVersion":"areal.runtime.v0","runtimeEpoch":epoch,"connectionId":"fixture","rootScopeId":root,"capabilities":{"methods":["fs.execute"],"filesystem":{"artifactDelivery":true}}})
+                    json!({"protocolVersion":"areal.runtime.v0","runtimeEpoch":epoch,"connectionId":"fixture","rootScopeId":root,"capabilities":{"methods":["scope.check","fs.execute"],"restrictedScopes":{"available":!scopes.unavailable.load(Ordering::SeqCst)},"filesystem":{"artifactDelivery":true}}})
                 }
                 "scope.create" | "scope.get" | "scope.revoke" | "scope.waitClosed" => {
                     json!({"scopeId":root,"parentScopeId":null,"state":if method=="scope.waitClosed"{"closed"}else{"active"},"owner":{"taskId":"fixture"},"readRoots":["workspace://repo"],"writeRoots":["workspace://repo"],"network":"deny","limits":{"wallTimeMs":10000,"outputBytes":8388608,"maxProcesses":4},"activeProcesses":0,"outputBytes":0,"cleanupError":null})
+                }
+                "scope.check" => {
+                    scopes
+                        .checks
+                        .lock()
+                        .unwrap()
+                        .push(request["params"].clone());
+                    json!({"available":true})
                 }
                 "connection.close" => json!({"closed":true}),
                 "fs.execute" => {
@@ -200,8 +249,19 @@ async fn runtime(workspace: std::path::PathBuf) -> (Arc<Client>, tokio::task::Jo
                 }
                 _ => panic!("unexpected runtime request {method}"),
             };
+            let restricted = request["params"]["permissions"]["readRoots"].is_array()
+                || request["params"]["permissions"]["writeRoots"].is_array()
+                || request["params"]["permissions"]["network"] == "deny";
+            let response = if method == "scope.check"
+                && restricted
+                && scopes.unavailable.load(Ordering::SeqCst)
+            {
+                json!({"id":request["id"],"error":{"code":"UNSUPPORTED","message":"fixture: restricted sandbox unavailable"}})
+            } else {
+                json!({"id":request["id"],"result":result})
+            };
             writer
-                .write_all(format!("{}\n", json!({"id":request["id"],"result":result})).as_bytes())
+                .write_all(format!("{response}\n").as_bytes())
                 .await
                 .unwrap();
             if method == "connection.close" {
@@ -220,19 +280,38 @@ struct Fixture {
     parent: String,
     runtime: Arc<Client>,
     peer: tokio::task::JoinHandle<()>,
+    scopes: Arc<ScopeFixture>,
 }
 impl Fixture {
     async fn open(policy: Option<bool>) -> Self {
+        Self::open_with_limits(policy, Limits::default()).await
+    }
+    async fn open_with_limits(policy: Option<bool>, limits: Limits) -> Self {
+        Self::open_with_capability(policy, limits, false, true, false).await
+    }
+    async fn open_with_capability(
+        policy: Option<bool>,
+        limits: Limits,
+        unavailable: bool,
+        writable: bool,
+        research: bool,
+    ) -> Self {
         let root = tempfile::tempdir().unwrap();
         let workspace = root.path().join("repo");
         std::fs::create_dir(&workspace).unwrap();
-        let (runtime, peer) = runtime(workspace.clone()).await;
+        let scratch = root.path().join("scratch");
+        std::fs::create_dir(&scratch).unwrap();
+        let scopes = Arc::new(ScopeFixture::default());
+        scopes.unavailable.store(unavailable, Ordering::SeqCst);
+        let (runtime, peer) = runtime_with_scope(workspace.clone(), scopes.clone()).await;
         let model = Arc::new(ModelFixture {
             reject_work: AtomicBool::new(false),
             started: Semaphore::new(0),
             release: Semaphore::new(0),
             read_execution: std::sync::Mutex::new(None),
             root_calls: AtomicUsize::new(0),
+            child_requests: AtomicUsize::new(0),
+            advertised_tools: std::sync::Mutex::new(Vec::new()),
         });
         let worker = Arc::new(WorkerFixture {
             probes: AtomicUsize::new(0),
@@ -241,17 +320,28 @@ impl Fixture {
             checks: AtomicUsize::new(0),
             max_model_rounds: AtomicUsize::new(0),
         });
-        let engine = Engine::open_with_runtime(
+        let mut extensions = areal_engine::tools::ToolExtensions::default();
+        if research {
+            extensions.agents = Some(areal_engine::tools::AgentToolsConfig {
+                max_model_requests: 40,
+                max_tool_calls: 60,
+                max_worker_model_requests: 10,
+                max_worker_tool_calls: 12,
+                worker_timeout_seconds: 30,
+            });
+        }
+        let engine = Engine::open_with_extensions(
             &root.path().join("data"),
             model.clone(),
-            Limits::default(),
-            RuntimeConfig {
+            limits,
+            Some(RuntimeConfig {
                 client: runtime.clone(),
                 workspace: workspace.clone(),
-                writable: true,
+                writable,
                 command_scope: None,
-                command_scratch: None,
-            },
+                command_scratch: research.then_some(scratch),
+            }),
+            extensions,
         )
         .unwrap();
         if let Some(strict) = policy {
@@ -306,6 +396,7 @@ impl Fixture {
             parent: parent.id,
             runtime,
             peer,
+            scopes,
         }
     }
     fn request(&self, key: &str, intent: &str, delivery: &str) -> DelegationRequest {
@@ -326,6 +417,64 @@ impl Fixture {
         self.engine.shutdown().await;
         self.runtime.shutdown().await.unwrap();
         self.peer.await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn advertised_delegation_matches_known_scope_capability_without_widening() {
+    use areal_config::InspectionPermissions::{Inherit, ReadOnly};
+    for research in [false, true] {
+        for (unavailable, permissions, writable, expected) in [
+            (false, ReadOnly, true, Some(json!(["inspect", "modify"]))),
+            (true, ReadOnly, true, Some(json!(["modify"]))),
+            (true, Inherit, true, Some(json!(["inspect", "modify"]))),
+            (true, Inherit, false, None),
+        ] {
+            let fixture = Fixture::open_with_capability(
+                None,
+                Limits {
+                    inspection_permissions: permissions,
+                    ..Limits::default()
+                },
+                unavailable,
+                writable,
+                research,
+            )
+            .await;
+            {
+                let requests = fixture.model.advertised_tools.lock().unwrap();
+                let tools = &requests[0];
+                let advertised = tools
+                    .iter()
+                    .find(|tool| tool["function"]["name"] == "agent_spawn");
+                assert_eq!(
+                    advertised.map(|tool| {
+                        tool["function"]["parameters"]["properties"]["intent"]["enum"].clone()
+                    }),
+                    if research { None } else { expected },
+                    "research={research}, unavailable={unavailable}, permissions={permissions:?}, writable={writable}"
+                );
+                if !research {
+                    for name in ["agent_wait", "agent_cancel"] {
+                        assert!(tools.iter().any(|tool| tool["function"]["name"] == name));
+                    }
+                }
+                assert_eq!(
+                    tools
+                        .iter()
+                        .any(|tool| tool["function"]["name"] == "delegate_tasks"),
+                    research && !unavailable,
+                    "research creation must follow actual restricted-scope availability"
+                );
+                if research {
+                    for name in ["read_agent", "cancel_agent"] {
+                        assert!(tools.iter().any(|tool| tool["function"]["name"] == name));
+                    }
+                }
+            }
+            assert_eq!(fixture.model.child_requests.load(Ordering::SeqCst), 0);
+            fixture.close().await;
+        }
     }
 }
 
@@ -398,6 +547,391 @@ async fn inspect_uses_read_only_children_and_foreign_parent_cannot_read_the_exec
             .is_err()
     );
     fixture.close().await;
+}
+
+#[tokio::test]
+async fn inherited_inspection_runs_without_restricted_scopes_but_legacy_read_only_stays_strict() {
+    let fixture = Fixture::open_with_limits(
+        None,
+        Limits {
+            inspection_permissions: areal_config::InspectionPermissions::Inherit,
+            ..Default::default()
+        },
+    )
+    .await;
+    fixture.scopes.unavailable.store(true, Ordering::SeqCst);
+    let result = fixture
+        .engine
+        .delegate(fixture.request("inherit", "inspect", "report"))
+        .await
+        .unwrap();
+    assert_eq!(result["strategy"], "sharedInherited");
+    let done = fixture.wait(&result).await;
+    assert_eq!(done["status"], "completed");
+    let child = fixture
+        .engine
+        .read(done["threadId"].as_str().unwrap(), true)
+        .await
+        .unwrap();
+    assert!(!child.turns[0].configuration.as_ref().unwrap().read_only);
+    assert!(
+        child
+            .desktop
+            .as_ref()
+            .unwrap()
+            .execution_policy
+            .deferred_write
+    );
+    assert_eq!(fixture.model.child_requests.load(Ordering::SeqCst), 1);
+    let permissions = fixture.scopes.checks.lock().unwrap()[0]["permissions"].clone();
+    assert!(permissions["readRoots"].is_null());
+    assert!(permissions["writeRoots"].is_null());
+    assert_eq!(permissions["network"], "inherit");
+    let legacy=fixture.engine.spawn_configured_child(serde_json::from_value(json!({
+        "parentThreadId":fixture.parent,"input":[{"type":"text","text":"legacy inspection"}],
+        "workspaceMode":"sharedReadOnly"
+    })).unwrap()).await;
+    assert!(legacy.is_err());
+    assert_eq!(fixture.model.child_requests.load(Ordering::SeqCst), 1);
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn task_run_inspection_rejects_unavailable_scope_before_registering_a_worker() {
+    use areal_protocol::tasks::{TaskCreate, TaskMode};
+    let fixture = Fixture::open(None).await;
+    fixture.scopes.unavailable.store(true, Ordering::SeqCst);
+    let accepted = fixture
+        .engine
+        .task_create(
+            "fixture".into(),
+            TaskCreate {
+                request_id: "task-admission".into(),
+                mode: TaskMode::Background,
+                objective: "TASK_SCOPE_ROOT".into(),
+                thread_id: None,
+                interaction_mode: None,
+                schedule: None,
+                token_budget: Some(100000),
+                max_turns: Some(2),
+                max_active_seconds: Some(30),
+            },
+        )
+        .await
+        .unwrap();
+    let task_id = accepted["id"].as_str().unwrap();
+    match tokio::time::timeout(Duration::from_secs(5), fixture.model.started.acquire()).await {
+        Ok(permit) => permit.unwrap().forget(),
+        Err(_) => panic!(
+            "TaskRun coordinator did not start: {:?}",
+            fixture.engine.task_read(task_id).await.unwrap()
+        ),
+    }
+    let task = fixture.engine.task_read(task_id).await.unwrap();
+    let parent = task.runs.last().unwrap().thread_id.clone().unwrap();
+    let mut request = fixture.request("task-inspect", "inspect", "report");
+    request.parent_thread_id = parent;
+    let result = fixture.engine.delegate(request).await.unwrap();
+    assert_eq!(result["status"], "failed");
+    assert_eq!(fixture.model.child_requests.load(Ordering::SeqCst), 0);
+    assert!(
+        fixture
+            .engine
+            .task_read(task_id)
+            .await
+            .unwrap()
+            .runs
+            .last()
+            .unwrap()
+            .workers
+            .is_empty()
+    );
+    assert_eq!(
+        fixture.engine.list(None, 100, None).await.unwrap().0.len(),
+        2
+    );
+    assert_eq!(fixture.scopes.checks.lock().unwrap().len(), 1);
+    fixture.model.release.add_permits(1);
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn task_run_inherited_inspection_runs_without_narrowing_the_scope() {
+    use areal_protocol::tasks::{TaskCreate, TaskMode};
+    let fixture = Fixture::open_with_limits(
+        None,
+        Limits {
+            inspection_permissions: areal_config::InspectionPermissions::Inherit,
+            ..Default::default()
+        },
+    )
+    .await;
+    fixture.scopes.unavailable.store(true, Ordering::SeqCst);
+    let accepted = fixture
+        .engine
+        .task_create(
+            "fixture".into(),
+            TaskCreate {
+                request_id: "task-inherited".into(),
+                mode: TaskMode::Background,
+                objective: "TASK_SCOPE_ROOT".into(),
+                thread_id: None,
+                interaction_mode: None,
+                schedule: None,
+                token_budget: Some(100000),
+                max_turns: Some(2),
+                max_active_seconds: Some(30),
+            },
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), fixture.model.started.acquire())
+        .await
+        .unwrap()
+        .unwrap()
+        .forget();
+    let task = fixture
+        .engine
+        .task_read(accepted["id"].as_str().unwrap())
+        .await
+        .unwrap();
+    let parent = task.runs.last().unwrap().thread_id.clone().unwrap();
+    let mut request = fixture.request("task-inspect-inherit", "inspect", "report");
+    request.parent_thread_id = parent.clone();
+    let result = fixture.engine.delegate(request).await.unwrap();
+    assert_eq!(result["strategy"], "sharedInherited");
+    let done = fixture
+        .engine
+        .execution_wait(&parent, result["executionId"].as_str().unwrap(), 5000)
+        .await
+        .unwrap();
+    assert_eq!(done["status"], "completed");
+    assert_eq!(fixture.model.child_requests.load(Ordering::SeqCst), 1);
+    let worker = fixture
+        .engine
+        .read(done["threadId"].as_str().unwrap(), true)
+        .await
+        .unwrap();
+    assert!(!worker.turns[0].configuration.as_ref().unwrap().read_only);
+    assert!(worker.desktop.unwrap().execution_policy.deferred_write);
+    let checks = fixture.scopes.checks.lock().unwrap().clone();
+    assert_eq!(checks.len(), 1);
+    assert_eq!(checks[0]["permissions"]["network"], "inherit");
+    assert!(checks[0]["permissions"]["writeRoots"].is_null());
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn unavailable_read_only_scope_rejects_before_child_model_and_keeps_parent_usable() {
+    let fixture = Fixture::open_with_limits(
+        None,
+        Limits {
+            max_children_per_turn: 1,
+            max_threads: 2,
+            max_active_turns: 2,
+            ..Default::default()
+        },
+    )
+    .await;
+    fixture.scopes.unavailable.store(true, Ordering::SeqCst);
+    let request = fixture.request("blocked-inspection", "inspect", "report");
+    let rejected = fixture.engine.delegate(request.clone()).await.unwrap();
+    assert_eq!(rejected["status"], "failed");
+    assert!(
+        rejected.to_string().contains("before model start"),
+        "{rejected}"
+    );
+    assert_eq!(fixture.model.child_requests.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        fixture
+            .engine
+            .list(None, 50, Some(&fixture.parent))
+            .await
+            .unwrap()
+            .0
+            .len(),
+        0
+    );
+    let repeated = fixture.engine.delegate(request).await.unwrap();
+    assert_eq!(repeated["executionId"], rejected["executionId"]);
+    let checks = fixture.scopes.checks.lock().unwrap().clone();
+    assert_eq!(checks.len(), 1, "幂等读取不能重新检查或启动子任务");
+    assert_eq!(checks[0]["permissions"]["network"], "deny");
+    assert_eq!(checks[0]["permissions"]["writeRoots"], json!([]));
+    assert_eq!(
+        checks[0]["permissions"]["readRoots"],
+        json!(["workspace://repo"])
+    );
+    // 外部能力确实改变后，一个新的请求可启动；旧失败记录仍保持失败。
+    fixture.scopes.unavailable.store(false, Ordering::SeqCst);
+    let accepted = fixture
+        .engine
+        .delegate(fixture.request("available-inspection", "inspect", "report"))
+        .await
+        .unwrap();
+    assert_eq!(fixture.wait(&accepted).await["status"], "completed");
+    assert_eq!(fixture.model.child_requests.load(Ordering::SeqCst), 1);
+    fixture.close().await;
+}
+
+struct DelegationToolModel {
+    unavailable: bool,
+    child_requests: AtomicUsize,
+}
+#[async_trait]
+impl Model for DelegationToolModel {
+    fn name(&self) -> &str {
+        "delegation-control-fixture"
+    }
+    async fn stream(&self, _: Vec<Message>) -> anyhow::Result<ModelStream> {
+        unreachable!()
+    }
+    async fn chat(&self, messages: Vec<Message>, _: Vec<Value>) -> anyhow::Result<ModelStream> {
+        if messages
+            .iter()
+            .any(|message| message.role == "user" && message.text_content() == "inspect-only")
+        {
+            self.child_requests.fetch_add(1, Ordering::SeqCst);
+            return Ok(Box::pin(futures_util::stream::iter([Ok(
+                ModelEvent::text("observed child result"),
+            )])));
+        }
+        let tools: Vec<_> = messages
+            .iter()
+            .filter(|message| message.role == "tool")
+            .collect();
+        let event = match tools.len() {
+            0 => ModelEvent::ToolCall(areal_engine::model::ToolCall {
+                id: "inspection-request".into(),
+                name: "agent_spawn".into(),
+                arguments: json!({"prompt":"inspect-only","intent":"inspect","delivery":"report"})
+                    .to_string(),
+            }),
+            1 => {
+                let result: Value = serde_json::from_str(&tools[0].text_content())?;
+                for field in ["owner", "parentThreadId", "threadId", "turnId"] {
+                    assert!(result.get(field).is_none(), "{result}");
+                }
+                if self.unavailable {
+                    assert_eq!(result["status"], "failed");
+                    ModelEvent::text(
+                        "Child capability unavailable; continuing locally within the existing permission boundary.",
+                    )
+                } else {
+                    ModelEvent::ToolCall(areal_engine::model::ToolCall {
+                        id: "recover-control-handles".into(),
+                        name: "task_state".into(),
+                        arguments: "{}".into(),
+                    })
+                }
+            }
+            2 => {
+                let result: Value = serde_json::from_str(&tools[1].text_content())?;
+                assert_eq!(result["executionCount"], 1);
+                assert!(result["agents"][0].get("threadId").is_none());
+                assert_eq!(
+                    result["agents"][0]["executionId"],
+                    result["executions"][0]["executionId"]
+                );
+                ModelEvent::ToolCall(areal_engine::model::ToolCall {
+                    id: "wait-inspection".into(), name: "agent_wait".into(),
+                    arguments: json!({"executionId":result["executions"][0]["executionId"],"timeoutMs":5000}).to_string(),
+                })
+            }
+            3 => {
+                let result: Value = serde_json::from_str(&tools[2].text_content())?;
+                assert_eq!(result["status"], "completed");
+                assert_eq!(result["text"], "observed child result");
+                ModelEvent::text("Integrated the observed child result.")
+            }
+            _ => panic!("unexpected repeated delegation"),
+        };
+        Ok(Box::pin(futures_util::stream::iter([Ok(event)])))
+    }
+}
+
+#[tokio::test]
+async fn model_uses_one_execution_identity_and_rejected_spawn_is_not_reported_as_tool_success() {
+    for unavailable in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("repo");
+        let scratch = root.path().join("scratch");
+        std::fs::create_dir(&workspace).unwrap();
+        std::fs::create_dir(&scratch).unwrap();
+        let scopes = Arc::new(ScopeFixture::default());
+        scopes.unavailable.store(unavailable, Ordering::SeqCst);
+        let (runtime, peer) = runtime_with_scope(workspace.clone(), scopes).await;
+        let model = Arc::new(DelegationToolModel {
+            unavailable,
+            child_requests: AtomicUsize::new(0),
+        });
+        let engine = Engine::open_with_runtime(
+            &root.path().join("data"),
+            model.clone(),
+            Limits::default(),
+            RuntimeConfig {
+                client: runtime.clone(),
+                workspace: workspace.clone(),
+                writable: true,
+                command_scope: None,
+                command_scratch: Some(scratch.clone()),
+            },
+        )
+        .unwrap();
+        let parent = engine
+            .create(workspace.to_string_lossy().into_owned())
+            .await
+            .unwrap();
+        engine
+            .start(&parent.id, vec![Input::text("coordinate")])
+            .await
+            .unwrap();
+        let finished = tokio::time::timeout(Duration::from_secs(10), engine.wait(&parent.id))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(finished.turns[0].status, TurnStatus::Completed);
+        assert_eq!(
+            model.child_requests.load(Ordering::SeqCst),
+            usize::from(!unavailable)
+        );
+        let outcomes: Vec<_> = finished.turns[0]
+            .items
+            .iter()
+            .filter_map(|item| {
+                if let Item::DynamicToolCall { execution, .. } = item {
+                    Some(execution.outcome.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if unavailable {
+            assert_eq!(outcomes, [ToolOutcome::Failed]);
+            assert_eq!(
+                std::fs::read_dir(&scratch).unwrap().count(),
+                0,
+                "未准入子任务不能遗留空 scratch"
+            );
+        } else {
+            assert_eq!(
+                outcomes,
+                [
+                    ToolOutcome::Succeeded,
+                    ToolOutcome::Succeeded,
+                    ToolOutcome::Succeeded
+                ]
+            );
+            let records = engine.execution_list(&parent.id, 0, 50).await.unwrap();
+            assert!(
+                records["data"][0]["threadId"].is_string(),
+                "客户端仍保留完整身份"
+            );
+        }
+        engine.shutdown().await;
+        runtime.shutdown().await.unwrap();
+        peer.await.unwrap();
+    }
 }
 
 #[tokio::test]
@@ -572,6 +1106,122 @@ struct BlockingProbeFactory {
     release: Semaphore,
     finished: AtomicBool,
 }
+
+#[tokio::test]
+async fn slow_isolation_probe_does_not_block_another_parents_shared_child() {
+    let fixture = Fixture::open(None).await;
+    let factory = Arc::new(BlockingProbeFactory {
+        started: Semaphore::new(0),
+        release: Semaphore::new(0),
+        finished: AtomicBool::new(false),
+    });
+    let workspace = fixture.root.path().join("repo");
+    fixture
+        .engine
+        .attach_automatic_workgroups(
+            Service::open_automatic(
+                &fixture.root.path().join("slow-service"),
+                &workspace,
+                factory.clone(),
+                1,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let other = fixture
+        .engine
+        .create(workspace.to_string_lossy().into_owned())
+        .await
+        .unwrap();
+    fixture
+        .engine
+        .start(&other.id, vec![Input::text("root")])
+        .await
+        .unwrap();
+    fixture.model.started.acquire().await.unwrap().forget();
+    let mut request = fixture.request("slow-isolated", "modify", "patch");
+    request.writes = vec!["result.txt".into()];
+    let engine = fixture.engine.clone();
+    let slow = tokio::spawn(async move { engine.delegate(request).await });
+    factory.started.acquire().await.unwrap().forget();
+    let mut request = fixture.request("other-inspection", "inspect", "report");
+    request.parent_thread_id = other.id.clone();
+    let accepted = tokio::time::timeout(Duration::from_secs(2), fixture.engine.delegate(request))
+        .await
+        .expect("另一个父任务不能排在全局委派探针之后")
+        .unwrap();
+    assert_eq!(
+        fixture
+            .engine
+            .execution_wait(&other.id, accepted["executionId"].as_str().unwrap(), 5000)
+            .await
+            .unwrap()["status"],
+        "completed"
+    );
+    assert!(!factory.finished.load(Ordering::SeqCst));
+    factory.release.add_permits(1);
+    let _ = tokio::time::timeout(Duration::from_secs(5), slow)
+        .await
+        .unwrap()
+        .unwrap();
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn isolated_admission_rechecks_cumulative_limit_after_a_slow_probe() {
+    let fixture = Fixture::open_with_limits(
+        None,
+        Limits {
+            max_children_per_turn: 1,
+            ..Default::default()
+        },
+    )
+    .await;
+    let factory = Arc::new(BlockingProbeFactory {
+        started: Semaphore::new(0),
+        release: Semaphore::new(0),
+        finished: AtomicBool::new(false),
+    });
+    fixture
+        .engine
+        .attach_automatic_workgroups(
+            Service::open_automatic(
+                &fixture.root.path().join("slow-service"),
+                &fixture.root.path().join("repo"),
+                factory.clone(),
+                1,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let mut request = fixture.request("slow-isolated", "modify", "patch");
+    request.writes = vec!["result.txt".into()];
+    let engine = fixture.engine.clone();
+    let pending = tokio::spawn(async move { engine.delegate(request).await });
+    factory.started.acquire().await.unwrap().forget();
+    let (child, _) = fixture
+        .engine
+        .spawn_child(&fixture.parent, vec![Input::text("legacy child")])
+        .await
+        .unwrap();
+    fixture.engine.wait(&child.id).await.unwrap();
+    factory.release.add_permits(1);
+    let result = tokio::time::timeout(Duration::from_secs(5), pending)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(result["status"], "failed");
+    assert!(
+        result["error"]
+            .as_str()
+            .unwrap()
+            .contains("child admission exhausted during capability check"),
+        "{result}"
+    );
+    assert_eq!(fixture.model.child_requests.load(Ordering::SeqCst), 1);
+    fixture.close().await;
+}
 #[async_trait]
 impl Factory for BlockingProbeFactory {
     async fn probe_availability(&self, _: &Path) -> Result<(), AvailabilityError> {
@@ -710,6 +1360,7 @@ async fn cancelling_a_completed_candidate_prevents_delivery_and_survives_restart
         parent,
         runtime,
         peer,
+        scopes: _,
     } = fixture;
     drop(engine);
     // 服务恢复会创建新 token，持久执行记录仍必须挡住手动及自动交付。

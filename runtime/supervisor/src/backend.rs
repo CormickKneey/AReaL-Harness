@@ -34,6 +34,11 @@ pub struct Execution {
 #[derive(Debug)]
 pub enum Event {
     Output(OutputStream, Vec<u8>),
+    /// 后端不能确认执行或清理；保留原因，不以正常退出回执代替。
+    Failed {
+        error: areal_runtime_protocol::Error,
+        cleanup_confirmed: bool,
+    },
     Exited {
         exit_code: Option<i32>,
         signal: Option<i32>,
@@ -52,6 +57,10 @@ pub trait Backend: Send + Sync {
     /// False unless restricted filesystem and network Scopes are enforced by the backend.
     fn restricted_scope_isolation(&self) -> bool {
         false
+    }
+    /// 检查收窄后的执行路径；不得启动任务程序或把不可用隔离降级为宿主执行。
+    fn check_scope(&self, _access: ScopeAccess, _has_read_only_paths: bool) -> Result<()> {
+        Ok(())
     }
     fn supports_input(&self) -> bool {
         false

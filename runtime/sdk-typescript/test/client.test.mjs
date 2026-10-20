@@ -30,6 +30,7 @@ async function fixture(handle, capabilities = {}) {
               "process.start",
               "process.wait",
               "scope.get",
+              "scope.check",
               "scope.revoke",
               "output.read",
               "fs.execute",
@@ -86,6 +87,31 @@ test("execution waits inherit the Runtime deadline and leave control requests us
     f.client.disconnect();
     t.mock.timers.reset();
   }
+});
+
+test("scope checks preserve narrowed permissions without creating an execution", async () => {
+  const f = await fixture((request, reply) => {
+    assert.equal(request.method, "scope.check");
+    assert.deepEqual(request.params, {
+      parentScopeId: "root",
+      permissions: { readRoots: ["workspace://repo"], writeRoots: [], network: "deny" },
+    });
+    reply(request.id, { available: true });
+  });
+  assert.deepEqual(
+    await f.client.scopes.check({
+      parentScopeId: "root",
+      permissions: { readRoots: ["workspace://repo"], writeRoots: [], network: "deny" },
+    }),
+    { available: true },
+  );
+  assert.equal(
+    f.requests.some(
+      (request) => request.method === "scope.create" || request.method === "process.start",
+    ),
+    false,
+  );
+  await f.client.close();
 });
 
 test("explicit deadlines and ordinary control deadlines still fence an unresponsive transport", async (t) => {
@@ -212,6 +238,7 @@ test("reserved control capacity survives a flood of aborted waits", async () => 
   const f = await fixture((request, reply) => {
     if (request.method === "scope.revoke")
       reply(request.id, { scopeId: "root", state: "revoking" });
+    else if (request.method === "scope.check") reply(request.id, { available: true });
   });
   for (let i = 0; i < 112; i++) {
     const controller = new AbortController();
@@ -226,6 +253,7 @@ test("reserved control capacity survives a flood of aborted waits", async () => 
     (error) => error.code === "RESOURCE_EXHAUSTED",
   );
   assert.equal((await f.client.scopes.revoke("root")).state, "revoking");
+  assert.equal((await f.client.scopes.check({ parentScopeId: "root" })).available, true);
   await f.client.close();
 });
 

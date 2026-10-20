@@ -62,6 +62,33 @@ def validate_build_info(info, revision, fingerprint, metadata):
     return info
 
 
+def private_shell_info(root, source):
+    directory = source / "shells"
+    info = json.loads((directory / "build.json").read_text())
+    lock = root / "runtime/host-tools/bash.lock.json"
+    expected = {
+        "lockSha256": hashlib.sha256(lock.read_bytes()).hexdigest(),
+        "builderSha256": hashlib.sha256(
+            (root / "scripts/prepare-runtime-shell.py").read_bytes()
+        ).hexdigest(),
+        "version": json.loads(lock.read_text())["version"],
+        "minimumMacOSVersion": json.loads(lock.read_text())["minimumMacOSVersion"],
+        "license": "GPL-3.0-or-later",
+    }
+    if any(info.get(key) != value for key, value in expected.items()):
+        raise ValueError("private shell build inputs changed; run make build/release first")
+    for name, key in [
+        ("bash", "binarySha256"),
+        ("sh", "binarySha256"),
+        ("corresponding-source.tar.gz", "sourceSha256"),
+    ]:
+        if hashlib.sha256((directory / name).read_bytes()).hexdigest() != info.get(key):
+            raise ValueError(f"private shell artifact checksum mismatch: {name}")
+    if not (directory / "COPYING").is_file():
+        raise ValueError("private shell license is missing")
+    return info
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", choices=("debug", "release"), default="release")
@@ -88,6 +115,9 @@ def main():
     for name in names:
         if not (source / name).is_file():
             parser.error(f"missing {name}; build the selected Cargo profile first")
+    shell = private_shell_info(root, source) if platform.system() == "Darwin" else None
+    if shell:
+        names.extend(["shells/bash", "shells/sh"])
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
     identity = validate_build_info(
         json.loads(subprocess.check_output([str(source / "areal"), "build-info"], text=True)),
@@ -119,6 +149,12 @@ def main():
         ):
             raise ValueError(f"unsigned local copy changed input bytes: {name}")
     version = subprocess.check_output([str(source / "areal"), "--version"], text=True).strip()
+    if shell:
+        for name in ["COPYING", "corresponding-source.tar.gz", "build.json"]:
+            relative = Path("libexec/areal/shells") / name
+            target = destination / relative
+            shutil.copy2(source / "shells" / name, target)
+            files[str(relative)] = hashlib.sha256(target.read_bytes()).hexdigest()
     manifest = {
         "manifestVersion": 2,
         "productVersion": version,
@@ -129,6 +165,17 @@ def main():
         **metadata,
         "platform": target_platform,
         "files": files,
+        "thirdPartyComponents": [
+            {
+                "name": "Bash",
+                "version": shell["version"],
+                "license": shell["license"],
+                "licenseFile": "libexec/areal/shells/COPYING",
+                "correspondingSource": "libexec/areal/shells/corresponding-source.tar.gz",
+            }
+        ]
+        if shell
+        else [],
         "prerequisites": [
             *(
                 [

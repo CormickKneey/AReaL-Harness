@@ -72,6 +72,24 @@ pub enum PermissionMode {
     AskPermissions,
 }
 
+/// 分析职责与执行权限分开；继承模式只由可信部署显式选择。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum InspectionPermissions {
+    #[default]
+    ReadOnly,
+    Inherit,
+}
+
+impl InspectionPermissions {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ReadOnly => "read-only",
+            Self::Inherit => "inherit",
+        }
+    }
+}
+
 impl PermissionMode {
     pub const fn requires_approval(self) -> bool {
         matches!(self, Self::AskPermissions)
@@ -231,6 +249,7 @@ pub struct GoalConfig {
 }
 
 pub struct ResolvedCoreConfig {
+    pub inspection_permissions: InspectionPermissions,
     pub trajectory: TrajectoryConfig,
     pub model_catalog: Vec<models::ProviderConfig>,
     pub model_catalog_managed: bool,
@@ -297,6 +316,7 @@ impl ResolvedCoreConfig {
             endpoint.to_string()
         };
         let mut result = serde_json::json!({
+            "delegation": {"inspection_permissions":self.inspection_permissions},
             "trajectory": self.trajectory.diagnostic(),
             "permissions": self.permissions,
             "goals": self.goals,

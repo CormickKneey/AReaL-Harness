@@ -33,6 +33,10 @@ impl Engine {
     ) -> Result<Value> {
         let thread_id = cell.state.lock().await.thread.id.clone();
         match tool {
+            "task_state" => self
+                .task_state(cell, args["pendingAfter"].as_str())
+                .await
+                .map_err(invalid),
             "side_context_read" => {
                 self.side_context_read(
                     &thread_id,

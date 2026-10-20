@@ -14,6 +14,36 @@ async fn fixture() -> (
     fixture_with_capabilities(json!({"methods":[]})).await
 }
 
+#[tokio::test]
+async fn old_runtime_scope_check_is_rejected_locally_without_poisoning_transport() {
+    let (client, mut requests, replies, peer) = fixture().await;
+    let error = client
+        .check_scope(areal_runtime_protocol::CheckScope {
+            parent_scope_id: "root".into(),
+            permissions: Default::default(),
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::Unsupported);
+    assert!(!client.is_closed());
+    assert!(requests.try_recv().is_err());
+    let control = {
+        let client = client.clone();
+        tokio::spawn(async move {
+            client
+                .call::<_, Value>("scope.get", json!({"scopeId":"root"}))
+                .await
+        })
+    };
+    let request = requests.recv().await.unwrap();
+    replies
+        .send(json!({"id":request["id"],"result":{"scopeId":"root"}}))
+        .unwrap();
+    assert_eq!(control.await.unwrap().unwrap()["scopeId"], "root");
+    drop(replies);
+    peer.await.unwrap();
+}
+
 async fn fixture_with_capabilities(
     capabilities: Value,
 ) -> (
@@ -172,6 +202,18 @@ async fn cancelled_rpc_waiters_keep_correlation_and_reserved_control_capacity() 
         .send(json!({"id":request["id"],"result":{}}))
         .unwrap();
     control.await.unwrap().unwrap();
+    let health = {
+        let client = client.clone();
+        tokio::spawn(async move { client.status().await })
+    };
+    let request = requests.recv().await.unwrap();
+    assert_eq!(request["method"], "runtime.status");
+    replies.send(json!({"id":request["id"],"result":{"admissionOpen":false,"recovery":{"cleanupConfirmed":false}}})).unwrap();
+    health.await.unwrap().unwrap();
+    assert!(
+        !client.admission_open(),
+        "健康查询使用保留控制容量并关闭新工作准入"
+    );
     let closing = {
         let client = client.clone();
         tokio::spawn(async move { client.shutdown().await })
@@ -200,4 +242,42 @@ async fn malformed_cleanup_acknowledgement_is_not_success() {
         ErrorCode::Unavailable
     );
     task.await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn delayed_health_observation_keeps_late_correlation_and_other_controls_available() {
+    let (client, mut requests, replies, peer) = fixture().await;
+    let health = {
+        let client = client.clone();
+        tokio::spawn(async move { client.status().await })
+    };
+    let late = requests.recv().await.unwrap();
+    tokio::time::advance(Duration::from_millis(3100)).await;
+    assert_eq!(
+        health.await.unwrap().unwrap_err().code,
+        ErrorCode::Unavailable
+    );
+    assert!(!client.is_closed(), "单次健康观察超时不能封闭共享执行连接");
+    replies
+        .send(json!({"id":late["id"],"result":{"admissionOpen":true,"recovery":null}}))
+        .unwrap();
+    let control = {
+        let client = client.clone();
+        tokio::spawn(async move { client.call::<_, Value>("scope.get", json!({})).await })
+    };
+    let request = requests.recv().await.unwrap();
+    replies
+        .send(json!({"id":request["id"],"result":{"state":"active"}}))
+        .unwrap();
+    assert_eq!(control.await.unwrap().unwrap()["state"], "active");
+    let closing = {
+        let client = client.clone();
+        tokio::spawn(async move { client.shutdown().await })
+    };
+    let request = requests.recv().await.unwrap();
+    replies
+        .send(json!({"id":request["id"],"result":{"closed":true}}))
+        .unwrap();
+    closing.await.unwrap().unwrap();
+    peer.await.unwrap();
 }

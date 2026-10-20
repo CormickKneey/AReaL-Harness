@@ -1,0 +1,430 @@
+{
+  "run_id": "standard122-r3p12-20261019",
+  "scope": "Offline diagnostic of consumed development evidence, not a model rerun or causal intervention. Scores are platform automatic scores, not semantic/visual delivery approval.",
+  "source_fingerprints": [
+    {
+      "evidence_root_relative_path": "platform-final.json",
+      "sha256": "5b940bb776c968d584f40740e98346adc248e198e062ae8dc44bb1acb9370b62",
+      "bytes": 881957
+    },
+    {
+      "evidence_root_relative_path": "final-score-summary.json",
+      "sha256": "f59f74785349d2f532d40019a8a61daa5b0b71f3b9f8cbe7348a69827fa9f92f",
+      "bytes": 8763
+    },
+    {
+      "evidence_root_relative_path": "archive-integrity.json",
+      "sha256": "6e812e3b97869cda6b9d404b44dbb1dec48ff834befdd3e3cbfd6d488a85599e",
+      "bytes": 1194
+    },
+    {
+      "evidence_root_relative_path": "documents-trajectory-analysis-v1/documents-metrics.json",
+      "sha256": "6b5df792834b36de582a1bebc8e8492e09cf2070c8793138f5a58adfde277c6b",
+      "bytes": 635822
+    },
+    {
+      "evidence_root_relative_path": "documents-trajectory-analysis-v1/trajectory-statistics.json",
+      "sha256": "4bb85124db37794571c0afdfe71b7b5f1b97dba6847a5b798ea0c072abda27ef",
+      "bytes": 73916
+    },
+    {
+      "evidence_root_relative_path": "documents-trajectory-analysis-v1/context-audit.json",
+      "sha256": "d93a2a565ef36d649a3b52d0215366ef79056b72863e8234608255fc5c981afb",
+      "bytes": 11385
+    }
+  ],
+  "conditions": [
+    {
+      "engine": "areal",
+      "model": "qwen",
+      "tasks": 122,
+      "done": 113,
+      "automatic_full": 81,
+      "normal_zero": 24,
+      "failed": 9,
+      "retried_tasks": 24,
+      "actual_attempts": 175,
+      "platform_domain25_score": 0.740492605239588,
+      "domain_scores": {
+        "browser": 0.8272727272727273,
+        "data": 0.8344827586206897,
+        "documents": 0.7287863636363636,
+        "software_engineering": 0.5714285714285714
+      }
+    },
+    {
+      "engine": "dsh",
+      "model": "qwen",
+      "tasks": 122,
+      "done": 108,
+      "automatic_full": 87,
+      "normal_zero": 16,
+      "failed": 14,
+      "retried_tasks": 35,
+      "actual_attempts": 197,
+      "platform_domain25_score": 0.7906108262427228,
+      "domain_scores": {
+        "browser": 0.8,
+        "data": 0.809196551724138,
+        "documents": 0.9818181818181818,
+        "software_engineering": 0.5714285714285714
+      }
+    },
+    {
+      "engine": "codex",
+      "model": "qwen",
+      "tasks": 122,
+      "done": 120,
+      "automatic_full": 82,
+      "normal_zero": 25,
+      "failed": 2,
+      "retried_tasks": 16,
+      "actual_attempts": 149,
+      "platform_domain25_score": 0.7731208967756381,
+      "domain_scores": {
+        "browser": 0.7727272727272727,
+        "data": 0.9195413793103449,
+        "documents": 0.8287863636363636,
+        "software_engineering": 0.5714285714285714
+      }
+    },
+    {
+      "engine": "areal",
+      "model": "astra",
+      "tasks": 122,
+      "done": 120,
+      "automatic_full": 74,
+      "normal_zero": 27,
+      "failed": 2,
+      "retried_tasks": 19,
+      "actual_attempts": 150,
+      "platform_domain25_score": 0.7215480551468236,
+      "domain_scores": {
+        "browser": 0.6545454545454545,
+        "data": 0.8367827586206896,
+        "documents": 0.8030272727272727,
+        "software_engineering": 0.5918367346938775
+      }
+    },
+    {
+      "engine": "dsh",
+      "model": "astra",
+      "tasks": 122,
+      "done": 122,
+      "automatic_full": 79,
+      "normal_zero": 26,
+      "failed": 0,
+      "retried_tasks": 24,
+      "actual_attempts": 149,
+      "platform_domain25_score": 0.746757978536242,
+      "domain_scores": {
+        "browser": 0.6579545454545455,
+        "data": 0.8563206896551724,
+        "documents": 0.8196954545454546,
+        "software_engineering": 0.6530612244897959
+      }
+    },
+    {
+      "engine": "codex",
+      "model": "astra",
+      "tasks": 122,
+      "done": 117,
+      "automatic_full": 85,
+      "normal_zero": 20,
+      "failed": 5,
+      "retried_tasks": 65,
+      "actual_attempts": 246,
+      "platform_domain25_score": 0.7804412857462735,
+      "domain_scores": {
+        "browser": 0.6818181818181819,
+        "data": 0.9126448275862069,
+        "documents": 0.8742409090909091,
+        "software_engineering": 0.6530612244897959
+      }
+    }
+  ],
+  "pairwise_task_scores": [
+    {
+      "model": "qwen",
+      "comparator": "dsh",
+      "tie": 96,
+      "areal_loss": 16,
+      "areal_win": 10
+    },
+    {
+      "model": "qwen",
+      "comparator": "codex",
+      "areal_loss": 16,
+      "tie": 94,
+      "areal_win": 12
+    },
+    {
+      "model": "astra",
+      "comparator": "dsh",
+      "tie": 101,
+      "areal_loss": 14,
+      "areal_win": 7
+    },
+    {
+      "model": "astra",
+      "comparator": "codex",
+      "tie": 97,
+      "areal_loss": 19,
+      "areal_win": 6
+    }
+  ],
+  "domain_gap_contributions": [
+    {
+      "model": "qwen",
+      "comparator": "dsh",
+      "gap_pp": 5.0118221003134815,
+      "domain_contribution_pp": {
+        "browser": -0.6818181818181807,
+        "data": -0.6321551724137925,
+        "documents": 6.325795454545455,
+        "software_engineering": 0.0
+      }
+    },
+    {
+      "model": "qwen",
+      "comparator": "codex",
+      "gap_pp": 3.2628291536050154,
+      "domain_contribution_pp": {
+        "browser": -1.3636363636363642,
+        "data": 2.12646551724138,
+        "documents": 2.4999999999999996,
+        "software_engineering": 0.0
+      }
+    },
+    {
+      "model": "astra",
+      "comparator": "dsh",
+      "gap_pp": 2.5209923389418463,
+      "domain_contribution_pp": {
+        "browser": 0.08522727272727293,
+        "data": 0.48844827586206896,
+        "documents": 0.4167045454545465,
+        "software_engineering": 1.530612244897958
+      }
+    },
+    {
+      "model": "astra",
+      "comparator": "codex",
+      "gap_pp": 5.889323059944983,
+      "domain_contribution_pp": {
+        "browser": 0.6818181818181834,
+        "data": 1.896551724137932,
+        "documents": 1.7803409090909106,
+        "software_engineering": 1.530612244897958
+      }
+    }
+  ],
+  "qwen_document_five_case_attribution": {
+    "cases": [
+      {
+        "id": "011-release-notes",
+        "codex": 0,
+        "areal": 0,
+        "dsh": 1
+      },
+      {
+        "id": "012-apispace-runbook",
+        "codex": 1,
+        "areal": 0,
+        "dsh": 1
+      },
+      {
+        "id": "014-architecture-adr",
+        "codex": 0,
+        "areal": 0,
+        "dsh": 1
+      },
+      {
+        "id": "015-benchmark-report",
+        "codex": 1,
+        "areal": 0,
+        "dsh": 1
+      },
+      {
+        "id": "bx-doc-controls",
+        "dsh": 1,
+        "codex": 1,
+        "areal": 0
+      }
+    ],
+    "five_case_gap_pp": 5.681818181818182,
+    "four_citation_case_gap_pp": 4.545454545454546,
+    "fraction_of_document_gap": 0.8981982143819497,
+    "not_a_predicted_repair_gain": true
+  },
+  "document_children_final_archives": [
+    {
+      "model": "qwen",
+      "parent_tasks_with_child": 1,
+      "children": 2,
+      "child_failed": 2,
+      "child_bwrap_uid_denied": 2
+    },
+    {
+      "model": "astra",
+      "parent_tasks_with_child": 22,
+      "children": 24,
+      "child_failed": 24,
+      "child_bwrap_uid_denied": 24
+    }
+  ],
+  "document_metrics_single_attempt_only": [
+    {
+      "model": "qwen",
+      "engine": "areal",
+      "single_attempt_tasks": 22,
+      "median_logged_requests": 17.0,
+      "median_first_prompt_tokens": 9112.0
+    },
+    {
+      "model": "qwen",
+      "engine": "dsh",
+      "single_attempt_tasks": 22,
+      "median_logged_requests": 20.5,
+      "median_first_prompt_tokens": 6086.5
+    },
+    {
+      "model": "qwen",
+      "engine": "codex",
+      "single_attempt_tasks": 22,
+      "median_logged_requests": 13.0,
+      "median_first_prompt_tokens": 8993.5
+    },
+    {
+      "model": "astra",
+      "engine": "areal",
+      "single_attempt_tasks": 22,
+      "median_logged_requests": 17.0,
+      "median_first_prompt_tokens": 6404.0
+    },
+    {
+      "model": "astra",
+      "engine": "dsh",
+      "single_attempt_tasks": 20,
+      "median_logged_requests": 32.5,
+      "median_first_prompt_tokens": 2416.5
+    },
+    {
+      "model": "astra",
+      "engine": "codex",
+      "single_attempt_tasks": 15,
+      "median_logged_requests": 9,
+      "median_first_prompt_tokens": 11025
+    }
+  ],
+  "citation_gate_semantic_caveat": {
+    "observation": "All four placeholder triggers occur in introductory citation-format explanations, not necessarily in factual evidence citations. The whole-document regex also matches backticked notation examples. Preserve original scores; do not equate these zeros with proven factual hallucinations.",
+    "artifact_locations": [
+      "011-release-notes/RELEASE_NOTES.md:3",
+      "012-apispace-runbook/RUNBOOK.md:7",
+      "014-architecture-adr/ADR.md:5",
+      "015-benchmark-report/REPORT.md:3"
+    ],
+    "local_public_task": {
+      "path": "06_原始制题工作区/object-id-contract-r6/suite/cases/012-apispace-runbook/public/TASK.md",
+      "line": 17,
+      "sha256": "f954b64b0e869b246ac6441e4f7d87915816dc67c76ddd3b790e06951291525d"
+    },
+    "local_grader_source_reference": {
+      "path": "06_原始制题工作区/object-id-contract-r6/suite/cases/012-apispace-runbook/oracle/check.py",
+      "lines": [13, 167, 168, 169],
+      "sha256": "e9345ea84f774310ed88bbf2a7d8ba5433d9e18edf145de0a935d9b3d96e6d00",
+      "online_source_binary_equivalence_rebuilt": false
+    },
+    "semantic_review_status": "Not performed; ownership error in 014 remains independently reported."
+  },
+  "document_compaction_events": 0,
+  "areal_document_request_purposes": {
+    "Solve": 764
+  },
+  "receipt_count_caveat_example": {
+    "task_id": "s122-r3p12-areal-astra-browser17-2610190115:standard102-wd-browser-triage:0",
+    "artifact_attempt": 4,
+    "logged_rows": 337,
+    "rows_with_request_number_1": 4,
+    "receipt_requests": 334,
+    "warning": "Repeated request-number resets and append-only bridge log: receipt count is not a per-attempt root request count."
+  },
+  "selected_native_archives": [
+    {
+      "task_id": "s122-r3p12-areal-astra-browser17-2610190115:standard102-wd-browser-triage:0",
+      "model": "astra",
+      "id": "wd-browser-triage",
+      "attempt": 4,
+      "declared_bytes": 290768,
+      "bytes": 290768,
+      "sha256": "bc737d52ca2c8cdf66e0d13893e1da39eec8e789fc10bd188b42c2f4444004b8",
+      "size_match": true
+    },
+    {
+      "task_id": "s122-r3p12-areal-qwen-files41-2610190115:standard102-wd2-swe-http-polling:0",
+      "model": "qwen",
+      "id": "wd2-swe-http-polling",
+      "attempt": 4,
+      "declared_bytes": 179153,
+      "bytes": 179153,
+      "sha256": "020bd4acd9ccd24a7f9d60bebf48e930d24e3a36fbc2338971f87ea90b07f5cb",
+      "size_match": true
+    },
+    {
+      "task_id": "s122-r3p12-areal-astra-transfer8-2610190115:tbpc030001-drive-persistent-pty-session:0",
+      "model": "astra",
+      "id": "tbpc030001-drive-persistent-pty-session",
+      "attempt": 1,
+      "declared_bytes": 87438,
+      "bytes": 87438,
+      "sha256": "535144f179d8c53e6bb6d8712b3781ea43cff7d6a0461792be0e7ec3c49d48df",
+      "size_match": true
+    },
+    {
+      "task_id": "s122-r3p12-areal-astra-transfer8-2610190115:tbpc030001-recover-rotated-sqlite-wal-chain:0",
+      "model": "astra",
+      "id": "tbpc030001-recover-rotated-sqlite-wal-chain",
+      "attempt": 1,
+      "declared_bytes": 211965,
+      "bytes": 211965,
+      "sha256": "978e3963961da13f6b270952baa8233797be0937ede16eff26f01eca576a1b88",
+      "size_match": true
+    },
+    {
+      "task_id": "s122-r3p12-areal-qwen-files41-2610190115:standard102-wd2-swe-sse:0",
+      "model": "qwen",
+      "id": "wd2-swe-sse",
+      "attempt": 2,
+      "declared_bytes": 111327,
+      "bytes": 111327,
+      "sha256": "28f4002dc985bcbaf700012a96c2affade981710de7b11e00a21d0c0a0713832",
+      "size_match": true
+    },
+    {
+      "task_id": "s122-r3p12-areal-qwen-terminal12-2610190114:tb2-adaptive-rejection-sampler:0",
+      "model": "qwen",
+      "id": "tb2-adaptive-rejection-sampler",
+      "attempt": 4,
+      "declared_bytes": 42306,
+      "bytes": 42306,
+      "sha256": "6649edfd58ff7fb304356546790890a2056f7f3353e73f5cb35bca891a54e39d",
+      "size_match": true
+    }
+  ],
+  "validation": {
+    "primary_rows": 732,
+    "withdrawn_rows": 6,
+    "primary_attempts": 1066,
+    "assertions": "Fixed denominators, per-domain means, weighted totals, pair identities, attempt counts, no document compaction, child failure evidence, selected final artifact sizes, and repeated request counter resets checked."
+  },
+  "implementation_references": {
+    "areal_frozen_revision": "b775bc25fd2378ad3fccd35a6b1ed20842069d09",
+    "codex_version": "0.163.0",
+    "codex_tag_commit": "83086188ae0614bd882818ff1aa23f3194962012",
+    "dsh_version": "0.2.0-rc.2",
+    "dsh_published_agent_loop_sha256": "00c4814d63f3d1e2754eb09144832d19b30499d6ea444730473f740b587948c2",
+    "source_binary_rebuild_equivalence_verified": false
+  },
+  "analysis_script_sha256": "2bb22b02e680359df3f5d91afb71abc1d74f1486b0c9eb09a4daa21fd730958f"
+}

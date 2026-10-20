@@ -87,6 +87,7 @@ async fn collect(
         let mut exited = None;
         while let Some(event) = rx.recv().await {
             match event {
+                Event::Failed { error, .. } => panic!("executor failed: {error}"),
                 Event::Output(_, bytes) => {
                     assert!(exited.is_none());
                     output.extend(bytes);
@@ -121,6 +122,7 @@ async fn signal_exit_preserves_the_actual_termination_reason() {
         let mut signalled = false;
         while let Some(event) = rx.recv().await {
             match event {
+                Event::Failed { error, .. } => panic!("executor failed: {error}"),
                 Event::Exited {
                     exit_code, signal, ..
                 } => {
@@ -211,7 +213,7 @@ async fn terminate_reaps_process_group_and_shutdown_closes_admission() {
     assert!(backend.start(execution(&root, "true")).await.is_err());
 }
 #[tokio::test]
-async fn stalled_output_fails_closed_and_reaps_child() {
+async fn stalled_output_is_isolated_after_cleanup_and_next_execution_runs() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().canonicalize().unwrap();
     let backend = NativeBackend::launch_with_profile(test_profile())
@@ -228,7 +230,17 @@ async fn stalled_output_fails_closed_and_reaps_child() {
         closed |= matches!(event, Event::Closed);
     }
     assert!(!closed);
-    assert!(backend.shutdown().await.is_err());
+    assert!(!backend.state.lock().unwrap().closed);
+    assert!(backend.state.lock().unwrap().failure.is_none());
+    let mut next = backend
+        .start(execution(&root, "printf still-available"))
+        .await
+        .unwrap();
+    assert_eq!(
+        collect(&mut next, &backend).await,
+        (b"still-available".to_vec(), Some(0))
+    );
+    backend.shutdown().await.unwrap();
 }
 
 #[tokio::test]
@@ -432,6 +444,142 @@ async fn system_python_direct_and_shell_commands_preserve_sandbox() {
         }
     }
     backend.shutdown().await.unwrap();
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn system_git_reads_a_repository_but_cannot_write_its_index_or_configuration() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let source = root.join("source");
+    let scratch = root.join("scratch");
+    std::fs::create_dir(&source).unwrap();
+    std::fs::create_dir(&scratch).unwrap();
+    std::fs::write(source.join("fixture"), "original\n").unwrap();
+    for args in [
+        vec!["init", "-q"],
+        vec!["add", "fixture"],
+        vec![
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "user.name=fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-qm",
+            "fixture-commit",
+        ],
+    ] {
+        let output = std::process::Command::new("/usr/bin/git")
+            .args(args)
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .current_dir(&source)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let index = std::fs::read(source.join(".git/index")).unwrap();
+    let config = std::fs::read(source.join(".git/config")).unwrap();
+    for profile in [SandboxProfile::Native, SandboxProfile::FullAccess] {
+        let backend = NativeBackend::launch_with_profile(profile).await.unwrap();
+        for (number, command, direct, succeeds) in [
+            (0, "--version", true, true),
+            (
+                1,
+                "git status --porcelain && git diff --no-ext-diff && git log -1 --format=%s",
+                false,
+                true,
+            ),
+            (2, "git add fixture", false, false),
+            (3, "git config runtime.probe changed", false, false),
+        ] {
+            let mut exec = execution(&source, command);
+            exec.process_id = format!("git-{number}");
+            exec.read_roots = vec![source.clone(), scratch.clone()];
+            exec.write_roots = vec![scratch.clone()];
+            exec.env
+                .insert("TMPDIR".into(), scratch.to_string_lossy().into_owned());
+            if direct {
+                exec.argv = vec!["/usr/bin/git".into(), command.into()];
+            }
+            let mut rx = backend.start(exec).await.unwrap();
+            let (output, exit) = collect(&mut rx, &backend).await;
+            assert_eq!(
+                exit == Some(0),
+                succeeds,
+                "{command}: {}",
+                String::from_utf8_lossy(&output)
+            );
+            if number == 1 {
+                assert!(String::from_utf8_lossy(&output).contains("fixture-commit"));
+            }
+        }
+        backend.shutdown().await.unwrap();
+    }
+    assert_eq!(std::fs::read(source.join(".git/index")).unwrap(), index);
+    assert_eq!(std::fs::read(source.join(".git/config")).unwrap(), config);
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn private_shell_heredocs_preserve_source_and_shared_temporary_file_isolation() {
+    let temp = tempfile::tempdir().unwrap();
+    let outside = tempfile::NamedTempFile::new().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    let source = root.join("source");
+    let scratch = root.join("scratch");
+    std::fs::create_dir(&source).unwrap();
+    std::fs::create_dir(&scratch).unwrap();
+    std::fs::write(source.join("fixture"), "original").unwrap();
+    std::fs::write(outside.path(), "private-outside-sentinel").unwrap();
+    let payload = "x".repeat(80_000);
+    let code = format!(
+        "set -e\ncat <<'LITERAL'\nliteral $HOME $(false)\nLITERAL\nwc -c <<'LARGE'\n{payload}\nLARGE\nprintf scratch-ok > \"$TMPDIR/probe\"\nif printf bad > fixture; then exit 31; fi\nif cat '{outside}'; then exit 32; fi\nif printf bad > '{outside}'; then exit 33; fi\nprintf '\nreadonly-preserved\n'\n",
+        outside = outside.path().display(),
+    );
+    let backend = NativeBackend::launch_with_profile(SandboxProfile::FullAccess)
+        .await
+        .unwrap();
+    for (number, program) in ["/bin/bash", "/bin/sh"].into_iter().enumerate() {
+        let mut exec = execution(&source, &code);
+        exec.process_id = format!("heredoc-{number}");
+        exec.argv[0] = program.into();
+        exec.read_roots = vec![source.clone(), scratch.clone()];
+        exec.write_roots = vec![scratch.clone()];
+        exec.env
+            .insert("TMPDIR".into(), scratch.to_string_lossy().into_owned());
+        let mut rx = backend.start(exec).await.unwrap();
+        let (output, exit) = collect(&mut rx, &backend).await;
+        let text = String::from_utf8_lossy(&output);
+        assert_eq!(exit, Some(0), "{program}: {text}");
+        assert!(text.contains("literal $HOME $(false)"), "{text}");
+        assert!(text.contains("80001"), "{text}");
+        assert!(text.contains("readonly-preserved"), "{text}");
+        assert!(!text.contains("private-outside-sentinel"), "{text}");
+    }
+    backend.shutdown().await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(source.join("fixture")).unwrap(),
+        "original"
+    );
+    assert_eq!(
+        std::fs::read_to_string(scratch.join("probe")).unwrap(),
+        "scratch-ok"
+    );
+    assert_eq!(
+        std::fs::read_to_string(outside.path()).unwrap(),
+        "private-outside-sentinel"
+    );
 }
 
 #[cfg(target_os = "linux")]

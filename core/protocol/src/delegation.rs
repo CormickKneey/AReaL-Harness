@@ -115,4 +115,7 @@ pub struct ExecutionRecord {
 pub struct ChildExecutionPolicy {
     #[serde(default)]
     pub exclusive_write: bool,
+    /// 继承可写权限的分析者先并行读取，首次潜在写入后持有租约直到资源结算。
+    #[serde(default)]
+    pub deferred_write: bool,
 }

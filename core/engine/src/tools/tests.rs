@@ -389,8 +389,9 @@ async fn process_fixture_output(
             let method = req["method"].as_str().unwrap();
             let result = match method {
                 "connection.open" => {
-                    json!({"protocolVersion":rt::VERSION,"runtimeEpoch":"epoch","connectionId":"fixture","rootScopeId":"scope","capabilities":{"methods":["fs.execute"]}})
+                    json!({"protocolVersion":rt::VERSION,"runtimeEpoch":"epoch","connectionId":"fixture","rootScopeId":"scope","capabilities":{"methods":["scope.check","fs.execute"]}})
                 }
+                "scope.check" => json!({"available":true}),
                 "scope.create" | "scope.get" | "scope.revoke" | "scope.waitClosed" => {
                     json!({"scopeId":"scope","parentScopeId":null,"state":if method=="scope.waitClosed"{"closed"}else{"active"},"owner":{"taskId":"fixture"},"readRoots":["workspace://repo"],"writeRoots":["workspace://repo"],"network":"deny","limits":{"wallTimeMs":10000,"outputBytes":8388608,"maxProcesses":4},"activeProcesses":0,"outputBytes":0,"cleanupError":null})
                 }
@@ -1310,6 +1311,260 @@ async fn research_hooks_keep_workspace_admission_and_can_cancel_while_waiting() 
 struct ExternalAgentNamedHost {
     gate: Arc<tokio::sync::RwLock<()>>,
     saw_read_lease: Arc<std::sync::atomic::AtomicBool>,
+}
+
+struct InheritedLeaseHost {
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl DynamicToolHost for InheritedLeaseHost {
+    fn id(&self) -> &str {
+        "inherited-lease-host"
+    }
+    fn is_closed(&self) -> bool {
+        false
+    }
+    async fn call(
+        &self,
+        _: Value,
+        _: CancellationToken,
+    ) -> anyhow::Result<areal_protocol::DynamicToolResponse> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(areal_protocol::DynamicToolResponse {
+            success: true,
+            content_items: vec![],
+            structured_content: None,
+        })
+    }
+}
+
+async fn inherited_lease_fixture(
+    read_only: bool,
+) -> (
+    tempfile::TempDir,
+    Arc<Engine>,
+    Arc<Cell>,
+    Arc<Cell>,
+    Arc<InheritedLeaseHost>,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = Engine::open(
+        dir.path(),
+        Arc::new(PendingExecutionGuard),
+        Limits {
+            inspection_permissions: areal_config::InspectionPermissions::Inherit,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let host = Arc::new(InheritedLeaseHost {
+        calls: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let parent = engine
+        .create_with_tools(
+            "/workspace".into(),
+            vec![areal_protocol::ToolDefinition {
+                // 与原生读取同名的外部回调仍可能写入，必须取得租约。
+                name: "read_file".into(),
+                description: "ambient callback named like a native read".into(),
+                input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
+                output_schema: None,
+            }],
+            host.clone(),
+        )
+        .await
+        .unwrap();
+    if read_only {
+        let cell = engine.cell(&parent.id).await.unwrap();
+        let mut state = cell.state.lock().await;
+        state.thread.desktop = Some(areal_protocol::desktop::DesktopState {
+            configuration: areal_protocol::desktop::EffectiveConfig {
+                read_only: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+    }
+    let turn = engine
+        .start(&parent.id, vec![Input::text("parent")])
+        .await
+        .unwrap();
+    let (child,_)=engine.spawn_delegated_child(serde_json::from_value(json!({
+        "parentThreadId":parent.id,"input":[{"type":"text","text":"inspection"}],"workspaceMode":"sharedWrite"
+    })).unwrap(),turn.id,false,None).await.unwrap();
+    let parent = engine.cell(&parent.id).await.unwrap();
+    let child = engine.cell(&child.id).await.unwrap();
+    (dir, engine, parent, child, host)
+}
+
+fn inherited_action(id: &str) -> ToolCall {
+    ToolCall {
+        id: id.into(),
+        name: "read_file".into(),
+        arguments: "{}".into(),
+    }
+}
+
+#[tokio::test]
+async fn inherited_inspection_takes_writer_lease_only_when_needed_and_releases_after_cancellation()
+{
+    let (_dir, engine, parent, child, host) = inherited_lease_fixture(false).await;
+    assert!(
+        engine.workspace_gate.try_write().is_ok(),
+        "model-only work eagerly blocked the parent"
+    );
+    engine
+        .tool(
+            &child,
+            &CancellationToken::new(),
+            inherited_action("child-action"),
+            usize::MAX,
+        )
+        .await
+        .unwrap();
+    assert!(
+        engine.workspace_gate.try_read().is_err(),
+        "ambient action ran without an exclusive lease"
+    );
+    assert_eq!(host.calls.load(Ordering::SeqCst), 1);
+    let pending = tokio::spawn({
+        let engine = engine.clone();
+        let parent = parent.clone();
+        async move {
+            engine
+                .tool(
+                    &parent,
+                    &CancellationToken::new(),
+                    inherited_action("parent-action"),
+                    usize::MAX,
+                )
+                .await
+        }
+    });
+    tokio::task::yield_now().await;
+    assert!(!pending.is_finished());
+    let turn = child.state.lock().await.active.as_ref().unwrap().id.clone();
+    engine.interrupt(&child.id, &turn).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(3), engine.wait(&child.id))
+        .await
+        .unwrap()
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(3), pending)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(host.calls.load(Ordering::SeqCst), 2);
+    assert!(engine.workspace_gate.try_write().is_ok());
+    engine.shutdown().await;
+}
+
+#[tokio::test]
+async fn inherited_writer_wait_can_cancel_without_the_other_writer_releasing() {
+    let (_dir, engine, _parent, child, host) = inherited_lease_fixture(false).await;
+    let writer = engine.workspace_gate.clone().write_owned().await;
+    let cancel = child
+        .state
+        .lock()
+        .await
+        .active
+        .as_ref()
+        .unwrap()
+        .cancel
+        .clone();
+    let pending = tokio::spawn({
+        let engine = engine.clone();
+        let child = child.clone();
+        async move {
+            engine
+                .tool(
+                    &child,
+                    &cancel,
+                    inherited_action("waiting-child"),
+                    usize::MAX,
+                )
+                .await
+        }
+    });
+    tokio::task::yield_now().await;
+    let turn = child.state.lock().await.active.as_ref().unwrap().id.clone();
+    engine.interrupt(&child.id, &turn).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(3), engine.wait(&child.id))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_secs(3), pending)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_err()
+    );
+    assert_eq!(host.calls.load(Ordering::SeqCst), 0);
+    drop(writer);
+    engine.shutdown().await;
+}
+
+#[tokio::test]
+async fn inherited_inspection_preserves_read_only_parent_and_rejects_ambient_tools() {
+    let (_dir, engine, _parent, child, host) = inherited_lease_fixture(true).await;
+    assert!(
+        child
+            .state
+            .lock()
+            .await
+            .thread
+            .turns
+            .last()
+            .unwrap()
+            .configuration
+            .as_ref()
+            .unwrap()
+            .read_only
+    );
+    assert!(
+        !child
+            .state
+            .lock()
+            .await
+            .thread
+            .desktop
+            .as_ref()
+            .unwrap()
+            .execution_policy
+            .deferred_write
+    );
+    engine
+        .tool(
+            &child,
+            &CancellationToken::new(),
+            inherited_action("forbidden-child"),
+            usize::MAX,
+        )
+        .await
+        .unwrap();
+    assert_eq!(host.calls.load(Ordering::SeqCst), 0);
+    assert!(
+        child
+            .state
+            .lock()
+            .await
+            .thread
+            .turns
+            .last()
+            .unwrap()
+            .items
+            .iter()
+            .any(|item| matches!(
+                item,
+                Item::DynamicToolCall {
+                    success: Some(false),
+                    ..
+                }
+            ))
+    );
+    engine.shutdown().await;
 }
 
 #[async_trait::async_trait]

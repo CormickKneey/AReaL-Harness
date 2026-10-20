@@ -5,9 +5,28 @@ use areal_protocol::ToolDefinition;
 use serde::Deserialize;
 use std::borrow::Cow;
 
-pub(crate) const INSTRUCTIONS: &str = "Delegate concrete independent work with agent_spawn and continue useful local work. Describe intent (inspect or modify), required delivery (report, changes or patch), exact source writes when known, whether the work is independent, and any requirement to use the current host environment or trusted checks. Core selects the execution strategy within existing permissions; never choose or configure an execution backend. Small or tightly coupled work is best completed by one writer. Use the returned executionId with agent_read/wait/wait_any/send_input/cancel. Do not edit files assigned to a running writer. Worker completion, validation and application are distinct: only delivery.status=applied means isolated changes have reached this workspace, and notRun is not a passed test. TaskRun-owned workers survive coordinator Turn completion; use task_wait when no other work remains. Save evidence with agent_report and inspect failed/partial results. Never repeat an execution whose creation or side effects are UNKNOWN. A frozen isolated contract may require settled cancellation and a new, revised task rather than live steering.";
+pub(crate) const INSTRUCTIONS: &str = "Delegation is optional; complete small or tightly coupled work directly. Use agent_spawn when there is a concrete separable question or change with useful stopping evidence, and the benefit justifies startup, coordination and integration. Do not spawn merely because the tool is available or to satisfy a delegation quota. Continue useful independent work while a child runs; keep work needed for your immediate next step local. Describe intent (inspect or modify), required delivery (report, changes or patch), exact source writes when known, whether the work is independent, and any requirement to use the current host environment or trusted checks. Core selects the execution strategy within existing permissions; never choose or configure an execution backend. An unavailable scope means no child was started: continue locally or report the capability limitation, without widening permissions or repeating the unchanged request. Use the returned executionId with agent_read/wait/wait_any/send_input/cancel. Do not edit files assigned to a running writer. Worker completion, validation and application are distinct: only delivery.status=applied means isolated changes have reached this workspace, and notRun is not a passed test. TaskRun-owned workers survive coordinator Turn completion; use task_wait when no other work remains. Save evidence with agent_report and inspect failed/partial results. Never repeat an execution whose creation or side effects are UNKNOWN. A frozen isolated contract may require settled cancellation and a new, revised task rather than live steering.";
 
 pub(crate) const CHILD_INSTRUCTIONS: &str = "Complete the assigned task within its scope and stopping condition. Save useful findings with agent_report: summarize conclusions, cite evidence or artifact paths, and list remaining work. Checkpoint before further exploration so a failure does not discard the handoff. Finish with verified results and explicitly identify incomplete work.";
+
+pub(crate) fn model_execution_view(mut value: Value) -> Value {
+    if value.get("executionId").is_some() {
+        // 模型控制只接受 executionId；底层身份仍保存在执行记录和客户端诊断中。
+        if let Some(object) = value.as_object_mut() {
+            for key in ["owner", "parentThreadId", "threadId", "turnId"] {
+                object.remove(key);
+            }
+        }
+    }
+    for key in ["completed", "pending"] {
+        if let Some(rows) = value.get_mut(key).and_then(Value::as_array_mut) {
+            for row in rows {
+                *row = model_execution_view(std::mem::take(row));
+            }
+        }
+    }
+    value
+}
 
 // 只读豁免绑定内置后端，关闭委派后注册的同名外部工具不能借此调用宿主。
 pub(crate) fn read_only_tool(name: &str, backend: &Backend) -> bool {
