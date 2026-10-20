@@ -112,4 +112,6 @@ Bash 3.2 的 [here_document_to_fd](https://github.com/apple-oss-distributions/ba
 
 Arena 复验沿用冻结的 122 题、原 Reward 和公共原生适配器，两个原模型各一轮；只有 AReaL 运行包更新。Task 失败重试从 3 增至 5，正常 DONE 0 分不重试；每次根预算和模型 HTTP 重试不变。该复验用于工程验收与历史描述性对比，不能将重试当作独立重复。正式策略优越性仍要求每侧至少五轮独立重复、可比资源与未见来源确认；本轮不据单轮历史差值晋级 inherit 或声称稳定排名。
 
-收敛源码的完整 Rust workspace 回归为 **1082 项通过、14 项按原配置忽略**，Clippy、三份桌面 schema、SDK/脚本与 GUI 资源回归通过。含空格目录中的完整 macOS 包通过 owned release smoke 与全屏 PTY 测试。原生 Runtime 端到端夹具的直接 Mach-O 启动暴露本机入口差异，按产品和既有搜索夹具采用系统 Python 父进程；没有改写沙箱、跳过执行或把响应管道丢失当作成功。失败日志与修正后的验收分开保留。
+收敛源码的完整 Rust workspace 回归为 **1082 项通过、14 项按原配置忽略**，Clippy、三份桌面 schema、SDK/脚本与 GUI 资源回归通过。含空格目录中的完整 macOS 包通过 owned release smoke 与全屏 PTY 测试。原生 Runtime 与共享服务端到端夹具的直接 Mach-O 启动暴露本机入口差异，按产品和既有搜索夹具采用系统 Python 父进程；没有改写沙箱、跳过执行或把响应管道丢失当作成功。失败日志与修正后的验收分开保留。
+
+真实 Core/Runtime 的最终权限矩阵在本机通过：强制只读和显式继承各产生 11 次子模型 fixture 请求，父子均结算；Git 读取、大小 here-document 和 scratch 正例成功，源码/Git 配置写入、外部读取及网络负例符合各模式授权。YOLO、ASK 的一次/会话/项目授权、重启、撤销、取消和父只读规则通过。共享服务故障、崩溃恢复与多窗口生命周期也完成真实验证；脚本 fixture 不计为真实模型能力结果。

@@ -79,7 +79,22 @@ const model = createServer(async (req, res) => {
 model.listen(0, "127.0.0.1");
 await once(model, "listening");
 async function cli(args, { timeout = 80000 } = {}) {
-  const { stdout } = await exec(bin, args, { env, timeout, maxBuffer: 1024 * 1024 });
+  // 与产品及其他原生夹具一样，由系统父进程启动本地 Mach-O；共享服务的真实 PID 不变。
+  const [command, argv] =
+    process.platform === "darwin"
+      ? [
+          "/usr/bin/python3",
+          [
+            "-I",
+            "-S",
+            "-c",
+            "import signal,subprocess,sys; p=subprocess.Popen(sys.argv[1:]); signal.signal(signal.SIGTERM,lambda *_:p.terminate()); signal.signal(signal.SIGINT,lambda *_:p.send_signal(signal.SIGINT)); r=p.wait(); sys.exit(r if r>=0 else 128-r)",
+            bin,
+            ...args,
+          ],
+        ]
+      : [bin, args];
+  const { stdout } = await exec(command, argv, { env, timeout, maxBuffer: 1024 * 1024 });
   return JSON.parse(stdout);
 }
 const local = ["--workspace", workspace, "--config", config];
