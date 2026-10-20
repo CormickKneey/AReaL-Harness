@@ -522,12 +522,17 @@ function AppContent({ services }: { services: PlatformServices }) {
     projectId: project?.id, threadId, turnId, itemId, operation: "turnReview",
   }), [resourceAction, project?.id, threadId]);
   const selectedCompletion = library.threads?.[`${project?.id}:${threadId}`]?.completionId;
+  const completionInterruptPending = snapshot.lifecycle?.operations.some(operation =>
+    operation.kind === "interruptTurn" && operation.threadId === threadId && operation.turnId === selectedCompletion
+    && operation.phase !== "completed" && operation.phase !== "blocked"
+    && operation.targets.some(target => target.projectId === project?.id && target.phase !== "completed" && target.phase !== "blocked"),
+  ) ?? false;
   useEffect(() => {
     // A new completion visible in the foreground is read. A manual unread mark
     // does not change completionId, so it survives until the user opens it again.
-    if (!project?.id || !project.state?.connected || !threadId || thread?.id !== threadId || !selectedCompletion || settingsOpen || taskCenterOpen || !document.hasFocus() || document.visibilityState !== "visible") return;
+    if (!project?.id || !project.state?.connected || !threadId || thread?.id !== threadId || !selectedCompletion || completionInterruptPending || settingsOpen || taskCenterOpen || !document.hasFocus() || document.visibilityState !== "visible") return;
     void action("library", { operation: "readThread", projectId: project.id, threadId, read: true, completionId: selectedCompletion }).catch(() => {});
-  }, [project?.id, project?.state?.connected, threadId, thread?.id, selectedCompletion, settingsOpen, taskCenterOpen, action]);
+  }, [project?.id, project?.state?.connected, threadId, thread?.id, selectedCompletion, completionInterruptPending, settingsOpen, taskCenterOpen, action]);
   const reconnectService = async () => {
     await resourceAction("connectService");
     if (project) {
