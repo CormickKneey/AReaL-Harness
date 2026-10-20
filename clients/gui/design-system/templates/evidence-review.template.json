@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "questionId": "<bounded-question-id>",
+  "surfaceId": "<existing-or-proposed-surface-id>",
+  "ruleIds": [],
+  "runManifests": [
+    {
+      "runId": "<reference-run-id>",
+      "role": "reference",
+      "manifestPath": "<local-existing-manifest>"
+    },
+    {
+      "runId": "<implementation-run-id>",
+      "role": "implementation",
+      "manifestPath": "<local-existing-manifest>"
+    }
+  ],
+  "analysis": {
+    "status": "pending",
+    "reason": "尚未分析；skipped/unavailable时填写原因及替代核查路径",
+    "requestPath": null,
+    "rawResultPath": null,
+    "structuredResultPath": null,
+    "observedModel": null,
+    "observedEffort": null,
+    "limits": []
+  },
+  "candidates": [
+    {
+      "id": "<candidate-id>",
+      "sourceEventIds": [],
+      "referenceEvidence": [],
+      "implementationEvidence": [],
+      "comparison": {
+        "state": "unknown",
+        "comparableAxes": [],
+        "mismatches": [],
+        "actionAndReadingChecked": false
+      },
+      "observation": "",
+      "hypothesis": "",
+      "decision": "needs-evidence",
+      "reason": "尚未核查",
+      "basis": {
+        "kind": "unknown",
+        "source": null,
+        "scope": null
+      },
+      "change": {
+        "ruleId": null,
+        "canonicalRuleSource": null,
+        "productionOwner": null,
+        "closureCondition": null
+      },
+      "validation": {
+        "status": "not-run",
+        "evidenceRefs": [],
+        "remainingGaps": []
+      }
+    }
+  ],
+  "normUpdates": [],
+  "remainingQuestions": [],
+  "delivery": {
+    "status": "pending",
+    "scope": "<fixture/desktop/package and actual conditions>",
+    "checks": [],
+    "ownedDiffReviewed": false,
+    "limits": []
+  }
+}

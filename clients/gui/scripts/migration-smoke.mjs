@@ -60,6 +60,12 @@ await writeFile(
     ],
   }),
 );
+const conversationStage2 = process.argv.includes("--conversation-stage2");
+const settingsMode = process.argv.includes("--settings-stage1");
+const hostMode = process.argv.includes("--conversation-host");
+const motionMode = hostMode || process.argv.includes("--conversation-motion");
+const journeyMode = conversationStage2 || settingsMode || motionMode || process.argv.includes("--conversation-journey");
+const journey = settingsMode ? (await import("./settings-stage1.mjs")).settingsStage1(scratch) : hostMode ? (await import("./conversation-host.mjs")).conversationHost(scratch, workspace) : journeyMode ? (await import("./conversation-journey.mjs")).conversationJourney(scratch, workspace, { motion: motionMode, stage2: conversationStage2 }) : null;
 const received = [];
 let finishBackground, finishAgentParent;
 const server = createServer(async (req, res) => {
@@ -80,7 +86,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   const msgs = body.messages ?? [],
-    last = msgs.findLastIndex((m) => m.role === "user"),
+    last = msgs.findLastIndex((m) => m.role === "user" && (!journey || typeof m.content !== "string" || !m.content.startsWith("AReaL runtime context (not a user request):"))),
     content = msgs[last]?.content;
   const text =
     typeof content === "string" ? content : (content ?? []).map((x) => x.text ?? "").join("");
@@ -89,6 +95,7 @@ const server = createServer(async (req, res) => {
     res.write(
       `data: ${JSON.stringify({ id: "fixture", object: "chat.completion.chunk", choices: [{ index: 0, delta, finish_reason }] })}\n\n`,
     );
+  try { if (journey?.model(text, msgs, send, res)) return; } catch (error) { errors.push(error.stack); res.end("data: [DONE]\n\n"); return; }
   if (text.includes("后台持续执行")) {
     send({ content: "后台开始。" });
     finishBackground = () => {
@@ -211,6 +218,7 @@ const env = {
   AREAL_CORE_CONFIG: config,
   AREAL_CORE_DESKTOP_CONFIG: deployment,
   AREAL_GUI_USER_DATA: join(scratch, "electron"),
+  ...(journey ? { AREAL_HARNESS_SERVICE_HOME: join(scratch, "services") } : {}),
 };
 delete env.AREAL_CORE_WORKSPACE;
 if (process.env.AREAL_GUI_EXECUTABLE) delete env.AREAL_CORE_BIN;
@@ -277,9 +285,11 @@ async function shot(name) {
   frames.push(name + ".png");
 }
 async function launch() {
+  if (journey) await mkdir(join(scratch, "video"), { recursive: true });
   app = await electron.launch({
+    ...(journey && !motionMode ? { recordVideo: { dir: join(scratch, "video"), size: { width: 1509, height: 949 } } } : {}),
     executablePath: process.env.AREAL_GUI_EXECUTABLE || require("electron"),
-    args: process.env.AREAL_GUI_EXECUTABLE ? [] : [desktop],
+    args: process.env.AREAL_GUI_EXECUTABLE ? [] : [desktop, ...(hostMode && process.env.AREAL_E3_CDP_PORT ? ["--remote-debugging-port=" + process.env.AREAL_E3_CDP_PORT] : [])],
     env,
     timeout: 120000,
   });
@@ -360,6 +370,9 @@ try {
     await button("发送").click();
     await until((s) => turnCountOf(s) > count, "turn admission");
   };
+  if (journey) {
+    await journey.run({ app: () => app, page: () => page, state, call, until, button, launch, quit, received, checks, previewUrl });
+  } else {
   // 通过已有提示入口复现旧错误；后续真实发送不应继续展示它。
   await page.evaluate(() =>
     document.dispatchEvent(
@@ -791,6 +804,7 @@ try {
     "window close preserves one scheduled execution and its run history",
   );
   }
+  }
   assert.deepEqual(errors, []);
   passed = true;
   console.log(JSON.stringify({ passed, scratch, checks }));
@@ -879,8 +893,10 @@ try {
         arch: process.arch,
         runtime: "real Electron + real Rust Core/Runtime + deterministic local HTTP/SSE model",
         nativeDialogs: "project picker and archive/quit confirmations injected",
+        scenario: conversationStage2 ? "conversation-stage2" : settingsMode ? "settings-stage1" : hostMode ? "conversation-host" : motionMode ? "conversation-motion" : journey ? "conversation-journey" : "migration",
         scratch,
-        frames,
+        frames: journey ? journey.frames() : frames,
+        journeyEvents: journey ? "journey-events.json" : null,
         checks,
         errors,
         failure,

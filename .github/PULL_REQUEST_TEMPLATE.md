@@ -12,6 +12,18 @@ List checks actually run and their results, including omissions and reasons. For
 
 Link updated Chinese and English contracts, examples or guides, or explain why documentation is unaffected.
 
+## UI design evidence
+
+For user-visible GUI changes, follow the [design delivery criteria](../clients/gui/design-system/governance.md#完成条件). Include:
+
+- User intent, interaction families and applicable rules.
+- Reused production components and their owners.
+- Exceptions with scope, rationale and evidence, or explicitly none.
+- States and theme/font/window conditions actually checked; skipped checks and reasons.
+- Reviewable evidence references and remaining gaps; distinguish preview, source Electron and package validation.
+
+Reuse the existing page contract or report where applicable. For changes without GUI impact, state not applicable. Passing static checks does not constitute visual approval.
+
 ## Generalization evidence
 
 For agent behavior changes, describe the problem class, causal evidence, shared repair boundary and valid counterexamples. Disclose changes to prompts, tools, defaults, budgets, adapters or continuation; exclude task identity and hidden grading information from product decisions.

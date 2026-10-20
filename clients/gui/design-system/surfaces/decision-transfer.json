@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "id": "decision-transfer",
+  "intent": "用新的长说明及终端审批内容检验现有Base在非设置任务中的组合能力",
+  "pattern": "P-DECISION",
+  "target": "renderer/src/design-system/DecisionTransferExercise.tsx",
+  "runtime": "component-preview",
+  "reference": {
+    "kind": "existing-code",
+    "path": "renderer/src/ApprovalRequest.tsx",
+    "visualTarget": null
+  },
+  "slots": {
+    "request": [
+      "ApprovalRequest",
+      "CollapsibleText"
+    ],
+    "actions": [
+      "ApprovalRequest"
+    ],
+    "feedback": [
+      "Feedback"
+    ]
+  },
+  "states": [
+    {
+      "id": "ready",
+      "condition": "ready后批准一次",
+      "expected": "回执仅锁定动作，保留卡片等待权威更新"
+    },
+    {
+      "id": "busy",
+      "condition": "busy后批准一次",
+      "expected": "显示提交中且不可重复响应"
+    },
+    {
+      "id": "failed",
+      "condition": "failed后批准一次",
+      "expected": "保留参数与明确未受理反馈，可重试"
+    },
+    {
+      "id": "unknown",
+      "condition": "unknown后批准一次，再核对失败",
+      "expected": "保留未知，仅提供核对入口，不自动重提"
+    }
+  ],
+  "conditions": {
+    "themes": [
+      "light",
+      "dark"
+    ],
+    "fontSizes": [
+      14,
+      18
+    ],
+    "widthModes": [
+      "wide",
+      "narrow"
+    ],
+    "reducedMotion": [
+      true
+    ]
+  },
+  "invariants": [
+    "不添加题目CSS或生产数值",
+    "完整参数与说明保留；窄容器操作可达",
+    "回执不等于执行完成；未知不重提",
+    "仅本地fixture，不证明Core授权与恢复"
+  ],
+  "evidence": {
+    "status": "pending",
+    "artifacts": [],
+    "gaps": [
+      "探索题不是盲测或正式Base冻结",
+      "原始运行材料保存在本地报告，未批准为公共视觉基线",
+      "无Codex决策同状态目标；不声称该场景视觉保真"
+    ]
+  }
+}

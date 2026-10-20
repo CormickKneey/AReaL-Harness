@@ -1,8 +1,8 @@
 import { ActionButton } from "../components/ui/action-button.js";
 import { SettingsSelect } from "./SettingsPageParts.js";
+import { SettingsDisclosure } from "./SettingsDisclosure.js";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Input } from "../components/ui/input.js";
-import { Switch } from "../components/ui/switch.js";
 import { CODE_PREVIEW_THEME_OPTIONS } from "../lib/codePreviewPreferences.js";
 import {
   SettingsGroupCard,
@@ -304,20 +304,16 @@ export function AppearanceSettings({
       ))}
     </SettingsSelect>
   );
-  // Editing a palette is local UI state; both persisted palettes keep their
-  // existing owners, including when the app follows the system appearance.
-  const [mode, setMode] = useState<"light" | "dark">((theme === "data-dense" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches)) ? "dark" : "light");
-  const [advanced, setAdvanced] = useState(true);
+  // Palette editing is independent of the active application appearance.
+  const activeMode = theme === "data-dense" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
+  const [mode, setMode] = useState<"light" | "dark">(activeMode);
   const palette = prefs[mode];
   const label = mode === "light" ? "浅色" : "深色";
   const update = (patch: Partial<Palette>) => setApplicationPreferences({ [mode]: { ...palette, ...patch } });
   return (
     <div className="settings-sections">
-      <SettingsSection title="视觉风格" action={
-        <SettingsSegmentedTabs ariaLabel="编辑配色" value={mode} onValueChange={setMode}
-          items={[{ label: "浅色配色", value: "light" }, { label: "深色配色", value: "dark" }]} />
-      }>
-        <SettingsGroupCard density="compact">
+      <SettingsSection title="界面">
+        <SettingsGroupCard>
           <SettingsRow label="界面主题" control={
             <SettingsSelect aria-label="界面主题" value={theme} onValueChange={value => {
               setTheme(value); if (value !== "system") setMode(value === "data-dense" ? "dark" : "light");
@@ -325,65 +321,70 @@ export function AppearanceSettings({
               <option value="system">跟随系统</option><option value="soft-glass">浅色</option><option value="data-dense">深色</option>
             </SettingsSelect>
           } />
+          <SettingsRow label="界面字体" control={fontSelect(activeMode, "uiFont", "界面字体")} />
+          <SettingsRow label="界面字号" description="调整导航、设置和控件的基础字号" control={sizeInput("界面字号", fontSize, 12, 18, setFontSize)} />
         </SettingsGroupCard>
-        <div className="appearance-theme-palette" key={mode}>
-          <SettingsGroupCard density="compact">
-            <SettingsRow className="appearance-theme-heading" label="主题" controlLayout="wide" control={
-              <div className="appearance-theme-tools"><ThemeSharing mode={mode} /><CodeThemeSample theme={code[`${mode}Theme`]} />{codeTheme(mode)}</div>
-            } />
-            <SettingsRow label="强调色" control={
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                <ColorField label={`${label}强调色`} value={palette.accent} onChange={accent => update({ accent })} />
-                <ActionButton disabled={palette.accent.toLowerCase() === DEFAULT_PALETTES[mode].accent} onClick={() => update({ accent: DEFAULT_PALETTES[mode].accent })}>重置</ActionButton>
-              </div>
-            } />
-            <SettingsRow label="背景" control={<ColorField label={`${label}背景颜色`} value={palette.background} onChange={background => update({ background })} />} />
-            <SettingsRow label="前景" control={<ColorField label={`${label}墨迹颜色`} value={palette.foreground} onChange={foreground => update({ foreground })} />} />
-            <SettingsRow label="字体" control={fontSelect(mode, "uiFont", "界面字体")} />
-          </SettingsGroupCard>
-        </div>
       </SettingsSection>
-      <SettingsSection title={
-        <button type="button" className="appearance-disclosure" aria-expanded={advanced} aria-controls="appearance-advanced" onClick={() => setAdvanced(!advanced)}>
-          高级 <span className="settings-disclosure-action">{advanced ? "收起" : "展开"}</span>
-        </button>
-      } action={<ActionButton aria-label={`恢复${label}默认`} onClick={() => setApplicationPreferences({ [mode]: DEFAULT_PALETTES[mode] })}>{`重置${label}配色`}</ActionButton>}>
-        {advanced && <div id="appearance-advanced" className="appearance-advanced">
-          <SettingsGroupCard>
-            <SettingsRow label="界面字号" description="调整应用的基础字号" control={sizeInput("界面字号", fontSize, 12, 18, setFontSize)} />
-            <SettingsRow label="内容字体大小" description="调整正文使用的基础字号" control={sizeInput("内容字号", prefs.contentSize, 12, 24, n => setApplicationPreferences({ contentSize: n }))} />
-            <SettingsRow label="代码字体大小" description="调整聊天和差异视图中代码使用的基础字号" control={sizeInput("代码字号", code.fontSizePx, 10, 24, n => setCodePreferences({ fontSizePx: n }))} />
-          </SettingsGroupCard>
-          <SettingsGroupCard>
-            <SettingsRow label="减少动态效果" description="减少动画效果或匹配系统设置" control={
-              <SettingsSelect aria-label="减少动态效果" value={prefs.reducedMotion}
-                onValueChange={reducedMotion => setApplicationPreferences({ reducedMotion: reducedMotion as "system" | "on" | "off" })}>
-                <option value="system">跟随系统</option><option value="on">开启</option><option value="off">关闭</option>
-              </SettingsSelect>
-            } />
-          </SettingsGroupCard>
-          <SettingsGroupCard density="compact">
-            <SettingsRow label="内容字体" control={fontSelect(mode, "contentFont", "内容字体")} />
-            <SettingsRow label="代码字体" control={fontSelect(mode, "codeFont", "代码字体")} />
-            <SettingsRow label="半透明侧边栏" control={<SettingsSwitch aria-label={`${label}半透明侧边栏`} checked={palette.translucentSidebar} onCheckedChange={translucentSidebar => update({ translucentSidebar })} />} />
-            <SettingsRow label="对比度" control={
-              <div className="flex items-center gap-3"><input aria-label={`${label}对比度`} type="range" min="0" max="100" value={palette.contrast} onChange={e => update({ contrast: Number(e.target.value) })} /><output>{palette.contrast}</output></div>
-            } />
-          </SettingsGroupCard>
-          <SettingsGroupCard>
-            <SettingsRow label="使用指针光标" description="悬停交互元素时切换为指针光标" control={<SettingsSwitch aria-label="使用指针光标" checked={prefs.pointerCursor} onCheckedChange={pointerCursor => setApplicationPreferences({ pointerCursor })} />} />
-            <SettingsRow label="字体平滑" description="使用 macOS 原生字体抗锯齿" control={<SettingsSwitch aria-label="字体平滑" checked={prefs.fontSmoothing} onCheckedChange={fontSmoothing => setApplicationPreferences({ fontSmoothing })} />} />
-          </SettingsGroupCard>
-          <SettingsGroupCard>
-            <SettingsRow label="差异标记" description="使用颜色或 +/− 标记显示更改" control={
-              <SettingsSegmentedTabs ariaLabel="差异标记" value={prefs.diffMarkers} items={[{ label: "颜色", value: "color" }, { label: "+/-", value: "signs" }]}
-                onValueChange={diffMarkers => setApplicationPreferences({ diffMarkers })} />
-            } />
-            <SettingsRow label="显示行号" description="在代码块左侧显示行号列" control={<Switch aria-label="显示行号" checked={code.showLineNumbers} onCheckedChange={showLineNumbers => setCodePreferences({ showLineNumbers })} />} />
-            <SettingsRow label="长行自动换行" description="超出宽度的代码行软换行显示，无需横向滚动" control={<Switch aria-label="长行自动换行" checked={code.wrapLongLines} onCheckedChange={wrapLongLines => setCodePreferences({ wrapLongLines })} />} />
-          </SettingsGroupCard>
-          <ThemeDiffPreview />
-        </div>}
+      <SettingsSection title="交互与动效">
+        <SettingsGroupCard>
+          <SettingsRow label="减少动态效果" description="减少动画效果，或跟随系统偏好" control={
+            <SettingsSelect aria-label="减少动态效果" value={prefs.reducedMotion}
+              onValueChange={reducedMotion => setApplicationPreferences({ reducedMotion: reducedMotion as "system" | "on" | "off" })}>
+              <option value="system">跟随系统</option><option value="on">开启</option><option value="off">关闭</option>
+            </SettingsSelect>
+          } />
+          <SettingsRow label="使用指针光标" description="悬停交互元素时切换为指针光标" control={<SettingsSwitch aria-label="使用指针光标" checked={prefs.pointerCursor} onCheckedChange={pointerCursor => setApplicationPreferences({ pointerCursor })} />} />
+          <SettingsRow label="字体平滑" description="使用 macOS 原生字体抗锯齿" control={<SettingsSwitch aria-label="字体平滑" checked={prefs.fontSmoothing} onCheckedChange={fontSmoothing => setApplicationPreferences({ fontSmoothing })} />} />
+        </SettingsGroupCard>
+      </SettingsSection>
+      <SettingsSection>
+        <SettingsDisclosure title="阅读与代码">
+          <div className="appearance-theme-content">
+            <SettingsGroupCard>
+              <SettingsRow label="内容字体" control={fontSelect(activeMode, "contentFont", "内容字体")} />
+              <SettingsRow label="内容字体大小" description="调整正文使用的基础字号" control={sizeInput("内容字号", prefs.contentSize, 12, 24, n => setApplicationPreferences({ contentSize: n }))} />
+              <SettingsRow label="代码字体" control={fontSelect(activeMode, "codeFont", "代码字体")} />
+              <SettingsRow label="代码字体大小" description="聊天和差异视图中的代码字号" control={sizeInput("代码字号", code.fontSizePx, 10, 24, n => setCodePreferences({ fontSizePx: n }))} />
+              <SettingsRow label="显示行号" control={<SettingsSwitch aria-label="显示行号" checked={code.showLineNumbers} onCheckedChange={showLineNumbers => setCodePreferences({ showLineNumbers })} />} />
+              <SettingsRow label="长行自动换行" description="超出宽度的代码行软换行显示" control={<SettingsSwitch aria-label="长行自动换行" checked={code.wrapLongLines} onCheckedChange={wrapLongLines => setCodePreferences({ wrapLongLines })} />} />
+              <SettingsRow label="差异标记" description="使用颜色或 +/− 标记显示更改" control={
+                <SettingsSegmentedTabs ariaLabel="差异标记" value={prefs.diffMarkers} items={[{ label: "颜色", value: "color" }, { label: "+/-", value: "signs" }]}
+                  onValueChange={diffMarkers => setApplicationPreferences({ diffMarkers })} />
+              } />
+            </SettingsGroupCard>
+            <ThemeDiffPreview />
+          </div>
+        </SettingsDisclosure>
+      </SettingsSection>
+      <SettingsSection>
+        <SettingsDisclosure title="配色微调">
+          <div className="appearance-theme-content">
+            <div className="settings-section-action">
+              <SettingsSegmentedTabs ariaLabel="编辑配色" value={mode} onValueChange={setMode}
+                items={[{ label: "浅色配色", value: "light" }, { label: "深色配色", value: "dark" }]} />
+              <ThemeSharing mode={mode} />
+              <ActionButton aria-label={`恢复${label}默认`} onClick={() => setApplicationPreferences({ [mode]: DEFAULT_PALETTES[mode] })}>{`重置${label}配色`}</ActionButton>
+            </div>
+            <SettingsGroupCard density="compact">
+              <SettingsRow label="代码主题" control={<div className="appearance-theme-tools"><CodeThemeSample theme={code[`${mode}Theme`]} />{codeTheme(mode)}</div>} />
+              <SettingsRow label="界面字体" control={fontSelect(mode, "uiFont", `${label}界面字体`)} />
+              <SettingsRow label="内容字体" control={fontSelect(mode, "contentFont", `${label}内容字体`)} />
+              <SettingsRow label="代码字体" control={fontSelect(mode, "codeFont", `${label}代码字体`)} />
+              <SettingsRow label="强调色" control={
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <ColorField label={`${label}强调色`} value={palette.accent} onChange={accent => update({ accent })} />
+                  <ActionButton disabled={palette.accent.toLowerCase() === DEFAULT_PALETTES[mode].accent} onClick={() => update({ accent: DEFAULT_PALETTES[mode].accent })}>重置</ActionButton>
+                </div>
+              } />
+              <SettingsRow label="背景" control={<ColorField label={`${label}背景颜色`} value={palette.background} onChange={background => update({ background })} />} />
+              <SettingsRow label="前景" control={<ColorField label={`${label}墨迹颜色`} value={palette.foreground} onChange={foreground => update({ foreground })} />} />
+              <SettingsRow label="半透明侧边栏" control={<SettingsSwitch aria-label={`${label}半透明侧边栏`} checked={palette.translucentSidebar} onCheckedChange={translucentSidebar => update({ translucentSidebar })} />} />
+              <SettingsRow label="对比度" control={
+                <div className="flex items-center gap-3"><input aria-label={`${label}对比度`} type="range" min="0" max="100" value={palette.contrast} onChange={e => update({ contrast: Number(e.target.value) })} /><output>{palette.contrast}</output></div>
+              } />
+            </SettingsGroupCard>
+          </div>
+        </SettingsDisclosure>
       </SettingsSection>
     </div>
   );

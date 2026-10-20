@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Messages } from "./Messages.js";
-import { AgentAvatar, agentName, agentStatus } from "./AgentIdentity.js";
+import { AgentAvatar, agentName, agentStatus, agentAssignment } from "./AgentIdentity.js";
 import type { Action, Data } from "./services.js";
 
 /** 子对话复用权威投影与消息组件；标签关闭只关闭阅读视图。 */
@@ -29,8 +29,10 @@ export function AgentConversationPane({ project, parentId, childId, action, dark
   }, [project.id, childId, connected, action, revision]);
   // 迟到的旧任务投影不能成为当前标签的内容。
   const owned = thread?.id === childId && thread.parentThreadId === parentId;
+  const parent = project.state?.threads[parentId];
+  const title = (parent?.id === parentId ? agentAssignment(parent, childId) : undefined) || agentName(childId);
   return <section className="agent-conversation-pane" data-agent-conversation={childId} aria-label={`${agentName(childId)} 子对话`}>
-    <div className="agent-conversation-heading"><AgentAvatar id={childId} /><strong>{agentName(childId)}</strong><span role="status">{agentStatus(owned ? thread.turns?.at(-1)?.status : undefined)}</span></div>
+    <div className="agent-conversation-heading"><AgentAvatar id={childId} /><div className="agent-conversation-title"><span>子代理对话</span><strong title={title}>{title}</strong></div><span role="status">{agentStatus(owned ? thread.turns?.at(-1)?.status : undefined)}</span></div>
     {!connected && <p className="agent-pane-notice" role="status">连接不可用，已显示的历史可能已过期。</p>}
     {error && <div className="agent-pane-notice" role="alert">{error}<button type="button" disabled={!connected || loading} onClick={() => refresh(n => n + 1)}>重新读取</button></div>}
     {owned ? <Messages project={project} thread={thread} action={action} dark={dark} onLink={onLink} onFile={onFile}

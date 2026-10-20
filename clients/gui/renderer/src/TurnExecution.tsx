@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { spawnedAgent } from "./AgentIdentity.js";
 import { ActivityIcon } from "./ActivityIcon.js";
 import { ReasoningGroup } from "./ReasoningGroup.js";
@@ -25,7 +25,10 @@ export function TurnExecution({ items, turn, project, threadId, renderItem, hasT
   hasTurnSummary?: boolean; items: Data[]; turn: Data; project: Data; threadId: string; renderItem: (item: Data, disclosure: { animate: boolean; onDisclosureChange: (open: boolean) => void }) => ReactNode;
 }) {
   const { failures, unfinished } = executionOutcome(items);
-  const [open, setOpen] = useState(false);
+  const defaultOpen = turn.status !== "inProgress" && !(turn.status === "completed" && hasTurnSummary && !unfinished && !failures);
+  const [open, setOpen] = useState(defaultOpen);
+  const manual = useRef(false);
+  useEffect(() => { if (!manual.current) setOpen(defaultOpen); }, [defaultOpen]);
   const detailsId = useId();
   const tools = items.filter(item => item.type === "dynamicToolCall");
   const unconfirmed = tools.some(item => toolPresentation(item).status === "结果待确认");
@@ -41,7 +44,7 @@ export function TurnExecution({ items, turn, project, threadId, renderItem, hasT
   const canAnimate = canAnimateTurn(project, threadId, turn);
   const iconKind = toolPresentation(tools.find(item => toolPresentation(item).running) ?? tools[0] ?? {}).kind;
   if (!rows.length) return null;
-  const heading = !direct && <button type="button" className="execution-summary" aria-label="执行过程" aria-expanded={open} aria-controls={detailsId} title={counts || undefined} onClick={() => setOpen(!open)}>
+  const heading = !direct && <button type="button" className="execution-summary" aria-label="执行过程" aria-expanded={open} aria-controls={detailsId} title={counts || undefined} onClick={() => { manual.current = true; setOpen(!open); }}>
       {tools.length > 0 && <ActivityIcon kind={iconKind} />}
       <span className="execution-label">{label}</span>
       {!!failures && !(hasTurnSummary && turn.status === "completed") && <span className="execution-failures">{failures} 次工具失败</span>}
@@ -54,7 +57,7 @@ export function TurnExecution({ items, turn, project, threadId, renderItem, hasT
       role={rows.length > 1 ? "region" : undefined} aria-label={rows.length > 1 ? "工具活动" : undefined} tabIndex={rows.length > 1 ? 0 : undefined}>
       {rows.map(item => <div key={item.id} className="execution-row">{item.type === "reasoningGroup"
         ? <ReasoningGroup items={item.items} />
-        : renderItem(item, { animate: canAnimate && expanded, onDisclosureChange: next => { if (next) setOpen(true); } })}</div>)}
+        : renderItem(item, { animate: canAnimate && expanded, onDisclosureChange: next => { manual.current = true; if (next) setOpen(true); } })}</div>)}
     </div>
   </div>;
 }

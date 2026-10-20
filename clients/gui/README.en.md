@@ -10,6 +10,15 @@ Update recovery and menu stop share lifecycle observation and stopping. Normal s
 
 Legacy adapters without lifecycle version 2 retain observation; no cross-layer cancellation fallback is attempted. A known legacy Desktop partial-stop record exposes inspection and an explicit recovery action in the backend banner and settings. Inspection checks original Host identities, admission and resource settlement. Exited targets additionally require a clean Host shutdown marker and released instance/Store locks; a missing PID or socket is insufficient. Unknown, draining, busy or replaced targets retain their records and show the blocker. After confirmation, a new safe stop targets only the original generations verified as idle. A lost recovery-stop response is inspected without resubmission. The current backend starts only after all original Hosts confirm cleanup and the old Desktop exits. An unresponsive Desktop manager requires a separate confirmation before ending that manager; Core/Runtime receive no process signals. Configuration, workspaces, history and tool UNKNOWN records remain intact; the original stop record is archived, and interrupted recovery can be checked again. `pnpm --dir clients/gui run test:legacy-recovery` uses an isolated historical Desktop, current GUI/Core and a local model; `AREAL_RECOVERY_SCENARIO=exited` covers a completed Host stop whose response was unknown.
 
+Before creating, changing or reviewing a page, agents follow the internal [design rules v1](design-system/README.md) and [evidence-driven workflow](design-system/structured-flow.md#执行顺序与每步完成条件): fix the contract and reference, use video analysis to nominate candidates, verify them with keyframes and logs, select justified differences, then implement through existing owners, validate and update the canonical rules. Token roles, interaction contracts and previews remain in the [client design system](DESIGN_SYSTEM.md).
+
+Run `node clients/gui/scripts/migration-smoke.mjs --conversation-journey` from the repository root after building and verifying Core/Runtime and the renderer. This real Electron scenario covers commands, child agents, images, reading/convergence, paused UNKNOWN inspection and GUI history recovery against a deterministic local SSE model. See the [Electron scenario](design-system/exercises/conversation-flow.md#真实-electron-专项-e1) for evidence and injected boundaries.
+The same runner's `--conversation-motion` mode retains original CDP frames plus RAF/input/reading observations and checks disclosure reversal, resource return and reduced motion. See the [E2 scenario](design-system/exercises/conversation-flow.md#真实-electron-连续动效专项-e2) for its boundaries and replay requirements.
+
+Use `--conversation-host` for actual window sizes/125% zoom, child/settings focus return, drafts, shortcuts and a new-content journey. Native Chinese IME requires separately attributable OS interaction. See [E3](design-system/exercises/conversation-flow.md#真实-electron-宿主与新内容专项-e3); [E4](design-system/exercises/conversation-flow.md#原生宿主补充-e4) uses `AREAL_E4_NATIVE=1 AREAL_E4_OPERATOR=0` to replay same-app window reactivation, independent native web interaction/hiding and focus return. Omit `AREAL_E4_OPERATOR=0` for the separately attributable manual stage. An untriggered candidate overlay is not a pass.
+
+The existing conversation catalog is available at `design-system.html?conversation`, composing production messages, a draft composer and resource panels with return paths. Run `pnpm --dir clients/gui test:design --conversation-demo` for this sample. See the [catalog migration](design-system/exercises/conversation-flow.md#现有对话目录迁移样板) for matched before/after evidence and limits.
+
 ## Development
 
 Run from the repository root with Node.js 22.19+, pnpm 11.7.0 and the repository Rust toolchain. Use the same Node.js 22 LTS version as CI for both packaging and validation:
@@ -192,6 +201,10 @@ Finish Core builds before starting desktop smoke tests that use that binary, and
 `pnpm --dir clients/gui run test:connection` covers real Core disconnect recovery, concurrent operations, retired connection messages and explicit shutdown. `pnpm --dir clients/gui run test:architecture` uses real Electron IPC to cover contract rejection, error-code forwarding and native preview eviction, crash reconstruction and owner release. Both isolate data and produce evidence; they do not replace package acceptance.
 
 See [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES.md). Runtime icons retain the source repository's versions; capture archives, development Skills/AGENTS, and source Git history are excluded.
+
+Start UI design from [interaction families](design-system/interactions.en.md), then compose existing patterns/components. [Settings stage one](design-system/exercises/settings-stage1.en.md) validates isolated source Electron; phase two follows review.
+
+See [conversation stage two](design-system/exercises/conversation-stage2.en.md) for production send, command, child-agent and panel-return migration with equivalent-state evidence.
 
 ## Installation and updates
 

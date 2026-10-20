@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "id": "settings-reflow",
+  "intent": "在固定通知设置迁移题中复用P-SETTINGS，验证长文案、大字号、宽窄与局部状态",
+  "pattern": "P-SETTINGS",
+  "target": "renderer/src/design-system/SettingsReflowExercise.tsx",
+  "runtime": "component-preview",
+  "reference": {
+    "kind": "existing-code",
+    "path": "renderer/src/settings/DisplaySettings.tsx",
+    "visualTarget": null
+  },
+  "slots": {
+    "label": [
+      "SettingsRow"
+    ],
+    "control": [
+      "SettingsSelect",
+      "Switch"
+    ],
+    "detail": [
+      "Feedback"
+    ]
+  },
+  "states": [
+    {
+      "id": "default",
+      "condition": "题目参考内容集，ready，初始值固定",
+      "expected": "五行完整可读，三个开关开启，单选为Only when unfocused与Default"
+    },
+    {
+      "id": "busy",
+      "condition": "预览状态busy",
+      "expected": "单选和开关不可重复操作，保留当前值并显示处理文字"
+    },
+    {
+      "id": "failed",
+      "condition": "预览状态failed",
+      "expected": "alert明确操作未受理，当前值保留"
+    },
+    {
+      "id": "unknown",
+      "condition": "预览状态unknown",
+      "expected": "显示待核对，保留值且禁用控件，不重放"
+    },
+    {
+      "id": "disabled",
+      "condition": "始终禁用的预览动作",
+      "expected": "标签可读且不可触发"
+    }
+  ],
+  "conditions": {
+    "themes": [
+      "light",
+      "dark"
+    ],
+    "fontSizes": [
+      14,
+      18
+    ],
+    "widthModes": [
+      "wide",
+      "narrow"
+    ],
+    "reducedMotion": [
+      false,
+      true
+    ]
+  },
+  "invariants": [
+    "仅复用生产设置组合，无题目专有控件或布局CSS",
+    "原始设置值在宽度、主题和字号变化后保留",
+    "标签与说明自然换行，窄组控件在完整说明之后",
+    "本地fixture不连接真实通知服务；不证明Core或安装包"
+  ],
+  "evidence": {
+    "status": "pending",
+    "artifacts": [],
+    "gaps": [
+      "探索题使用候选快照，不是正式Base冻结或盲测",
+      "原始参考与运行证据保存在本地报告，未批准为公共视觉基线",
+      "整体窗口不同；组件区域比较需逐项注明实际条件，不声称逐像素一致"
+    ]
+  }
+}

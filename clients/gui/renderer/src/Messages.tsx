@@ -356,13 +356,15 @@ export function Messages({
           // chronological disclosure; it does not classify or rewrite any message.
           // Unsettled work, pending input and terminal exceptions stay inspectable.
           const tail = segments.at(-1);
+          const pendingInput = project.state?.interactions?.[thread.id]?.data?.some((item: Data) => item.status === "pending" && item.turnId === turn.id);
           const legacyReply = turn.status === "completed" && tail?.type === "agentMessage" &&
             segments.every((item: Data) => item.type !== "agentMessage" || item.phase == null) &&
             !executionOutcome(segments.flatMap((item: Data) => item.items ?? [])).unfinished &&
-            !project.state?.interactions?.[thread.id]?.data?.some((item: Data) => item.status === "pending" && item.turnId === turn.id) ? tail : undefined;
+            !pendingInput ? tail : undefined;
           const responseMessage = finalMessage ?? legacyReply;
           const hasReadingSummary = hasFinal || !!legacyReply;
-          // User follow-ups, media and the retained reply remain in original order.
+          // 带phase与旧快照共用同一过程总组；从运行期起保留挂载，
+          // 完成收敛只隐藏内容，不重置工具详情或改变历史顺序。
           const groups: { id: string; progress: boolean; entries: { item: Data; index: number }[] }[] = [];
           segments.forEach((item: Data, index: number) => {
             const progress = item.type !== "questionAnswer" && item.type !== "userMessage" && item.type !== "agentMedia" && (item.type !== "agentMessage" || item.phase === "commentary" || (!!legacyReply && item.id !== legacyReply.id));
@@ -382,6 +384,7 @@ export function Messages({
           const stopAccepted = turn.status === "inProgress" && queue?.paused === true && queue?.pauseReason === "stopped";
           const command = (turn.items ?? []).find((item: Data) => item.type === "dynamicToolCall" && item.tool === "run_command");
           const resourceLabel = command && queue?.pauseReason === "stopped" ? commandResourceLabel(command) : null;
+          const hasInterruption = turn.status === "interrupted" || turn.status === "failed" && !!turn.interruption;
           const stopHeading = <div className="turn-stop-heading turn-progress-heading">
             <div className="turn-progress-label"><span className="turn-status turn-progress-summary" role="status">{ordinary ? interruptionLabel(turn) : "已停止"}{turn.error ? `：${turnFailureMessage(turn)}` : ""}</span></div>
             <div className="turn-progress-divider" />
@@ -455,11 +458,11 @@ export function Messages({
                 }} />;
             });
             return <Fragment key={group.id}>
-              {turn.status === "interrupted" && groupIndex === stopHeaderIndex && stopHeading}
+              {hasInterruption && groupIndex === stopHeaderIndex && stopHeading}
               {group.progress ? <TurnProgress summaryAvailable
                 turn={groupIndex === firstProgress ? turn : undefined} connected={!!project.state?.connected}
                 label={legacyReply ? "早前消息与活动" : "本轮过程"}
-                settled={turn.status === "completed" && hasReadingSummary && !outcome.unfinished}
+                settled={turn.status === "completed" && hasReadingSummary && !outcome.unfinished && !outcome.failures && !pendingInput}
                 {...outcome}>{contents}</TurnProgress> : contents}
               {group.entries.some(({ item }) => item === initialUser) &&
                 firstProgress < 0 &&
@@ -473,8 +476,8 @@ export function Messages({
               : <div className="message-actions"><TurnUsage project={project} thread={localThread} turn={turn} action={action} inherited={isInherited} />{forkControls}</div>}
             {canFork && forkReason && turn.status !== "inProgress" && <p id={`fork-reason-${turn.id}`} className="notice">{forkReason}</p>}
             {canFork && forkError?.turnId === turn.id && <p role="alert" className="notice">{forkError?.message}</p>}
-            {turn.status === "interrupted" && stopHeaderIndex < 0 && stopHeading}
-            {turn.status !== "inProgress" && turn.status !== "interrupted" && !(turn.status === "completed" && hasReadingSummary) && (
+            {hasInterruption && stopHeaderIndex < 0 && stopHeading}
+            {turn.status !== "inProgress" && !hasInterruption && !(turn.status === "completed" && hasReadingSummary) && (
               <div className="turn-status">
                 {({ completed: "已完成", interrupted: "已停止", failed: "执行失败" } as Data)[
                   turn.status

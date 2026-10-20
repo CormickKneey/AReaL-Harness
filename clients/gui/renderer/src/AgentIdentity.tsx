@@ -22,9 +22,17 @@ export function spawnedAgent(item: Data): string | undefined {
   }
 }
 
+/** Both supported delegation inputs describe the assignment; neither proves a
+ * child's current execution status. Long prompts stay in the child conversation. */
+export function agentTask(item: Data): string | undefined {
+  const prompt = item.arguments?.prompt;
+  if (typeof prompt === "string" && prompt.trim()) return prompt.trim();
+  const text = (item.arguments?.input ?? []).filter((part: Data) => part.type === "text").map((part: Data) => part.text).join("\n").trim();
+  return text || undefined;
+}
+
 /** 摘要使用真实委派输入；长指令留在子对话中，不猜测系统前缀边界。 */
 export function agentAssignment(thread: Data, id: string): string | undefined {
   const item = (thread.turns ?? []).flatMap((turn: Data) => turn.items ?? []).find((item: Data) => spawnedAgent(item) === id);
-  const text = (item?.arguments?.input ?? []).filter((part: Data) => part.type === "text").map((part: Data) => part.text).join("\n").trim();
-  return text || undefined;
+  return item ? agentTask(item) : undefined;
 }

@@ -1,5 +1,7 @@
 # 客户端设计系统
 
+新增或修改页面、组件、布局、样式、动效或 UI 文案前，先读[设计规则 v1 的开工顺序](design-system/README.md)。默认按[证据驱动设计流程（B路线）](design-system/structured-flow.md#执行顺序与每步完成条件)先核查差异，再沿现有所有者实现与重放验收。规则目录负责页面模式、基础约束、覆盖和证据；本指南继续维护 Token 角色、控件合同与生产预览入口。
+
 本指南供客户端开发使用，默认中文。设计数值归生产 CSS，组件变体归现有公共组件；新增功能按角色组合，不复制另一套样式。执行、权限、历史和草稿继续由原业务所有者管理。
 
 ## 设置与管理界面的交互规范
@@ -20,6 +22,8 @@
 | 开启 / 关闭一个状态 | 左右滑动开关 | 复用 `Switch` / `SettingsSwitch`；以真实状态驱动，操作中禁用并显示简短反馈，失败后保留或恢复已确认状态 |
 | 三个及以上候选值中选择一个 | 下拉按钮与菜单 | 复用 `Select`；收起时显示当前值和右侧小箭头，展开后显示候选项与选中标记；不把选项摊成一排按钮 |
 | 两个互斥值中选择一个 | 并排的两个选项 | 复用 `SettingsSegmentedTabs`，如“底部 / 右侧”；全部可见，选中项高亮，不再套下拉菜单 |
+
+设置行默认使用 `Switch` 的 default 尺寸（`SettingsSwitch` 同样默认）；三项及以上使用 `SettingsSelect` 拥有的常规 control 尺寸与 navigation 圆角。紧凑 sm 仅用于已登记的高密度场景，页面不得临时选小一档。尺寸与水平留白归公共实现，不在页面覆盖。
 
 此处“多项选择”指多个候选值的单选，不等于一次选择多个值。真正允许多值选择时沿用支持复选语义的现有控件，不能假装成单选菜单。导航 Tab 与设置值选择也不能混为一谈。
 
@@ -50,6 +54,7 @@
 | 说明 | `--text-ui-sm` | Side 标题、上下文说明、次要反馈 |
 | 辅助信息 | `--text-ui-xs` | 来源细节；不用于主要正文 |
 | 公共行高 | `--line-height-ui`、`--line-height-ui-sm` | 决策正文与紧凑说明，随 UI 字号增长 |
+| 设置说明 | `--color-settings-secondary` | 活跃设置标签的说明；独立于禁用透明度及已完成过程信息，偏好派生归 applicationSettings.ts |
 | 文字层级 | `--color-foreground`、`--color-foreground-subtle/subtlest` | 主内容、说明、低强调信息；不能只用颜色表达状态 |
 | 表面 | `--color-background`、`--color-composer`、`--color-composer-catalog` | 页面、输入区、相关浮层；明暗由主题提供 |
 | 按钮填充 | `--color-button-surface`、`--color-button-hover` | 普通操作与下拉按钮的默认 / 悬停表面 |
@@ -96,14 +101,11 @@ Tailwind 的 `text-ui-sm`、`rounded-overlay` 等直接消费同一套 Token。�
 
 对话时间线以 Core 的 `commentary` / `final_answer` 为边界，不按文字内容猜测思考或工具事件。耗时位于过程顶部并控制整段过程的展开与折叠；已完成过程默认折叠，最终回答及交付内容不在折叠范围。工具分组独立默认折叠，展开后列表限高 224px 并支持上下滚动。长过程仍在六行高度内滚动，当前流式正文完整展示。过程和活动区域支持键盘聚焦与滚动；打开单条命令或文件比较时，列表取消限高，避免与具体输出同时形成双层滚动。这是过程阅读的专用机制，不改变已发送用户长消息的展开行为。执行中活动文字复用左向右亮色扫光，终态及 reduced motion 下不播放。成功图片结果、可打开的子对话保留轻量入口，原始记录按需查看；文件变更默认显示前五条，多余部分可展开或收起，行数继续取自 Core 本轮比较。Markdown 图片仅通过现有会话授权的 Core blob 读取直接显示；不自动读取任意本机路径或远端图片。普通链接直接打开，独立本地网页链接显示预览卡片，点击仍经过现有 Main 导航策略，不探测服务状态。`design-system.html?conversation` 提供同一生产组件的隔离预览，不连接用户 Core。
 
-## 新增功能的四步
+对话时间线的分组、完成收敛、工具层级与阅读状态统一遵循[信息流合同](design-system/patterns.md#对话信息流)。共享Messages已统一带phase与旧快照的过程总组；实现及未覆盖项见该合同，不由业务页面重新设计。`design-system.html?conversation`仍是静态状态fixture；`?conversation-exercise`串接命令分批输出、并行子代理、真实图片预览组件、独立子对话和最终收敛，可自动播放或暂停逐事件检查。该复合题保留生产回复占位及阅读逻辑，逐状态对照方法见[场景说明](design-system/exercises/conversation-flow.md)。二者均不连接用户Core，不能代替真实执行或桌面发送验收。文件变更摘要与行数继续取自Core本轮比较。
 
-1. 先遵循本指南的[设置与管理界面的交互规范](#设置与管理界面的交互规范)，再选择一个相近的生产组件或组合。新的工具结果卡片可以复用卡片结构、Button 与 Feedback。
-2. 按角色选择 Token 和已有变体；多个实际消费者需要同一新角色时，在现有所有者补齐。
-3. 新公共状态加入预览；仅业务组合变化时检查该组合，不重复维护所有基础控件。
-4. 运行类型/构建和相关设计检查。修改交互、IME、权限或提交时追加相应真实桌面路径。
+## 新增或修改页面
 
-常规功能无需重新做全套设计规格或每次跑全量 E2E。业务差异通过内容、动作和有限变体表达；不要让 CSS 根据翻译文案猜测操作含义。
+按[设计系统开工顺序](design-system/README.md#开工顺序)执行；步骤与完成条件只在[结构化流程](design-system/structured-flow.md#执行顺序与每步完成条件)维护。调用方用内容、动作和有限变体表达业务差异；公共控件、数值与状态归原所有者。常规修改复用适用证据和既有验收，不要求新建设计提案或全量E2E。CSS使用组件语义与真实状态，不根据翻译文案猜测操作含义。
 
 ## 开发预览
 
@@ -132,6 +134,10 @@ pnpm --dir clients/gui test:design --settings-only
 
 ## 增量检查与验证边界
 
-普通 `verify` 已包含 `verify:design` 的检查逻辑。`verify:design` 的单一清单覆盖已迁移的 DecisionCard、ComposerSurface、SideChat、Feedback、SettingsPageParts 完整 CSS，以及 `SettingsPageParts.tsx`。CSS 检查阻止局部硬编码字号和颜色，并检查 Token 存在。TSX 使用现有 TypeScript AST 检查 JSX `className` 的直接字符串、`cn`、条件与模板中的字符串，以及直接对象 `style` 的字面量；拒绝 Tailwind 固定字号和标准色板，允许布局数字。检查器内的正反例验证目标写法。动态间接值、变量传递的 style、其他未迁移文件不在覆盖范围内。
+普通 `verify` 执行目录、完整迁移清单和[增量设计检查](design-system/automation.md#增量设计检查)；`verify:design` 另运行目录与增量审计回归。`verify:design` 的单一清单覆盖已迁移的 DecisionCard、ComposerSurface、SideChat、Feedback、SettingsPageParts 完整 CSS，以及 `SettingsPageParts.tsx`。CSS 检查阻止局部硬编码字号和颜色，并检查 Token 存在。TSX 使用现有 TypeScript AST 检查 JSX `className` 的直接字符串、`cn`、条件与模板中的字符串，以及直接对象 `style` 的字面量；拒绝 Tailwind 固定字号和标准色板，允许布局数字。检查器内的正反例验证目标写法。动态间接值和变量传递的 style 不在静态覆盖范围内；其他生产 UI 文件按 Git 基线检查新增问题，具体范围见增量设计检查。
+
+目录与页面合同另外由[单源目录](design-system/automation.md)校验；目录变化后运行 `design:sync` 同步派生物。
 
 生产样式改变需查看相关组件和原消费者；变体变化看默认、焦点、禁用和提交状态。Composer、审批、Side 的业务兼容继续使用已有 `test:composer`、`test:interactions`、`test:conversation-derivation`，它们与组件预览各自提供不同证据。物理 IME、真实供应商及安装包需单独验收。
+
+新增或重构页面先读[用户交互模式](design-system/interactions.md)，按 must/default/explore 约束选已有组合。设置首阶段的设计输入与实际Electron验证合同见[迁移题](design-system/exercises/settings-stage1.md)。
