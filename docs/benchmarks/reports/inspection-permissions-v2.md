@@ -115,3 +115,5 @@ Arena 复验沿用冻结的 122 题、原 Reward 和公共原生适配器，两�
 收敛源码的完整 Rust workspace 回归为 **1082 项通过、14 项按原配置忽略**，Clippy、三份桌面 schema、SDK/脚本与 GUI 资源回归通过。含空格目录中的完整 macOS 包通过 owned release smoke 与全屏 PTY 测试。原生 Runtime 与共享服务端到端夹具的直接 Mach-O 启动暴露本机入口差异，按产品和既有搜索夹具采用系统 Python 父进程；没有改写沙箱、跳过执行或把响应管道丢失当作成功。失败日志与修正后的验收分开保留。
 
 真实 Core/Runtime 的最终权限矩阵在本机通过：强制只读和显式继承各产生 11 次子模型 fixture 请求，父子均结算；Git 读取、大小 here-document 和 scratch 正例成功，源码/Git 配置写入、外部读取及网络负例符合各模式授权。YOLO、ASK 的一次/会话/项目授权、重启、撤销、取消和父只读规则通过。共享服务故障、崩溃恢复与多窗口生命周期也完成真实验证；脚本 fixture 不计为真实模型能力结果。
+
+最终发布门禁还命中主线已有 TLS 依赖的三条新公告（RUSTSEC-2026-0381/0382/0383）。锁文件仅将 rustls-webpki 升至 0.103.16、webpki-roots 与 webpki-root-certs 升至 1.0.10，保留其他依赖；没有禁用证书检查或忽略审计。原始依据为 [RustSec 公告数据库](https://github.com/RustSec/advisory-db/tree/e6f94f3760d5e6c54c1b05f204002263bc025524/crates)。因此首次候选仅保留两个部署资格任务，不启动正式矩阵；修正依赖后以新不可变包重新验收，所有原尝试保留，不按得分选择候选。
