@@ -1,33 +1,98 @@
 'use strict';
+const { performance } = require('node:perf_hooks');
+const { operationTrace } = require('./startup-timing.cjs');
+const reads = new WeakMap();
+const deadlineMs = 5000;
 
-// 全局目录只汇总各 Core 的事实；项目外工作空间仍由已有 projectless 所有者管理。
+function bounded(work, deadline, timeout) {
+  let timer;
+  return Promise.race([work, new Promise((_, reject) => { timer = setTimeout(() => reject(timeout()), Math.max(0, deadline - performance.now())); })])
+    .finally(() => clearTimeout(timer));
+}
+
+function ownerRead(backend, saved, inbox, limit, trace, deadline = performance.now() + deadlineMs) {
+  let pending = reads.get(backend);
+  if (!pending) { pending = new Map(); reads.set(backend, pending); }
+  const key = `${saved.id}:${inbox ? 'inbox' : 'list'}`;
+  const existing = pending.get(key);
+  if (existing) {
+    trace.advance('shared_wait', { connectionGeneration: existing.state.generation, pages: existing.state.pages });
+    if (!existing.state.closed && existing.limit >= limit) return existing.result;
+    return bounded(existing.work.catch(() => {}), deadline, () => Object.assign(new Error('任务目录读取超时，请重试。上次读取仍在结束。'), { code: 'TASK_CATALOG_TIMEOUT', stage: existing.state.stage }))
+      .then(() => ownerRead(backend, saved, inbox, limit, trace, deadline));
+  }
+  if (performance.now() >= deadline) return Promise.reject(Object.assign(new Error('任务目录读取超时，请重试。'), { code: 'TASK_CATALOG_TIMEOUT', stage: 'start' }));
+  const state = { closed: false, stage: 'start', pages: 0, generation: 0 };
+  const timeout = () => Object.assign(new Error('任务目录读取超时，请重试。后台连接仍由现有启动流程管理。'), { code: 'TASK_CATALOG_TIMEOUT', stage: state.stage, pages: state.pages, connectionGeneration: state.generation });
+  const guard = (project, client) => {
+    if (state.closed || performance.now() >= deadline) throw timeout();
+    if (!backend.saved.some(owner => owner.id === saved.id)) throw new Error('任务所有者已移除');
+    if (project) {
+      backend.requireConnection(project, client);
+      if ((project.connectionGeneration ?? 0) !== state.generation) throw Object.assign(new Error('连接已换代，请重试'), { code: 'STALE_CONNECTION' });
+    }
+  };
+  const work = (async () => {
+    trace.advance('start');
+    const project = await backend.start(saved.id);
+    guard();
+    const client = project.client;
+    state.generation = project.connectionGeneration ?? 0;
+    state.stage = 'list';
+    trace.advance('list', { connectionGeneration: state.generation });
+    const data = new Map(), cursors = new Set();
+    let after;
+    do {
+      guard(project, client);
+      const page = await client.request(inbox ? 'areal/inbox/list' : 'areal/task/list', { limit: Math.min(100, limit), ...(after ? { after } : {}) });
+      guard(project, client);
+      state.pages++;
+      for (const task of page.data) {
+        if (!inbox && task.mode !== 'scheduled') continue;
+        data.set(inbox ? `${task.taskId}:${task.message.runId}:${task.message.id}` : task.id, task);
+      }
+      after = page.nextCursor;
+      if (after && cursors.has(after)) throw new Error('任务列表分页未前进');
+      if (after) cursors.add(after);
+    } while (after && data.size < limit);
+    guard(project, client);
+    const rows = [...data.values()].slice(0, limit);
+    if (!inbox) for (const task of rows) project.model.setTask(task);
+    return { data: rows, hasMore: !!after || data.size > limit, connectionGeneration: state.generation, pages: state.pages };
+  })().catch(error => { error.stage ??= state.stage; error.pages ??= state.pages; error.connectionGeneration ??= state.generation; throw error; });
+  const result = bounded(work, deadline, () => { state.closed = true; return timeout(); }).finally(() => { state.closed = true; });
+  const flight = { result, work, state, limit };
+  pending.set(key, flight);
+  const clear = () => { if (pending.get(key) === flight) pending.delete(key); };
+  work.then(clear, clear);
+  return result;
+}
+
 async function taskCatalog(backend, request) {
-  const limit = request.limit ?? 30;
-  const inbox = request.operation === 'inbox';
+  const limit = request.limit ?? 30, inbox = request.operation === 'inbox';
   if ((!inbox && request.operation !== 'list') || !Number.isSafeInteger(limit) || limit < 1 || limit > 1024) throw new Error('无效任务列表请求');
-  const results = await Promise.all(backend.saved.map(async saved => {
+  const selected = request.projectId === undefined ? backend.saved : backend.saved.filter(saved => saved.id === request.projectId);
+  if (request.projectId !== undefined && selected.length !== 1) throw new Error('任务所有者不存在');
+  const trace = operationTrace('task_catalog', request);
+  trace.advance('begin');
+  const results = await Promise.all(selected.map(async saved => {
     const projectName = saved.projectless ? '独立任务' : backend.library.value.projects[saved.id]?.title || saved.root.split(/[\\/]/).pop();
+    const ownerTrace = operationTrace('task_catalog.owner', { ...request, projectId: saved.id });
+    ownerTrace.advance('begin');
     try {
-      const project = await backend.start(saved.id), data = new Map(), cursors = new Set();
-      const client = project.client;
-      let after;
-      do {
-        const page = await client.request(inbox ? 'areal/inbox/list' : 'areal/task/list', { limit: 100, ...(after ? { after } : {}) });
-        backend.requireConnection(project, client);
-        for (const task of page.data) {
-          if (!inbox && task.mode !== 'scheduled') continue;
-          if (!inbox) project.model.setTask(task);
-          data.set(inbox ? `${task.taskId}:${task.message.runId}:${task.message.id}` : task.id, { ...task, projectId: saved.id, projectName, scope: saved.projectless ? 'independent' : 'project' });
-        }
-        after = page.nextCursor;
-        if (after && cursors.has(after)) throw new Error('任务列表分页未前进');
-        cursors.add(after);
-      } while (after && data.size < limit);
-      return { data: [...data.values()].slice(0, limit), hasMore: !!after || data.size > limit };
+      const result = await ownerRead(backend, saved, inbox, limit, ownerTrace);
+      const data = result.data.slice(0, limit).map(task => ({ ...task, projectId: saved.id, projectName, scope: saved.projectless ? 'independent' : 'project' }));
+      const hasMore = result.hasMore || result.data.length > limit;
+      ownerTrace.finish('ready', { connectionGeneration: result.connectionGeneration, pages: result.pages, rows: data.length });
+      return { data, hasMore, owner: { projectId: saved.id, status: 'ready', connectionGeneration: result.connectionGeneration } };
     } catch (error) {
-      return { data: [], error: { projectId: saved.id, projectName, message: backend.providers.redact(error.message) } };
+      const failure = { projectId: saved.id, projectName, code: error.code === 'TASK_CATALOG_TIMEOUT' ? error.code : 'TASK_CATALOG_READ_FAILED', stage: error.stage === 'start' ? 'start' : 'list', message: backend.providers.redact(error.message) };
+      ownerTrace.finish(failure.code === 'TASK_CATALOG_TIMEOUT' ? 'timedOut' : 'error', { connectionGeneration: error.connectionGeneration, pages: error.pages, rows: 0 });
+      return { data: [], hasMore: false, error: failure, owner: { projectId: saved.id, status: 'error' } };
     }
   }));
-  return { data: results.flatMap(r => r.data), errors: results.flatMap(r => r.error ? [r.error] : []), hasMore: results.some(r => r.hasMore) };
+  trace.finish(results.some(result => result.error) ? 'error' : 'ready', { rows: results.reduce((sum, result) => sum + result.data.length, 0) });
+  return { data: results.flatMap(result => result.data), errors: results.flatMap(result => result.error ? [result.error] : []), hasMore: results.some(result => result.hasMore), owners: results.map(result => result.owner),
+    ...(request.projectId === undefined ? {} : { projectId: request.projectId }), ...(request.requestId === undefined ? {} : { requestId: request.requestId }), ...(request.viewEpoch === undefined ? {} : { viewEpoch: request.viewEpoch }) };
 }
 module.exports = { taskCatalog };

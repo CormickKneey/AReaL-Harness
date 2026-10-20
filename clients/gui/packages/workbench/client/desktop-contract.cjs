@@ -107,6 +107,12 @@ function validateCommand(name, params, { serviceOnly = false } = {}) {
   }
   if (['manage', 'workspace', 'media', 'queueEdit', 'library', 'providers', 'chatgpt', 'analytics', 'resources', 'projectless', 'tasks', 'remoteControl'].includes(name)
     && !identifier(params.operation)) invalid();
+  if (name === 'tasks' && (!['list', 'inbox'].includes(String(params.operation))
+    || Object.keys(params).some(key => !['operation', 'projectId', 'limit', 'requestId', 'viewEpoch'].includes(key))
+    || params.projectId !== undefined && !identifier(params.projectId)
+    || params.limit !== undefined && (!Number.isSafeInteger(params.limit) || Number(params.limit) < 1 || Number(params.limit) > 1024)
+    || params.requestId !== undefined && (typeof params.requestId !== 'string' || !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(params.requestId))
+    || params.viewEpoch !== undefined && (!Number.isSafeInteger(params.viewEpoch) || Number(params.viewEpoch) < 0))) invalid();
   if (name === 'resources' && params.operation === 'builtinSkill'
     && (params.id !== 'openai-skill-creator' || Object.keys(params).some(key => !['operation', 'id'].includes(key)))) invalid();
   if (name === 'manage' && ['pluginArchivePick', 'pluginArchiveImport'].includes(String(params.operation))) {
@@ -259,6 +265,17 @@ function validateCommandResponse(name, params, value) {
       || !record(value.provenance) || Object.keys(value.provenance).some(key => !['upstream', 'revision', 'contentDigest'].includes(key))
       || !identifier(value.provenance.upstream) || !identifier(value.provenance.revision)
       || typeof value.provenance.contentDigest !== 'string' || !/^[a-f0-9]{64}$/.test(value.provenance.contentDigest)) invalid();
+    return;
+  }
+  if (name === 'tasks') {
+    if (params.projectId !== undefined && (!record(value) || value.projectId !== params.projectId
+      || value.requestId !== params.requestId || value.viewEpoch !== params.viewEpoch
+      || !Array.isArray(value.owners) || value.owners.length !== 1 || !record(value.owners[0]) || value.owners[0].projectId !== params.projectId)) {
+      throw Object.assign(new Error('当前后台不支持按所有者读取任务目录。请安全更新后台后重试。'), { code: 'SERVICE_COMMAND_UNSUPPORTED' });
+    }
+    if (!record(value) || !Array.isArray(value.data) || !value.data.every(record) || !Array.isArray(value.errors) || !value.errors.every(record) || typeof value.hasMore !== 'boolean'
+      || params.projectId !== undefined && (value.data.some(row => row.projectId !== params.projectId) || value.errors.some(error => error.projectId !== params.projectId)
+        || !['ready', 'error'].includes(String(value.owners[0].status)) || value.owners[0].status === 'ready' && (!Number.isSafeInteger(value.owners[0].connectionGeneration) || value.owners[0].connectionGeneration < 0))) invalid();
     return;
   }
   if (name === 'continue' && (!record(value) || !(record(value.turn) && identifier(value.turn.id) || Number.isSafeInteger(value.queueRevision) && Number(value.queueRevision) >= 0))) invalid();

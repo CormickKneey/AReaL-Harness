@@ -40,4 +40,23 @@ function startupTrace(scope, context = {}) {
   };
 }
 
-module.exports = { startupTrace };
+function operationTrace(scope, context = {}) {
+  const started = performance.now(), identity = { event: 'operation', pid: process.pid, runId, scope };
+  for (const key of ['requestId', 'projectId']) {
+    if (typeof context[key] === 'string' && (key === 'projectId' ? /^[a-f0-9]{24}$/ : /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i).test(context[key])) identity[key] = context[key];
+  }
+  if (Number.isSafeInteger(context.viewEpoch) && context.viewEpoch >= 0) identity.viewEpoch = context.viewEpoch;
+  let finished = false;
+  const record = (kind, stage, fields = {}) => {
+    if (finished) return;
+    if (kind === 'end') finished = true;
+    const entry = { ...identity, kind, stage, at: new Date().toISOString(), durationMs: Math.round((performance.now() - started) * 1000) / 1000 };
+    for (const key of ['connectionGeneration', 'pages', 'rows']) {
+      if (Number.isSafeInteger(fields[key]) && fields[key] >= 0) entry[key] = fields[key];
+    }
+    try { writeSync(2, `[operation] ${JSON.stringify(entry)}\n`); } catch {}
+  };
+  return { advance(stage, fields) { record('stage', stage, fields); }, finish(terminal, fields) { record('end', terminal, fields); } };
+}
+
+module.exports = { startupTrace, operationTrace };
