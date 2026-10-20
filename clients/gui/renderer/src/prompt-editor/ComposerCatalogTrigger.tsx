@@ -59,7 +59,7 @@ export function ComposerCatalogTrigger({
                     setQuery("");
                     setIndex(0);
                     setOpen((value) => !value);
-                    catalog.refresh();
+                    if (!open) catalog.refresh();
                 }}
             >
                 <ComposerPlusIcon width={20} height={20} />
