@@ -257,6 +257,8 @@ pub struct Provider {
     pub endpoint: String,
     pub protocol: String,
     pub models: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub model_parameters: BTreeMap<String, ModelParameters>,
     #[serde(default)]
     pub credential_ref: Option<String>,
     #[serde(default)]

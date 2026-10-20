@@ -18,10 +18,12 @@ function connection(baseUrl, protocol) {
   return { baseUrl: base, endpoint: base + (protocol === 'responses' ? '/responses' : '/chat/completions') };
 }
 
+function validContextWindow(value) { return Number.isSafeInteger(value) && value > 0 && value <= 2_000_000; }
+
 function modelParameters(raw = {}) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('模型参数无效');
   const rules = { temperature: v => Number.isFinite(v) && v >= 0 && v <= 2, maxOutputTokens: v => Number.isSafeInteger(v) && v > 0,
-    contextWindowTokens: v => Number.isSafeInteger(v) && v > 0 && v <= 2_000_000,
+    contextWindowTokens: validContextWindow,
     reasoningEffort: v => ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'].includes(v) };
   const result = {};
   for (const [name, value] of Object.entries(raw)) {
@@ -219,9 +221,12 @@ class AppProviders {
       trace.advance('local_ready');
       await service.ready();
       if (!current()) { trace.finish('degraded'); return; }
-      const desired = { id: service.id ?? 'areal_openai', protocol: 'responses', endpoint: service.endpoint, credentialRef: service.id ?? 'areal_openai', models: (status.models ?? service.models).map(m => m.id), parameters: {} };
+      const models = status.models ?? service.models;
+      const contexts = Object.fromEntries(models.filter(m => validContextWindow(m.parameters?.contextWindowTokens)).map(m => [m.id, { contextWindowTokens: m.parameters.contextWindowTokens }]));
+      const desired = { id: service.id ?? 'areal_openai', protocol: 'responses', endpoint: service.endpoint, credentialRef: service.id ?? 'areal_openai', models: models.map(m => m.id),
+        ...(Object.keys(contexts).length ? { modelParameters: contexts } : {}), parameters: {} };
       trace.advance('provider_upsert');
-      if (!existing || Object.entries(desired).some(([k,v]) => JSON.stringify(existing[k]) !== JSON.stringify(v)))
+      if (!existing || !isDeepStrictEqual(existing.modelParameters ?? {}, contexts) || Object.entries(desired).some(([k,v]) => k !== 'modelParameters' && JSON.stringify(existing[k]) !== JSON.stringify(v)))
         await this.backend.submit(project, 'areal/provider/upsert', { provider: { ...desired, revision: existing?.revision ?? 0 }, expectedRevision: existing?.revision ?? 0 });
       trace.finish('ok');
     } catch (error) { trace.finish('error', error); throw error; }
@@ -326,7 +331,7 @@ class AppProviders {
         if (request.discoverModels && !previous && item.enabled && item.models.length === 0) {
           const catalog = await this.testConnection(item, { operation: 'discover' });
           if (!catalog.models.length) throw new Error('服务未提供模型，请手动添加后保存。');
-          item.models = [...new Set(catalog.models)].map(id => ({ id, enabled: true, parameters: {} }));
+          item.models = [...new Set(catalog.models)].map(id => ({ id, enabled: true, parameters: !item.parameters.contextWindowTokens && Object.hasOwn(catalog.modelParameters ?? {}, id) ? catalog.modelParameters[id] : {} }));
         }
         next.data = previous ? next.data.map(p => p.id === item.id ? item : p) : [...next.data, item];
       }
@@ -581,7 +586,9 @@ class AppProviders {
     try { data = JSON.parse(Buffer.concat(chunks).toString()); } catch { throw new Error('模型服务未返回有效的 JSON 响应'); }
     if (operation === 'discover') {
       if (!Array.isArray(data.data)) throw new Error('服务未返回模型列表，请手动添加模型');
-      return { models: data.data.map(p => p.id).filter(v => typeof v === 'string' && v.length <= 256 && (!key || !v.includes(key))).slice(0, 64) };
+      const models = data.data.filter(p => typeof p?.id === 'string' && p.id.length <= 256 && (!key || !p.id.includes(key))).slice(0, 64);
+      const parameters = Object.fromEntries(models.filter(p => validContextWindow(p.context_window)).map(p => [p.id, { contextWindowTokens: p.context_window }]));
+      return { models: models.map(p => p.id), ...(Object.keys(parameters).length ? { modelParameters: parameters } : {}) };
     }
     throw new Error('不支持的供应商测试操作');
   }

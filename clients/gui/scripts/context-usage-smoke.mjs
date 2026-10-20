@@ -100,7 +100,7 @@ async function choose(label) {
   await page.getByRole('button', { name: '模型', exact: true }).click();
   const picker = page.getByRole('button', { name: '选择模型', exact: true });
   if (await picker.isVisible()) await picker.click();
-  await page.getByRole('radio', { name: label, exact: true }).click(); await page.keyboard.press('Escape');
+  await page.getByRole('radio', { name: label, exact: true }).click(); await dismissPopovers();
   await page.waitForFunction(label => {
     const model = document.querySelector('button[aria-label="模型"]');
     return model && !model.disabled && model.textContent.includes(label);
@@ -114,7 +114,12 @@ async function send(prompt, expectedStatus = 'completed') {
   await until(s => thread(s, id)?.turns?.length > before && thread(s, id).turns.at(-1).status === expectedStatus, `turn ${prompt}`);
   return { id, turn: thread(await state(), id).turns.at(-1) };
 }
+async function dismissPopovers() {
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('[data-slot=popover-content]'));
+}
 async function showContext(id) {
+  await page.getByTestId('context-popover').waitFor({ state: 'detached' });
   await page.getByTestId('context-meter').click();
   await page.getByTestId('context-popover').waitFor();
   await page.waitForFunction(() => document.querySelector('[data-testid=context-popover]')?.textContent.includes('输出预留'));
@@ -177,12 +182,12 @@ try {
   assert.ok(popup.y + popup.height <= composer.y, 'context popup sits above the entire composer');
   assert.ok(Math.abs(popup.x + popup.width - composer.x - composer.width) <= 2, 'context popup aligns with composer right edge');
   assert.equal(await page.getByTestId('context-popover').getByRole('button', { name: /刷新|压缩上下文/ }).count(), 0, 'context is observation only');
-  await page.keyboard.press('Escape');
-  await choose('Gamma'); assert.equal((await showContext(source)).contextUsage.budget.windowTokens, 32000); await page.keyboard.press('Escape');
+  await dismissPopovers();
+  await choose('Gamma'); assert.equal((await showContext(source)).contextUsage.budget.windowTokens, 32000); await dismissPopovers();
   await choose('Beta'); assert.equal((await showContext(source)).contextUsage.budget.windowTokens, 128000);
   assert.equal(requests.length, 0, 'A -> provider fallback -> B capacity updates before sending');
   assert.equal(await page.getByTestId('context-meter').innerText(), '', 'Composer control is only a ring');
-  await page.screenshot({ path: join(scratch, '01-selected-capacity.png') }); await page.keyboard.press('Escape');
+  await page.screenshot({ path: join(scratch, '01-selected-capacity.png') }); await dismissPopovers();
   const first = await send('USAGE_NORMAL');
   assert.equal(first.turn.usage.inputTokens, 120); assert.equal(first.turn.usage.cachedInputTokens, 20);
   assert.equal(first.turn.generation.outputTokens, 30); assert.equal(first.turn.generation.measuredRequests, 1);
@@ -194,9 +199,9 @@ try {
   assert.match(await page.getByTestId('turn-usage').last().innerText(), /^150 Token · [\d.]+ tok\/s$/);
   await page.getByTestId('turn-usage-popover').locator('dd').first().getByText('150', { exact: true }).waitFor();
   await page.getByRole('button', { name: '本轮', exact: true }).click();
-  await page.screenshot({ path: join(scratch, '02-turn-usage.png') }); await page.keyboard.press('Escape');
+  await page.screenshot({ path: join(scratch, '02-turn-usage.png') }); await dismissPopovers();
   await choose('Alpha'); const changed = await showContext(source);
-  assert.equal(changed.contextUsage.kind, 'unavailable'); assert.equal(changed.contextUsage.budget.windowTokens, 64000); await page.keyboard.press('Escape');
+  assert.equal(changed.contextUsage.kind, 'unavailable'); assert.equal(changed.contextUsage.budget.windowTokens, 64000); await dismissPopovers();
   const fork = await call('fork', { projectId, sourceThreadId: source, workspaceMode: 'sharedCurrent', anchor: { turnId: first.turn.id, boundary: 'after' }, requestId: randomUUID() });
   await selectConversation(page, fork.threadId);
   let forkContext = await context(fork.threadId);
@@ -217,7 +222,7 @@ try {
   const definitions = categories.find(p => p.kind === 'toolDefinitions').children;
   assert.ok(definitions.some(p => p.name === 'CLI · fixture_cli')); assert.ok(definitions.some(p => p.name === '内置 · run_command'));
   for (const category of await page.locator('.context-category').all()) await category.locator('summary').click();
-  await page.screenshot({ path: join(scratch, '03-context-categories.png') }); await page.keyboard.press('Escape');
+  await page.screenshot({ path: join(scratch, '03-context-categories.png') }); await dismissPopovers();
   for (const mode of ['SINGLE', 'UNKNOWN', 'ZERO', 'ERROR']) {
     const { turn } = await send(`USAGE_${mode}`, mode === 'ERROR' ? 'failed' : 'completed');
     assert.equal(turn.generation.measuredRequests, 0); assert.equal(turn.generation.unmeasuredRequests, 1);
@@ -253,17 +258,17 @@ try {
   await until(s => thread(s, source)?.turns?.at(-1)?.usage?.inputTokens === 190, 'manual compact refreshes saved turn usage');
   const compacted = thread(await state(), source).turns.at(-1);
   assert.equal(compacted.id, long.turn.id); assert.equal(compacted.usage.outputTokens, 38); assert.equal(compacted.generation.outputTokens, 38); assert.equal(compacted.generation.measuredRequests, 2);
-  await page.keyboard.press('Escape'); assert.match(await page.getByTestId('turn-usage').last().innerText(), /^228 Token/);
+  await dismissPopovers(); assert.match(await page.getByTestId('turn-usage').last().innerText(), /^228 Token/);
   const subtotal = (await context(source)).sessionUsage;
   assert.equal(subtotal.unknownTurns, 2); assert.equal(subtotal.generation.missingUsageRequests, 2);
   const own = thread(await state(), source).turns;
   assert.equal(subtotal.usage.inputTokens, own.reduce((n, t) => n + (t.usage?.inputTokens ?? 0), 0));
   checks.push('accepted new-session preference, actual Skills and Runtime results, CLI registry classification, single/missing/zero/error/cancel coverage, compact updates saved usage and matched rate');
   await showContext(source);
-  await page.screenshot({ path: join(scratch, '07-final-context.png') }); await page.keyboard.press('Escape');
+  await page.screenshot({ path: join(scratch, '07-final-context.png') }); await dismissPopovers();
   await resizeConversation(app, page, 780, 900); await showContext(source);
   const bounds = await page.getByTestId('context-popover').boundingBox(); assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 780);
-  await page.screenshot({ path: join(scratch, '04-narrow-context.png') }); await page.keyboard.press('Escape');
+  await page.screenshot({ path: join(scratch, '04-narrow-context.png') }); await dismissPopovers();
   const before = requests.length, saved = structuredClone(thread(await state(), source).turns.map(({ usage, generation }) => ({ usage, generation })));
   await close(); await launch(); await until(s => project(s)?.state?.connected, 'reopened project'); await selectConversation(page, source);
   assert.deepEqual(thread(await state(), source).turns.map(({ usage, generation }) => ({ usage, generation })), saved);

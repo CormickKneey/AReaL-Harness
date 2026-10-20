@@ -372,7 +372,7 @@ export function Composer({
       </div>}
       <ConversationComposer
         project={project}
-        contextControl={<ContextMeter key={`${project.id}:${thread.id}`} project={project} thread={thread} action={readAction} />}
+        contextControl={<ContextMeter key={`${project.id}:${thread.id}`} project={project} thread={thread} action={readAction} anchor={menuAnchor} />}
         modelConfig={config}
         modelDisabled={disabled || !!queueEditor.edit || !!running || !config}
         onConfigureModel={values => { void configure(values); }}

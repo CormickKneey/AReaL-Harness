@@ -473,10 +473,9 @@ export function Messages({
             })}
             {!isInherited && (turn.items ?? []).filter((item: Data) => item.type === "dynamicToolCall").map((item: Data) =>
               <UnknownToolInspection key={`${project.id}:${thread.id}:${item.id}`} item={item} project={readOnly ? { ...project, state: { ...project.state, connected: false } } : project} thread={thread} action={action} />)}
-            <TurnUsage project={project} thread={localThread} turn={turn} action={action} inherited={isInherited} />
             <TurnFileSummary turn={turn} readTurnReview={readTurnReview} onFile={onFile} onReview={onReview} />
-            {responseMessage && turn.status !== "inProgress" && <MessageActions text={responseMessage.text}><TurnHookStats turn={turn} />{forkControls}{responseActions?.(responseMessage)}{!isInherited && !readOnly && <UserFeedback project={project} thread={localThread} turn={turn} item={responseMessage} action={action} dark={dark} />}</MessageActions>}
-            {canAskSelection && (!responseMessage || turn.status === "inProgress") && <div className="message-actions">{forkControls}</div>}
+            {responseMessage && turn.status !== "inProgress" ? <MessageActions text={responseMessage.text}><TurnHookStats turn={turn} />{forkControls}<TurnUsage project={project} thread={localThread} turn={turn} action={action} inherited={isInherited} />{responseActions?.(responseMessage)}{!isInherited && !readOnly && <UserFeedback project={project} thread={localThread} turn={turn} item={responseMessage} action={action} dark={dark} />}</MessageActions>
+              : <div className="message-actions">{forkControls}<TurnUsage project={project} thread={localThread} turn={turn} action={action} inherited={isInherited} /></div>}
             {canFork && forkError?.turnId === turn.id && <p role="alert" className="notice">{forkError?.message}</p>}
             {turn.status === "interrupted" && stopHeaderIndex < 0 && stopHeading}
             {turn.status !== "inProgress" && turn.status !== "interrupted" && !(turn.status === "completed" && hasReadingSummary) && (

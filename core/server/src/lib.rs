@@ -791,6 +791,7 @@ fn configured_models(
             .into(),
             credential_ref: reference,
             models,
+            model_parameters: std::collections::BTreeMap::new(),
             parameters: parameters(&item.parameters),
         });
         for model in &item.models {

@@ -2,7 +2,7 @@
 
 # 上下文管理
 
-Core 负责完整请求预算、压缩与持久历史。[Core 契约](../api/core.md)定义公开投影，[配置指南](../guides/configuration.md)说明配置。窗口兜底为 131072 token，HTTP 请求输出默认 16384 token。
+Core 负责完整请求预算、压缩与持久历史。[Core 契约](../api/core.md)定义公开投影，[配置指南](../guides/configuration.md)说明配置。显式窗口配置优先于已知模型默认值。未知模型 ID 由全局 131072 token 兜底，HTTP 请求输出仍默认 16384 token。
 
 ## 问题与目标
 
@@ -12,7 +12,7 @@ Core 负责完整请求预算、压缩与持久历史。[Core 契约](../api/cor
 
 | 配置 | 行为 |
 |---|---|
-| `model.context_window_tokens` | 常用配置；声明实际窗口，缺省由全局 131072 token 兜底 |
+| `model.context_window_tokens` | 声明实际窗口，优先于已知模型默认值与全局 131072 token 兜底 |
 | `model.max_output_tokens` | 常用配置；单次 HTTP 请求默认 16384，可按模型覆盖，必须为正数 |
 | `context.mode` | 保留 auto / manual / disabled |
 | `context.target_tokens`、`context.recent_tokens` | 目标与近期默认均为 0（自动）；显式正数保留为兼容边界偏好并报告来源 |
@@ -23,9 +23,25 @@ Core 负责完整请求预算、压缩与持久历史。[Core 契约](../api/cor
 
 不新增“用户原文保留额度”设置。常用设置只需窗口、输出和压缩模式；供应商及模型参数的覆盖顺序保持兼容。摘要专用推理强度和输出参数继续作为高级设置，避免把已有支持变为无效配置。
 
+## 已知模型窗口
+
+未显式配置线程、模型或供应商窗口时，Core 按完整模型 ID 查找默认容量。该表是本地默认值，不保证具体端点能力。代理或订阅可能限制更小窗口，应在供应商或模型参数中配置 `contextWindowTokens`；独立 TOML 对应 `model.context_window_tokens`。模型发现保留端点的 `context_window`，写为 `contextWindowTokens`，不拿可选的 `max_context_window` 代替默认容量。默认表不修改输出上限或已保存配置。未知或重命名模型继续使用全局兜底，不按型号前缀猜测容量。
+
+以下默认值于 2026-10-20 核对官方文档。实际支持的精确 ID 以 `core/engine/src/model/context_windows.rs` 为准。
+
+| 文档中的模型 ID | 窗口 | 来源 |
+|---|---:|---|
+| `gpt-6.1-sol`、`gpt-6-sol`、`gpt-6-astra`、`gpt-6-luna` | 1,050,000 | [OpenAI 模型目录](https://developers.openai.com/api/docs/models)、[Sol 对比](https://developers.openai.com/api/docs/models/compare?model=gpt-6-sol&model=gpt-6.1-sol) |
+| `gpt-5.6-sol`、`gpt-5.6` | 1,050,000 | [GPT-5.6 Sol](https://developers.openai.com/api/docs/models/gpt-5.6-sol) |
+| Core 表中列出的当前 Claude Opus、Sonnet、Haiku ID | 1,000,000 | [Claude 上下文窗口](https://platform.claude.com/docs/en/build-with-claude/context-windows) |
+| `deepseek-flash`、`deepseek-v4-pro` 与文档明确的 V4 Flash 别名 | 1,000,000 | [DeepSeek 模型](https://api-docs.deepseek.com/quick_start/pricing/) |
+| `glm-5` | 200,000 | [GLM-5](https://docs.z.ai/guides/llm/glm-5) |
+
+本次调研 Gemini，但未在表中设置其默认值。Gemini 3 与 2.5 的输入、输出预算独立，Gemini 4 才共享一个窗口。把前者的输入上限直接视为共享窗口会改变语义，见 [Gemini Token 限制](https://ai.google.dev/gemini-api/docs/tokens)。
+
 ## 完整请求的统一规划
 
-设模型窗口为 W，输出预留 R 取请求输出上限与显式预留下限的较大值，可用输入为 W − R。默认 HTTP 请求得到 114688 token 的完整输入空间。规划与最终发送共用消息构造与计量路径，计入动态指令、工具 schema、媒体及协议封套；沿用供应商完整输入用量的校准，媒体代理估算仍需保守余量。压缩触发同时受最终预检的原始保守估算约束：较小的历史用量不能跳过硬窗口门禁，较大的真实用量仍可提前触发压缩。
+设模型窗口为 W，输出预留 R 取请求输出上限与显式预留下限的较大值，可用输入为 W − R。未知模型使用兜底窗口与默认 HTTP 输出上限时，得到 114688 token 的完整输入空间。规划与最终发送共用消息构造与计量路径，计入动态指令、工具 schema、媒体及协议封套；沿用供应商完整输入用量的校准，媒体代理估算仍需保守余量。压缩触发同时受最终预检的原始保守估算约束：较小的历史用量不能跳过硬窗口门禁，较大的真实用量仍可提前触发压缩。
 
 按以下顺序分配，并保持原始角色与时间顺序：
 

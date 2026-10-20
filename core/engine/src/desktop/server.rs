@@ -349,7 +349,7 @@ impl Engine {
                     provider_id: p.id.clone(),
                     model_id: name.clone(),
                 };
-                let parameters = self.model_parameters(&reference, &p.parameters);
+                let parameters = self.model_parameters(&reference, p);
                 let result = self.provider_model(p, name, &parameters);
                 let capabilities = match p.protocol.as_str() {
                     "responses" => model::ModelProtocol::Responses.capabilities(),

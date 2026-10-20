@@ -346,6 +346,9 @@ impl Engine {
             }
             provider.revision = revision + 1;
             engine.provider_model(&provider, &provider.models[0], &provider.parameters)?;
+            for (name, parameters) in &provider.model_parameters {
+                engine.provider_model(&provider, name, parameters)?;
+            }
             candidate
                 .providers
                 .insert(provider.id.clone(), provider.clone());
@@ -530,7 +533,7 @@ impl Engine {
             .map(|m| self.provider(&m.provider_id))
             .transpose()?;
         let defaults = match (&model, &provider) {
-            (Some(model), Some(provider)) => self.model_parameters(model, &provider.parameters),
+            (Some(model), Some(provider)) => self.model_parameters(model, provider),
             _ => self
                 .default_model_metadata(None)
                 .map(|(_, parameters)| parameters)
@@ -575,7 +578,7 @@ impl Engine {
     pub(crate) fn model_parameters(
         &self,
         model: &ModelRef,
-        provider: &ModelParameters,
+        provider: &Provider,
     ) -> ModelParameters {
         let configured = self.desktop.configured_models.read().unwrap();
         let parameters = configured
@@ -583,7 +586,15 @@ impl Engine {
             .get(&(model.provider_id.clone(), model.model_id.clone()))
             .cloned()
             .unwrap_or_default();
-        merge_model_parameters(parameters, provider.clone())
+        let defaults = merge_model_parameters(
+            provider
+                .model_parameters
+                .get(&model.model_id)
+                .cloned()
+                .unwrap_or_default(),
+            provider.parameters.clone(),
+        );
+        merge_model_parameters(parameters, defaults)
     }
     pub(crate) fn update_model_parameters(
         &self,
@@ -592,7 +603,7 @@ impl Engine {
     ) {
         let _configuration = self.desktop.model_configuration.read().unwrap();
         let defaults = match (&configuration.model, &configuration.provider) {
-            (Some(model), Some(provider)) => self.model_parameters(model, &provider.parameters),
+            (Some(model), Some(provider)) => self.model_parameters(model, provider),
             _ => self
                 .default_model_metadata(configuration.default_model_revision.as_deref())
                 .map(|(_, parameters)| parameters)
@@ -817,7 +828,13 @@ impl Engine {
         use futures_util::StreamExt;
         let provider = self.provider(id)?;
         let name = model.unwrap_or_else(|| provider.models[0].clone());
-        let mut parameters = provider.parameters.clone();
+        let mut parameters = self.model_parameters(
+            &ModelRef {
+                provider_id: provider.id.clone(),
+                model_id: name.clone(),
+            },
+            &provider,
+        );
         parameters.max_output_tokens = Some(32);
         let adapter = self.provider_model(&provider, &name, &parameters)?;
         let probe = async {

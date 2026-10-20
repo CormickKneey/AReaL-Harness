@@ -41,7 +41,7 @@ export function ModelSettings({ action, onOpenSessionSettings }: { action: Actio
   const { busy, error, message, setError, setMessage, run, execute } = useSettingsOperation();
   const [remove, setRemove] = useState<Data | null>(null);
   const [modelDraft, setModelDraft] = useState<{ model: Data; index: number } | null>(null);
-  const [discovered, setDiscovered] = useState<string[] | null>(null);
+  const [discovered, setDiscovered] = useState<{ models: string[]; modelParameters?: Record<string, { contextWindowTokens: number }> } | null>(null);
   const [checked, setChecked] = useState<string[]>([]);
   const [probe, setProbe] = useState<Data>({});
   const items: Data[] = state.value?.data ?? [];
@@ -168,7 +168,7 @@ export function ModelSettings({ action, onOpenSessionSettings }: { action: Actio
             <div className="mb-1 flex flex-wrap items-center justify-between gap-3">
               <span className="text-ui-base text-foreground-subtle">模型 · {provider.models.length}</span>
               <div className="flex gap-2">
-                <Button variant="secondary" onClick={() => void saveThen(async saved => { const result = await api("discover", { id: saved.id }); setDiscovered(result.models); setChecked([]); })}>获取模型</Button>
+                <Button variant="secondary" onClick={() => void saveThen(async saved => { const result = await api("discover", { id: saved.id }); setDiscovered({ models: result.models, modelParameters: result.modelParameters }); setChecked([]); })}>获取模型</Button>
                 <Button variant="secondary" onClick={() => setModelDraft({ model: { id: "", enabled: true, parameters: {} }, index: -1 })}>添加模型</Button>
               </div>
             </div>
@@ -230,7 +230,7 @@ export function ModelSettings({ action, onOpenSessionSettings }: { action: Actio
     </div>
     {modelDraft && provider && <ModelEditor model={modelDraft.model} editing={modelDraft.index >= 0} ids={provider.models.filter((_: Data, i: number) => i !== modelDraft.index).map((m: Data) => m.id)} onClose={() => setModelDraft(null)} onSave={model => { const models = [...provider.models]; if (modelDraft.index < 0) models.push(model); else models[modelDraft.index] = model; edit({ models }); setModelDraft(null); }} />}
 
-    {discovered && provider && <SettingsDialog title="选择模型" description="从服务返回的模型列表中选择添加。" onClose={() => setDiscovered(null)}><div className="max-h-80 overflow-auto">{discovered.map(id => <label key={id} className="flex gap-3 p-2"><input type="checkbox" checked={checked.includes(id)} onChange={e => setChecked(e.target.checked ? [...checked, id] : checked.filter(v => v !== id))} />{id}</label>)}</div><Button onClick={() => { edit({ models: [...provider.models, ...checked.filter(id => !provider.models.some((m: Data) => m.id === id)).map(id => ({ id, enabled: true }))] }); setDiscovered(null); }}>添加所选模型</Button></SettingsDialog>}
+    {discovered && provider && <SettingsDialog title="选择模型" description="从服务返回的模型列表中选择添加。" onClose={() => setDiscovered(null)}><div className="max-h-80 overflow-auto">{discovered.models.map(id => <label key={id} className="flex gap-3 p-2"><input type="checkbox" checked={checked.includes(id)} onChange={e => setChecked(e.target.checked ? [...checked, id] : checked.filter(v => v !== id))} />{id}</label>)}</div><Button onClick={() => { edit({ models: [...provider.models, ...checked.filter(id => !provider.models.some((m: Data) => m.id === id)).map(id => ({ id, enabled: true, parameters: !provider.parameters?.contextWindowTokens && discovered.modelParameters && Object.hasOwn(discovered.modelParameters, id) ? discovered.modelParameters[id] : {} }))] }); setDiscovered(null); }}>添加所选模型</Button></SettingsDialog>}
     {remove && <SettingsDialog className="settings-confirm-dialog" title="移除供应商？" description={`移除 ${remove.name} 后，引用该供应商的任务需要重新选择模型。历史消息保留。`} onClose={() => setRemove(null)} busy={busy}><Feedback error={error} /><DialogFooter><Button variant="outline" disabled={busy} onClick={() => setRemove(null)}>取消</Button><Button variant="destructive" disabled={busy} onClick={() => void run(async () => { await api("removeAndApply", { id: remove.id, expectedRevision: state.value?.revision }); setRemove(null); setDraft(null); setKey(undefined); setSelected(items.find(item => item.id !== remove.id)?.id ?? (accountModels.length ? CHATGPT : null)); await state.refresh(); })}>{busy ? "移除中…" : "移除"}</Button></DialogFooter></SettingsDialog>}
   </div>;
 }

@@ -2,6 +2,7 @@ mod decoder;
 use decoder::{ChatDecoder, Decoder, ResponsesDecoder};
 
 mod audit;
+mod context_windows;
 mod request_budget;
 mod telemetry;
 mod tool_calls;
@@ -920,7 +921,10 @@ impl Model for HttpModel {
 
     fn capabilities(&self) -> ModelCapabilities {
         let mut capabilities = self.protocol.capabilities();
-        capabilities.context_window_tokens = self.options.context_window_tokens;
+        capabilities.context_window_tokens = self
+            .options
+            .context_window_tokens
+            .or_else(|| context_windows::known_context_window(&self.name));
         capabilities.max_output_tokens = self.options.max_output_tokens.map(|n| n as usize);
         capabilities.summary_output_tokens = Some(
             self.options

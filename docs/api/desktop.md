@@ -90,6 +90,8 @@ thread/configure 使用 expectedRevision，仅空闲且不压缩时生效。rese
 
 `areal/thread/start` 使用 `{requestId,agentProfile:{id,revision},cwd?,model?,parameters?,dynamicTools?}` 创建按指定 Profile 冻结配置的 Thread。客户端可以用 `--agent id@revision` 传入同一引用；不需要再指定 Workflow。Profile 的 `workflow` 字段是 Agent 属性，创建 Thread 时自动启动一次并在快照 `desktop.workflowRun` 中记录 Workgroup ID 与启动状态；实时状态通过 Workgroup API 查询。相同 requestId 重试和恢复 Thread 不会重复启动；绑定 Workflow 的 Profile 只能在创建 Thread 时选择，不能通过 `thread/configure` 切换。没有 Workflow 的 Profile 不要求 Workgroup policy，仍可使用其 `toolAllowlist` 允许的工具。
 
+`areal/provider/upsert` 接受可选 `Provider.modelParameters`，以目录中的模型 ID 映射既有 `ModelParameters`。原 `models` 仍为字符串数组。未知映射键或无效参数拒绝整次更新。有效参数依次采用显式 Thread 配置、已配置模型默认、Provider 模型元数据、Provider 全局默认。选定的 Provider 快照保留该元数据；省略映射保持原契约。端点 `context_window` 表示默认容量，`max_context_window` 不会自动启用更大窗口。
+
 `areal/model/list` 的每项 `parameters` 是 Core 按模型默认、Provider 默认合并的参数；`isDefault` 标识新会话的服务默认选择。显式 Profile 模型仍优先于全局默认。Composer 在发送前显示具体模型与有效思考强度，完全未设置强度时显示“供应商默认”，显式 `none` 显示“无”。“使用模型默认”只清除当前强度覆盖，不绕过模型或 Provider 已保存的默认值。新会话只保留本次未发送草稿的选择，创建成功后清除；历史使用会话当前已保存的选择，已有 Turn 快照不变。
 
 `areal/model/list` 还返回本实例的 `lastAcceptedModel`（无记录时为 null）：`{acceptedAt,model,modelId,reasoningEffort}`。`acceptedAt` 为 Core 受理时间（Unix 微秒），`model` 为供应商模型引用或隐式服务默认的 null，`modelId` 为实际模型名；`reasoningEffort=null` 与显式 `"none"` 不同。用户主会话的 `areal/turn/submit` 及显式 `areal/turn/start|enqueue` 将记录与受理收据写入同一 Thread 快照，并在响应/原收据中返回该字段。重复查询不刷新时间，后台执行不更新。桌面服务按时间汇总各项目的记录，持久保存新会话偏好；它不是已有会话配置的所有者。
