@@ -42,7 +42,7 @@ const server = createServer(async (request, response) => {
     const summary = body.messages.some(m => m.role === 'system' && typeof m.content === 'string' && m.content.startsWith('Summarize this session prefix'));
     const user = [...body.messages].reverse().find(m => m.role === 'user');
     const prompt = JSON.stringify(user?.content ?? '');
-    const mode = summary ? 'summary' : ['TOOLS', 'SINGLE', 'UNKNOWN', 'ZERO', 'ERROR', 'CANCEL', 'LONG'].find(mode => prompt.includes(`USAGE_${mode}`)) ?? 'normal';
+    const mode = summary ? 'summary' : ['TOOLS', 'SINGLE', 'UNKNOWN', 'ZERO', 'ERROR', 'CANCEL', 'LONG', 'LIVE'].find(mode => prompt.includes(`USAGE_${mode}`)) ?? 'normal';
     const record = { model: body.model, mode, request: body, startedAt: Date.now() }; requests.push(record);
     if (mode === 'ERROR') { response.writeHead(400, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ error: { message: 'Deterministic pre-stream error' } })); return; }
     response.writeHead(200, { 'Content-Type': 'text/event-stream' });
@@ -62,6 +62,10 @@ const server = createServer(async (request, response) => {
     const first = mode === 'SINGLE' || mode === 'ZERO' || mode === 'CANCEL' ? answer : answer.slice(0, Math.ceil(answer.length / 2));
     write(response, chunk(first)); record.firstContentAt = Date.now();
     if (mode === 'CANCEL') { held = () => { end(response, usage()); held = null; }; return; }
+    if (mode === 'LIVE') {
+      held = () => { write(response, chunk(' live continuation')); end(response, usage()); held = null; };
+      return;
+    }
     await delay(70);
     if (mode !== 'SINGLE' && mode !== 'ZERO') write(response, chunk(answer.slice(first.length)));
     await delay(70);
@@ -165,7 +169,15 @@ try {
   const created = await call('create', { projectId, profile: { id: 'standard', revision: 'v1' }, model: { providerId: 'fixture', modelId: 'alpha' } });
   const source = created.threadId; await selectConversation(page, source);
   identities.at(-1).coreServices = JSON.parse(execFileSync(binary, ['service', 'list', '--json'], { env, encoding: 'utf8', timeout: 20000 }));
-  assert.equal((await showContext(source)).contextUsage.budget.windowTokens, 64000); await page.keyboard.press('Escape');
+  assert.equal((await showContext(source)).contextUsage.budget.windowTokens, 64000);
+  const popup = await page.getByTestId('context-popover').boundingBox();
+  const composer = await page.locator('.composer-input-stack .composer-surface').boundingBox();
+  await page.screenshot({ path: join(scratch, '00-context-layout.png') });
+  assert.ok(composer, 'composer is present');
+  assert.ok(popup.y + popup.height <= composer.y, 'context popup sits above the entire composer');
+  assert.ok(Math.abs(popup.x + popup.width - composer.x - composer.width) <= 2, 'context popup aligns with composer right edge');
+  assert.equal(await page.getByTestId('context-popover').getByRole('button', { name: /刷新|压缩上下文/ }).count(), 0, 'context is observation only');
+  await page.keyboard.press('Escape');
   await choose('Gamma'); assert.equal((await showContext(source)).contextUsage.budget.windowTokens, 32000); await page.keyboard.press('Escape');
   await choose('Beta'); assert.equal((await showContext(source)).contextUsage.budget.windowTokens, 128000);
   assert.equal(requests.length, 0, 'A -> provider fallback -> B capacity updates before sending');
@@ -175,6 +187,9 @@ try {
   assert.equal(first.turn.usage.inputTokens, 120); assert.equal(first.turn.usage.cachedInputTokens, 20);
   assert.equal(first.turn.generation.outputTokens, 30); assert.equal(first.turn.generation.measuredRequests, 1);
   assert.ok(first.turn.generation.durationMs >= 100 && first.turn.generation.durationMs < 5000);
+  const usageRow = page.getByTestId('turn-usage').last().locator('..');
+  assert.ok((await usageRow.getAttribute('class')).includes('message-actions'), 'usage shares the response action row');
+  assert.ok(await usageRow.getByRole('button', { name: /分支/ }).count(), 'branch is beside usage');
   await page.getByTestId('turn-usage').last().click();
   assert.match(await page.getByTestId('turn-usage').last().innerText(), /^150 Token · [\d.]+ tok\/s$/);
   await page.getByRole('button', { name: '本轮', exact: true }).click();
@@ -216,9 +231,24 @@ try {
   await until(s => thread(s, source)?.turns?.at(-1)?.status === 'interrupted', 'cancel settled');
   const cancelled = thread(await state(), source).turns.at(-1);
   assert.equal(cancelled.usage.inputTokens, 120); assert.equal(cancelled.generation.measuredRequests, 0); assert.equal(cancelled.generation.usageRequests, 1);
+  await page.getByTestId('chat-input').fill('USAGE_LIVE');
+  await page.getByRole('button', { name: '发送', exact: true }).click();
+  await until(() => !!held, 'live content is held before provider usage');
+  const live = page.getByTestId('turn-usage').last();
+  await page.getByText('生成中', { exact: true }).waitFor();
+  assert.ok(!(await live.innerText()).includes('tok/s'), 'no invented streaming rate without provider token increments');
+  await page.screenshot({ path: join(scratch, '06-generating.png') });
+  held();
+  await until(s => thread(s, source)?.turns?.at(-1)?.status === 'completed', 'live stream finishes');
+  assert.match(await page.getByTestId('turn-usage').last().innerText(), /^150 Token · [\d.]+ tok\/s$/);
   const long = await send('USAGE_LONG');
-  await showContext(source); await page.getByRole('button', { name: '压缩上下文', exact: true }).click();
-  await page.getByText('压缩已完成', { exact: true }).waitFor({ timeout: 60000 });
+  await showContext(source);
+  const beforeCompact = (await context(source)).contextUsage.estimate.tokens;
+  await call('manage', { projectId, threadId: source, operation: 'contextCompact' });
+  await page.waitForFunction(before => {
+    const shown = document.querySelector('.context-usage-total')?.textContent;
+    return shown && !shown.includes(before);
+  }, new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(beforeCompact));
   await until(s => thread(s, source)?.turns?.at(-1)?.usage?.inputTokens === 190, 'manual compact refreshes saved turn usage');
   const compacted = thread(await state(), source).turns.at(-1);
   assert.equal(compacted.id, long.turn.id); assert.equal(compacted.usage.outputTokens, 38); assert.equal(compacted.generation.outputTokens, 38); assert.equal(compacted.generation.measuredRequests, 2);

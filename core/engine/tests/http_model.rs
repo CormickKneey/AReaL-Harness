@@ -859,3 +859,34 @@ async fn summary_overrides_are_isolated_and_never_raise_the_goal_output_cap() {
     }
     server.abort();
 }
+
+#[test]
+fn known_context_capacities_preserve_explicit_overrides_and_unknown_models() {
+    use areal_engine::model::{Model, ModelOptions};
+    for (name, expected) in [
+        ("gpt-6.1-sol", Some(1_050_000)),
+        ("gpt-6-sol", Some(1_050_000)),
+        ("gpt-6-astra", Some(1_050_000)),
+        ("gpt-6-luna", Some(1_050_000)),
+        ("claude-opus-5-5", Some(1_000_000)),
+        ("claude-sonnet-5-5", Some(1_000_000)),
+        ("claude-haiku-5-5", Some(1_000_000)),
+        ("claude-sonnet-4-6", Some(1_000_000)),
+        ("custom-gpt-6.1-sol", None),
+        ("gpt-6.1-sol-unverified", None),
+        ("fixture", None),
+    ] {
+        for protocol in [ModelProtocol::ChatCompletions, ModelProtocol::Responses] {
+            let model = HttpModel::with_protocol(
+                "http://127.0.0.1:9/".into(), name.into(), None, protocol,
+            ).unwrap();
+            assert_eq!(model.capabilities().context_window_tokens, expected, "{name}");
+            let configured = model.with_options(ModelOptions {
+                context_window_tokens: Some(64000),
+                ..Default::default()
+            }).unwrap();
+            assert_eq!(configured.capabilities().context_window_tokens, Some(64000));
+            assert_eq!(configured.capabilities().max_output_tokens, Some(16384));
+        }
+    }
+}
