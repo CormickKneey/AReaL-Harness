@@ -4,7 +4,7 @@ import { captureSmokeFailure, resizeConversation, selectConversation } from "./s
 import assert from "node:assert/strict";
 
 import { createRequire } from "node:module";
-import { mkdtemp, mkdir, writeFile, readFile, rename } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, rename, unlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
@@ -12,6 +12,9 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const desktop = join(gui, "app");
+const skillsRegression = process.env.AREAL_COMPOSER_SKILLS_REGRESSION === "1";
+assert.ok(!skillsRegression || !process.env.AREAL_GUI_EXECUTABLE, "Skills barriers require the source Electron fixture");
+let launchApp = desktop;
 const require = createRequire(join(desktop, "package.json"));
 const { _electron: electron } = require("playwright-core");
 const root = resolve(gui, "../..");
@@ -61,6 +64,10 @@ await writeFile(
       { id: "fixture-two", revision: "v2", root: secondSkill },
     ],
     profiles: [
+      ...(skillsRegression ? [{
+        id: "standard", revision: "v2", displayName: "标准二", instructions: "Complete the task",
+        skills: [{ id: "fixture-two", revision: "v2" }],
+      }] : []),
       {
         id: "standard",
         revision: "v1",
@@ -109,6 +116,40 @@ const env = {
 };
 delete env.AREAL_CORE_WORKSPACE;
 if (process.env.AREAL_GUI_EXECUTABLE) delete env.AREAL_CORE_BIN;
+const labelsControl = join(scratch, "labels-control.json");
+const labelsTrace = join(scratch, "labels-trace.jsonl");
+const labelGates = [];
+if (skillsRegression) {
+  launchApp = join(scratch, "app");
+  await mkdir(launchApp);
+  await writeFile(join(launchApp, "package.json"), JSON.stringify({ name: "composer-skills-fixture", main: "bootstrap.cjs" }));
+  await writeFile(join(launchApp, "bootstrap.cjs"), `
+const { CoreBackend } = require(${JSON.stringify(join(desktop, "src/core/backend.cjs"))});
+const { ScopedResources } = require(${JSON.stringify(join(desktop, "src/core/scoped-resources.cjs"))});
+const { existsSync, readFileSync, appendFileSync } = require("node:fs");
+const execute = CoreBackend.prototype.executeCommand;
+const skills = ScopedResources.prototype.skills;
+const trace = value => appendFileSync(${JSON.stringify(labelsTrace)}, JSON.stringify(value) + "\\n");
+ScopedResources.prototype.skills = async function(request) {
+  if (existsSync(${JSON.stringify(labelsControl)})) {
+    const plan = JSON.parse(readFileSync(${JSON.stringify(labelsControl)}, "utf8"));
+    trace({ kind: "labels_begin", plan: plan.id, scope: request.scope, projectId: request.projectId });
+    while (plan.gate && existsSync(plan.gate)) await new Promise(resolve => setTimeout(resolve, 20));
+    trace({ kind: "labels_end", plan: plan.id, scope: request.scope, failed: !!plan.failure });
+    if (plan.failure) throw new Error("optional source fixture failure");
+    return { revision: 1, data: plan[request.scope] || [] };
+  }
+  return skills.call(this, request);
+};
+CoreBackend.prototype.executeCommand = async function(name, request, context) {
+  const result = await execute.call(this, name, request, context);
+  if (name === "manage" && request.operation === "skills")
+    trace({ kind: "core_catalog", projectId: request.projectId, profile: request.agentProfile, rows: result.data.map(row => ({ id: row.id, revision: row.revision, available: row.available })) });
+  return result;
+};
+require(${JSON.stringify(join(desktop, "src/main.cjs"))});
+`);
+}
 let app,
   page,
   passed = false;
@@ -116,6 +157,7 @@ const errors = [],
   frames = [],
   checks = [];
 const pasteEvidence = { uploadedFile: null, folded: [] };
+const skillCatalogEvents = [];
 const button = (name) => page.getByRole("button", { name, exact: true });
 const state = () => page.evaluate(() => window.arealDesktop.snapshot());
 const project = (snapshot) =>
@@ -167,7 +209,7 @@ async function shot(name) {
 async function launch() {
   app = await electron.launch({
     executablePath: process.env.AREAL_GUI_EXECUTABLE || require("electron"),
-    args: process.env.AREAL_GUI_EXECUTABLE ? [] : [desktop],
+    args: process.env.AREAL_GUI_EXECUTABLE ? [] : [launchApp],
     env,
     timeout: 120000,
   });
@@ -177,6 +219,11 @@ async function launch() {
   page = await app.firstWindow();
   page.setDefaultTimeout(15000);
   page.on("pageerror", (e) => errors.push(e.message));
+  page.on("console", message => {
+    const output = message.text();
+    if (!output.startsWith("[composer-skills] ")) return;
+    skillCatalogEvents.push(JSON.parse(output.slice("[composer-skills] ".length)));
+  });
   await page.locator("[data-testid=areal-workbench]").waitFor({ timeout: 120000 });
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1440, 960));
 }
@@ -212,17 +259,17 @@ try {
   await page.getByRole("menuitem", { name: "新建项目", exact: true }).click();
   await until((s) => project(s)?.state?.connected, "project ready");
   const pid = project(await state()).id;
-  const selectFixtureProfile = async () => {
+  const selectFixtureProfile = async (revision = "v1") => {
     await page.waitForFunction((id) => {
       const workbench = document.querySelector('[data-testid="areal-workbench"]');
       return workbench?.dataset.projectId === id && !workbench.dataset.threadId;
     }, pid);
-    assert(project(await state()).profiles.some((p) => p.id === "standard" && p.revision === "v1"));
-    await page.evaluate((id) => {
+    assert(project(await state()).profiles.some((p) => p.id === "standard" && p.revision === revision));
+    await page.evaluate(({ id, revision }) => {
       const key = `areal-gui:draft:${id}:new`;
-      localStorage.setItem(`${key}:profile`, JSON.stringify({ id: "standard", revision: "v1" }));
+      localStorage.setItem(`${key}:profile`, JSON.stringify({ id: "standard", revision }));
       window.dispatchEvent(new CustomEvent("areal-draft-change", { detail: key }));
-    }, pid);
+    }, { id: pid, revision });
   };
   await selectFixtureProfile();
   await call("manage", {
@@ -263,6 +310,80 @@ try {
       "send completed",
     );
   };
+  if (skillsRegression) {
+    const trace = async () => (await readFile(labelsTrace, "utf8").catch(error => {
+      if (error.code === "ENOENT") return "";
+      throw error;
+    })).trim().split("\n").filter(Boolean).map(line => JSON.parse(line));
+    const plan = async (id, extra = {}) => {
+      const gate = join(scratch, `labels-${id}.gate`);
+      labelGates.push(gate);
+      await writeFile(gate, "held");
+      await writeFile(labelsControl, JSON.stringify({ id, gate, ...extra }));
+      return gate;
+    };
+    const source = () => page.getByRole("option", { name: /Second source/ }).locator(".composer-catalog-source");
+    const settled = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const firstGate = await plan("held", { project: [{ id: "fixture-skill", revision: "v1" }], user: [{ id: "fixture-two", revision: "v2" }] });
+    await input().fill("来源阻塞时保留正文");
+    await input().click();
+    await button("添加功能与 Skills").click();
+    await until(async () => (await trace()).filter(row => row.kind === "labels_begin" && row.plan === "held").length === 2, "both source labels held after the real Core catalog");
+    const core = (await trace()).filter(row => row.kind === "core_catalog" && row.profile?.revision === "v1").at(-1);
+    assert.deepEqual(core.rows.filter(row => row.available).map(({ id, revision }) => ({ id, revision })).sort((a, b) => a.id.localeCompare(b.id)), [
+      { id: "fixture-skill", revision: "v1" }, { id: "fixture-two", revision: "v2" },
+    ]);
+    const first = page.getByRole("option", { name: /Deterministic test skill/ });
+    await first.waitFor({ timeout: 3000 });
+    assert.notEqual(await first.getAttribute("aria-disabled"), "true", "Core skill is selectable while optional source labels are held");
+    assert.equal(await first.locator(".composer-catalog-source").textContent(), "任务配置 · fixture-skill");
+    await first.click();
+    assert.equal(await tags().count(), 1);
+    assert.equal(await input().textContent(), "来源阻塞时保留正文");
+    assert.equal(received.length, 0);
+    await unlink(firstGate);
+    await until(async () => (await trace()).filter(row => row.kind === "labels_end" && row.plan === "held").length === 2, "held labels released");
+    await openCatalog();
+    await until(async () => await source().textContent() === "个人", "released labels enrich current Core rows");
+    await settled();
+    const beforeClose = (await trace()).length;
+    await button("添加功能与 Skills").click();
+    await page.getByTestId("composer-catalog").waitFor({ state: "detached" });
+    await settled();
+    assert.equal((await trace()).length, beforeClose, "closing the catalog does not refresh Core or source labels");
+    checks.push("Core Skills remain selectable with source labels held; source labels later enrich rows; closing performs no refresh");
+
+    const failedGate = await plan("failure", { failure: true });
+    await openCatalog();
+    await unlink(failedGate);
+    await until(async () => (await trace()).filter(row => row.kind === "labels_end" && row.plan === "failure").length === 2, "source failures returned");
+    await settled();
+    assert.equal(await page.getByRole("option", { name: /Deterministic test skill/ }).count(), 1);
+    assert.equal(await source().textContent(), "任务配置 · fixture-two");
+    assert.equal(await page.getByTestId("composer-catalog").getByRole("alert").count(), 0, "optional source failure preserves authoritative skills without catalog error");
+    await page.getByLabel("搜索功能与 Skills").press("Escape");
+
+    const staleGate = await plan("stale", { project: [{ id: "fixture-two", revision: "v2" }] });
+    await openCatalog();
+    await until(async () => (await trace()).filter(row => row.kind === "labels_begin" && row.plan === "stale").length === 2, "old profile labels held");
+    await writeFile(labelsControl, JSON.stringify({ id: "current", user: [{ id: "fixture-two", revision: "v2" }] }));
+    await selectFixtureProfile("v2");
+    await until(async () => (await trace()).some(row => row.kind === "core_catalog" && row.profile?.revision === "v2"), "real Core returns the v2 profile catalog");
+    await until(async () => await source().textContent() === "个人", "current profile source labels applied");
+    assert.equal(await page.getByRole("option", { name: /Deterministic test skill/ }).count(), 0);
+    await unlink(staleGate);
+    await until(async () => (await trace()).filter(row => row.kind === "labels_end" && row.plan === "stale").length === 2, "old profile labels released");
+    await settled();
+    assert.equal(await source().textContent(), "个人", "old profile label response cannot overwrite the current catalog identity");
+    assert.equal(await page.getByRole("option", { name: /Deterministic test skill/ }).count(), 0);
+    assert.equal(await tags().count(), 1, "profile changes preserve the selected skill identity");
+    assert.equal(await input().textContent(), "来源阻塞时保留正文");
+    await page.getByLabel("搜索功能与 Skills").press("Escape");
+    await page.getByRole("button", { name: /移除技能/ }).click();
+    await selectFixtureProfile();
+    await input().fill("");
+    checks.push("source failure preserves Core availability; late labels cannot overwrite a different profile revision; selected skill and body remain intact");
+  }
   // 由 Chromium 驱动真实组词事件；候选中间态不能保存到草稿或触发发送。
   const checkComposition = async (draftKey, label) => {
     await input().fill("");
@@ -816,6 +937,9 @@ try {
   );
   throw error;
 } finally {
+  for (const gate of labelGates) await unlink(gate).catch(error => {
+    if (error.code !== "ENOENT") console.error("Source label barrier cleanup:", error.message);
+  });
   const stoppingAdapter = await readFile(join(scratch, "core/service.json"), "utf8").then(JSON.parse).catch(error => { if (error.code === "ENOENT") return null; throw error; });
   await quit();
   try {
@@ -889,6 +1013,9 @@ try {
         platform: process.platform,
         arch: process.arch,
         runtime: "real Electron + real Rust Core/Runtime + deterministic local HTTP/SSE model",
+        skillsRegression,
+        labelsTrace: skillsRegression ? labelsTrace : undefined,
+        skillCatalogEvents,
         nativeDialogs: "project picker and archive/quit confirmations injected",
         scratch,
         frames,

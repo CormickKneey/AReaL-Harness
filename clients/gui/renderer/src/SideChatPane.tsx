@@ -24,7 +24,8 @@ export function SideChatPane({ project, source, action, dark, onReturn, onPanel 
   }), [project.core?.instanceId, project.id, source.id]);
   const [selected, setSelected] = useState(() => workspace.current());
   const [relatedOpen, setRelatedOpen] = useState(false);
-  const choose = (next: { kind: string; id: string }) => { setSelected(next); setRelatedOpen(false); };
+  const [contextOpen, setContextOpen] = useState(false);
+  const choose = (next: { kind: string; id: string }) => { setSelected(next); setRelatedOpen(false); setContextOpen(false); };
   useEffect(() => { choose(workspace.current()); }, [workspace]);
   useEffect(() => {
     const receive = (event: Event) => {
@@ -42,6 +43,7 @@ export function SideChatPane({ project, source, action, dark, onReturn, onPanel 
       <Popover open={relatedOpen} onOpenChange={setRelatedOpen}>
         <PopoverTrigger render={<Button type="button" variant="ghost" size="icon" aria-label="相关侧边讨论" title="相关讨论"><MoreOptionsIcon /></Button>} />
         <PopoverContent align="end" className="side-chat-related">
+          <button type="button" aria-pressed={contextOpen} onClick={() => { setContextOpen(open => !open); setRelatedOpen(false); }}>上下文与文件访问</button>
           <RelatedSideChats project={project} sourceId={source.id} selectedId={selected.kind === "side" ? selected.id : ""} action={action} showNew={false}
             onSelect={id => choose(id ? workspace.selectSide(id) : workspace.newDraft())} />
           {workspace.availableDrafts().filter(draft => draft.id !== selected.id).map(draft => <button type="button" key={draft.id}
@@ -51,13 +53,13 @@ export function SideChatPane({ project, source, action, dark, onReturn, onPanel 
       <Button type="button" variant="ghost" size="icon" aria-label="返回主会话" title="关闭侧边聊天" onClick={onReturn}><CloseIcon /></Button>
     </div>
     <SideChatEditor key={`${workspace.owner(selected)}:${project.core?.connectionGeneration ?? 0}`} project={project} source={source}
-      action={action} dark={dark} workspace={workspace} selected={selected} onSelected={choose} onPanel={onPanel} />
+      action={action} dark={dark} workspace={workspace} selected={selected} onSelected={choose} onPanel={onPanel} contextOpen={contextOpen} />
   </section>;
 }
 
-function SideChatEditor({ project, source, action, dark, workspace, selected, onSelected, onPanel }: {
+function SideChatEditor({ project, source, action, dark, workspace, selected, onSelected, onPanel, contextOpen }: {
   project: Data; source: Data; action: Action; dark: boolean; workspace: SideDraftWorkspace;
-  selected: { kind: string; id: string }; onSelected: (next: { kind: string; id: string }) => void; onPanel: (name: string) => void;
+  selected: { kind: string; id: string }; onSelected: (next: { kind: string; id: string }) => void; onPanel: (name: string) => void; contextOpen: boolean;
 }) {
   const prefs = useApplicationPreferences();
   const api = useRef<LexicalChatInputHandle | null>(null);
@@ -241,9 +243,9 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
   };
   const disabled = !project.state?.connected || busy || !!pendingId || unsettled || !!sideId && (!validSide || side.desktop?.archived);
   return <>
-    <div className="side-chat-information">
+    <div className="side-chat-information" hidden={!contextOpen}>
       {validSide && <p role="status">{sourceStatus}{active && <> · {side.desktop?.sideCapacityStatus === "waiting" ? "等待模型容量" : "正在生成"}</>}</p>}
-      <details className="side-chat-context"><summary>会话上下文与文件访问</summary><p className="text-foreground-subtle">来源：{source.preview || source.id}。{validSide ? sourceStatus : anchor?.kind === "turn" ? `首问锚定轮次 ${anchor.turnId} 之后的持久证据` : "首问发送时冻结最新持久观察"}。{validSide && side.conversation.policy?.workspaceAccess === "readOnly" ? "可只读查询当前工作区；文件内容可能与历史锚点不同。" : "仅会话证据"}；不会执行来源任务。</p>
+      <details className="side-chat-context" open><summary>会话上下文与文件访问</summary><p className="text-foreground-subtle">来源：{source.preview || source.id}。{validSide ? sourceStatus : anchor?.kind === "turn" ? `首问锚定轮次 ${anchor.turnId} 之后的持久证据` : "首问发送时冻结最新持久观察"}。{validSide && side.conversation.policy?.workspaceAccess === "readOnly" ? "可只读查询当前工作区；文件内容可能与历史锚点不同。" : "仅会话证据"}；不会执行来源任务。</p>
       {!sideId && <label>文件访问范围 <select value={workspaceAccess} onChange={event => {
         const value = event.target.value;
         if (value !== "none" && value !== "readOnly") return;

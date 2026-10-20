@@ -60,7 +60,7 @@ const launch = async entry => {
   await until(async () => (await entry.page.evaluate(() => window.arealDesktop.snapshot())).connection?.state === 'ready', 'GUI connected');
   await entry.app.evaluate(({ dialog }) => {
     globalThis.__quitConfirm = false; globalThis.__quitDialogs = [];
-    dialog.showMessageBox = async (...args) => { const options = args.at(-1); globalThis.__quitDialogs.push(options); return { response: globalThis.__quitConfirm && ['确认取消后台任务？', '停止任务并退出应用？', '退出应用并暂停服务？'].includes(options.message) ? 1 : options.cancelId ?? 0 }; };
+    dialog.showMessageBox = async (...args) => { const options = args.at(-1); globalThis.__quitDialogs.push(options); return { response: globalThis.__quitConfirm && ['确认取消后台任务？', '退出 AReaL Harness？'].includes(options.message) ? 1 : options.cancelId ?? 0 }; };
   });
   entry.metadata = await metadata(entry.env);
   entry.pids = descendants([entry.process.pid, entry.metadata.pid]);
@@ -130,7 +130,7 @@ const model = createServer(async (request, response) => {
 await new Promise(resolve => model.listen(0, '127.0.0.1', resolve));
 const config = join(scratch, 'config.toml');
 await writeFile(config, `schema_version=1\n[model]\nprovider="fixture"\nname="fixture"\n[model.providers.fixture]\nprotocol="chat-completions"\nendpoint="http://127.0.0.1:${model.address().port}/v1/chat/completions"\n`);
-const sourceHashes = Object.fromEntries(await Promise.all(['app/src/core/main.cjs', 'app/src/core/service-main.cjs', 'app/src/core/service-client.cjs', 'app/src/core/backend.cjs', 'app/src/core/core-process.cjs', 'scripts/desktop-exit-smoke.mjs', 'renderer/dist/index.html'].map(async path => [path, sha(await readFile(join(gui, path)))])));
+const sourceHashes = Object.fromEntries(await Promise.all(['app/src/core/main.cjs', 'app/src/core/startup-recovery.cjs', 'app/src/core/service-main.cjs', 'app/src/core/service-client.cjs', 'app/src/core/backend.cjs', 'app/src/core/core-process.cjs', 'scripts/desktop-exit-smoke.mjs', 'renderer/dist/index.html'].map(async path => [path, sha(await readFile(join(gui, path)))])));
 const binaryHashes = Object.fromEntries(await Promise.all(['areal', 'areal-runtime', 'areal-runtime-fs'].map(async name => [name, sha(await readFile(join(dirname(binary), name)))])));
 const productHashes = packaged ? Object.fromEntries(await Promise.all(['bin/areal', 'libexec/areal/areal-runtime', 'libexec/areal/areal-runtime-fs'].map(async path => [path, sha(await readFile(join(bundledRoot, path)))]))) : binaryHashes;
 const cliEnv = { ...process.env, AREAL_HARNESS_HOME: join(scratch, 'cli-home'), AREAL_HARNESS_SERVICE_HOME: join(scratch, 'cli-registry') };
@@ -170,7 +170,7 @@ try {
   await quit(main);
   await until(() => main.app.evaluate(() => globalThis.__quitDialogs.length > 0), 'active quit confirmation');
   assert.equal(main.process.exitCode, null); assert.equal(held.size, 1);
-  const dialogs = await main.app.evaluate(() => globalThis.__quitDialogs); assert.equal(dialogs[0].message, '停止任务并退出应用？');
+  const dialogs = await main.app.evaluate(() => globalThis.__quitDialogs); assert.equal(dialogs[0].message, '退出 AReaL Harness？');
   checks.push('ordinary application quit asks before cancelling active work; cancel preserves the running request');
   await main.app.evaluate(() => { globalThis.__quitConfirm = true; });
   main.pids = [...new Set([...main.pids, ...descendants([main.process.pid, main.metadata.pid])])];
@@ -194,7 +194,7 @@ try {
   await quit(scheduled);
   await until(() => scheduled.app.evaluate(() => globalThis.__quitDialogs.length > 0), 'scheduled service quit impact');
   const scheduleDialog = await scheduled.app.evaluate(() => globalThis.__quitDialogs.at(-1));
-  assert.match(scheduleDialog.detail, /FUTURE_APPLICATION_SCHEDULE/); assert.equal(scheduled.process.exitCode, null);
+  assert.equal(scheduleDialog.detail, '正在运行的对话和任务将中断。应用关闭期间，定时任务不会运行，手机连接也将断开。'); assert.equal(scheduled.process.exitCode, null);
   await scheduled.app.evaluate(() => { globalThis.__quitConfirm = true; });
   await quit(scheduled); await gone(scheduled);
   checks.push('idle enabled schedules display quit impact and permit cancel; confirmation stops triggering without deleting definitions');

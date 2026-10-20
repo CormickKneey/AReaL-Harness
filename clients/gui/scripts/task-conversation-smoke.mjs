@@ -23,6 +23,7 @@ assert.ok(!inlineRegression||(!loadingRegression&&!dailyStartRegression&&process
 const inlineObjective='定时执行内联验收 INLINE_CONVERSATION';
 const inlineRuns=new Map();
 const dailyClock=join(scratch,'daily-clock');
+const loadingRpcGate=join(scratch,'hold-catalog-page');
 const loadingGate=join(scratch,'hold-project'), loadingTrace=join(scratch,'loading-trace.log'), prepareFailureGate=join(scratch,'fail-projectless-prepare');
 const watchGates=[];
 let launchApp=process.env.AREAL_GUI_TEST_APP_DIR || join(gui,'app');
@@ -31,7 +32,7 @@ await mkdir(workspace); await mkdir(join(userHome,'.areal'),{recursive:true});
 const taskDirectory=join(workspace,'task-working-directory'), independentDirectory=join(scratch,'independent-working-directory');
 await mkdir(taskDirectory);await mkdir(independentDirectory);
 execFileSync('git',['init','-b','main'],{cwd:workspace,stdio:'ignore'});
-const errors=[],checks=[],modelRequests=[],held=new Set();
+const errors=[],checks=[],modelRequests=[],catalogEvents=[],held=new Set();
 const pastDailyAnchor=new Date(Date.now()-86400000).toISOString().replace(/\.\d{3}Z$/,'Z');
 const changedAnchor=new Date(Date.now()+172800000).toISOString().replace(/\.\d{3}Z$/,'Z');
 const blockedOnce=new Set();
@@ -148,7 +149,12 @@ async function assertGlobalCreation(){
  assert.equal(draft.thread.cwd,owner.root);
  return {saved,owner,draft};
 }
-async function launch(){app=await electron.launch({executablePath:process.env.AREAL_ELECTRON_EXECUTABLE||require('electron'),args:[launchApp],env,timeout:120000});page=await app.firstWindow();await app.evaluate(({BrowserWindow})=>{const window=BrowserWindow.getAllWindows()[0];window.show();window.focus();});await page.bringToFront();page.setDefaultTimeout(15000);page.on('pageerror',error=>errors.push(error.message));await page.getByTestId('areal-workbench').waitFor({timeout:120000});await until(async()=>(await snapshot()).connection?.state==='ready','adapter ready');}
+async function launch(){app=await electron.launch({executablePath:process.env.AREAL_ELECTRON_EXECUTABLE||require('electron'),args:[launchApp],env,timeout:120000});page=await app.firstWindow();await app.evaluate(({BrowserWindow})=>{const window=BrowserWindow.getAllWindows()[0];window.show();window.focus();});await page.bringToFront();page.setDefaultTimeout(15000);page.on('pageerror',error=>errors.push(error.message));page.on('console',message=>{
+ const output=message.text();if(!output.startsWith('[task-catalog] '))return;
+ try{const {kind,requestId,viewEpoch,projectId,rows,at}=JSON.parse(output.slice('[task-catalog] '.length));
+  if(['begin','response_received','epoch_discarded','owner_committed','end','abandoned'].includes(kind)&&typeof requestId==='string'&&Number.isSafeInteger(viewEpoch)&&typeof at==='number')catalogEvents.push({kind,requestId,viewEpoch,projectId,rows,at});
+ }catch{}
+});await page.getByTestId('areal-workbench').waitFor({timeout:120000});await until(async()=>(await snapshot()).connection?.state==='ready','adapter ready');}
 if(loadingRegression||creationRegression){
  launchApp=join(scratch,'app');await mkdir(launchApp);
  await writeFile(join(launchApp,'package.json'),JSON.stringify({name:'task-loading-fixture',main:'bootstrap.cjs'}));
@@ -163,7 +169,28 @@ CoreBackend.prototype.start=async function(id){
   appendFileSync(${JSON.stringify(loadingTrace)},'project pending\\n');
   while(existsSync(${JSON.stringify(loadingGate)}))await new Promise(resolve=>setTimeout(resolve,50));
  }
- return start.call(this,id);
+ const value=await start.call(this,id);
+ if(${JSON.stringify(loadingRegression)}&&!value.loadingFixture){
+  value.loadingFixture=true;
+  const setTask=value.model.setTask.bind(value.model);
+  value.model.setTask=task=>{if(!/^(READY_TASK_|DELAYED_OWNER_TASK)/.test(task.objective))setTask(task);};
+ }
+ if(${JSON.stringify(loadingRegression)}&&project?.root.endsWith('slow-workspace')&&!value.client.loadingFixture){
+  value.client.loadingFixture=true;
+  const request=value.client.request.bind(value.client);
+  value.client.request=async(method,params)=>{
+   if(method==='areal/task/list'&&params.limit===30&&existsSync(${JSON.stringify(loadingRpcGate)})){
+    appendFileSync(${JSON.stringify(loadingTrace)},'catalog page '+(params.after||'first')+'\\n');
+    if(!params.after){const page=await request(method,params);return {...page,nextCursor:'fixture-second'};}
+    while(existsSync(${JSON.stringify(loadingRpcGate)}))await new Promise(resolve=>setTimeout(resolve,25));
+    appendFileSync(${JSON.stringify(loadingTrace)},'catalog page released\\n');
+    const page=await request(method,{limit:30});
+    return {...page,data:page.data.map(row=>({...row,objective:'LATE_CATALOG_TASK'}))};
+   }
+   return request(method,params);
+  };
+ }
+ return value;
 };
 CoreBackend.prototype.executeCommand=async function(name,request,context){
  if(name==='projectless'&&request.operation==='prepare'){
@@ -372,14 +399,24 @@ async function checkLoadingRegression(){
  await app.evaluate(({dialog},path)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[path]});},slow);
  await page.evaluate(()=>window.arealDesktop.chooseProject());
  const slowProject=await until(async()=>(await snapshot()).projects.find(p=>p.root===slow&&p.state?.connected),'second project ready');
+ for(let index=0;index<3;index++){
+  const root=join(scratch,`ready-workspace-${index}`);await mkdir(root);
+  await app.evaluate(({dialog},path)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[path]});},root);
+  await page.evaluate(()=>window.arealDesktop.chooseProject());
+  const owner=await until(async()=>(await snapshot()).projects.find(p=>p.root===root&&p.state?.connected),'healthy owner ready');
+  await call('manage',{projectId:owner.id,operation:'taskCreate',mode:'scheduled',objective:`READY_TASK_OWNER_${index}`,interactionMode:'interactive',schedule:{at:Math.floor(Date.now()/1000)+86400,timeZone:'Asia/Shanghai'}});
+ }
  const create=objective=>call('manage',{projectId:pid,operation:'taskCreate',mode:'scheduled',objective,interactionMode:'interactive',schedule:{at:Math.floor(Date.now()/1000)+86400,timeZone:'Asia/Shanghai'}});
  const first=await create('READY_TASK_FIRST'), second=await create('READY_TASK_SECOND');
+ await call('manage',{projectId:slowProject.id,operation:'taskCreate',mode:'scheduled',objective:'DELAYED_OWNER_TASK',interactionMode:'interactive',schedule:{at:Math.floor(Date.now()/1000)+86400,timeZone:'Asia/Shanghai'}});
+ assert.equal((await snapshot()).projects.find(p=>p.id===pid).state.tasks?.[first.id],undefined,'healthy rows must come from catalog response rather than prefilled projection');
  for(const entry of [first,second]){const gate=join(scratch,'watch-'+entry.id);watchGates.push(gate);await writeFile(gate,'hold');}
  await writeFile(loadingGate,'hold');
  await page.getByRole('button',{name:'定时任务',exact:true}).click();
  const traced=async value=>(await readFile(loadingTrace,'utf8').catch(()=>'' )).includes(value);
  await until(()=>traced('project pending'),'global catalog waits on unrelated project');
- assert.equal((await snapshot()).projects.find(p=>p.id===pid).state.tasks[first.id].objective,'READY_TASK_FIRST');
+ await page.getByRole('button',{name:'打开自动化 READY_TASK_FIRST',exact:true}).waitFor({timeout:4000});
+ for(let index=0;index<3;index++)await page.getByRole('button',{name:`打开自动化 READY_TASK_OWNER_${index}`,exact:true}).waitFor({timeout:4000});
  await page.getByText('其余任务仍在读取…',{exact:true}).waitFor();
  assert.equal(await page.getByText('没有符合筛选条件的定时任务。',{exact:true}).count(),0);
  assert.equal(await page.getByText('正在读取任务…',{exact:true}).count(),0);
@@ -403,16 +440,41 @@ async function checkLoadingRegression(){
  await page.getByText('你希望什么时候执行？',{exact:true}).waitFor();
  const management=await page.evaluate(key=>JSON.parse(localStorage.getItem(key)),`areal-gui:task-edit:${pid}:${second.id}`);
  assert.equal((await call('manage',{projectId:pid,operation:'taskDraftRead',threadId:management.threadId})).thread.cwd,workspace);
- await page.getByText('其余任务仍在读取…',{exact:true}).waitFor();
+ await page.getByRole('alert').filter({hasText:'任务目录读取超时'}).waitFor({timeout:10000});
+ assert.equal(await page.getByText('其余任务仍在读取…',{exact:true}).count(),0,'timed-out owner ends global pending');
  await page.screenshot({path:join(scratch,'ready-task-while-catalog-pending.png')});
  checks.push('ready task opens and sends through Composer before unrelated catalog returns; pending and stale subscription receipts do not enable management');
- await page.evaluate(projectId=>{window.loadingRegressionCreation=window.arealDesktop.command('manage',{projectId,operation:'taskCreate',mode:'scheduled',objective:'DELAYED_OWNER_TASK',interactionMode:'interactive',schedule:{at:Math.floor(Date.now()/1000)+86400,timeZone:'Asia/Shanghai'}});},slowProject.id);
  assert.equal(await page.getByRole('button',{name:'打开自动化 DELAYED_OWNER_TASK',exact:true}).count(),0);
  await rm(loadingGate);
- assert.equal((await page.evaluate(()=>window.loadingRegressionCreation)).ok,true);
+ await page.getByRole('button',{name:'重试读取 slow-workspace',exact:true}).click();
  await page.getByRole('button',{name:'打开自动化 DELAYED_OWNER_TASK',exact:true}).waitFor();
- await until(async()=>await page.getByText('其余任务仍在读取…',{exact:true}).count()===0,'global catalog completes after release');
- checks.push('delayed owner tasks appear after release without a false global empty state');
+ await until(async()=>await page.getByText('其余任务仍在读取…',{exact:true}).count()===0,'catalog completes after explicit retry');
+ assert.equal((await call('tasks',{operation:'list'})).data.some(row=>row.id===first.id),true,'omitted owner preserves global catalog');
+ assert.ok(Array.isArray((await call('tasks',{operation:'inbox'})).data),'omitted owner preserves Inbox catalog');
+ checks.push('delayed owner times out explicitly, retains no false empty state and returns on explicit retry; global list and Inbox remain supported');
+ await writeFile(loadingRpcGate,'hold');
+ await until(()=>traced('catalog page fixture-second'),'second page RPC held');
+ await page.getByRole('alert').filter({hasText:'任务目录读取超时'}).waitFor({timeout:10000});
+ assert.equal(await page.getByRole('button',{name:'打开自动化 DELAYED_OWNER_TASK',exact:true}).count(),1,'RPC failure retains previous complete owner rows');
+ assert.ok(await page.getByText('读取失败 · 上次读取',{exact:true}).count()>0);
+ await page.getByRole('button',{name:'返回对话',exact:true}).click();
+ await page.getByRole('button',{name:'定时任务',exact:true}).click();
+ await page.getByRole('button',{name:'打开自动化 READY_TASK_FIRST',exact:true}).waitFor({timeout:4000});
+ await page.getByText('其余任务仍在读取…',{exact:true}).waitFor();
+ const beforeRelease=await readFile(loadingTrace,'utf8');
+ assert.equal(beforeRelease.split('catalog page fixture-second').length-1,1,'reentering and retries share the held underlying page');
+ await rm(loadingRpcGate);
+ await page.getByRole('button',{name:'打开自动化 DELAYED_OWNER_TASK',exact:true}).waitFor();
+ assert.equal(await page.getByRole('button',{name:'打开自动化 LATE_CATALOG_TASK',exact:true}).count(),0,'expired page cannot publish to new view');
+ assert.equal(Object.values((await snapshot()).projects.find(p=>p.id===slowProject.id).state.tasks??{}).some(row=>row.objective==='LATE_CATALOG_TASK'),false,'expired page cannot update backend projection');
+ checks.push('RPC timeout retains complete rows; rapid navigation starts fresh epoch while sharing outstanding page; expired data never publishes');
+ const commit=catalogEvents.find(event=>event.kind==='owner_committed'&&event.projectId===pid&&event.rows>0);
+ assert.ok(commit,'healthy owner has an actual React commit event');
+ const response=catalogEvents.find(event=>event.kind==='response_received'&&event.requestId===commit.requestId&&event.viewEpoch===commit.viewEpoch&&event.projectId===pid);
+ assert.ok(response&&response.at<=commit.at,'healthy response precedes its correlated visible commit');
+ const terminals=new Set();
+ for(const event of catalogEvents.filter(event=>['end','abandoned'].includes(event.kind))){const identity=`${event.viewEpoch}:${event.requestId}`;assert.ok(!terminals.has(identity),'each catalog batch has one terminal event');terminals.add(identity);}
+ checks.push('structured renderer evidence ties healthy response to visible commit and uniquely terminates catalog batches');
  await page.getByRole('button',{name:'关闭任务详情',exact:true}).click();
  const retainedId=randomUUID(),retainedText='保留初始化失败前的任务描述';
  await page.evaluate(({projectId,cwd,draftId,text})=>localStorage.setItem(`areal-gui:task-draft:${projectId}`,JSON.stringify({draftId,location:{kind:'project',projectId,cwd},text})),{projectId:workspacePid,cwd:taskDirectory,draftId:retainedId,text:retainedText});
@@ -786,7 +848,7 @@ try{
  throw error;
 }finally{
  await rm(creationGate,{force:true});
- await rm(loadingGate,{force:true});
+ await rm(loadingGate,{force:true});await rm(loadingRpcGate,{force:true});
  await rm(prepareFailureGate,{force:true});
  for(const gate of watchGates)await rm(gate,{force:true});
  for(const response of held)response.destroy();
@@ -801,6 +863,7 @@ try{
  }
  if(app)await app.close().catch(()=>{});
  model.closeAllConnections();await new Promise(resolve=>model.close(resolve));
+ await writeFile(join(scratch,'catalog-events.json'),JSON.stringify(catalogEvents,null,2));
  await writeFile(join(scratch,'evidence.json'),JSON.stringify({passed,binary,binarySha256,checks,errors,modelRequests:modelRequests.length},null,2));
  await writeFile(join(scratch,'model-requests.json'),JSON.stringify(modelRequests,null,2));
  await writeFile(join(scratch,'manifest.json'),JSON.stringify({passed,sourceCommit:execFileSync('git',['rev-parse','HEAD'],{cwd:gui,encoding:'utf8'}).trim(),diff:execFileSync('git',['diff','--stat'],{cwd:gui,encoding:'utf8'}),binary,binarySha256,checks,errors,boundaries:['real isolated Electron, preload, Desktop adapter and Core','synthetic local model replies','native directory dialog result is stubbed','not installed app or real provider']},null,2));

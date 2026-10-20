@@ -162,7 +162,7 @@ class ScopedResources {
   async skills(request) {
     const scope = this.scope(request),
       data = await this.scan(scope);
-    const projectSkills = request.projectId
+    const projectSkills = scope === "user" && request.projectId
       ? await this.scan(this.project(request.projectId).id)
       : [];
     return {

@@ -176,6 +176,8 @@ Desktop owner 在副作用前保存持久回执，记录逐目标 Host requestId
 
 ## Task Mode 接入
 
+GUI 的 `tasks` 只读命令支持 `operation: list | inbox`、可选 `projectId`、`limit`（1 至 1024）、UUID `requestId` 和非负整数 `viewEpoch`。省略 `projectId` 时仍汇总全部已保存所有者。指定时只读取该所有者，响应回传身份与 `owners` 终态；旧后台缺少这些身份时，GUI 要求安全更新后台，不将全局数据当作单所有者结果。每所有者从请求开始计时的 5 秒期限包含启动与全部分页。期限只结束目录读取，底层启动仍由既有生命周期管理；未结束读取跨重试复用，迟到结果不得继续分页或更新投影，失败保留上次完整结果。每页固定并检查 client 与连接 generation，重复游标视为失败。`[operation]` 日志记录 requestId、viewEpoch、projectId、阶段、耗时、页数、行数和终态；renderer 的 `[task-catalog]` 记录接收、提交或视图放弃，不记录任务正文或凭据。taskWatch 回执继续独立决定任务管理是否可用。
+
 `task/create/list/read/pause/resume/cancel/subscribe/unsubscribe`、`channel/read/reply`、`inbox/list` 构成独立于 Thread 的任务控制与通信 API，详见 [Task 契约](tasks.md)。task/updated 通知携带 Task 投影和 channelSequence；客户端通过分页频道读取维护消息。server/status 与 drain 的 activeTasks 统计需要结算的任务工作：定时任务只在 Run 排队、执行、等待输入或子任务时计入，不计仅等待下一次触发的安排；暂停后仍在运行的定时 Run 继续计入。空闲定时安排可安全重启，保留时间、启用状态和历史。GUI/TUI/WebUI 可共享同一 Inbox；现有会话交互面板仍处理同步问题和审批。
 
 可选 `parameters.contextWindowTokens`（1–2000000）声明模型容量，保存在模型默认参数与 Thread 覆盖中。`areal/model/list.contextWindowTokens` 未声明时仍为 null，`effectiveContextWindowTokens` 包含全局兜底。上下文检查增加 budget 字段 windowTokens、outputReserveTokens、inputLimitTokens、targetTokens、windowSource（model/fallback）。模型配置或凭据不可用时仍可查看上下文，budget 返回 null。这些元数据控制本地预检，不改变供应商模型容量。

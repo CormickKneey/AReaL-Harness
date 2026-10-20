@@ -12,6 +12,17 @@ import type { Action, Data } from "./services.js";
 import { GoalUsageSummary } from "./GoalUsage.js";
 import { goalBudgetMessage } from "./conversationPresentation.js";
 
+type CatalogIdentity = { requestId: string; viewEpoch: number };
+type OwnerRows = { data: Data[]; hasMore: boolean; readAt: number; connectionGeneration: number };
+type OwnerRead =
+  | { status: "pending"; identity: CatalogIdentity; previous?: OwnerRows }
+  | { status: "ready"; identity: CatalogIdentity; value: OwnerRows }
+  | { status: "error"; identity: CatalogIdentity; message: string; previous?: OwnerRows };
+const ownerRows = (read?: OwnerRead) => read?.status === "ready" ? read.value : read?.previous;
+const catalogTrace = (kind: "begin" | "response_received" | "epoch_discarded" | "owner_committed" | "end" | "abandoned", identity: CatalogIdentity, projectId?: string, rows?: number) => {
+  console.info(`[task-catalog] ${JSON.stringify({ kind, ...identity, ...(projectId ? { projectId } : {}), ...(rows === undefined ? {} : { rows }), at: performance.now() })}`);
+};
+
 const statusLabels: Record<string, string> = { queued: "已受理，等待开始", running: "运行中", waitingForInput: "等待回答", waitingForAgents: "等待 worker", paused: "已暂停", blocked: "受阻", completed: "已完成", failed: "失败", cancelled: "已取消" };
 const terminal = (run?: Data) => !!run && ["completed", "failed", "cancelled"].includes(run.status);
 const finished = (task: Data) => terminal(task.runs?.at(-1)) && task.nextRunAt == null;
@@ -176,9 +187,23 @@ export function TaskCenter({ projects, connected, initialProjectId, defaultProje
   const [filters, setFilters] = useState(["已开启","已暂停","已完成"]);
   const [draftProjectId, setDraftProjectId] = useState<string>();
   const [initialText, setInitialText] = useState("");
-  const [rows, setRows] = useState<Data[]>([]), [messages, setMessages] = useState<Data[]>([]);
-  const [hasMore, setHasMore] = useState(false);
-  const [failedProjects, setFailedProjects] = useState<string[]>([]);
+  const [catalog, setCatalog] = useState<Record<string, OwnerRead>>({});
+  const committedOwners = useRef(new Map<string, string>());
+  useLayoutEffect(() => {
+    for (const [projectId, read] of Object.entries(catalog)) {
+      if (read.status === "pending") continue;
+      const identity = `${read.identity.viewEpoch}:${read.identity.requestId}`;
+      if (committedOwners.current.get(projectId) === identity) continue;
+      committedOwners.current.set(projectId, identity);
+      catalogTrace("owner_committed", read.identity, projectId, ownerRows(read)?.data.length ?? 0);
+    }
+  }, [catalog]);
+  const [messages, setMessages] = useState<Data[]>([]);
+  const rows = Object.values(catalog).flatMap(read => ownerRows(read)?.data ?? []);
+  const failedProjects = projects.filter(project => catalog[project.id]?.status === "error").map(project => project.id);
+  const loading = connected && projects.some(project => !catalog[project.id] || catalog[project.id].status === "pending");
+  const fresh = connected && projects.every(project => catalog[project.id]?.status === "ready");
+  const hasMore = Object.values(catalog).some(read => ownerRows(read)?.hasMore);
   const [selected, setSelected] = useState(() => sessionStorage.getItem("areal-gui:selected-global-task") ?? ""), [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false), [error, setError] = useState("");
   const [viewId] = useState(() => {
@@ -190,14 +215,11 @@ export function TaskCenter({ projects, connected, initialProjectId, defaultProje
     setCreating(false); setSelected(`${target.projectId}:${target.taskId}`); setDetailsOpen(true);
   }, [target]);
   const focusedTarget = useRef<typeof target>(undefined);
-  const sequence = useRef(0), reading = useRef(false), mutation = useRef(false);
+  const sequence = useRef(0), mutation = useRef(false);
+  const refreshRead = useRef<(more?: boolean, retryProjectId?: string) => Promise<void>>(async () => {});
   const pages = useRef(1);
-  const [readError, setReadError] = useState("");
   const [controlView, setControlView] = useState<Data | null>(null);
   const [channelError, setChannelError] = useState("");
-  const [loaded, setLoaded] = useState(false);
-  const [fresh, setFresh] = useState(false);
-  const [loading, setLoading] = useState(false);
   const [confirmedWatch, setConfirmedWatch] = useState<{ owner: string; generation: number } | null>(null);
   const listed: Data[] = [];
   let projectedHasMore = false;
@@ -206,6 +228,7 @@ export function TaskCenter({ projects, connected, initialProjectId, defaultProje
     for (const live of Object.values<Data>(owner.state?.tasks ?? {})) {
       if (live.mode !== "scheduled") continue;
       const previous = byId.get(live.id);
+      if (!previous && ownerRows(catalog[owner.id]) && `${owner.id}:${live.id}` !== selected) continue;
       if (previous && (live.revision < previous.revision || (live.channelSequence ?? 0) < (previous.channelSequence ?? 0))) continue;
       byId.set(live.id, { ...live, projectId: owner.id, projectName: previous?.projectName ?? projectLabel(owner), scope: owner.projectless ? "independent" : "project" });
     }
@@ -257,32 +280,51 @@ export function TaskCenter({ projects, connected, initialProjectId, defaultProje
       setChannelError((cause as Error).message);
     }
   }, [action]);
-  const refresh = useCallback(async (more = false) => {
-    if (reading.current || !connected) return;
-    if (more) pages.current++;
-    reading.current = true; setLoading(true); const id = ++sequence.current;
-    try {
-      const result = await action("tasks", { operation:"list", limit:Math.min(1024,30*pages.current) });
-      if (id !== sequence.current) return;
-      const current = selection.current;
-      if (current.selected && !result.data.some((row: Data) => taskKey(row) === current.selected)) {
-        const owner = current.projects.find(p => current.selected.startsWith(`${p.id}:`));
-        if (owner && !result.errors.some((error: Data) => error.projectId === owner.id)) {
-          const taskId = current.selected.slice(owner.id.length + 1);
-          const selectedTask = await action("manage", { projectId:owner.id, operation:"task", taskId });
-          result.data.push({ ...selectedTask, projectId:owner.id, projectName:projectLabel(owner), scope:owner.projectless ? "independent" : "project" });
-        }
-      }
-      if (id !== sequence.current) return;
-      const failed = result.errors.map((error: Data) => error.projectId);
-      setRows(previous => [...result.data,...previous.filter(row => failed.includes(row.projectId))]);
-      setFailedProjects(failed); setHasMore(result.hasMore); setFresh(true);
-      setReadError(result.errors.map((error: Data) => `${error.projectName}：${error.message}`).join("\n")); setLoaded(true);
-    } catch (cause) { if (id === sequence.current) { setReadError((cause as Error).message); setFresh(false); } }
-    finally { reading.current = false; setLoading(false); }
-  }, [action, connected]);
-  const projectIds = projects.map(project => project.id).join(":");
-  useEffect(() => { setFresh(false); void refresh(); const timer = window.setInterval(() => { if (!mutation.current) void refresh(); }, 3000); return () => { sequence.current++; clearInterval(timer); }; }, [refresh, projectIds]);
+  const refresh = useCallback((more = false, retryProjectId?: string) => refreshRead.current(more, retryProjectId), []);
+  const projectIds = projects.map(project => `${project.id}:${!!project.state?.connected}:${project.core?.connectionGeneration ?? 0}`).join(":");
+  useEffect(() => {
+    const viewEpoch = ++sequence.current;
+    const inFlight = new Set<string>(), failed = new Set<string>();
+    const batches = new Set<CatalogIdentity>();
+    let active = true;
+    const owners = selection.current.projects;
+    setCatalog(previous => Object.fromEntries(owners.flatMap(owner => previous[owner.id] ? [[owner.id, previous[owner.id]]] : [])));
+    const read = async (more = false, retryProjectId?: string) => {
+      if (!active || !connected || more && inFlight.size > 0) return;
+      if (more) pages.current++;
+      if (retryProjectId) failed.delete(retryProjectId);
+      const available = owners.filter(owner => !inFlight.has(owner.id) && !failed.has(owner.id) && (!retryProjectId || owner.id === retryProjectId));
+      if (!available.length) return;
+      const identity = { requestId: crypto.randomUUID(), viewEpoch };
+      batches.add(identity); catalogTrace("begin", identity);
+      await Promise.all(available.map(async owner => {
+        inFlight.add(owner.id);
+        setCatalog(previous => ({ ...previous, [owner.id]: { status: "pending", identity, previous: ownerRows(previous[owner.id]) } }));
+        try {
+          const result = await action("tasks", { operation: "list", projectId: owner.id, limit: Math.min(1024, 30 * pages.current), ...identity });
+          catalogTrace("response_received", identity, owner.id, result.data.length);
+          if (!active) { catalogTrace("epoch_discarded", identity, owner.id); return; }
+          if (result.projectId !== owner.id || result.requestId !== identity.requestId || result.viewEpoch !== viewEpoch) throw new Error("后台任务目录响应身份不匹配，请更新后台后重试。");
+          if (result.errors.length) throw new Error(result.errors.map((error: Data) => error.message).join("\n"));
+          const value = { data: result.data, hasMore: result.hasMore, readAt: Date.now(), connectionGeneration: result.owners[0].connectionGeneration };
+          setCatalog(previous => ({ ...previous, [owner.id]: { status: "ready", identity, value } }));
+        } catch (cause) {
+          if (!active) { catalogTrace("epoch_discarded", identity, owner.id); return; }
+          failed.add(owner.id);
+          setCatalog(previous => ({ ...previous, [owner.id]: { status: "error", identity, message: (cause as Error).message, previous: ownerRows(previous[owner.id]) } }));
+        } finally { inFlight.delete(owner.id); }
+      }));
+      if (batches.delete(identity)) catalogTrace("end", identity);
+    };
+    refreshRead.current = read;
+    void read();
+    const timer = window.setInterval(() => { if (!mutation.current) void read(); }, 3000);
+    return () => {
+      active = false; clearInterval(timer);
+      for (const identity of batches) catalogTrace("abandoned", identity);
+      batches.clear();
+    };
+  }, [action, connected, projectIds]);
   useEffect(() => {
     setConfirmedWatch(null);
     if (!task || !connected || !project?.state?.connected || ownerFailed) return;
@@ -368,11 +410,14 @@ export function TaskCenter({ projects, connected, initialProjectId, defaultProje
       <div className="task-list-scroll">
         {pending.length > 0 && <p role="alert">提交结果尚未确认，请核对任务列表。</p>}
         {error && <p role="alert">{error}</p>}
-        {readError && <p role="alert">{readError}</p>}
-        {(!connected || loaded && !fresh) && <p role="status">尚未确认最新状态，当前显示上次读取的任务。请连接后台后重试。</p>}
-        {connected && (!loaded || !fresh) && !readError && <p role="status">{listed.length ? "其余任务仍在读取…" : "正在读取任务…"}</p>}
-        <div className="task-list-rows">{visibleRows.map(row => <button key={`${row.projectId}:${row.id}`} type="button" aria-label={`打开自动化 ${row.objective}`} aria-pressed={`${row.projectId}:${row.id}` === selected} disabled={!connected || !projects.find(owner => owner.id === row.projectId)?.state?.connected || failedProjects.includes(row.projectId)} className={`task-list-row ${`${row.projectId}:${row.id}` === selected ? "bg-selected" : ""}`} onClick={() => {setCreating(false);setSelected(`${row.projectId}:${row.id}`);setError("");}}><span>{row.objective}</span><small>{row.scope === "independent" ? "独立任务" : row.projectName} · 定时任务</small><small>{row.paused || row.cancelled || finished(row) ? taskStatus(row) : row.nextRunAt != null ? date(row.nextRunAt, row.schedule?.timeZone) : taskStatus(row)}</small>{failedProjects.includes(row.projectId) && <small>读取失败 · 上次读取</small>}</button>)}</div>
-        {loaded && fresh && !readError && !visibleRows.length && <p>{moreAvailable ? "已加载任务中没有匹配项，可展开显示更多。" : "没有符合筛选条件的定时任务。"}</p>}
+        {projects.map(owner => {
+          const read = catalog[owner.id];
+          return read?.status === "error" && <div key={owner.id}><p role="alert">{projectLabel(owner)}：{read.message}{read.previous && " 当前显示上次读取的任务。"}</p><Button variant="ghost" onClick={() => void refresh(false, owner.id)} disabled={!connected} aria-label={`重试读取 ${projectLabel(owner)}`}>重试读取</Button></div>;
+        })}
+        {!connected && <p role="status">尚未确认最新状态，当前显示上次读取的任务。请连接后台后重试。</p>}
+        {loading && <p role="status">{listed.length ? "其余任务仍在读取…" : "正在读取任务…"}</p>}
+        <div className="task-list-rows">{visibleRows.map(row => <button key={`${row.projectId}:${row.id}`} type="button" aria-label={`打开自动化 ${row.objective}`} aria-pressed={`${row.projectId}:${row.id}` === selected} disabled={!connected || !projects.find(owner => owner.id === row.projectId)?.state?.connected || failedProjects.includes(row.projectId)} className={`task-list-row ${`${row.projectId}:${row.id}` === selected ? "bg-selected" : ""}`} onClick={() => {setCreating(false);setSelected(`${row.projectId}:${row.id}`);setError("");}}><span>{row.objective}</span><small>{row.scope === "independent" ? "独立任务" : row.projectName} · 定时任务</small><small>{row.paused || row.cancelled || finished(row) ? taskStatus(row) : row.nextRunAt != null ? date(row.nextRunAt, row.schedule?.timeZone) : taskStatus(row)}</small>{catalog[row.projectId]?.status !== "ready" && <small>{failedProjects.includes(row.projectId) ? "读取失败 · 上次读取" : "读取中 · 上次读取"}</small>}</button>)}</div>
+        {fresh && !visibleRows.length && <p>{moreAvailable ? "已加载任务中没有匹配项，可展开显示更多。" : "没有符合筛选条件的定时任务。"}</p>}
         {moreAvailable && <Button variant="ghost" disabled={!connected || loading} onClick={() => void refresh(true)}>展开显示</Button>}
       </div>
     </div>

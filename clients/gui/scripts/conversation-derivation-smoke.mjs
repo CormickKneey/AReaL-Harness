@@ -201,6 +201,10 @@ async function showRelated(pane) {
   await page.getByRole("region", { name: "相关讨论" }).waitFor();
 }
 async function openSideContext(pane) {
+  if (!await pane.locator(".side-chat-information").isVisible()) {
+    await showRelated(pane);
+    await page.getByRole("button", { name: "上下文与文件访问", exact: true }).click();
+  }
   if (!await pane.locator("details.side-chat-context").getAttribute("open").then(value => value !== null)) await pane.getByText("会话上下文与文件访问", { exact: true }).click();
 }
 async function composeText(input, text, label, append = false) {
@@ -412,8 +416,10 @@ try {
   await page.getByRole("menuitem", { name: "新建项目", exact: true }).click();
   await until(s => project(s)?.state?.connected, "project connection");
   projectId = project(await state()).id;
+  const sourceModelTrigger = page.getByRole("button", { name: "模型", exact: true }).filter({ hasText: "fixture" });
+  await sourceModelTrigger.waitFor();
   // 新草稿需显式选择目录中的模型，再开始本专项的来源对话。
-  await page.getByRole("button", { name: "模型", exact: true }).click();
+  await sourceModelTrigger.click();
   await page.getByRole("button", { name: "选择模型", exact: true }).click();
   await page.getByRole("radio", { name: "fixture", exact: true }).and(page.locator('[data-model-value="fixture/fixture"]')).click();
   await page.keyboard.press("Escape");
@@ -588,10 +594,20 @@ try {
   const selectSideExcerpt = () => selectMessageExcerpt(
     page.locator(`[data-turn-id="${anchorTurnId}"] [data-side-item-id] .conversation-markdown`).first(), unicodeExcerpt);
   await selectSideExcerpt();
-  const sideTrigger = page.getByRole("button", { name: "在旁路中询问所选内容" });
-  await sideTrigger.waitFor();
+  const sideTrigger = page.getByRole("menuitem", { name: "在旁路中询问所选内容" });
+  assert.equal(await page.locator(".side-selection-action").count(), 0, "选中文本后不再展示浮动旁路提示");
+  assert.equal(await sideTrigger.count(), 0, "旁路选区入口仅在主动打开轮次菜单后展示");
+  await page.locator(`[data-turn-id="${anchorTurnId}"] [data-side-item-id] .conversation-markdown`).first().scrollIntoViewIfNeeded();
+  await shot("04a-selection-without-floating-prompt.png");
+  await page.locator(`[data-turn-id="${anchorTurnId}"]`).getByRole("button", { name: /^轮次操作 / }).click();
+  await sideTrigger.press("Escape");
+  await page.getByRole("menu").waitFor({ state: "hidden" });
   await selectConversation(page, targetThreadId);
+  await page.getByRole("button", { name: /^轮次操作 / }).first().click();
+  await page.getByRole("menuitem").first().waitFor();
   assert.equal(await sideTrigger.count(), 0, "来源 A 的选区不能在切换后的 B 会话显示或提交");
+  await page.getByRole("menuitem").first().press("Escape");
+  await page.getByRole("menu").waitFor({ state: "hidden" });
   await selectConversation(page, sourceThreadId);
   // 导航会补全默认模型的权威版本；在打开 Side 前固定完整配置基线。
   const refreshedSource = await until(s => {
@@ -601,12 +617,15 @@ try {
   }, "source configured fixture model restored after navigation");
   const mainConfigBefore = JSON.stringify(project(refreshedSource).configurations[sourceThreadId]);
   await selectSideExcerpt();
-  checks.push("AC55: switching the source Thread invalidates the prior Side selection owner");
+  checks.push("AC55: Side selection stays in the explicit Turn menu, never floats, and switching the source Thread invalidates its owner");
+  const selectionMenuTrigger = page.locator(`[data-turn-id="${anchorTurnId}"]`).getByRole("button", { name: /^轮次操作 / });
+  await selectionMenuTrigger.evaluate(element => { window.__scfSideTrigger = element; });
+  await selectionMenuTrigger.click();
   await sideTrigger.focus();
-  await sideTrigger.evaluate(element => { window.__scfSideTrigger = element; });
   await sideTrigger.press("Enter");
   const sidePane = page.getByRole("region", { name: "旁路讨论" });
-  await sidePane.getByText("会话上下文与文件访问", { exact: true }).click();
+  assert.equal(await sidePane.locator(".side-chat-information").isVisible(), false);
+  await openSideContext(sidePane);
   await sidePane.locator("blockquote.notice").filter({ hasText: unicodeExcerpt }).waitFor();
   assert.match(await sidePane.innerText(), /已持久化选区/);
   await openSideContext(sidePane);
@@ -832,6 +851,7 @@ try {
   checks.push("AC74: real Core modality refusal preserves the main draft and attachment without a Turn/request; Side history and error state remain independent");
   const late = await send(lateSentinel, sourceThreadId);
   assert.ok(late.turnId);
+  await openSideContext(sidePane);
   assert.match(await sidePane.innerText(), /来源已推进/);
   const previousSideTurns = project(await state()).state.threads[sideThreadId].turns.length;
   const followStart = requests.length;
@@ -940,7 +960,9 @@ try {
   const streamingBody = page.locator(`[data-turn-id="${streamingTurnId}"] .assistant-message .conversation-markdown`);
   await streamingBody.getByText(streamExcerpt, { exact: true }).waitFor();
   await selectMessageExcerpt(streamingBody, streamExcerpt);
-  await page.getByRole("button", { name: "在旁路中询问所选内容" }).click();
+  assert.equal(await page.locator(".side-selection-action").count(), 0);
+  await page.locator(`[data-turn-id="${streamingTurnId}"]`).getByRole("button", { name: /^轮次操作 / }).click();
+  await page.getByRole("menuitem", { name: "在旁路中询问所选内容" }).click();
   await openSideContext(sidePane);
   await sidePane.locator("blockquote.notice").filter({ hasText: "用户引文，来源未确认" }).waitFor();
   await openSideContext(sidePane);
@@ -993,17 +1015,36 @@ try {
   checks.push("AC34/50/72: visible single-slot waiting, independent Side Stop and source Stop, no deadlock or cancellation cascade");
   await showSideConversation();
   const beforeDisconnect = project(await state());
-  await app.evaluate(() => globalThis.__scfConnection.socket.terminate());
-  await until(s => s.connection?.state === "unavailable", "GUI-to-Core transport disconnect");
-  await openSideContext(sidePane);
-  await sidePane.getByText(/^来源：.*来源当前状态未知/).waitFor();
-  await page.getByRole("button", { name: "重新连接后台" }).click();
-  const reconnected = await until(s => s.connection?.state === "ready" && project(s)?.state?.connected &&
-    project(s)?.state?.threads?.[sourceThreadId]?.turns?.length === beforeDisconnect.state.threads[sourceThreadId].turns.length &&
-    project(s)?.state?.threads?.[sideThreadId]?.turns?.length === beforeDisconnect.state.threads[sideThreadId].turns.length,
-  "GUI-to-Core reconnection and authoritative source/Side snapshot");
-  assert.equal(project(reconnected).state.threads[sideThreadId].conversation.origin.sourceThreadId, sourceThreadId);
-  assert.equal(project(reconnected).state.threads[sourceThreadId].conversation?.kind ?? "main", "main");
+  // 保持本次真实断线，避免 500ms 被动重连抢在 React/Playwright 的离线断言之前完成。
+  try {
+    await app.evaluate(({ app }, connectionPath) => {
+      const read = process.getBuiltinModule("module").createRequire(app.getAppPath() + "/package.json");
+      const { SharedCoreBackend } = read(connectionPath);
+      const original = SharedCoreBackend.prototype.scheduleReconnect;
+      const connection = globalThis.__scfConnection;
+      let disconnectedBackend;
+      SharedCoreBackend.prototype.scheduleReconnect = function () {
+        if (this.connection === connection) disconnectedBackend = this;
+        // 手动重连会替换 connection；该后端仍不能靠被动重试掩盖手动恢复失败。
+        if (this !== disconnectedBackend) return original.call(this);
+      };
+      globalThis.__scfRestoreReconnect = () => { SharedCoreBackend.prototype.scheduleReconnect = original; };
+      connection.socket.terminate();
+    }, join(desktop, "src/core/service-client.cjs"));
+    await until(s => s.connection?.state === "unavailable" && project(s)?.state?.connected === false,
+      "GUI-to-Core transport disconnect and disconnected project projection");
+    await openSideContext(sidePane);
+    await sidePane.getByText(/^来源：.*来源当前状态未知/).waitFor();
+    await page.getByRole("button", { name: "重新连接后台" }).click();
+    const reconnected = await until(s => s.connection?.state === "ready" && project(s)?.state?.connected &&
+      project(s)?.state?.threads?.[sourceThreadId]?.turns?.length === beforeDisconnect.state.threads[sourceThreadId].turns.length &&
+      project(s)?.state?.threads?.[sideThreadId]?.turns?.length === beforeDisconnect.state.threads[sideThreadId].turns.length,
+    "GUI-to-Core manual reconnection and authoritative source/Side snapshot");
+    assert.equal(project(reconnected).state.threads[sideThreadId].conversation.origin.sourceThreadId, sourceThreadId);
+    assert.equal(project(reconnected).state.threads[sourceThreadId].conversation?.kind ?? "main", "main");
+  } finally {
+    await app.evaluate(() => { globalThis.__scfRestoreReconnect?.(); delete globalThis.__scfRestoreReconnect; });
+  }
   checks.push("AC49: real GUI transport disconnect/reconnect restored distinct source and Side identities without duplicate Turns");
   // 重启使用同一隔离状态目录，并另行标记第二段连续录屏。
   const preRestart = { sourceTurns: project(await state()).state.threads[sourceThreadId].turns.length,
