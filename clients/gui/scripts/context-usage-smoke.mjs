@@ -75,7 +75,7 @@ const server = createServer(async (request, response) => {
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const config = join(scratch, 'config.toml');
-await writeFile(config, `schema_version=1\n[model]\ncatalog_version=1\nprovider="fixture"\nname="alpha"\n[model.providers.fixture]\nname="Fixture"\nendpoint="http://127.0.0.1:${server.address().port}/v1/chat/completions"\nprotocol="chat-completions"\nparameters={contextWindowTokens=32000}\nmodels=[{id="alpha",displayName="Alpha",enabled=true,parameters={contextWindowTokens=64000}},{id="beta",displayName="Beta",enabled=true,parameters={contextWindowTokens=128000}},{id="gamma",displayName="Gamma",enabled=true}]\n[tools]\nextensions_file=${JSON.stringify(extensions)}\n`);
+await writeFile(config, `schema_version=1\n[model]\ncatalog_version=1\nprovider="areal_openai"\nname="gpt-6.1-sol"\n[model.providers.fixture]\nname="Fixture"\nendpoint="http://127.0.0.1:${server.address().port}/v1/chat/completions"\nprotocol="chat-completions"\nparameters={contextWindowTokens=32000}\nmodels=[{id="alpha",displayName="Alpha",enabled=true,parameters={contextWindowTokens=64000}},{id="beta",displayName="Beta",enabled=true,parameters={contextWindowTokens=128000}},{id="gamma",displayName="Gamma",enabled=true}]\n[tools]\nextensions_file=${JSON.stringify(extensions)}\n`);
 const env = { ...process.env };
 for (const key of Object.keys(env)) if (/^(AREAL_|OPENAI_|ANTHROPIC_)/.test(key) || key === 'ELECTRON_RUN_AS_NODE') delete env[key];
 Object.assign(env, { AREAL_CORE_BIN: binary, AREAL_CORE_CONFIG: config, AREAL_CORE_DESKTOP_CONFIG: deployment, AREAL_GUI_USER_DATA: join(scratch, 'electron'), AREAL_CORE_HOME: join(scratch, 'core'), AREAL_CORE_USER_HOME: userHome, AREAL_HARNESS_SERVICE_HOME: join(scratch, 'registry'), NO_PROXY: '127.0.0.1,localhost', no_proxy: '127.0.0.1,localhost' });
@@ -206,14 +206,13 @@ try {
   await choose('Alpha'); const changed = await showContext(source);
   assert.equal(changed.contextUsage.kind, 'unavailable'); assert.equal(changed.contextUsage.budget.windowTokens, 64000); await dismissPopovers();
   await branchButton.click();
-  assert.equal(await page.getByRole('menuitem', { name: '在此轮之前分支', exact: true }).isEnabled(), true);
-  await page.getByRole('menuitem', { name: '在此轮之后分支', exact: true }).click();
   const forkDialog = page.getByRole('dialog', { name: '从这里创建聊天分支', exact: true });
-  await forkDialog.waitFor(); await page.keyboard.press('Escape');
+  await forkDialog.waitFor();
+  assert.equal(await page.getByRole('menuitem', { name: /在此轮(之前|之后)分支/ }).count(), 0, 'Branch opens the target dialog without a boundary menu');
+  await page.keyboard.press('Escape');
   await forkDialog.waitFor({ state: 'hidden' });
   await page.waitForFunction(() => document.activeElement?.classList.contains('turn-fork-trigger'));
   await branchButton.click();
-  await page.getByRole('menuitem', { name: '在此轮之后分支', exact: true }).click();
   await forkDialog.getByRole('button', { name: '创建分支', exact: true }).click();
   await page.waitForFunction(source => document.querySelector('[data-testid=areal-workbench]')?.dataset.threadId !== source, source);
   const fork = { threadId: await currentId() };
