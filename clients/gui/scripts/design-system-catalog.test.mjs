@@ -29,7 +29,7 @@ async function fixture(t) {
   pattern.states = ["ready", "busy", "failed", "unknown", "reading-history"];
   const surface = {
     schemaVersion: 1, id: "conversation-contract-check", intent: "检查对话规则引用，不验收UI",
-    pattern: "P-CONVERSATION", target: "renderer/src/design-system/ConversationTimelinePreview.tsx", runtime: "component-preview",
+    pattern: "P-CONVERSATION", target: pattern.reference, runtime: "component-preview",
     reference: { kind: "existing-code", path: "renderer/src/Messages.tsx", visualTarget: null },
     rules: ["CONV-READ-01"],
     slots: { timeline: ["Messages", "TurnExecution", "ToolEvent"], composer: ["ConversationComposer"], context: ["ToolEvent"] },
@@ -69,4 +69,13 @@ test("目录规则必须指向唯一定义", async t => {
 test("动态题不能遗漏历史阅读检查点", async t => {
   const f = await fixture(t); f.surface.states = f.surface.states.filter(item => item.id !== "reading-history"); await f.save();
   await assert.rejects(verifyDesignCatalog({ root: f.root, write: true }), /missing required state reading-history/);
+});
+
+test("交互分类不能引用不存在的生产所有者", async t => {
+  const f = await fixture(t); f.registry.interactionFamilies[0].components.push("InventedControl"); await f.save();
+  await assert.rejects(verifyDesignCatalog({ root: f.root, write: true }), /unknown component InventedControl/);
+});
+test("页面不能发明交互分类", async t => {
+  const f = await fixture(t); f.surface.interactionFamilies = ["I-INVENTED"]; await f.save();
+  await assert.rejects(verifyDesignCatalog({ root: f.root, write: true }), /unknown interaction family I-INVENTED/);
 });

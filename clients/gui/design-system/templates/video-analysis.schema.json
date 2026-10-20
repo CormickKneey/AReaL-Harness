@@ -1,0 +1,212 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Design video observation candidates",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "enum": [
+        1
+      ]
+    },
+    "mediaAccess": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "mediaId": {
+            "type": "string"
+          },
+          "access": {
+            "type": "string",
+            "enum": [
+              "native_video",
+              "sampled_frames",
+              "text_only",
+              "unavailable",
+              "unknown"
+            ]
+          },
+          "accessEvidence": {
+            "type": "string"
+          },
+          "sampleFps": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "limitations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "mediaId",
+          "access",
+          "accessEvidence",
+          "sampleFps",
+          "limitations"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "mediaId": {
+            "type": "string"
+          },
+          "startSeconds": {
+            "type": "number",
+            "minimum": 0
+          },
+          "endSeconds": {
+            "type": "number",
+            "minimum": 0
+          },
+          "timeUncertaintySeconds": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "visualObjectRef": {
+            "type": "string"
+          },
+          "axis": {
+            "type": "string",
+            "enum": [
+              "task",
+              "command",
+              "child",
+              "image",
+              "reading",
+              "disclosure",
+              "navigation",
+              "other"
+            ]
+          },
+          "observation": {
+            "type": "string"
+          },
+          "visibleText": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "uncertainty": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "mediaId",
+          "startSeconds",
+          "endSeconds",
+          "timeUncertaintySeconds",
+          "visualObjectRef",
+          "axis",
+          "observation",
+          "visibleText",
+          "uncertainty"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "referenceEventIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "implementationEventIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "observation": {
+            "type": "string"
+          },
+          "hypothesis": {
+            "type": "string"
+          },
+          "suggestedChange": {
+            "type": "string"
+          },
+          "keyframesToCheck": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "mediaId": {
+                  "type": "string"
+                },
+                "seconds": {
+                  "type": "array",
+                  "items": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                }
+              },
+              "required": [
+                "mediaId",
+                "seconds"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "uncertainty": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "referenceEventIds",
+          "implementationEventIds",
+          "observation",
+          "hypothesis",
+          "suggestedChange",
+          "keyframesToCheck",
+          "uncertainty"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 5
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "mediaAccess",
+    "events",
+    "findings",
+    "limitations"
+  ],
+  "additionalProperties": false
+}

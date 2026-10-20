@@ -370,6 +370,7 @@ export function Messages({
           const stopAccepted = turn.status === "inProgress" && queue?.paused === true && queue?.pauseReason === "stopped";
           const command = (turn.items ?? []).find((item: Data) => item.type === "dynamicToolCall" && item.tool === "run_command");
           const resourceLabel = command && queue?.pauseReason === "stopped" ? commandResourceLabel(command) : null;
+          const hasInterruption = turn.status === "interrupted" || turn.status === "failed" && !!turn.interruption;
           const stopHeading = <div className="turn-stop-heading turn-progress-heading">
             <div className="turn-progress-label"><span className="turn-status turn-progress-summary" role="status">{ordinary ? interruptionLabel(turn) : "已停止"}{turn.error ? `：${turnFailureMessage(turn)}` : ""}</span></div>
             <div className="turn-progress-divider" />
@@ -439,7 +440,7 @@ export function Messages({
                 }} />;
             });
             return <Fragment key={group.id}>
-              {turn.status === "interrupted" && groupIndex === stopHeaderIndex && stopHeading}
+              {hasInterruption && groupIndex === stopHeaderIndex && stopHeading}
               {group.progress ? <TurnProgress summaryAvailable={turn.status === "completed" && hasReadingSummary}
                 label={(groupIndex === firstProgress ? completedTimeLabel(turn) : undefined) ?? (legacyReply ? "早前消息与活动" : "本轮过程")}
                 settled={turn.status === "completed" && hasReadingSummary && !outcome.unfinished && !outcome.failures && !pendingInput}
@@ -458,8 +459,8 @@ export function Messages({
             {turn.status === "inProgress" && (!segments.length || ["userMessage", "agentMessage", "agentMedia"].includes(segments.at(-1)?.type)) && (
               <TurnExecution items={[]} turn={turn} project={project} threadId={thread.id} renderItem={() => null} />
             )}
-            {turn.status === "interrupted" && stopHeaderIndex < 0 && stopHeading}
-            {turn.status !== "inProgress" && turn.status !== "interrupted" && !(turn.status === "completed" && hasReadingSummary) && (
+            {hasInterruption && stopHeaderIndex < 0 && stopHeading}
+            {turn.status !== "inProgress" && !hasInterruption && !(turn.status === "completed" && hasReadingSummary) && (
               <div className="turn-status">
                 {({ completed: "已完成", interrupted: "已停止", failed: "执行失败" } as Data)[
                   turn.status

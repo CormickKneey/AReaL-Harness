@@ -184,6 +184,6 @@ export const baseCandidate = {
     "候选集不是已冻结 Base，不代表用户视觉验收完成",
     "证据仅覆盖生产 renderer 组件和本地 fixture，不覆盖 Core、真实供应商或安装包",
     "未覆盖全仓组件、其它平台和所有自定义主题；未完成独立做题实验",
-    "仅准入已复验的对话过程/阅读组合；完整P-CONVERSATION及图片/网页/子对话宿主返回、重连和真实执行仍未准入"
+    "仅准入过程/阅读组合；复合fixture补充命令、图片和子对话组合证据，完整P-CONVERSATION、生产App宿主、重连和真实执行仍未准入"
   ]
 } as const;

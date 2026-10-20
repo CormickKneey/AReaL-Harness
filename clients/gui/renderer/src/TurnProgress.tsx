@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { Collapsible } from "@base-ui/react/collapsible";
 import { ActivityIcon } from "./ActivityIcon.js";
 
 /** Local disclosure only. The parent supplies ordered content; hidden children stay
@@ -11,10 +12,10 @@ export function TurnProgress({ settled, summaryAvailable, failures, unfinished, 
   useEffect(() => { if (!manual.current) setOpen(!settled); }, [settled]);
   const id = useId();
   const expanded = !summaryAvailable || open;
-  return <div className="turn-progress">
-    {summaryAvailable && <div className="turn-progress-heading"><div className="turn-progress-label"><button className="turn-progress-summary" type="button" aria-label={label} aria-expanded={expanded} aria-controls={id} onClick={() => { manual.current = true; setOpen(!open); }}>
-      <span>{label}</span>{!!failures && <span className="execution-failures">{failures} 次工具失败</span>}{unfinished && <span>结果待确认</span>}<ActivityIcon kind="chevron" size={14} className={expanded ? "open" : ""} />
+  return <Collapsible.Root open={expanded} className="turn-progress">
+    {summaryAvailable && <div className="turn-progress-heading"><div className="turn-progress-label"><button className="turn-progress-summary" type="button" aria-label={`执行过程：${label}`} aria-expanded={expanded} aria-controls={id} onClick={() => { manual.current = true; setOpen(!open); }}>
+      <span>执行过程</span><span className="turn-progress-duration">{label}</span>{!!failures && <span className="execution-failures">{failures} 次工具失败</span>}{unfinished && <span>结果待确认</span>}<span className="conversation-disclosure-action" aria-hidden="true">{expanded ? "收起" : "展开"}</span><ActivityIcon kind="chevron" size={14} className={expanded ? "open" : ""} />
     </button></div><div className="turn-progress-divider" /></div>}
-    <div id={id} className="turn-progress-body" hidden={!expanded}>{children}</div>
-  </div>;
+    <Collapsible.Panel keepMounted id={id} className="turn-progress-body conversation-disclosure">{children}</Collapsible.Panel>
+  </Collapsible.Root>;
 }

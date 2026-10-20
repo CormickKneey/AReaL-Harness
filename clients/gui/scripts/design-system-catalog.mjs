@@ -75,6 +75,16 @@ export async function verifyDesignCatalog({ write = false, root = guiRoot } = {}
       }
     }
   }
+  unique(registry.interactionFamilies.map(item => item.id), "interaction family ids");
+  const interactionFamilies = new Set(registry.interactionFamilies.map(item => item.id));
+  for (const family of registry.interactionFamilies) {
+    assert.ok(/^I-[A-Z]+$/.test(family.id) && text(family.intent), `invalid interaction family ${family.id}`);
+    for (const key of ["patterns", "components", "rules"]) unique(family[key], `${family.id}.${key}`);
+    for (const id of family.patterns) assert.ok(patterns.has(id), `${family.id}: unknown pattern ${id}`);
+    for (const id of family.components) assert.ok(components.has(id), `${family.id}: unknown component ${id}`);
+    const document = await source(root, family.ruleSource);
+    for (const id of family.rules) assert.equal(document.split(`\`${id}\`：`).length - 1, 1, `${family.id}: rule ${id} needs one canonical definition`);
+  }
   const base = registry.baseCandidate;
   assert.ok(base && text(base.id) && /^\d+\.\d+\.\d+$/.test(base.version), "baseCandidate needs id/version");
   for (const key of ["foundations", "primitives", "compositions", "patterns", "acceptance", "limits"]) unique(base[key], `baseCandidate.${key}`);
@@ -99,6 +109,14 @@ export async function verifyDesignCatalog({ write = false, root = guiRoot } = {}
     const pattern = patterns.get(surface.pattern);
     assert.ok(pattern, `${path}: unknown pattern ${surface.pattern}`);
     await source(root, surface.target);
+    if (surface.interactionFamilies !== undefined) {
+      unique(surface.interactionFamilies, `${path}.interactionFamilies`);
+      for (const id of surface.interactionFamilies) {
+        assert.ok(interactionFamilies.has(id), `${path}: unknown interaction family ${id}`);
+        assert.ok(registry.interactionFamilies.find(item => item.id === id).patterns.includes(surface.pattern), `${path}: family ${id} does not support ${surface.pattern}`);
+      }
+    }
+
     if (pattern.rules !== undefined || surface.rules !== undefined) {
       unique(surface.rules, `${path}.rules`);
       for (const id of surface.rules) assert.ok(pattern.rules?.includes(id), `${path}: unknown rule ${id}`);
@@ -144,6 +162,8 @@ export async function verifyDesignCatalog({ write = false, root = guiRoot } = {}
     const path = `design-system/${file}`;
     outputs.set(path, block(await source(root, path), name, body));
   }
+  const familyTable = "| ID / 用户意图 | 既有组合 | 生产所有者 | 规则 |\n| --- | --- | --- | --- |\n" + registry.interactionFamilies.map(item => `| ${item.id} ${cells(item.intent)} | ${item.patterns.join(", ")} | ${item.components.join(", ")} | ${item.rules.join(", ")} |`).join("\n");
+  outputs.set("design-system/interactions.md", block(await source(root, "design-system/interactions.md"), "interaction-families", familyTable));
   const stale = [];
   for (const [path, content] of outputs) {
     let previous;
@@ -153,7 +173,7 @@ export async function verifyDesignCatalog({ write = false, root = guiRoot } = {}
     else stale.push(path);
   }
   assert.equal(stale.length, 0, `Design catalog is stale: ${stale.join(", ")}. Run pnpm --dir clients/gui design:sync; do not edit generated blocks.`);
-  return { components: components.size, patterns: patterns.size, tokens: tokenNames.length, surfaces: surfaces.length, rules, outputs: outputs.size };
+  return { components: components.size, patterns: patterns.size, tokens: tokenNames.length, surfaces: surfaces.length, rules, interactionFamilies: interactionFamilies.size, outputs: outputs.size };
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   assert.ok(process.argv.slice(2).every(arg => ["--write", "--check"].includes(arg)), "usage: design-system-catalog.mjs [--write|--check]");

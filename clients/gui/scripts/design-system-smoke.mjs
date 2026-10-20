@@ -1,3 +1,4 @@
+import { runConversationDemo } from "./design-system-conversation-demo.mjs";
 import { runConversationExercise } from "./design-system-conversation-exercise.mjs";
 import { runDecisionExercise } from "./design-system-decision-exercise.mjs";
 import assert from "node:assert/strict";
@@ -15,14 +16,15 @@ import { execFileSync } from "node:child_process";
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(join(gui, "app/package.json"));
 const { chromium } = require("playwright-core");
-const dist = join(gui, "dist/design-system");
+const dist = resolve(process.env.AREAL_DESIGN_PREVIEW_DIST || join(gui, "dist/design-system"));
 const scratch = await mkdtemp(join(tmpdir(), "areal-design-system-"));
 const baseline = process.argv.includes("--baseline");
 const conversationExercise = process.argv.includes("--conversation-exercise");
+const conversationDemo = process.argv.includes("--conversation-demo");
 const decisionExercise = process.argv.includes("--decision-exercise");
 const settingsContrast = process.argv.includes("--settings-contrast");
 const settingsExercise = process.argv.includes("--settings-exercise") || settingsContrast;
-const evidenceExercise = settingsExercise || decisionExercise || conversationExercise;
+const evidenceExercise = settingsExercise || decisionExercise || conversationExercise || conversationDemo;
 let exercise = null;
 const html = await readFile(join(dist, "design-system.html"), "utf8");
 const buildDigest = createHash("sha256").update(html);
@@ -41,22 +43,29 @@ const server = createServer(async (request, response) => {
 await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
 const origin = `http://127.0.0.1:${server.address().port}`;
 let browser, page, browserVersion, passed = false;
+let recordingStartHostMs, navigationStartHostMs, recordingEndHostMs;
 const errors = [], external = [], samples = [], checks = [];
 try {
   browser = await chromium.launch({ headless: true, ...(process.env.AREAL_GUI_TEST_BROWSER ? { executablePath: process.env.AREAL_GUI_TEST_BROWSER } : { channel: "chrome" }) });
   browserVersion = browser.version();
-  const context = await browser.newContext({ deviceScaleFactor: evidenceExercise ? 2 : 1, viewport: { width: 1440, height: evidenceExercise ? 949 : 900 }, ...(conversationExercise ? { recordVideo: { dir: scratch, size: { width: 1440, height: 949 } } } : {}), serviceWorkers: "block" });
+  const context = await browser.newContext({ deviceScaleFactor: evidenceExercise ? 2 : 1, viewport: { width: conversationExercise ? 1509 : 1440, height: conversationDemo ? 1000 : evidenceExercise ? 949 : 900 }, ...(conversationExercise ? { recordVideo: { dir: scratch, size: { width: 1509, height: 949 } } } : {}), serviceWorkers: "block" });
   await context.route("**/*", route => {
     if (route.request().url().startsWith(origin + "/")) return route.continue();
     external.push(route.request().url()); return route.abort();
   });
   if (evidenceExercise) await context.tracing.start({ screenshots: true, snapshots: true });
+  if (conversationExercise) recordingStartHostMs = Date.now();
   page = await context.newPage();
   page.on("pageerror", error => errors.push(error.message));
-  await page.goto(`${origin}/design-system.html${conversationExercise ? "?conversation-exercise" : decisionExercise ? "?decision-exercise" : settingsExercise ? "?settings-exercise" : ""}`);
+  if (conversationExercise) navigationStartHostMs = Date.now();
+  await page.goto(`${origin}/design-system.html${conversationDemo ? "?conversation" : conversationExercise ? "?conversation-exercise" : decisionExercise ? "?decision-exercise" : settingsExercise ? "?settings-exercise" : ""}`);
   await page.getByRole("heading", { name: "客户端设计系统", exact: true }).waitFor();
   assert.equal(await page.evaluate(() => typeof window.arealDesktop), "undefined");
-  if (conversationExercise) {
+  if (conversationDemo) {
+    exercise = { id: "conversation-demo", steps: [], checks: [] };
+    await runConversationDemo(page, scratch, exercise.checks);
+    checks.push(...exercise.checks);
+  } else if (conversationExercise) {
     exercise = { steps: [], checks: [] };
     await runConversationExercise(page, scratch, gui, exercise);
     checks.push(...exercise.checks);
@@ -115,64 +124,7 @@ try {
   assert.equal(await controls.getByRole("button", { name: "不可用", exact: true }).isDisabled(), true);
   checks.push("Base settings controls exercise keyboard switch, pair selection, menu choice/focus, disclosure and busy/failed/unknown feedback");
   const input = page.getByTestId("preview-composer");
-  const timeline = page.getByRole("region", { name: "对话时间线预览", exact: true });
-  const earlier = timeline.locator('[data-side-item-id="timeline-progress"]');
-  // CONV-GROUP-01统一完成过程；原先“phased短过程始终外露”的预期已被新合同替换。
-  const aggregate = timeline.getByRole("button", { name: "用时 19秒", exact: true });
-  assert.equal(await aggregate.getAttribute("aria-expanded"), "false");
-  assert.equal(await earlier.isVisible(), false, "normal completed commentary follows the aggregate default");
-  assert.equal(await timeline.locator('[data-side-item-id="timeline-final"]').isVisible(), true);
-  assert.equal(await timeline.locator('.turn-progress-body [data-side-item-id="timeline-final"]').count(), 0);
-  await aggregate.click();
-  assert.equal(await earlier.isVisible(), true, "aggregate restores original short commentary");
-  const longProgress = timeline.locator('[data-side-item-id="timeline-long-progress"]');
-  const progressSize = await longProgress.locator(".collapsible-text-viewport").evaluate(el => ({ height: el.clientHeight, full: el.scrollHeight, line: parseFloat(getComputedStyle(el).lineHeight) }));
-  assert.ok(progressSize.full > progressSize.height && Math.abs(progressSize.height - progressSize.line * 6) <= 1);
-  await longProgress.getByRole("button", { name: "展开全文", exact: true }).click();
-  assert.equal(await longProgress.getByRole("button", { name: "收起", exact: true }).getAttribute("aria-expanded"), "true");
-  assert.ok((await longProgress.innerText()).includes("检查记录 10"));
-  await longProgress.getByRole("button", { name: "收起", exact: true }).click();
-  const imageToggle = timeline.getByRole("button", { name: "已查看 1 张图片", exact: true });
-  assert.equal(await imageToggle.isVisible(), true, "image results remain discoverable inside the opened aggregate with the activity collapsed");
-  await imageToggle.click();
-  await timeline.getByRole("button", { name: "预览图片 工具图片", exact: true }).waitFor();
-  await timeline.getByRole("button", { name: "预览图片 工具图片", exact: true }).click();
-  await page.getByRole("button", { name: "关闭图片预览", exact: true }).waitFor();
-  await page.keyboard.press("Escape");
-  await imageToggle.waitFor();
-  const child = timeline.getByRole("button", { name: "打开 preview-child 子对话", exact: true });
-  assert.ok((await child.innerText()).includes("检查消息投影"));
-  assert.ok((await child.innerText()).includes("已完成"));
-  await child.click();
-  await timeline.getByRole("status").filter({ hasText: "预览打开：preview-child" }).waitFor();
-  const activity = timeline.getByRole("button", { name: "执行过程", exact: true });
-  if (await activity.getAttribute("aria-expanded") !== "true") await activity.click();
-  const command = timeline.locator('[data-tool-id="timeline-command"]');
-  await command.getByRole("button").click();
-  await command.getByLabel("工具结果", { exact: true }).waitFor();
-  assert.ok((await command.getByLabel("工具结果", { exact: true }).innerText()).includes("类型检查通过"));
-  const scrollOwners = await command.locator(".command-card").evaluate(el => ({
-    output: getComputedStyle(el.querySelector(".command-output")).overflowY,
-    group: getComputedStyle(el.closest(".execution-details")).overflowY,
-  }));
-  assert.equal(scrollOwners.output, "auto");
-  assert.equal(scrollOwners.group, "visible", "expanded tools use transcript scrolling rather than a second activity scrollbar");
-  const fileSummary = timeline.getByRole("button", { name: "本轮文件变更", exact: true });
-  assert.equal(await fileSummary.getAttribute("aria-expanded"), "false");
-  assert.equal(await timeline.getByRole("region", { name: "本轮文件", exact: true }).isVisible(), false);
-  await fileSummary.click();
-  assert.equal(await timeline.getByRole("region", { name: "本轮文件", exact: true }).isVisible(), true);
-  assert.equal(await timeline.getByLabel("合计新增 1 行，删除 1 行", { exact: true }).count(), 1);
-  await timeline.getByRole("button", { name: "查看变更", exact: true }).click();
-  await timeline.getByRole("status").filter({ hasText: "预览打开：本轮文件变更" }).waitFor();
-  await fileSummary.click();
-  await timeline.getByRole("button", { name: "显示执行中", exact: true }).click();
-  assert.equal(await timeline.getByTestId("turn-file-summary").count(), 0, "running turns do not claim completed file totals");
-  assert.equal(await timeline.locator('[data-side-item-id="timeline-stream"] .collapsible-text').count(), 0, "public reasoning after the current streamed reply does not fold that reply");
-  await timeline.getByRole("button", { name: "显示已完成", exact: true }).click();
-  assert.equal(await longProgress.getByRole("button", { name: "展开全文", exact: true }).getAttribute("aria-expanded"), "false");
-  assert.ok((await timeline.locator('[data-side-item-id="timeline-final"]').innerText()).includes("最终回答保留完整内容"));
-  checks.push("phased timeline groups completed progress, restores original text, bounds long commentary, and exposes images, named agents, command output and verified file totals without nested activity scrolling");
+  await runConversationDemo(page, scratch, checks);
   await input.fill("保留这份草稿 Keep this draft");
   await input.press("Enter");
   await page.getByRole("status").filter({ hasText: "预览收到输入" }).waitFor();
@@ -403,17 +355,19 @@ try {
   if (page) await page.screenshot({ path: join(scratch, "failure.png"), fullPage: true }).catch(() => {});
   process.exitCode = 1;
 } finally {
-  if (evidenceExercise && page) await page.context().tracing.stop({ path: join(scratch, conversationExercise ? "conversation-trace.zip" : decisionExercise ? "decision-trace.zip" : "settings-trace.zip") }).catch(error => { errors.push(String(error)); passed = false; process.exitCode = 1; });
-  if (conversationExercise && page) await page.context().close();
+  if (evidenceExercise && page) await page.context().tracing.stop({ path: join(scratch, conversationDemo ? "demo-trace.zip" : conversationExercise ? "conversation-trace.zip" : decisionExercise ? "decision-trace.zip" : "settings-trace.zip") }).catch(error => { errors.push(String(error)); passed = false; process.exitCode = 1; });
+  if (conversationExercise && page) { await page.context().close(); recordingEndHostMs = Date.now(); }
   await browser?.close(); await new Promise(resolve => server.close(resolve));
   const artifacts = await Promise.all((await readdir(scratch)).filter(name => name.endsWith(".png") || (evidenceExercise && /\.(json|zip|webm)$/.test(name))).sort().map(async name => ({ path: name, sha256: createHash("sha256").update(await readFile(join(scratch, name))).digest("hex") })));
   const worktreeStatus = execFileSync("git", ["status", "--porcelain"], { cwd: gui }).toString();
-  const sourceFiles = conversationExercise ? await Promise.all([...new Set([
+  const sourceFiles = (conversationExercise || conversationDemo) ? await Promise.all([...new Set([
     ...execFileSync("git", ["diff", "--name-only", "HEAD", "--"], { cwd: gui }).toString().trim().split("\n"),
     ...execFileSync("git", ["ls-files", "--full-name", "--others", "--exclude-standard"], { cwd: gui }).toString().trim().split("\n"),
   ])].filter(Boolean).map(async path => ({ path, sha256: createHash("sha256").update(await readFile(resolve(gui, "../..", path))).digest("hex") }))) : undefined;
   const diffSha256 = createHash("sha256").update(execFileSync("git", ["diff", "HEAD", "--"], { cwd: gui })).digest("hex");
   await writeFile(join(scratch, "manifest.json"), JSON.stringify({ passed, baseline, exercise, runId: scratch.split("/").at(-1), recordedAt: new Date().toISOString(), commit, buildSha256, worktreeStatus, diffSha256, sourceFiles,
-    environment: { platform: process.platform, arch: process.arch, browserVersion, viewport: evidenceExercise ? null : { width: 1440, height: 900 }, deviceScaleFactor: evidenceExercise ? 2 : 1 }, artifacts, checks, errors, external, samples, scope: "production renderer components with local fixture actions; no Electron/Core acceptance" }, null, 2));
+    environment: { platform: process.platform, arch: process.arch, browserVersion, viewport: evidenceExercise ? null : { width: 1440, height: 900 }, deviceScaleFactor: evidenceExercise ? 2 : 1 },
+    ...(conversationExercise ? { videoClock: { recordingStartHostMs, navigationStartHostMs, recordingEndHostMs, mapping: "host timestamps bound recording startup; event metrics.now is page performance time; correlate video by visible stage, not an assumed exact offset" } } : {}),
+    artifacts, checks, errors, external, samples, scope: "production renderer components with local fixture actions; no Electron/Core acceptance" }, null, 2));
   console.log(JSON.stringify({ passed, scratch, checks, errors }));
 }

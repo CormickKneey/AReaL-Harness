@@ -259,6 +259,26 @@
       "id": "TurnProgress",
       "source": "renderer/src/TurnProgress.tsx",
       "purpose": "保留子项身份与人工选择的过程总组"
+    },
+    {
+      "id": "CommandDetails",
+      "source": "renderer/src/CommandDetails.tsx",
+      "purpose": "同一进程的输入、连续输出、状态与原始记录"
+    },
+    {
+      "id": "AgentConversationPane",
+      "source": "renderer/src/AgentConversationPane.tsx",
+      "purpose": "绑定父子身份的独立子对话阅读"
+    },
+    {
+      "id": "SentAttachment",
+      "source": "renderer/src/MessageAttachment.tsx",
+      "purpose": "已发送媒体的生产预览与关闭返回"
+    },
+    {
+      "id": "SettingsNavigation",
+      "source": "renderer/src/settings/SettingsWorkspace.tsx",
+      "purpose": "定位、筛选设置分类并沿原导航守卫返回"
     }
   ],
   "patterns": [
@@ -318,9 +338,12 @@
         "TurnProgress",
         "TurnExecution",
         "ToolEvent",
-        "ConversationComposer"
+        "ConversationComposer",
+        "CommandDetails",
+        "AgentConversationPane",
+        "SentAttachment"
       ],
-      "reference": "renderer/src/design-system/ConversationTimelinePreview.tsx",
+      "reference": "renderer/src/design-system/ConversationFlowExercise.tsx",
       "slots": [
         "timeline",
         "composer",
@@ -334,7 +357,11 @@
         "reading-history",
         "following-latest",
         "tool-details",
-        "completed"
+        "completed",
+        "command-streaming",
+        "parallel-working",
+        "image-preview",
+        "child-conversation"
       ],
       "variation": "消息类型、工具结果、合法动作与上下文",
       "acceptance": "权威状态、内容层级与阅读意图独立；按信息流合同验收完成收敛、人工展开和返回最新；未知提交不重放",
@@ -346,7 +373,10 @@
         "CONV-GROUP-01",
         "CONV-DISCLOSURE-01",
         "CONV-READ-01",
-        "CONV-RESOURCE-01"
+        "CONV-RESOURCE-01",
+        "CONV-COMMAND-01",
+        "CONV-PARALLEL-01",
+        "CONV-SCENARIO-01"
       ]
     },
     {
@@ -466,7 +496,157 @@
       "候选集不是已冻结 Base，不代表用户视觉验收完成",
       "证据仅覆盖生产 renderer 组件和本地 fixture，不覆盖 Core、真实供应商或安装包",
       "未覆盖全仓组件、其它平台和所有自定义主题；未完成独立做题实验",
-      "仅准入已复验的对话过程/阅读组合；完整P-CONVERSATION及图片/网页/子对话宿主返回、重连和真实执行仍未准入"
+      "仅准入过程/阅读组合；复合fixture补充命令、图片和子对话组合证据，完整P-CONVERSATION、生产App宿主、重连和真实执行仍未准入"
     ]
-  }
+  },
+  "interactionFamilies": [
+    {
+      "id": "I-NAV",
+      "intent": "定位与切换",
+      "patterns": [
+        "P-SETTINGS",
+        "P-RESOURCES"
+      ],
+      "components": [
+        "SettingsNavigation"
+      ],
+      "rules": [
+        "NAV-CONTEXT-01",
+        "NAV-DEFAULT-01"
+      ],
+      "ruleSource": "design-system/interactions.md"
+    },
+    {
+      "id": "I-INPUT",
+      "intent": "输入与提交",
+      "patterns": [
+        "P-CONVERSATION",
+        "P-SETTINGS",
+        "P-DETAIL"
+      ],
+      "components": [
+        "ConversationComposer",
+        "SettingsRow"
+      ],
+      "rules": [
+        "INPUT-TRUTH-01",
+        "INPUT-DEFAULT-01"
+      ],
+      "ruleSource": "design-system/interactions.md"
+    },
+    {
+      "id": "I-OBSERVE",
+      "intent": "等待与观察",
+      "patterns": [
+        "P-CONVERSATION",
+        "P-STATUS",
+        "P-SETTINGS"
+      ],
+      "components": [
+        "TurnExecution",
+        "TurnProgress",
+        "Feedback"
+      ],
+      "rules": [
+        "OBSERVE-TRUTH-01",
+        "OBSERVE-DEFAULT-01"
+      ],
+      "ruleSource": "design-system/interactions.md"
+    },
+    {
+      "id": "I-READ",
+      "intent": "阅读与探索",
+      "patterns": [
+        "P-CONVERSATION",
+        "P-DETAIL",
+        "P-SETTINGS"
+      ],
+      "components": [
+        "CollapsibleText",
+        "SettingsDisclosure"
+      ],
+      "rules": [
+        "READ-CONTINUITY-01",
+        "READ-DEFAULT-01"
+      ],
+      "ruleSource": "design-system/interactions.md"
+    },
+    {
+      "id": "I-RETURN",
+      "intent": "打开与返回",
+      "patterns": [
+        "P-CONVERSATION",
+        "P-DETAIL",
+        "P-SETTINGS"
+      ],
+      "components": [
+        "AgentConversationPane",
+        "SettingsDialog"
+      ],
+      "rules": [
+        "RETURN-CONTEXT-01",
+        "RETURN-DEFAULT-01"
+      ],
+      "ruleSource": "design-system/interactions.md"
+    },
+    {
+      "id": "I-DECIDE",
+      "intent": "选择与确认",
+      "patterns": [
+        "P-DECISION",
+        "P-SETTINGS",
+        "P-DETAIL"
+      ],
+      "components": [
+        "SettingsSelect",
+        "Switch",
+        "DecisionCard"
+      ],
+      "rules": [
+        "DECIDE-RESULT-01",
+        "DECIDE-DEFAULT-01"
+      ],
+      "ruleSource": "design-system/interactions.md"
+    },
+    {
+      "id": "I-MANAGE",
+      "intent": "调整与管理",
+      "patterns": [
+        "P-SETTINGS",
+        "P-RESOURCES"
+      ],
+      "components": [
+        "SettingsPage",
+        "SettingsSection",
+        "SettingsGroupCard",
+        "SettingsRow"
+      ],
+      "rules": [
+        "MANAGE-OWNER-01",
+        "MANAGE-DEFAULT-01"
+      ],
+      "ruleSource": "design-system/interactions.md"
+    },
+    {
+      "id": "I-RECOVER",
+      "intent": "异常与恢复",
+      "patterns": [
+        "P-STATUS",
+        "P-CONVERSATION",
+        "P-SETTINGS",
+        "P-RESOURCES",
+        "P-DETAIL",
+        "P-DECISION"
+      ],
+      "components": [
+        "Feedback",
+        "EmptySettings"
+      ],
+      "rules": [
+        "RECOVER-TRUTH-01",
+        "RECOVER-DEFAULT-01"
+      ],
+      "ruleSource": "design-system/interactions.md"
+    }
+  ]
 }

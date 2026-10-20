@@ -90,7 +90,7 @@ import { ExecutionsPane } from "./ExecutionsPane.js";
 import { AgentConversationPane } from "./AgentConversationPane.js";
 import { SideChatPane } from "./SideChatPane.js";
 import { SideDraftWorkspace } from "./side-draft-owner.js";
-import { agentName } from "./AgentIdentity.js";
+import { agentName, agentAssignment } from "./AgentIdentity.js";
 import { WorkgroupsPane } from "./WorkgroupsPane.js";
 import { ServiceStatusSettings } from "./settings/ServiceStatusSettings.js";
 import { TrajectorySettings } from "./settings/TrajectorySettings.js";
@@ -247,7 +247,14 @@ function AppContent({ services }: { services: PlatformServices }) {
   const [pluginsOpen, setPluginsOpen] = useState(false);
   const [pluginMarketRequest, setPluginMarketRequest] = useState(0);
   const [settingsOpen, updateSettingsOpen] = useState(false);
-  const setSettingsOpen = (open: boolean) => { if (open) { setPluginsOpen(false); setTaskCenterOpen(false); updateSettingsOpen(true); } else requestNavigation(() => updateSettingsOpen(false)); };
+  const settingsTrigger = React.useRef<{ element: HTMLElement; route: string } | null>(null);
+  const setSettingsOpen = (open: boolean) => {
+    if (open) {
+      if (!settingsOpen && document.activeElement instanceof HTMLElement)
+        settingsTrigger.current = { element: document.activeElement, route: `${projectId}:${threadId}` };
+      setPluginsOpen(false); setTaskCenterOpen(false); updateSettingsOpen(true);
+    } else requestNavigation(() => updateSettingsOpen(false));
+  };
   const [searchOpen, setSearchOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [uiFontSize, setUiFontSize] = useState(
@@ -275,10 +282,19 @@ function AppContent({ services }: { services: PlatformServices }) {
     if (previousSettingsOpen.current === settingsOpen) return;
     previousSettingsOpen.current = settingsOpen;
     const frame = requestAnimationFrame(() => {
+      const trigger = settingsTrigger.current;
+      if (!settingsOpen && trigger?.route === `${projectId}:${threadId}`) {
+        // Settings replaces the chat subtree, so resolve a remounted composer
+        // only within the same conversation. Never focus a previous task.
+        const target = trigger.element.isConnected ? trigger.element
+          : trigger.element.matches('[data-testid="chat-input"]')
+            ? document.querySelector<HTMLElement>('[data-testid="chat-input"]') : null;
+        if (target) { target.focus({ preventScroll: true }); return; }
+      }
       const selector = settingsOpen
         ? '[aria-label="设置导航"] [aria-current="page"]'
         : '[aria-label="设置"], [aria-label="展开侧栏"]';
-      document.querySelector<HTMLButtonElement>(selector)?.focus();
+      document.querySelector<HTMLButtonElement>(selector)?.focus({ preventScroll: true });
     });
     return () => cancelAnimationFrame(frame);
   }, [settingsOpen]);
@@ -376,12 +392,19 @@ function AppContent({ services }: { services: PlatformServices }) {
   const previewOwner = React.useRef("");
   previewOwner.current = `${project?.id ?? ""}:${threadId}`;
   const browserWorkspace = useBrowserWorkspace(services, project?.id ?? "", threadId, browserPageId(panel));
+  const rememberSideTrigger = useCallback(() => {
+    const focused = document.activeElement;
+    const element = focused?.getAttribute("role") === "menuitem"
+      ? document.querySelector<HTMLElement>('[aria-haspopup="menu"][aria-expanded="true"]') ?? focused : focused;
+    if (element instanceof HTMLElement && panel !== "旁路讨论") sideTrigger.current = { element, route: `${projectId}:${threadId}` };
+  }, [panel, projectId, threadId]);
   const openingBrowser = React.useRef<string | null>(null);
   const openBrowser = useCallback(async (create = false, url?: string) => {
     if (!project) return;
     const owner = `${project.id}:${threadId}`;
     if (openingBrowser.current === owner) return;
     openingBrowser.current = owner;
+    if (!isBrowserTab(panel)) rememberSideTrigger();
     try {
       let value = await browserWorkspace.request("state");
       if (previewOwner.current !== owner) return;
@@ -397,7 +420,7 @@ function AppContent({ services }: { services: PlatformServices }) {
       setPanel(browserTabId(pageId));
     } catch (cause) { if (previewOwner.current === owner) setError((cause as Error).message); }
     finally { if (openingBrowser.current === owner) openingBrowser.current = null; }
-  }, [project?.id, threadId, browserWorkspace.request]);
+  }, [project?.id, threadId, browserWorkspace.request, panel, rememberSideTrigger]);
   useEffect(() => services.onPreviewEvent?.(event => {
     // 仅呈现当前聊天已由 Core 批准的页面，不切换后台聊天或重放导航。
     if (event.kind !== 'reveal' || previewOwner.current !== `${event.projectId}:${event.threadId}`) return;
@@ -698,20 +721,14 @@ function AppContent({ services }: { services: PlatformServices }) {
     setTerminalOpen(false);
     setPanel(create ? addTerminal(owner) : ensureTerminal(owner));
   };
-  const rememberSideTrigger = () => {
-    const focused = document.activeElement;
-    const element = focused?.getAttribute("role") === "menuitem"
-      ? document.querySelector<HTMLElement>('[aria-haspopup="menu"][aria-expanded="true"]') ?? focused : focused;
-    if (element instanceof HTMLElement && panel !== "旁路讨论") sideTrigger.current = { element, route: `${projectId}:${threadId}` };
-  };
   const hidePanel = () => {
-    const returning = panel === "旁路讨论";
+    const returning = panel === "旁路讨论" || panel.startsWith("agent:") || isBrowserTab(panel);
     setWorkspaceView("split"); setPanel("");
     if (returning) requestAnimationFrame(() => {
       const trigger = sideTrigger.current;
       if (trigger?.route !== `${projectId}:${threadId}`) return;
-      if (trigger.element.isConnected) trigger.element.focus();
-      else document.querySelector<HTMLElement>('[data-testid="chat-input"]')?.focus();
+      if (trigger.element.isConnected) trigger.element.focus({ preventScroll: true });
+      else document.querySelector<HTMLElement>('[data-testid="chat-input"]')?.focus({ preventScroll: true });
     });
   };
   useEffect(() => {
@@ -726,7 +743,7 @@ function AppContent({ services }: { services: PlatformServices }) {
   }, [panel, workspaceView]);
   const showPanel = (name: string) => {
     if (name === "预览") { void openBrowser(); return; }
-    if (name === "旁路讨论") { if (panel === name) { hidePanel(); return; } rememberSideTrigger(); }
+    if (name === "旁路讨论" || name.startsWith("agent:")) { if (panel === name) { hidePanel(); return; } rememberSideTrigger(); }
     setWorkspaceView(mode => name === "旁路讨论" && matchMedia("(max-width: 1200px)").matches ? "panel" : mode === "split" ? mode : "panel");
     if (["编辑目标", "执行计划", "上下文", "已保存授权", "进程"].includes(name)) {
       setPanel(name);
@@ -1786,7 +1803,7 @@ function AppContent({ services }: { services: PlatformServices }) {
               let title = page?.title;
               if (!title && page?.url) { try { title = new URL(page.url).host; } catch { title = page.url; } }
               return (title || "新标签页") + (page?.resource === "suspended" ? " · 已暂停" : "");
-            })() : name.startsWith("agent:") ? agentName(name.slice(6)) : isTerminalTab(name) ? terminalTitle(terminalOwner(project.id, threadId), name, project.root) : undefined}
+            })() : name.startsWith("agent:") ? agentAssignment(thread ?? {}, name.slice(6)) || agentName(name.slice(6)) : isTerminalTab(name) ? terminalTitle(terminalOwner(project.id, threadId), name, project.root) : undefined}
             onChange={tabs => {
               setPanelTabs(tabs);
               setPreviewFileTab(current => current && tabs.includes(current) ? current : undefined);

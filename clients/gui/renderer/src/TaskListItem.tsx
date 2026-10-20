@@ -55,7 +55,7 @@ export const MemoTaskItem = memo(function TaskListItem({ id, title, active, pinn
           {statePending ? (
             <span role="img" aria-label="状态待更新" title="打开任务以更新状态"><CircleDashed className="size-3.5 text-foreground-subtle" /></span>
           ) : running ? (
-            <LoaderIcon className="size-4 animate-spin text-foreground-subtle" />
+            <LoaderIcon className="size-4 animate-spin motion-reduce:animate-none text-foreground-subtle" />
           ) : attention ? (
             <span className="size-1.5 rounded-full bg-warning" />
           ) : unread ? (

@@ -1,6 +1,6 @@
 # 客户端设计系统
 
-新增或修改页面、组件、布局、样式、动效或 UI 文案前，先读[设计规则 v1 的开工顺序](design-system/README.md)。规则目录负责页面模式、基础约束、覆盖和证据；本指南继续维护 Token 角色、控件合同与生产预览入口。
+新增或修改页面、组件、布局、样式、动效或 UI 文案前，先读[设计规则 v1 的开工顺序](design-system/README.md)。默认按[证据驱动设计流程（B路线）](design-system/structured-flow.md#执行顺序与每步完成条件)先核查差异，再沿现有所有者实现与重放验收。规则目录负责页面模式、基础约束、覆盖和证据；本指南继续维护 Token 角色、控件合同与生产预览入口。
 
 本指南供客户端开发使用，默认中文。设计数值归生产 CSS，组件变体归现有公共组件；新增功能按角色组合，不复制另一套样式。执行、权限、历史和草稿继续由原业务所有者管理。
 
@@ -98,16 +98,11 @@ Tailwind 的 `text-ui-sm`、`rounded-overlay` 等直接消费同一套 Token。�
 
 已发送消息在共享 `Messages` 中应用此规则，主聊天、Side 与 Remote 复用同一展示路径。验收至少覆盖长/短文本、连续长段落、Markdown、明暗、窄宽面板、字号变化、展开再收起，以及原文复制。生产组件预览与脚本见下文；它们不代替真实服务或安装包验收。
 
-对话时间线的分组、完成收敛、工具层级与阅读状态统一遵循[信息流合同](design-system/patterns.md#对话信息流)。共享Messages已统一带phase与旧快照的过程总组；实现及未覆盖项见该合同，不由业务页面重新设计。`design-system.html?conversation`仍是静态状态fixture；`?conversation-exercise`通过生产组件逐步处理合成投影，保留真实回复占位及阅读逻辑。二者均不连接用户Core，不能代替真实执行或桌面发送验收。文件变更摘要与行数继续取自Core本轮比较。
+对话时间线的分组、完成收敛、工具层级与阅读状态统一遵循[信息流合同](design-system/patterns.md#对话信息流)。共享Messages已统一带phase与旧快照的过程总组；实现及未覆盖项见该合同，不由业务页面重新设计。`design-system.html?conversation`仍是静态状态fixture；`?conversation-exercise`串接命令分批输出、并行子代理、真实图片预览组件、独立子对话和最终收敛，可自动播放或暂停逐事件检查。该复合题保留生产回复占位及阅读逻辑，逐状态对照方法见[场景说明](design-system/exercises/conversation-flow.md)。二者均不连接用户Core，不能代替真实执行或桌面发送验收。文件变更摘要与行数继续取自Core本轮比较。
 
-## 新增功能的四步
+## 新增或修改页面
 
-1. 先遵循本指南的[设置与管理界面的交互规范](#设置与管理界面的交互规范)，再选择一个相近的生产组件或组合。新的工具结果卡片可以复用卡片结构、Button 与 Feedback。
-2. 按角色选择 Token 和已有变体；多个实际消费者需要同一新角色时，在现有所有者补齐。
-3. 新公共状态加入预览；仅业务组合变化时检查该组合，不重复维护所有基础控件。
-4. 运行类型/构建和相关设计检查。修改交互、IME、权限或提交时追加相应真实桌面路径。
-
-常规功能无需重新做全套设计规格或每次跑全量 E2E。业务差异通过内容、动作和有限变体表达；不要让 CSS 根据翻译文案猜测操作含义。
+按[设计系统开工顺序](design-system/README.md#开工顺序)执行；步骤与完成条件只在[结构化流程](design-system/structured-flow.md#执行顺序与每步完成条件)维护。调用方用内容、动作和有限变体表达业务差异；公共控件、数值与状态归原所有者。常规修改复用适用证据和既有验收，不要求新建设计提案或全量E2E。CSS使用组件语义与真实状态，不根据翻译文案猜测操作含义。
 
 ## 开发预览
 
@@ -135,3 +130,5 @@ pnpm --dir clients/gui test:design
 普通 `verify` 已包含 `verify:design` 的检查逻辑。它先校验[结构化目录与页面合同](design-system/automation.md)，并拒绝过期的预览目录和文档表格；目录变更运行 `pnpm --dir clients/gui design:sync` 同步派生物。CSS 部分只检查已经迁移的 DecisionCard、ComposerSurface、SideChat 和 Feedback CSS：阻止局部硬编码字号/颜色，检查引用 Token 存在。合法局部几何不禁止。检查器包含错误示例，确认会拒绝目标写法；它不声称解析所有 Tailwind class 或 TypeScript 间接样式。
 
 生产样式改变需查看相关组件和原消费者；变体变化看默认、焦点、禁用和提交状态。Composer、审批、Side 的业务兼容继续使用已有 `test:composer`、`test:interactions`、`test:conversation-derivation`，它们与组件预览各自提供不同证据。物理 IME、真实供应商及安装包需单独验收。
+
+新增或重构页面先读[用户交互模式](design-system/interactions.md)，按 must/default/explore 约束选已有组合。设置首阶段的设计输入与实际Electron验证合同见[迁移题](design-system/exercises/settings-stage1.md)。

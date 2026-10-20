@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CloseIcon as XIcon } from "./interfaceIcons.js";
 import { Attachment, AttachmentInfo, AttachmentPreview, AttachmentRemove } from "./components/ai-elements/attachments.js";
 import { Button } from "./components/ui/button.js";
@@ -11,6 +11,56 @@ function downloadMedia(url: string, name: string) {
   const link = document.createElement("a");
   link.href = url; link.download = name;
   document.body.appendChild(link); link.click(); link.remove();
+}
+
+/** Viewing state belongs to this dialog, never to the task or media reader. */
+function ImageInspection({ url, name }: { url: string; name: string }) {
+  const viewport = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
+  const [natural, setNatural] = useState({ width: 0, height: 0 });
+  const [space, setSpace] = useState({ width: 0, height: 0 });
+  const [zoom, setZoom] = useState<number | null>(null);
+  useEffect(() => {
+    const el = viewport.current;
+    if (!el) return;
+    const measure = () => setSpace({ width: el.clientWidth, height: el.clientHeight });
+    const observer = new ResizeObserver(measure);
+    observer.observe(el); measure();
+    return () => observer.disconnect();
+  }, []);
+  const fit = natural.width && space.width
+    ? Math.min(1, space.width / natural.width, space.height / natural.height) : 1;
+  const scale = zoom ?? fit;
+  const changeZoom = (factor: number) => setZoom(Math.min(4, Math.max(0.01, scale * factor)));
+  const pannable = natural.width * scale > space.width || natural.height * scale > space.height;
+  return <>
+    <div ref={viewport} className="image-inspection-viewport" role="region" aria-label="图片查看区域" tabIndex={0}
+      data-pannable={pannable}
+      onPointerDown={event => {
+        if (!pannable || event.button !== 0 || event.pointerType !== "mouse") return;
+        event.preventDefault();
+        drag.current = { x: event.clientX, y: event.clientY, left: event.currentTarget.scrollLeft, top: event.currentTarget.scrollTop };
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }}
+      onPointerMove={event => {
+        if (!drag.current) return;
+        event.currentTarget.scrollLeft = drag.current.left + drag.current.x - event.clientX;
+        event.currentTarget.scrollTop = drag.current.top + drag.current.y - event.clientY;
+      }}
+      onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }}>
+      <div className="image-inspection-canvas">
+        <img src={url} alt={name} draggable={false} onLoad={event => setNatural({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })}
+          style={natural.width ? { width: natural.width * scale, height: natural.height * scale } : undefined} />
+      </div>
+    </div>
+    <div className="image-inspection-controls" role="group" aria-label="图片缩放">
+      <Button type="button" variant="ghost" size="icon-sm" aria-label="缩小图片" disabled={scale <= 0.01} onClick={() => changeZoom(1 / 1.25)}>−</Button>
+      <output aria-label="图片缩放比例">{Math.round(scale * 100)}%</output>
+      <Button type="button" variant="ghost" size="icon-sm" aria-label="放大图片" disabled={scale >= 4} onClick={() => changeZoom(1.25)}>+</Button>
+      <Button type="button" variant="ghost" size="sm" aria-label="实际大小 100%" onClick={() => setZoom(1)}>100%</Button>
+      <Button type="button" variant="ghost" size="sm" aria-pressed={zoom === null} onClick={() => setZoom(null)}>适应窗口</Button>
+    </div>
+  </>;
 }
 
 /** ZCode's attachment tile, with Core supplying sent media bytes. */
@@ -53,12 +103,12 @@ function AttachmentTile({ name, mime, url, onRemove, sent = false, compact = fal
     </Attachment>}
     {previewOpen ? <Dialog open onOpenChange={setPreviewOpen}>
       <DialogContent showCloseButton={false} aria-describedby={undefined}
-        className="h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-none place-items-center overflow-hidden border-0 bg-transparent p-10 shadow-none [app-region:no-drag]">
+        className="image-inspection-dialog h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] max-w-none overflow-hidden border-0 bg-transparent shadow-none [app-region:no-drag]">
         <DialogTitle className="sr-only">{name}</DialogTitle>
         <Button type="button" variant="outline" size="sm" aria-label={`下载附件 ${name}`} className="absolute right-16 top-4 z-10" onClick={() => downloadMedia(url, name)}>下载</Button>
         <DialogClose render={<Button type="button" variant="ghost" size="icon-md" aria-label="关闭图片预览"
           className="absolute right-4 top-4 z-10 rounded-full border border-border bg-background text-foreground" />}><XIcon /></DialogClose>
-        {url ? <img src={url} alt={name} className="max-h-full max-w-full rounded-xl border border-border bg-background object-contain shadow-2xl" /> : null}
+        {url ? <ImageInspection url={url} name={name} /> : null}
       </DialogContent>
     </Dialog> : null}
   </>;

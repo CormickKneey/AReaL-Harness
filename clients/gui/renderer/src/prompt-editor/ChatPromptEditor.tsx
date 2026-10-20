@@ -233,7 +233,8 @@ export function ChatPromptEditor({
 
   const handleKeyDown: KeyboardEventHandler<HTMLFormElement> = useCallback(
     (event) => {
-      if (event.key !== "Escape" || !onCancel || submitting) {
+      if (event.key !== "Escape" || !onCancel || submitting ||
+        event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) {
         return;
       }
 

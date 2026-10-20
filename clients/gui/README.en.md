@@ -10,7 +10,14 @@ Startup recovery, update recovery and menu stop share lifecycle observation and 
 
 Legacy backends without `cancelStop` use compatibility cancellation only after an explicit busy rejection. Before cancellation, trusted Main records originally enabled schedules, workspace/task identities, timing and Run identities in private `legacy-schedule-recovery.json`. If old Core pauses schedules itself or requires a temporary pause before stopping, the replacement confirms old-process exit and checks task revisions before restoring only schedule enablement. Paused Runs remain paused. Unknown writes are not replayed; changed tasks or failed restoration retain the record and show a manual inspection notice. `test:lifecycle:legacy` requires verified current and old Core paths in `AREAL_CORE_BIN` and `AREAL_LEGACY_CORE_BIN`. It uses archived legacy adapter source with current renderer/dependencies and isolated data, without installing or publishing a version. `AREAL_LEGACY_PAUSE_UNKNOWN=1` injects a lost pause response.
 
-For page design and agent UI work, start with the internal [design rules v1](design-system/README.md) and choose an existing page pattern and component. Token roles, interaction contracts and previews remain in the [client design system](DESIGN_SYSTEM.md).
+Before creating, changing or reviewing a page, agents follow the internal [design rules v1](design-system/README.md) and [evidence-driven workflow](design-system/structured-flow.md#执行顺序与每步完成条件): fix the contract and reference, use video analysis to nominate candidates, verify them with keyframes and logs, select justified differences, then implement through existing owners, validate and update the canonical rules. Token roles, interaction contracts and previews remain in the [client design system](DESIGN_SYSTEM.md).
+
+Run `node clients/gui/scripts/migration-smoke.mjs --conversation-journey` from the repository root after building and verifying Core/Runtime and the renderer. This real Electron scenario covers commands, child agents, images, reading/convergence, paused UNKNOWN inspection and GUI history recovery against a deterministic local SSE model. See the [Electron scenario](design-system/exercises/conversation-flow.md#真实-electron-专项-e1) for evidence and injected boundaries.
+The same runner's `--conversation-motion` mode retains original CDP frames plus RAF/input/reading observations and checks disclosure reversal, resource return and reduced motion. See the [E2 scenario](design-system/exercises/conversation-flow.md#真实-electron-连续动效专项-e2) for its boundaries and replay requirements.
+
+Use `--conversation-host` for actual window sizes/125% zoom, child/settings focus return, drafts, shortcuts and a new-content journey. Native Chinese IME requires separately attributable OS interaction. See [E3](design-system/exercises/conversation-flow.md#真实-electron-宿主与新内容专项-e3); [E4](design-system/exercises/conversation-flow.md#原生宿主补充-e4) uses `AREAL_E4_NATIVE=1 AREAL_E4_OPERATOR=0` to replay same-app window reactivation, independent native web interaction/hiding and focus return. Omit `AREAL_E4_OPERATOR=0` for the separately attributable manual stage. An untriggered candidate overlay is not a pass.
+
+The existing conversation catalog is available at `design-system.html?conversation`, composing production messages, a draft composer and resource panels with return paths. Run `pnpm --dir clients/gui test:design --conversation-demo` for this sample. See the [catalog migration](design-system/exercises/conversation-flow.md#现有对话目录迁移样板) for matched before/after evidence and limits.
 
 ## Development
 
@@ -147,3 +154,7 @@ Finish Core builds before starting desktop smoke tests that use that binary, and
 `pnpm --dir clients/gui run test:connection` covers real Core disconnect recovery, concurrent operations, retired connection messages and explicit shutdown. `pnpm --dir clients/gui run test:architecture` uses real Electron IPC to cover contract rejection, error-code forwarding and native preview eviction, crash reconstruction and owner release. Both isolate data and produce evidence; they do not replace package acceptance.
 
 See [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES.md). Runtime icons retain the source repository's versions; capture archives, development Skills/AGENTS, and source Git history are excluded.
+
+Start UI design from [interaction families](design-system/interactions.en.md), then compose existing patterns/components. [Settings stage one](design-system/exercises/settings-stage1.en.md) validates isolated source Electron; phase two follows review.
+
+See [conversation stage two](design-system/exercises/conversation-stage2.en.md) for production send, command, child-agent and panel-return migration with equivalent-state evidence.

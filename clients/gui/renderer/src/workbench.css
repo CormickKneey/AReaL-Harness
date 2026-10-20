@@ -1713,14 +1713,16 @@ button.composer-project:hover > svg,
 @scope (:root[data-reduced-motion="true"]) { .turn-thinking { animation: none; background: none; color: var(--color-foreground-subtle); } }
 
 /* Only the timeline scrolls during execution. The composer never participates in auto-scroll. */
-.conversation-pane:not(.draft-pane) { overflow: hidden; }
+/* Clip chrome without creating a second programmatically scrollable owner.
+   Focus/scrollIntoView must never move the composer along with the transcript. */
+.conversation-pane:not(.draft-pane) { overflow: clip; }
 .tool-event { margin: 0; min-width: 0; }
 .tool-summary-row { display: flex; align-items: center; gap: 6px; max-width: 100%; min-height: 21px; padding: 0; border: 0; background: transparent; text-align: left; font-size: var(--text-ui-caption); line-height: 1.5; color: var(--activity-foreground); }
 .tool-summary-row > svg { flex-shrink: 0; }
 .tool-summary-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: inherit; }
 .tool-result { font-size: var(--text-ui-caption); white-space: nowrap; color: var(--color-foreground-subtle); }
 .tool-failed { color: var(--color-destructive, #d85656); }
-.tool-chevron { opacity: 0; flex-shrink: 0; }
+.tool-chevron { opacity: 0; flex-shrink: 0; transition: transform 300ms cubic-bezier(.4, 0, .2, 1); }
 .tool-summary-row:hover .tool-chevron, .tool-summary-row:focus-visible .tool-chevron, .tool-chevron.open { opacity: 1; }
 .tool-chevron.open { transform: rotate(90deg); }
 .tool-event-body { margin-top: 10px; padding: 12px 16px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface); }
@@ -1965,7 +1967,7 @@ body { font-family: var(--font-sans); }
 .command-copy { position: absolute; top: 4px; right: 8px; width: 24px; height: 24px; opacity: 0; }
 .command-text:hover .command-copy, .command-text:focus-within .command-copy { opacity: 1; }
 .command-output-notice { font-size: var(--text-ui-caption); color: var(--color-foreground-subtle); margin: 4px 8px; }
-@scope (:root[data-reduced-motion="true"]) { .execution-chevron { transition: none; } }
+@scope (:root[data-reduced-motion="true"]) { .execution-chevron, .tool-chevron, .turn-progress-summary > svg { transition: none; } }
 
 
 .turn-progress { margin: 9px 0; }
@@ -1975,11 +1977,16 @@ body { font-family: var(--font-sans); }
 .turn-progress-summary { display: inline-flex; vertical-align: middle; align-items: center; flex-wrap: wrap; gap: 4px; max-width: 100%; padding: 0; margin: 0; border: 0; border-radius: 0; background: transparent; color: var(--color-process-settled, var(--color-foreground-subtle)); font: inherit; text-align: left; }
 .turn-progress-divider { margin-top: 4px; border-bottom: 1px solid var(--color-menu-border, var(--color-border)); }
 .turn-progress:not(:has(> .turn-progress-heading)) { margin: 0; }
-.turn-progress-summary > svg { flex-shrink: 0; }
+.turn-progress-summary > svg { flex-shrink: 0; transition: transform var(--motion-normal) var(--ease-standard); }
 .turn-progress-summary > svg.open { transform: rotate(90deg); }
 .turn-progress-summary .execution-failures { margin-left: auto; }
 .turn-progress-body[hidden] { display: none; }
-.turn-progress-heading + .turn-progress-body { padding-top: 7px; }
+.turn-progress-heading + .turn-progress-body > :first-child { padding-top: 7px; }
+/* Reference disclosure rhythm; Base UI owns measured height and interrupted
+   transitions. Keep children mounted so disclosure never replays execution. */
+.conversation-disclosure { height: var(--collapsible-panel-height); overflow: hidden; transition: height 300ms cubic-bezier(.19, 1, .22, 1); }
+.conversation-disclosure[data-starting-style], .conversation-disclosure[data-ending-style], .conversation-disclosure[data-closed] { height: 0; }
+@scope (:root[data-reduced-motion="true"]) { .conversation-disclosure { transition: none; } }
 .turn-stop-heading { margin: 16px 0; }
 .turn-stop-heading .turn-status { margin: 0; font: inherit; }
 .message-actions { display: flex; align-items: center; gap: 2px; margin: 6px 0 0 -4px; }
@@ -2555,3 +2562,21 @@ body { font-family: var(--font-sans); }
 }
 
 .browser-transfer-status { position: absolute; bottom: 12px; left: 12px; right: 12px; z-index: 5; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 8px; }
+
+/* Shared attachment inspection; page consumers supply media, never viewport math. */
+.image-inspection-dialog { grid-template-rows: minmax(0, 1fr) auto; gap: var(--spacing-field); padding: calc(var(--spacing-panel) * 3) var(--spacing-panel) var(--spacing-panel); }
+.image-inspection-viewport { min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; border-radius: var(--radius-inset); outline-offset: -2px; }
+.image-inspection-viewport[data-pannable="true"] { cursor: grab; }
+.image-inspection-viewport[data-pannable="true"]:active { cursor: grabbing; }
+.image-inspection-canvas { min-width: 100%; min-height: 100%; width: max-content; display: grid; place-items: center; }
+.image-inspection-canvas img { display: block; max-width: none; flex: none; border-radius: var(--radius-inset); background: var(--color-background); user-select: none; }
+.image-inspection-controls { display: flex; align-items: center; justify-self: center; gap: var(--spacing-inline); max-width: 100%; padding: var(--spacing-inline); border: var(--border-width-default) solid var(--color-border); border-radius: var(--radius-navigation); background: var(--color-background); }
+.image-inspection-controls output { min-width: 4ch; text-align: center; font-size: var(--text-ui-sm); font-variant-numeric: tabular-nums; }
+
+/* Reading and inspection actions use the same text affordance across families;
+   existing owners retain disclosure timing, identities and focus behavior. */
+.conversation-disclosure-action { flex-shrink: 0; font-size: var(--text-ui-sm); color: var(--color-foreground-subtle); }
+.turn-progress-duration { color: var(--color-foreground-subtle); }
+.turn-progress-summary { gap: var(--spacing-inline); }
+.turn-progress-summary:focus-visible { outline: var(--focus-width) solid var(--color-ring); outline-offset: var(--focus-width); border-radius: var(--radius-control); }
+.command-heading .command-outcome { margin-left: auto; padding: 0; }
