@@ -482,6 +482,7 @@ try {
   assert.equal(beforeCreation.workspaceSha256, workspaceBefore);
   const anchor = page.locator(`[data-turn-id="${anchorTurnId}"]`);
   await anchor.getByRole("button", { name: "从此轮创建聊天分支", exact: true }).click();
+  await page.getByRole("menuitem", { name: "在此轮之后分支", exact: true }).click();
   let forkDialog = page.getByRole("dialog", { name: "从这里创建聊天分支", exact: true });
   await forkDialog.waitFor();
   assert.equal(await forkDialog.getByText("在当前工作区中创建", { exact: true }).count(), 1);
@@ -499,10 +500,12 @@ try {
   await page.keyboard.press("Escape");
   await forkDialog.waitFor({ state: "hidden" });
   await anchor.getByRole("button", { name: "从此轮创建聊天分支", exact: true }).click();
+  await page.getByRole("menuitem", { name: "在此轮之后分支", exact: true }).click();
   await forkDialog.waitFor();
   await page.getByTestId("chat-input").click();
   await forkDialog.waitFor({ state: "hidden" });
   await anchor.getByRole("button", { name: "从此轮创建聊天分支", exact: true }).click();
+  await page.getByRole("menuitem", { name: "在此轮之后分支", exact: true }).click();
   await forkDialog.waitFor();
   await app.evaluate(() => { globalThis.__scfRejectNext = "workflow"; });
   await forkDialog.getByRole("button", { name: "创建分支", exact: true }).click();
@@ -545,7 +548,7 @@ try {
   await shot("02-fork-empty.png");
   checks.push("AC01/02/06: older Turn GUI fork is idle, empty, source-owned, current shared workspace and bounded inherited history");
   const requestsBeforeNested = requests.length;
-  await inherited.locator(`[data-turn-id="${anchorTurnId}"]`).getByRole("button", { name: /^轮次操作 / }).click();
+  await inherited.locator(`[data-turn-id="${anchorTurnId}"]`).getByRole("button", { name: /^(从此轮创建聊天分支|所选内容操作)$/ }).click();
   await page.getByRole("menuitem", { name: "在此轮之后分支", exact: true }).click();
   await forkDialog.getByRole("button", { name: "创建分支", exact: true }).click();
   await page.waitForFunction(id => {
@@ -599,11 +602,11 @@ try {
   assert.equal(await sideTrigger.count(), 0, "旁路选区入口仅在主动打开轮次菜单后展示");
   await page.locator(`[data-turn-id="${anchorTurnId}"] [data-side-item-id] .conversation-markdown`).first().scrollIntoViewIfNeeded();
   await shot("04a-selection-without-floating-prompt.png");
-  await page.locator(`[data-turn-id="${anchorTurnId}"]`).getByRole("button", { name: /^轮次操作 / }).click();
+  await page.locator(`[data-turn-id="${anchorTurnId}"]`).getByRole("button", { name: /^(从此轮创建聊天分支|所选内容操作)$/ }).click();
   await sideTrigger.press("Escape");
   await page.getByRole("menu").waitFor({ state: "hidden" });
   await selectConversation(page, targetThreadId);
-  await page.getByRole("button", { name: /^轮次操作 / }).first().click();
+  await page.getByRole("button", { name: /^(从此轮创建聊天分支|所选内容操作)$/ }).first().click();
   await page.getByRole("menuitem").first().waitFor();
   assert.equal(await sideTrigger.count(), 0, "来源 A 的选区不能在切换后的 B 会话显示或提交");
   await page.getByRole("menuitem").first().press("Escape");
@@ -618,7 +621,7 @@ try {
   const mainConfigBefore = JSON.stringify(project(refreshedSource).configurations[sourceThreadId]);
   await selectSideExcerpt();
   checks.push("AC55: Side selection stays in the explicit Turn menu, never floats, and switching the source Thread invalidates its owner");
-  const selectionMenuTrigger = page.locator(`[data-turn-id="${anchorTurnId}"]`).getByRole("button", { name: /^轮次操作 / });
+  const selectionMenuTrigger = page.locator(`[data-turn-id="${anchorTurnId}"]`).getByRole("button", { name: /^(从此轮创建聊天分支|所选内容操作)$/ });
   await selectionMenuTrigger.evaluate(element => { window.__scfSideTrigger = element; });
   await selectionMenuTrigger.click();
   await sideTrigger.focus();
@@ -771,7 +774,7 @@ try {
   assert.equal(project(await state()).state.threads[sideThreadId].id, sideThreadId);
   checks.push("AC47/52/53/54/55/74: bring-back appends to the concurrent main draft with its attachment and model; edited preview survives Side switching; Chromium composition Enter submits neither editor; narrow return restores the original trigger or main editor fallback");
   const activeAnchor = page.locator(`[data-turn-id="${activeTurnId}"]`);
-  assert.equal(await activeAnchor.getByRole("button", { name: /^轮次操作 / }).count(), 0, "streaming turns have no menu");
+  assert.equal(await activeAnchor.getByRole("button", { name: /^(从此轮创建聊天分支|所选内容操作)$/ }).count(), 0, "streaming turns have no menu");
   assert.equal(await activeAnchor.getByRole("button", { name: "从此轮创建聊天分支", exact: true }).count(), 0, "streaming turns have no Fork action");
   const requestsBeforeActiveFork = requests.length;
   // Core still supports the safe before boundary; the streaming GUI exposes no action row.
@@ -804,7 +807,7 @@ try {
   const requestsBeforeRawFork = requests.length;
   const completedActions = activeAnchor.locator(".message-actions").filter({ has: page.getByRole("button", { name: "从此轮创建聊天分支", exact: true }) });
   assert.equal(await completedActions.getByRole("button", { name: "复制消息", exact: true }).count(), 1, "completed Fork and copy share one action row");
-  await activeAnchor.getByRole("button", { name: /^轮次操作 / }).click();
+  await activeAnchor.getByRole("button", { name: /^(从此轮创建聊天分支|所选内容操作)$/ }).click();
   await page.getByRole("menuitem", { name: "在此轮之后分支", exact: true }).click();
   await forkDialog.getByRole("button", { name: "创建分支", exact: true }).click();
   await page.waitForFunction(id => document.querySelector('[data-testid="areal-workbench"]')?.dataset.threadId !== id, sourceThreadId);
@@ -961,7 +964,7 @@ try {
   await streamingBody.getByText(streamExcerpt, { exact: true }).waitFor();
   await selectMessageExcerpt(streamingBody, streamExcerpt);
   assert.equal(await page.locator(".side-selection-action").count(), 0);
-  await page.locator(`[data-turn-id="${streamingTurnId}"]`).getByRole("button", { name: /^轮次操作 / }).click();
+  await page.locator(`[data-turn-id="${streamingTurnId}"]`).getByRole("button", { name: /^(从此轮创建聊天分支|所选内容操作)$/ }).click();
   await page.getByRole("menuitem", { name: "在旁路中询问所选内容" }).click();
   await openSideContext(sidePane);
   await sidePane.locator("blockquote.notice").filter({ hasText: "用户引文，来源未确认" }).waitFor();
@@ -1090,7 +1093,7 @@ try {
   const unknownDraft = "保持草稿，先检查来源未知结果";
   await showMainConversation();
   await page.getByTestId("chat-input").fill(unknownDraft);
-  await page.locator(`[data-turn-id="${activeTurnId}"]`).getByRole("button", { name: /^轮次操作 / }).click();
+  await page.locator(`[data-turn-id="${activeTurnId}"]`).getByRole("button", { name: /^(从此轮创建聊天分支|所选内容操作)$/ }).click();
   assert.ok(await page.getByRole("menuitem", { name: "在此轮之后分支", exact: true }).isDisabled());
   await page.getByText("历史包含未结算或未核查的操作；请在来源核查或选择更早边界", { exact: true }).waitFor();
   await page.getByRole("menuitem", { name: "查看来源轮次的核查入口", exact: true }).waitFor();
@@ -1105,7 +1108,7 @@ try {
   await selectConversation(page, rawThreadId);
   await page.getByTestId("chat-input").fill("冷历史损坏时保留这份草稿");
   const corruptHistory = page.locator(".messages .message-column");
-  await corruptHistory.locator(`[data-turn-id="${activeTurnId}"]`).getByRole("button", { name: /^轮次操作 / }).click();
+  await corruptHistory.locator(`[data-turn-id="${activeTurnId}"]`).getByRole("button", { name: /^(从此轮创建聊天分支|所选内容操作)$/ }).click();
   await page.getByRole("menuitem", { name: "在此轮之后分支", exact: true }).click();
   const rawSnapshot = project(await state()).state.threads[rawThreadId].conversation.historySeed.snapshotId;
   const snapshotPath = join(scratch, "core", projectId, "state", "history", rawSnapshot);
