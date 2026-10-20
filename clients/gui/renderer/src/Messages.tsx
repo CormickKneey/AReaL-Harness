@@ -339,14 +339,18 @@ export function Messages({
               setForkError({ turnId: turn.id, message });
             }).finally(() => setForking(false));
           };
-          const forkControls = canFork ? <><button type="button" className="turn-fork-trigger" aria-label="从此轮创建聊天分支" title={afterReason || "从这里创建聊天分支"} disabled={forking || !!afterReason} onClick={event => forkAt("after", event.currentTarget)}><ForkIcon /><span>分支</span></button><DropdownMenu>
+          const canAskSelection = !!onSideSelection && selectedSideText?.owner === selectionOwner && selectedSideText.turnId === turn.id;
+          const forkControls = canFork || canAskSelection ? <>{canFork && <button type="button" className="turn-fork-trigger" aria-label="从此轮创建聊天分支" title={afterReason || "从这里创建聊天分支"} disabled={forking || !!afterReason} onClick={event => forkAt("after", event.currentTarget)}><ForkIcon /><span>分支</span></button>}<DropdownMenu>
               <DropdownMenuTrigger render={<button type="button" className="icon-button" disabled={forking} aria-label={`轮次操作 ${turnIndex + 1}`}><MoreOptionsIcon /></button>} />
               <DropdownMenuContent align="end">
-                <DropdownMenuItem disabled={!!afterReason} title={afterReason || undefined} onClick={() => forkAt("after")}>在此轮之后分支</DropdownMenuItem>
-                {afterReason && <p className="px-2 text-xs text-muted-foreground">{afterReason}</p>}
-                <DropdownMenuItem disabled={!!beforeReason} title={beforeReason || undefined} onClick={() => forkAt("before")}>在此轮之前分支</DropdownMenuItem>
-                {beforeReason && <p className="px-2 text-xs text-muted-foreground">{beforeReason}</p>}
-                {inspectTurn && <DropdownMenuItem onClick={() => document.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(inspectTurn)}"]`)?.scrollIntoView({ block: "center" })}>查看来源轮次的核查入口</DropdownMenuItem>}
+                {canAskSelection && <DropdownMenuItem onClick={() => void askAboutSelection()}>在旁路中询问所选内容</DropdownMenuItem>}
+                {canFork && <>
+                  <DropdownMenuItem disabled={!!afterReason} title={afterReason || undefined} onClick={() => forkAt("after")}>在此轮之后分支</DropdownMenuItem>
+                  {afterReason && <p className="px-2 text-xs text-muted-foreground">{afterReason}</p>}
+                  <DropdownMenuItem disabled={!!beforeReason} title={beforeReason || undefined} onClick={() => forkAt("before")}>在此轮之前分支</DropdownMenuItem>
+                  {beforeReason && <p className="px-2 text-xs text-muted-foreground">{beforeReason}</p>}
+                  {inspectTurn && <DropdownMenuItem onClick={() => document.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(inspectTurn)}"]`)?.scrollIntoView({ block: "center" })}>查看来源轮次的核查入口</DropdownMenuItem>}
+                </>}
               </DropdownMenuContent>
             </DropdownMenu></> : null;
           const segments = executionSegments(turn.items ?? [], turn.status);
@@ -470,6 +474,7 @@ export function Messages({
               <UnknownToolInspection key={`${project.id}:${thread.id}:${item.id}`} item={item} project={readOnly ? { ...project, state: { ...project.state, connected: false } } : project} thread={thread} action={action} />)}
             <TurnFileSummary turn={turn} readTurnReview={readTurnReview} onFile={onFile} onReview={onReview} />
             {responseMessage && turn.status !== "inProgress" && <MessageActions text={responseMessage.text}><TurnHookStats turn={turn} />{forkControls}{responseActions?.(responseMessage)}{!isInherited && !readOnly && <UserFeedback project={project} thread={localThread} turn={turn} item={responseMessage} action={action} dark={dark} />}</MessageActions>}
+            {canAskSelection && (!responseMessage || turn.status === "inProgress") && <div className="message-actions">{forkControls}</div>}
             {canFork && forkError?.turnId === turn.id && <p role="alert" className="notice">{forkError?.message}</p>}
             {turn.status === "interrupted" && stopHeaderIndex < 0 && stopHeading}
             {turn.status !== "inProgress" && turn.status !== "interrupted" && !(turn.status === "completed" && hasReadingSummary) && (
@@ -491,7 +496,6 @@ export function Messages({
       </div>
       {!embedded && <div ref={responseSpace} className="message-response-space" aria-hidden="true" />}
     </div>
-    {selectedSideText?.owner === selectionOwner && <button type="button" className="side-selection-action" onClick={() => void askAboutSelection()}>在旁路中询问所选内容</button>}
     {!embedded && readingHistory && <TimelineBottomButton onClick={returnToBottom} />}
     </div>
   );
