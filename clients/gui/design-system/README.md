@@ -22,6 +22,8 @@
 
 系统级数据维护在 [registry.json](registry.json)，页面级数据按 [结构化实现流程](structured-flow.md) 引用它；[自动化机制与来源](automation.md) 解释生成链和当前检查边界。
 
+新增生产 UI 文件由[增量设计检查](automation.md#增量设计检查)自动纳入；交付按[完成条件](governance.md#完成条件)报告复用、例外、状态与证据。
+
 ## 按问题读取
 
 | 问题 | 唯一规则位置 |

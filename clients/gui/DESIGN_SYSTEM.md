@@ -134,7 +134,7 @@ pnpm --dir clients/gui test:design --settings-only
 
 ## 增量检查与验证边界
 
-普通 `verify` 已包含 `verify:design` 的检查逻辑。`verify:design` 的单一清单覆盖已迁移的 DecisionCard、ComposerSurface、SideChat、Feedback、SettingsPageParts 完整 CSS，以及 `SettingsPageParts.tsx`。CSS 检查阻止局部硬编码字号和颜色，并检查 Token 存在。TSX 使用现有 TypeScript AST 检查 JSX `className` 的直接字符串、`cn`、条件与模板中的字符串，以及直接对象 `style` 的字面量；拒绝 Tailwind 固定字号和标准色板，允许布局数字。检查器内的正反例验证目标写法。动态间接值、变量传递的 style、其他未迁移文件不在覆盖范围内。
+普通 `verify` 执行目录、完整迁移清单和[增量设计检查](design-system/automation.md#增量设计检查)；`verify:design` 另运行目录与增量审计回归。`verify:design` 的单一清单覆盖已迁移的 DecisionCard、ComposerSurface、SideChat、Feedback、SettingsPageParts 完整 CSS，以及 `SettingsPageParts.tsx`。CSS 检查阻止局部硬编码字号和颜色，并检查 Token 存在。TSX 使用现有 TypeScript AST 检查 JSX `className` 的直接字符串、`cn`、条件与模板中的字符串，以及直接对象 `style` 的字面量；拒绝 Tailwind 固定字号和标准色板，允许布局数字。检查器内的正反例验证目标写法。动态间接值和变量传递的 style 不在静态覆盖范围内；其他生产 UI 文件按 Git 基线检查新增问题，具体范围见增量设计检查。
 
 目录与页面合同另外由[单源目录](design-system/automation.md)校验；目录变化后运行 `design:sync` 同步派生物。
 
