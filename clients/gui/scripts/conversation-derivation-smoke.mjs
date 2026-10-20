@@ -201,6 +201,10 @@ async function showRelated(pane) {
   await page.getByRole("region", { name: "相关讨论" }).waitFor();
 }
 async function openSideContext(pane) {
+  if (!await pane.locator(".side-chat-information").isVisible()) {
+    await showRelated(pane);
+    await page.getByRole("button", { name: "上下文与文件访问", exact: true }).click();
+  }
   if (!await pane.locator("details.side-chat-context").getAttribute("open").then(value => value !== null)) await pane.getByText("会话上下文与文件访问", { exact: true }).click();
 }
 async function composeText(input, text, label, append = false) {
@@ -620,7 +624,8 @@ try {
   await sideTrigger.focus();
   await sideTrigger.press("Enter");
   const sidePane = page.getByRole("region", { name: "旁路讨论" });
-  await sidePane.getByText("会话上下文与文件访问", { exact: true }).click();
+  assert.equal(await sidePane.locator(".side-chat-information").isVisible(), false);
+  await openSideContext(sidePane);
   await sidePane.locator("blockquote.notice").filter({ hasText: unicodeExcerpt }).waitFor();
   assert.match(await sidePane.innerText(), /已持久化选区/);
   await openSideContext(sidePane);
