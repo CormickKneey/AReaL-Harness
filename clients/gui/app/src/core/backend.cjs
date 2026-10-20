@@ -467,6 +467,9 @@ class CoreBackend {
         if (method === 'areal/mcp/app/notification') this.onMcpAppNotification?.({ projectId: project.id, ...params });
         this.analytics.observe(project.id, method, params);
         project.model.event(method, params);
+        if (method === 'areal/context/compacted' && params?.threadId) {
+          void this.openThread(project, params.threadId).catch(() => {});
+        }
         if (!isTaskDraftConfiguration(project.configurations?.[params.threadId])) this.notifications.observe(project, method, params, this.library.value);
         if (method === 'thread/started' || method === 'turn/started' || method === 'turn/completed') {
           void this.library.recordThreadActivity(project.id, params.threadId ?? params.thread?.id,

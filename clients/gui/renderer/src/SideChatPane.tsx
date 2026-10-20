@@ -1,3 +1,4 @@
+import { ContextMeter } from "./ContextMeter.js";
 import "./SideChat.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Messages } from "./Messages.js";
@@ -302,7 +303,7 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
     </div>
     <div className="composer-dock side-chat-composer" data-side-owner={owner}>
       <div ref={setMenuAnchor} className="composer-menu-anchor" />
-      <ConversationComposer project={project} modelConfig={config} allowModelInheritance={!sideId} modelDisabled={disabled || !!active || !!sideId && !config}
+      <ConversationComposer project={project} contextControl={<ContextMeter key={`${project.id}:${sideId ?? "draft"}`} project={project} thread={validSide ? side : undefined} action={action} />} modelConfig={config} allowModelInheritance={!sideId} modelDisabled={disabled || !!active || !!sideId && !config}
         onConfigureModel={values => { void configure(values); }} onModelSettings={() => onPanel("设置")}
         workspacePath={project.root} taskId={sideId || null} triggerPanelContainer={menuAnchor}
         inputApiRef={api} inputTestId="side-chat-input" submitTestId="side-chat-send" initialValue={text}

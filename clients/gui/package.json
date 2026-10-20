@@ -27,6 +27,7 @@
     "test:interactions": "node scripts/interaction-smoke.mjs",
     "test:composer": "node scripts/composer-smoke.mjs",
     "test:provider-hot-apply": "node scripts/provider-hot-apply-smoke.mjs",
+    "test:context-usage": "node scripts/context-usage-smoke.mjs",
     "test:model-selection": "node scripts/model-selection-smoke.mjs",
     "test:history-compat": "node scripts/history-copy-smoke.mjs",
     "test:connection": "node scripts/connection-smoke.mjs",

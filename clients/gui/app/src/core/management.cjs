@@ -275,7 +275,21 @@ async function manage(backend, project, request) {
     await refresh();
     return {};
   }
-  if (operation === 'contextCompact') return project.client.request('areal/context/compact', pick(request, ['threadId']));
+  if (operation === 'contextCompact') {
+    const client = project.client;
+    const refresh = async () => {
+      const result = await client.request('thread/read', { threadId: request.threadId, includeTurns: true });
+      backend.requireConnection(project, client);
+      if (result.thread?.id !== request.threadId) throw new Error('压缩后的会话身份不匹配');
+      project.model.replace(result.thread);
+      backend.onChange();
+    };
+    let result;
+    try { result = await client.request('areal/context/compact', pick(request, ['threadId'])); }
+    catch (error) { await refresh().catch(() => {}); throw error; }
+    await refresh();
+    return result;
+  }
   // Scope-wide forgetting has no request receipt and must never be replayed.
   if (operation === 'permissionsForget') {
     if (typeof request.project !== 'boolean') throw new Error('请选择撤销授权的作用域');

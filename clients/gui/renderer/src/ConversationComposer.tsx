@@ -1,10 +1,11 @@
-import type { ComponentProps } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { ChatPromptEditor } from "./prompt-editor/ChatPromptEditor.js";
 import { ComposerModelMenu, composerModelOption } from "./ComposerModelMenu.js";
 import type { Data } from "./services.js";
 
 type ConversationComposerProps = Omit<ComponentProps<typeof ChatPromptEditor>, "betweenCancelAndSubmitAction"> & {
   project: Data;
+  contextControl?: ReactNode;
   modelConfig?: Data;
   modelDisabled?: boolean;
   allowModelInheritance?: boolean;
@@ -13,7 +14,7 @@ type ConversationComposerProps = Omit<ComponentProps<typeof ChatPromptEditor>, "
 };
 
 /** Main and Side share the editor, toolbar and Core model catalog; callers own submission and drafts. */
-export function ConversationComposer({ project, modelConfig: config, modelDisabled, onConfigureModel, onModelSettings, allowModelInheritance, ...editor }: ConversationComposerProps) {
+export function ConversationComposer({ project, modelConfig: config, modelDisabled, onConfigureModel, onModelSettings, allowModelInheritance, contextControl, ...editor }: ConversationComposerProps) {
   const value = allowModelInheritance && config?.model === undefined ? "__inherit" : config?.model ? `${config.model.providerId}/${config.model.modelId}` : "";
   const options = project.models.filter((item: Data) => item.providerId || !project.models.some((candidate: Data) => candidate.providerId && candidate.isDefault)).map(composerModelOption);
   if (config?.model && !options.some((option: { value: string }) => option.value === value)) {
@@ -25,7 +26,7 @@ export function ConversationComposer({ project, modelConfig: config, modelDisabl
     if (implicit) options.splice(options.indexOf(implicit), 1, historical);
     else options.unshift(historical);
   }
-  return <ChatPromptEditor {...editor} betweenCancelAndSubmitAction={<ComposerModelMenu
+  return <ChatPromptEditor {...editor} betweenCancelAndSubmitAction={<>{contextControl}<ComposerModelMenu
     disabled={modelDisabled}
     effort={config?.resolvedParameters?.reasoningEffort ?? config?.parameters?.reasoningEffort}
     value={value}
@@ -39,5 +40,5 @@ export function ConversationComposer({ project, modelConfig: config, modelDisabl
     }}
     onClose={() => editor.inputApiRef?.current?.focus()}
     onConfigure={onModelSettings}
-  />} />;
+  /></>} />;
 }

@@ -1,3 +1,4 @@
+import { ContextMeter } from "./ContextMeter.js";
 import { isOrdinaryConversation, interruptedConversationTurn } from "./ordinaryConversation.js";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { McpComposerAttachments, useMcpDraft } from "./McpComposerAttachments.js";
@@ -371,6 +372,7 @@ export function Composer({
       </div>}
       <ConversationComposer
         project={project}
+        contextControl={<ContextMeter key={`${project.id}:${thread.id}`} project={project} thread={thread} action={readAction} />}
         modelConfig={config}
         modelDisabled={disabled || !!queueEditor.edit || !!running || !config}
         onConfigureModel={values => { void configure(values); }}

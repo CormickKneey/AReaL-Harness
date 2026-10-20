@@ -22,3 +22,17 @@ export class CoreClient {
   onClose(listener: () => void): () => void;
   close(): void;
 }
+
+export type ModelUsage = { inputTokens: number; cachedInputTokens: number; outputTokens: number };
+export type GenerationStats = { outputTokens: number; durationMs: number; measuredRequests: number; unmeasuredRequests: number; usageRequests: number; missingUsageRequests: number };
+export type ContextPartKind = 'systemPrompt' | 'rules' | 'skills' | 'toolDefinitions' | 'conversation' | 'summary' | 'attachments' | 'toolResults' | 'other';
+export type ContextPart = { kind: ContextPartKind; name: string; estimatedTokens: number; children?: ContextPart[] };
+export type InstructionAttribution = { sha256: string; parts: ContextPart[] };
+export type TurnUsage = { usage?: ModelUsage | null; generation?: GenerationStats | null; instructionAttribution?: InstructionAttribution | null };
+export type ContextBasis = { provider: string; model: string; configurationRevision: number; defaultModelRevision: string | null; turnId: string | null };
+export type ContextBudget = { windowTokens: number; outputReserveTokens: number; inputLimitTokens: number; windowSource: string };
+export type ContextUsage =
+  | { kind: 'ready'; basis: ContextBasis; budget: ContextBudget; scope: { kind: 'assembledRequest'; sequence: number } | { kind: 'recordedHistory' }; estimate: { tokens: number; parts: ContextPart[] } }
+  | { kind: 'unavailable'; basis: ContextBasis; budget: ContextBudget | null; reason: 'awaitingRequest' | 'modelUnavailable' | 'instructionBasisChanged' };
+export type SessionUsage = { usage: ModelUsage | null; generation: GenerationStats; knownTurns: number; unknownTurns: number; partialTurns: number; scope: 'ownTurns' };
+export type ContextUsageResponse = { threadId: string; contextUsage: ContextUsage; sessionUsage: SessionUsage };
