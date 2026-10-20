@@ -411,10 +411,13 @@ test("Core sync removes subscription only on explicit sign-out or confirmed empt
     { state: "signed_out", authenticated: false },
     { state: "ready", authenticated: true, models: [] },
   ]) {
+    const { account } = fixture();
+    account.status = async () => status;
     await app.applySubscription(project, {
       id: "areal_openai",
-      account: { status: async () => status },
+      account,
     });
+    await account.close();
   }
   assert.deepEqual(calls, ["areal/provider/remove", "areal/provider/remove"]);
 });

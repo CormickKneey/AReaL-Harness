@@ -95,7 +95,7 @@ class AppProviders {
     const account = service.account, revision = account.revision, lifetime = account.lifetime;
     if (lifetime.signal.aborted) return;
     const prepared = this.preparedSubscriptionStatus;
-    if (prepared?.service === service && prepared.revision === revision && prepared.lifetime === lifetime) return;
+    if (prepared?.service === service && prepared.revision === revision && prepared.lifetime === lifetime) return prepared;
     const trace = startupTrace('providers.subscription_prefetch');
     trace.advance('account_status');
     const outcome = Promise.resolve().then(() => account.status()).then(status => {
@@ -105,7 +105,35 @@ class AppProviders {
       trace.finish('error', error);
       return { ok: false, error, completedAt: Date.now(), failure: account.failure, refreshing: account.refreshing };
     });
-    this.preparedSubscriptionStatus = { service, revision, lifetime, outcome: account.track(outcome) };
+    return this.preparedSubscriptionStatus = { service, revision, lifetime, outcome: account.track(outcome) };
+  }
+  async subscriptionStatus(service, trace) {
+    const account = service.account, revision = account.revision, lifetime = account.lifetime;
+    const current = () => account.revision === revision && account.lifetime === lifetime && !lifetime.signal.aborted;
+    const prepared = this.preparedSubscriptionStatus;
+    if (prepared?.service === service && prepared.revision === revision && prepared.lifetime === lifetime) {
+      const outcome = await prepared.outcome;
+      if (!current()) return null;
+      const metadata = service.catalog?.metadata();
+      const fresh = outcome.status?.state === 'ready'
+        ? metadata?.fresh && metadata.sessionRevision === revision && outcome.status.models === service.models
+        : Date.now() - outcome.completedAt < 30_000;
+      const coherent = !outcome.ok || !account.refreshing && outcome.status.state !== 'refreshing'
+        && isDeepStrictEqual(outcome.status.diagnostic, account.failure?.diagnostic() ?? null);
+      if (fresh && coherent && outcome.failure === account.failure && outcome.refreshing === account.refreshing) {
+        trace.advance('status_reuse');
+        if (!outcome.ok) throw outcome.error;
+        return outcome.status;
+      }
+    }
+    if (!current()) return null;
+    trace.advance('account_status');
+    if (this.preparedSubscriptionStatus === prepared) this.preparedSubscriptionStatus = null;
+    const replacement = this.prepareSubscriptionStatus(service);
+    const outcome = await replacement.outcome;
+    if (!current()) return null;
+    if (!outcome.ok) throw outcome.error;
+    return outcome.status;
   }
   async chatgpt(request) {
     if ((request.provider ?? 'openai') !== 'openai') throw new Error('不支持的账号类型');
@@ -176,26 +204,8 @@ class AppProviders {
     trace.advance(prepared?.service === service ? 'consume_wait' : 'account_status');
     try {
       if (!current()) { trace.finish('degraded'); return; }
-      let status;
-      if (prepared?.service === service && prepared.revision === revision && prepared.lifetime === lifetime) {
-        const outcome = await prepared.outcome;
-        if (this.preparedSubscriptionStatus === prepared) this.preparedSubscriptionStatus = null;
-        if (!current()) { trace.finish('degraded'); return; }
-        const metadata = service.catalog?.metadata();
-        const fresh = outcome.status?.state === 'ready'
-          ? metadata?.fresh && metadata.sessionRevision === revision && outcome.status.models === service.models
-          : Date.now() - outcome.completedAt < 30_000;
-        const coherent = !outcome.ok || !account.refreshing && outcome.status.state !== 'refreshing'
-          && isDeepStrictEqual(outcome.status.diagnostic, account.failure?.diagnostic() ?? null);
-        if (fresh && coherent && outcome.failure === account.failure && outcome.refreshing === account.refreshing) {
-          if (!outcome.ok) throw outcome.error;
-          status = outcome.status;
-        }
-      } else if (prepared) this.preparedSubscriptionStatus = null;
-      if (!status) {
-        if (prepared) trace.advance('account_status');
-        status = service ? await account.status() : { authenticated: false };
-      }
+      const status = service ? await this.subscriptionStatus(service, trace) : { authenticated: false };
+      if (!current()) { trace.finish('degraded'); return; }
       trace.advance('provider_read', status.modelError ? 'degraded' : service ? 'ok' : 'skipped');
       const existing = (await project.client.request('areal/provider/list')).data.find(p => p.id === (service?.id ?? 'areal_openai'));
       if (!current()) { trace.finish('degraded'); return; }
