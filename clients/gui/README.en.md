@@ -68,7 +68,7 @@ Source and installation details expand inline; full paths, configuration, and di
 
 ## Fork and Side Chat
 
-The branch action below a completed response opens the before/after boundary menu, replacing the separate three-dot action. Selecting a boundary opens a compact dialog centered in the window with only “Create in current workspace”, inheriting the anchor configuration. Click outside or press Esc to close. Creating a branch opens an independent chat at the selected history boundary. Files keep their current state; creating a new worktree is not offered. Unknown creation outcomes are reconciled before retrying.
+The branch action below a completed response directly opens a compact dialog centered in the window with only “Create in current workspace”. The independent chat inherits the current turn, all earlier history, and the current turn’s model configuration. Click outside or press Esc to close. There is no before/after menu or separate three-dot action. Files keep their current state; creating a new worktree is not offered. Unknown creation outcomes are reconciled before retrying.
 
 Use `/side` in the main composer to open a right-side chat. Both panes reuse `Messages` and `ConversationComposer` (the Lexical input, toolbar and `ComposerModelMenu`) while retaining separate drafts and submission state. The Side's first question can select a model and reasoning effort from the Core catalog; subsequent configuration affects that Side only. Core/Runtime retains file-access and read-only policy enforcement. Related discussions, frozen evidence and draft recovery remain available through the side pane. Bringing an answer back opens a preview and appends to the main draft without sending it.
 

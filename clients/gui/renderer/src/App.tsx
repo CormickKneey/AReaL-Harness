@@ -311,7 +311,7 @@ function AppContent({ services }: { services: PlatformServices }) {
   const toggleSidebarGroup = (id: string) => setCollapsedProjects(current => ({ ...current, [id]: !current[id] }));
   const [projectVisibleCounts, setProjectVisibleCounts] = useState<Record<string, number>>({});
   const [rename, setRename] = useState<Data | null>(null);
-  const [forkIntent, setForkIntent] = useState<{ projectId: string; sourceThreadId: string; turnId: string; boundary: "before" | "after"; route: string; anchor?: HTMLElement; resolve: () => void } | null>(null);
+  const [forkIntent, setForkIntent] = useState<{ projectId: string; sourceThreadId: string; turnId: string; route: string; anchor?: HTMLElement; resolve: () => void } | null>(null);
   const [renameText, setRenameText] = useState("");
   useEffect(() => {
     const unsubscribe = services.onState(setSnapshot);
@@ -1269,12 +1269,12 @@ function AppContent({ services }: { services: PlatformServices }) {
     !(thread && admitting) &&
     thread?.conversation?.kind !== "fork" &&
     !thread?.turns?.some((turn: Data) => turn.items?.length || turn.status === "inProgress");
-  const forkFromTurn = (turnId: string, boundary: "before" | "after", anchor?: HTMLElement): Promise<void> => {
+  const forkFromTurn = (turnId: string, anchor?: HTMLElement): Promise<void> => {
     if (!project || !thread) return Promise.resolve();
     const owner = project.id;
     const sourceThreadId = thread.id;
     const route = `${owner}:${sourceThreadId}`;
-    return new Promise(resolve => setForkIntent({ projectId: owner, sourceThreadId, turnId, boundary,
+    return new Promise(resolve => setForkIntent({ projectId: owner, sourceThreadId, turnId,
       route, anchor: anchor ?? document.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(turnId)}"] .turn-fork-trigger`) ?? undefined, resolve }));
   };
   const openSideSelection = (selection: Data, excerpt: string, anchor?: Data) => {
@@ -1965,7 +1965,7 @@ function AppContent({ services }: { services: PlatformServices }) {
         onCheck={() => resourceAction("reconcile", { projectId: forkIntent.projectId })}
         onCreate={async () => {
           const result = await resourceAction("fork", { projectId: forkIntent.projectId, sourceThreadId: forkIntent.sourceThreadId,
-            anchor: { turnId: forkIntent.turnId, boundary: forkIntent.boundary }, workspaceMode: "sharedCurrent" });
+            anchor: { turnId: forkIntent.turnId, boundary: "after" }, workspaceMode: "sharedCurrent" });
           forkIntent.resolve(); setForkIntent(current => current === forkIntent ? null : current);
           if (activeConversation.current === forkIntent.route) void open(forkIntent.projectId, result.threadId).catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
         }} />}

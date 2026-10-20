@@ -220,6 +220,7 @@ try {
   assert.equal(forkContext.contextUsage.budget.windowTokens, 128000, 'fork keeps accepted anchor configuration');
   assert.equal(forkContext.sessionUsage.knownTurns, 0); assert.equal(forkContext.sessionUsage.usage, null);
   await send('USAGE_FORK'); forkContext = await context(fork.threadId);
+  assert.ok(requests.at(-1).request.messages.some(message => message.role === 'user' && JSON.stringify(message.content).includes('USAGE_NORMAL')), 'fork replays the selected first turn instead of an empty prefix');
   assert.equal(forkContext.sessionUsage.usage.inputTokens, 120, 'fork subtotal excludes ancestor spend');
   checks.push('selected model/provider capacities before send, neutral changed instruction basis, matched generation, fork anchor and own-turn subtotal');
   await createProjectConversation(page, 'workspace');
