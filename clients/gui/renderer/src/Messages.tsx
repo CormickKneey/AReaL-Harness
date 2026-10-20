@@ -6,7 +6,7 @@ import { TurnNavigation } from "./TurnNavigation.js";
 import { executionOutcome, executionSegments, goalContinuationLabel, turnFailureMessage } from "./conversationPresentation.js";
 import { TurnProgress } from "./TurnProgress.js";
 import { TurnElapsed } from "./TurnElapsed.js";
-import { ForkIcon, MoreOptionsIcon } from "./interfaceIcons.js";
+import { ForkIcon } from "./interfaceIcons.js";
 import { UserPromptEdit } from "./UserPromptEdit.js";
 import { isOrdinaryConversation, interruptionLabel } from "./ordinaryConversation.js";
 import { MessageActions } from "./MessageActions.js";
@@ -341,8 +341,8 @@ export function Messages({
             }).finally(() => setForking(false));
           };
           const canAskSelection = !!onSideSelection && selectedSideText?.owner === selectionOwner && selectedSideText.turnId === turn.id;
-          const forkControls = canFork || canAskSelection ? <>{canFork && <button type="button" className="turn-fork-trigger" aria-label="从此轮创建聊天分支" title={afterReason || "从这里创建聊天分支"} disabled={forking || !!afterReason} onClick={event => forkAt("after", event.currentTarget)}><ForkIcon /><span>分支</span></button>}<DropdownMenu>
-              <DropdownMenuTrigger render={<button type="button" className="icon-button" disabled={forking} aria-label={`轮次操作 ${turnIndex + 1}`}><MoreOptionsIcon /></button>} />
+          const forkControls = (canFork && turn.status !== "inProgress") || canAskSelection ? <DropdownMenu>
+              <DropdownMenuTrigger render={<button type="button" className="turn-fork-trigger" disabled={forking} aria-label={canFork ? "从此轮创建聊天分支" : "所选内容操作"}><ForkIcon /><span>{canFork ? "分支" : "所选内容"}</span></button>} />
               <DropdownMenuContent align="end">
                 {canAskSelection && <DropdownMenuItem onClick={() => void askAboutSelection()}>在旁路中询问所选内容</DropdownMenuItem>}
                 {canFork && <>
@@ -353,7 +353,7 @@ export function Messages({
                   {inspectTurn && <DropdownMenuItem onClick={() => document.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(inspectTurn)}"]`)?.scrollIntoView({ block: "center" })}>查看来源轮次的核查入口</DropdownMenuItem>}
                 </>}
               </DropdownMenuContent>
-            </DropdownMenu></> : null;
+            </DropdownMenu> : null;
           const segments = executionSegments(turn.items ?? [], turn.status);
           const hasFinal = segments.some((item: Data) => item.type === "agentMessage" && item.phase === "final_answer" && item.text?.trim());
           const finalMessage = segments.findLast((item: Data) => item.type === "agentMessage" && item.phase === "final_answer" && item.text?.trim());
@@ -474,8 +474,8 @@ export function Messages({
             {!isInherited && (turn.items ?? []).filter((item: Data) => item.type === "dynamicToolCall").map((item: Data) =>
               <UnknownToolInspection key={`${project.id}:${thread.id}:${item.id}`} item={item} project={readOnly ? { ...project, state: { ...project.state, connected: false } } : project} thread={thread} action={action} />)}
             <TurnFileSummary turn={turn} readTurnReview={readTurnReview} onFile={onFile} onReview={onReview} />
-            {responseMessage && turn.status !== "inProgress" ? <MessageActions text={responseMessage.text}><TurnHookStats turn={turn} />{forkControls}<TurnUsage project={project} thread={localThread} turn={turn} action={action} inherited={isInherited} />{responseActions?.(responseMessage)}{!isInherited && !readOnly && <UserFeedback project={project} thread={localThread} turn={turn} item={responseMessage} action={action} dark={dark} />}</MessageActions>
-              : <div className="message-actions">{forkControls}<TurnUsage project={project} thread={localThread} turn={turn} action={action} inherited={isInherited} /></div>}
+            {responseMessage && turn.status !== "inProgress" ? <MessageActions text={responseMessage.text}><TurnHookStats turn={turn} /><TurnUsage project={project} thread={localThread} turn={turn} action={action} inherited={isInherited} />{forkControls}{responseActions?.(responseMessage)}{!isInherited && !readOnly && <UserFeedback project={project} thread={localThread} turn={turn} item={responseMessage} action={action} dark={dark} />}</MessageActions>
+              : <div className="message-actions"><TurnUsage project={project} thread={localThread} turn={turn} action={action} inherited={isInherited} />{forkControls}</div>}
             {canFork && forkError?.turnId === turn.id && <p role="alert" className="notice">{forkError?.message}</p>}
             {turn.status === "interrupted" && stopHeaderIndex < 0 && stopHeading}
             {turn.status !== "inProgress" && turn.status !== "interrupted" && !(turn.status === "completed" && hasReadingSummary) && (

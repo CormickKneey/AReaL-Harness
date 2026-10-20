@@ -2571,6 +2571,9 @@ body { font-family: var(--font-sans); }
 .context-ring-track { opacity: .22; }
 .context-ring-value { transform: rotate(-90deg); transform-origin: center; stroke-linecap: round; }
 .context-usage-popover { width: 420px; padding: 18px 20px; gap: 12px; }
+.context-meter-popover { height: min(560px, var(--available-height)); overflow: hidden; }
+.context-meter-popover > :not(.context-categories) { flex-shrink: 0; }
+.context-meter-popover .context-categories { flex: 1; min-height: 0; overflow-y: auto; }
 .context-usage-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--color-border); }
 .context-usage-close { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; margin: -6px -6px -6px 0; border-radius: 7px; color: var(--color-muted-foreground); }
 .context-usage-close:hover { background: var(--color-muted); color: var(--color-foreground); }

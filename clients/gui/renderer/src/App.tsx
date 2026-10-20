@@ -1275,7 +1275,7 @@ function AppContent({ services }: { services: PlatformServices }) {
     const sourceThreadId = thread.id;
     const route = `${owner}:${sourceThreadId}`;
     return new Promise(resolve => setForkIntent({ projectId: owner, sourceThreadId, turnId, boundary,
-      route, anchor: anchor ?? document.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(turnId)}"] .icon-button`) ?? undefined, resolve }));
+      route, anchor: anchor ?? document.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(turnId)}"] .turn-fork-trigger`) ?? undefined, resolve }));
   };
   const openSideSelection = (selection: Data, excerpt: string, anchor?: Data) => {
     if (!project || !thread) return;

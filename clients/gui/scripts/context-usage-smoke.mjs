@@ -209,6 +209,11 @@ try {
   assert.equal(await page.getByRole('menuitem', { name: '在此轮之前分支', exact: true }).isEnabled(), true);
   await page.getByRole('menuitem', { name: '在此轮之后分支', exact: true }).click();
   const forkDialog = page.getByRole('dialog', { name: '从这里创建聊天分支', exact: true });
+  await forkDialog.waitFor(); await page.keyboard.press('Escape');
+  await forkDialog.waitFor({ state: 'hidden' });
+  await page.waitForFunction(() => document.activeElement?.classList.contains('turn-fork-trigger'));
+  await branchButton.click();
+  await page.getByRole('menuitem', { name: '在此轮之后分支', exact: true }).click();
   await forkDialog.getByRole('button', { name: '创建分支', exact: true }).click();
   await page.waitForFunction(source => document.querySelector('[data-testid=areal-workbench]')?.dataset.threadId !== source, source);
   const fork = { threadId: await currentId() };
