@@ -7,6 +7,10 @@ const { isDeepStrictEqual } = require('node:util');
 
 const protocolToCore = value => value === 'chatCompletions' ? 'chat-completions' : value;
 const baseUrl = endpoint => endpoint.replace(/\/(chat\/completions|responses)\/?$/, '');
+function credentialValue(value, { privateKey = false } = {}) {
+  if (typeof value !== 'string' || value.length > (privateKey ? 32768 : 16384) || value.includes('\0') || (!privateKey && /[^\x20-\x7e]/.test(value))) throw new Error('凭据格式无效');
+  return value.trim();
+}
 
 // Core owns the document and its revision. This store owns only encrypted secrets
 // and migration receipts; an immutable credential reference makes failed CAS safe.
@@ -48,6 +52,7 @@ class ModelConfiguration {
     return this.reading;
   }
   async read() {
+    const previous = this.value;
     let current = await this.execute('read');
     if (this.legacy && !this.vault.migrated.includes(current.path)) {
       const imported = this.legacy.data.map(({ id, name, baseUrl: url, protocol, enabled, models, parameters, secret }) => ({
@@ -70,15 +75,15 @@ class ModelConfiguration {
       this.vault.migrated.push(current.path);
       await this.backend.save('provider-credentials.json', this.vault);
     }
-    this.value = current;
-    return current;
+    if (this.value === previous) this.value = current;
+    return this.value;
   }
   async credential(value, { privateKey = false } = {}) {
-    if (typeof value !== 'string' || value.length > (privateKey ? 32768 : 16384) || value.includes('\0') || (!privateKey && /[^\x20-\x7e]/.test(value))) throw new Error('凭据格式无效');
-    if (!value.trim()) return undefined;
+    value = credentialValue(value, { privateKey });
+    if (!value) return undefined;
     if (!this.encryption?.isEncryptionAvailable() || this.encryption.getSelectedStorageBackend?.() === 'basic_text') throw new Error('系统安全存储不可用，API Key 未保存');
     const reference = `AREAL_CREDENTIAL_${randomUUID().replaceAll('-', '')}`;
-    this.vault.keys[reference] = this.encryption.encryptString(value.trim()).toString('base64');
+    this.vault.keys[reference] = this.encryption.encryptString(value).toString('base64');
     await this.backend.save('provider-credentials.json', this.vault);
     return reference;
   }
@@ -104,4 +109,4 @@ class ModelConfiguration {
       pendingApply: [...this.backend.projects.values()].some(project => project.service && (project.providerRevision !== value.revision || project.providerError || this.backend.providers?.pendingApplications?.has(project.id))) };
   }
 }
-module.exports = { ModelConfiguration, protocolToCore, baseUrl };
+module.exports = { ModelConfiguration, protocolToCore, baseUrl, credentialValue };

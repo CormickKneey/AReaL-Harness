@@ -2,6 +2,8 @@ mod decoder;
 use decoder::{ChatDecoder, Decoder, ResponsesDecoder};
 
 mod audit;
+mod context_windows;
+pub(crate) use context_windows::known_context_window;
 mod request_budget;
 mod telemetry;
 mod tool_calls;
@@ -452,6 +454,8 @@ impl From<&str> for ModelEvent {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModelCapabilities {
+    pub declared: Option<areal_protocol::desktop::ModelCapabilityConfig>,
+    pub context_window: Option<areal_protocol::context::ContextWindow>,
     pub input: Vec<Modality>,
     pub output: Vec<Modality>,
     pub context_window_tokens: Option<usize>,
@@ -462,6 +466,8 @@ pub struct ModelCapabilities {
 impl ModelCapabilities {
     pub fn text() -> Self {
         Self {
+            declared: None,
+            context_window: None,
             input: vec![Modality::Text],
             output: vec![Modality::Text],
             context_window_tokens: None,
@@ -569,6 +575,8 @@ impl ModelProtocol {
     pub fn capabilities(self) -> ModelCapabilities {
         match self {
             ModelProtocol::ChatCompletions => ModelCapabilities {
+                declared: None,
+                context_window: None,
                 input: vec![Modality::Text, Modality::Image, Modality::Audio],
                 output: vec![Modality::Text],
                 context_window_tokens: None,
@@ -576,6 +584,8 @@ impl ModelProtocol {
                 summary_output_tokens: None,
             },
             ModelProtocol::Responses => ModelCapabilities {
+                declared: None,
+                context_window: None,
                 input: vec![
                     Modality::Text,
                     Modality::Image,
@@ -606,6 +616,8 @@ pub struct HttpModel {
 
 #[derive(Clone, Debug)]
 pub struct ModelOptions {
+    pub capabilities: Option<areal_protocol::desktop::ModelCapabilityConfig>,
+    pub context_window: Option<areal_protocol::context::ContextWindow>,
     pub reasoning_effort: Option<String>,
     pub summary_reasoning_effort: Option<String>,
     pub summary_max_output_tokens: Option<u64>,
@@ -626,6 +638,8 @@ pub struct ModelOptions {
 impl Default for ModelOptions {
     fn default() -> Self {
         Self {
+            capabilities: None,
+            context_window: None,
             reasoning_effort: None,
             summary_reasoning_effort: None,
             summary_max_output_tokens: None,
@@ -691,6 +705,43 @@ impl HttpModel {
     }
 
     pub fn with_options(mut self, mut options: ModelOptions) -> Result<Self> {
+        if let Some(capabilities) = &options.capabilities {
+            if let Some(efforts) = &capabilities.reasoning_effort_options {
+                anyhow::ensure!(
+                    efforts.len() <= 7
+                        && efforts
+                            .iter()
+                            .collect::<std::collections::BTreeSet<_>>()
+                            .len()
+                            == efforts.len()
+                        && efforts.iter().all(|effort| matches!(
+                            effort.as_str(),
+                            "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
+                        ))
+                        && (capabilities.reasoning || efforts.is_empty()),
+                    "invalid model reasoning effort options"
+                );
+            }
+            if !capabilities.reasoning {
+                options.reasoning_effort = None;
+                options.summary_reasoning_effort = None;
+                options.reasoning_summary = None;
+            } else if let Some(efforts) = &capabilities.reasoning_effort_options
+                && !efforts.is_empty()
+            {
+                anyhow::ensure!(
+                    options
+                        .reasoning_effort
+                        .as_ref()
+                        .is_none_or(|effort| efforts.contains(effort))
+                        && options
+                            .summary_reasoning_effort
+                            .as_ref()
+                            .is_none_or(|effort| efforts.contains(effort)),
+                    "reasoning effort is not supported by the selected model"
+                );
+            }
+        }
         // 稀疏目录参数与旧快照中的省略值沿用统一默认，不交给供应商隐式决定。
         options.max_output_tokens = options
             .max_output_tokens
@@ -720,11 +771,11 @@ impl HttpModel {
                 .as_deref()
                 .is_none_or(|v| matches!(
                     v,
-                    "none" | "minimal" | "low" | "medium" | "high" | "xhigh"
+                    "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
                 ))
                 && options.reasoning_effort.as_deref().is_none_or(|v| matches!(
                     v,
-                    "none" | "minimal" | "low" | "medium" | "high" | "xhigh"
+                    "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
                 )),
             "invalid reasoning effort"
         );
@@ -920,7 +971,38 @@ impl Model for HttpModel {
 
     fn capabilities(&self) -> ModelCapabilities {
         let mut capabilities = self.protocol.capabilities();
-        capabilities.context_window_tokens = self.options.context_window_tokens;
+        capabilities.declared = self.options.capabilities.clone();
+        if capabilities
+            .declared
+            .as_ref()
+            .is_some_and(|declared| !declared.vision)
+        {
+            capabilities
+                .input
+                .retain(|modality| *modality != Modality::Image);
+        }
+        capabilities.context_window = self.options.context_window.clone();
+        capabilities.context_window_tokens = capabilities
+            .context_window
+            .as_ref()
+            .map(|window| window.window_tokens)
+            .or(self.options.context_window_tokens)
+            .or_else(|| context_windows::known_context_window(&self.name));
+        if capabilities.context_window.is_none()
+            && let Some(window_tokens) = capabilities.context_window_tokens
+        {
+            capabilities.context_window = Some(areal_protocol::context::ContextWindow {
+                window_tokens,
+                source: if self.options.context_window_tokens.is_some() {
+                    areal_protocol::context::ContextWindowSource::User
+                } else {
+                    areal_protocol::context::ContextWindowSource::ModelDefault
+                },
+                reported_window_tokens: None,
+                reported_window_source: None,
+                user_budget_tokens: self.options.context_window_tokens,
+            });
+        }
         capabilities.max_output_tokens = self.options.max_output_tokens.map(|n| n as usize);
         capabilities.summary_output_tokens = Some(
             self.options
@@ -961,7 +1043,13 @@ impl Model for HttpModel {
             limits.max_buffer_bytes > 0,
             "tool buffer budget must be positive"
         );
-        if purpose == RequestPurpose::Summary {
+        if purpose == RequestPurpose::Summary
+            || self
+                .options
+                .capabilities
+                .as_ref()
+                .is_some_and(|capabilities| !capabilities.tools)
+        {
             limits.max_calls = 0;
             tools.clear();
         }
@@ -1042,7 +1130,13 @@ impl Model for HttpModel {
             };
             body["parallel_tool_calls"] = json!(true);
         }
-        if purpose == RequestPurpose::Summary || limits.max_calls == 0 {
+        if (purpose == RequestPurpose::Summary || limits.max_calls == 0)
+            && self
+                .options
+                .capabilities
+                .as_ref()
+                .is_none_or(|capabilities| capabilities.tools)
+        {
             body["tool_choice"] = json!("none");
         }
         // Retrying before accepting a stream cannot replay a tool operation.

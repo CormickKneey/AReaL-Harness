@@ -1,0 +1,664 @@
+{
+  "schemaVersion": 1,
+  "tokenSources": [
+    "renderer/src/styles.css",
+    "renderer/src/settings/applicationSettings.ts",
+    "renderer/src/settings/applicationPreferences.ts"
+  ],
+  "tokenGroups": [
+    {
+      "title": "文字",
+      "tokens": [
+        [
+          "--text-ui-lg",
+          "输入与强调正文"
+        ],
+        [
+          "--text-ui-base",
+          "正文"
+        ],
+        [
+          "--text-ui-caption",
+          "控件标签"
+        ],
+        [
+          "--text-ui-sm",
+          "说明"
+        ],
+        [
+          "--text-ui-xs",
+          "辅助信息"
+        ],
+        [
+          "--line-height-ui",
+          "公共内容行高"
+        ],
+        [
+          "--line-height-ui-sm",
+          "紧凑说明行高"
+        ]
+      ]
+    },
+    {
+      "title": "表面与反馈",
+      "tokens": [
+        [
+          "--color-background",
+          "页面背景"
+        ],
+        [
+          "--color-composer",
+          "输入表面"
+        ],
+        [
+          "--color-foreground",
+          "主要文字"
+        ],
+        [
+          "--color-foreground-subtle",
+          "次要文字"
+        ],
+        [
+          "--color-border",
+          "分隔与边框"
+        ],
+        [
+          "--color-button-surface",
+          "次要按钮"
+        ],
+        [
+          "--color-button-hover",
+          "按钮悬停"
+        ],
+        [
+          "--color-destructive",
+          "错误反馈"
+        ]
+      ]
+    },
+    {
+      "title": "尺寸与间距",
+      "tokens": [
+        [
+          "--spacing-control",
+          "标准控件"
+        ],
+        [
+          "--spacing-control-sm",
+          "紧凑控件"
+        ],
+        [
+          "--spacing-inline",
+          "相邻内容"
+        ],
+        [
+          "--spacing-field",
+          "内容块"
+        ],
+        [
+          "--spacing-section",
+          "分区"
+        ]
+      ]
+    },
+    {
+      "title": "形状与动效",
+      "tokens": [
+        [
+          "--radius-control",
+          "控件"
+        ],
+        [
+          "--radius-button",
+          "操作按钮与下拉触发器"
+        ],
+        [
+          "--radius-overlay",
+          "浮层和决策卡片"
+        ],
+        [
+          "--radius-composer",
+          "输入区"
+        ],
+        [
+          "--motion-fast",
+          "控件反馈"
+        ],
+        [
+          "--focus-width",
+          "焦点描边"
+        ],
+        [
+          "--radius-inset",
+          "表面内的预览内容"
+        ],
+        [
+          "--radius-pill",
+          "胶囊或圆形动作"
+        ]
+      ]
+    }
+  ],
+  "components": [
+    {
+      "id": "Button",
+      "source": "renderer/src/components/ui/button.tsx",
+      "purpose": "基础按钮与有限变体"
+    },
+    {
+      "id": "ActionButton",
+      "source": "renderer/src/components/ui/action-button.tsx",
+      "purpose": "普通紧凑操作与 pending"
+    },
+    {
+      "id": "Switch",
+      "source": "renderer/src/components/ui/switch.tsx",
+      "purpose": "双向布尔值"
+    },
+    {
+      "id": "Select",
+      "source": "renderer/src/components/ui/select.tsx",
+      "purpose": "多个候选中的单选"
+    },
+    {
+      "id": "SettingsPage",
+      "source": "renderer/src/settings/SettingsWorkspace.tsx",
+      "purpose": "设置页面的生产表面、列宽与滚动边界"
+    },
+    {
+      "id": "SettingsSection",
+      "source": "renderer/src/settings/SettingsPageParts.tsx",
+      "purpose": "功能分区"
+    },
+    {
+      "id": "SettingsGroupCard",
+      "source": "renderer/src/settings/SettingsPageParts.tsx",
+      "purpose": "相关行的公共外框"
+    },
+    {
+      "id": "SettingsRow",
+      "source": "renderer/src/settings/SettingsPageParts.tsx",
+      "purpose": "名称、说明与行内控件"
+    },
+    {
+      "id": "SettingsSelect",
+      "source": "renderer/src/settings/SettingsPageParts.tsx",
+      "purpose": "二值分段或多值菜单"
+    },
+    {
+      "id": "SettingsSegmentedTabs",
+      "source": "renderer/src/settings/SettingsSegmentedTabs.tsx",
+      "purpose": "两个互斥设置值"
+    },
+    {
+      "id": "SettingsDisclosure",
+      "source": "renderer/src/settings/SettingsDisclosure.tsx",
+      "purpose": "显式展开/收起详情"
+    },
+    {
+      "id": "SettingsDialog",
+      "source": "renderer/src/settings/common.tsx",
+      "purpose": "设置编辑与确认详情"
+    },
+    {
+      "id": "Feedback",
+      "source": "renderer/src/components/ui/feedback.tsx",
+      "purpose": "错误与状态反馈"
+    },
+    {
+      "id": "EmptySettings",
+      "source": "renderer/src/settings/common.tsx",
+      "purpose": "设置空态"
+    },
+    {
+      "id": "ConversationComposer",
+      "source": "renderer/src/ConversationComposer.tsx",
+      "purpose": "主与 Side 的输入组合"
+    },
+    {
+      "id": "ComposerSurface",
+      "source": "renderer/src/prompt-editor/ComposerSurface.tsx",
+      "purpose": "输入区布局插槽"
+    },
+    {
+      "id": "DecisionCard",
+      "source": "renderer/src/DecisionCard.tsx",
+      "purpose": "决策布局插槽"
+    },
+    {
+      "id": "ApprovalRequest",
+      "source": "renderer/src/ApprovalRequest.tsx",
+      "purpose": "具体审批交互"
+    },
+    {
+      "id": "Messages",
+      "source": "renderer/src/Messages.tsx",
+      "purpose": "共享消息投影"
+    },
+    {
+      "id": "TurnExecution",
+      "source": "renderer/src/TurnExecution.tsx",
+      "purpose": "过程状态"
+    },
+    {
+      "id": "ToolEvent",
+      "source": "renderer/src/ToolEvent.tsx",
+      "purpose": "工具事件"
+    },
+    {
+      "id": "CollapsibleText",
+      "source": "renderer/src/CollapsibleText.tsx",
+      "purpose": "长文本渐进展示"
+    },
+    {
+      "id": "SideChatPane",
+      "source": "renderer/src/SideChatPane.tsx",
+      "purpose": "辅助会话组合"
+    },
+    {
+      "id": "TurnProgress",
+      "source": "renderer/src/TurnProgress.tsx",
+      "purpose": "保留子项身份与人工选择的过程总组"
+    },
+    {
+      "id": "CommandDetails",
+      "source": "renderer/src/CommandDetails.tsx",
+      "purpose": "同一进程的输入、连续输出、状态与原始记录"
+    },
+    {
+      "id": "AgentConversationPane",
+      "source": "renderer/src/AgentConversationPane.tsx",
+      "purpose": "绑定父子身份的独立子对话阅读"
+    },
+    {
+      "id": "SentAttachment",
+      "source": "renderer/src/MessageAttachment.tsx",
+      "purpose": "已发送媒体的生产预览与关闭返回"
+    },
+    {
+      "id": "SettingsNavigation",
+      "source": "renderer/src/settings/SettingsWorkspace.tsx",
+      "purpose": "定位、筛选设置分类并沿原导航守卫返回"
+    },
+    {
+      "id": "SidePane",
+      "source": "renderer/src/app-shell/SidePane.tsx",
+      "purpose": "窗口局部的面板标签、视图切换与关闭焦点；资源生命周期沿原所有者"
+    }
+  ],
+  "patterns": [
+    {
+      "id": "P-SETTINGS",
+      "intent": "修改偏好或配置",
+      "components": [
+        "SettingsPage",
+        "SettingsSection",
+        "SettingsGroupCard",
+        "SettingsRow"
+      ],
+      "reference": "renderer/src/settings/DisplaySettings.tsx",
+      "slots": [
+        "label",
+        "control",
+        "detail"
+      ],
+      "states": [
+        "default",
+        "busy",
+        "failed",
+        "unknown",
+        "disabled"
+      ],
+      "variation": "分组、字段、文案与现有控件类型",
+      "acceptance": "标签/控件对齐，窄窗换行，值和反馈真实"
+    },
+    {
+      "id": "P-RESOURCES",
+      "intent": "查找并管理资源",
+      "components": [
+        "SettingsSection",
+        "ActionButton",
+        "Feedback"
+      ],
+      "reference": "renderer/src/settings/PluginCenter.tsx",
+      "slots": [
+        "toolbar",
+        "list",
+        "detail"
+      ],
+      "states": [
+        "loading",
+        "empty",
+        "ready",
+        "failed"
+      ],
+      "variation": "搜索、筛选、资源状态与详情",
+      "acceptance": "安装/连接状态分开；列表和详情职责清楚"
+    },
+    {
+      "id": "P-CONVERSATION",
+      "intent": "阅读并推进任务",
+      "components": [
+        "Messages",
+        "TurnProgress",
+        "TurnExecution",
+        "ToolEvent",
+        "ConversationComposer",
+        "CommandDetails",
+        "AgentConversationPane",
+        "SentAttachment",
+        "ComposerSurface",
+        "SideChatPane",
+        "SidePane",
+        "Feedback"
+      ],
+      "reference": "renderer/src/design-system/ConversationFlowExercise.tsx",
+      "slots": [
+        "timeline",
+        "composer",
+        "context"
+      ],
+      "states": [
+        "ready",
+        "busy",
+        "failed",
+        "unknown",
+        "reading-history",
+        "following-latest",
+        "tool-details",
+        "completed",
+        "command-streaming",
+        "parallel-working",
+        "image-preview",
+        "child-conversation"
+      ],
+      "variation": "消息类型、工具结果、合法动作与上下文",
+      "acceptance": "权威状态、内容层级与阅读意图独立；按信息流合同验收完成收敛、人工展开和返回最新；未知提交不重放",
+      "ruleSource": "design-system/patterns.md",
+      "rules": [
+        "CONV-OWNER-01",
+        "CONV-INPUT-01",
+        "CONV-CONTENT-01",
+        "CONV-GROUP-01",
+        "CONV-DISCLOSURE-01",
+        "CONV-READ-01",
+        "CONV-RESOURCE-01",
+        "CONV-COMMAND-01",
+        "CONV-PARALLEL-01",
+        "CONV-SCENARIO-01"
+      ]
+    },
+    {
+      "id": "P-DECISION",
+      "intent": "回答或批准请求",
+      "components": [
+        "DecisionCard",
+        "ApprovalRequest",
+        "Feedback"
+      ],
+      "reference": "renderer/src/ApprovalRequest.tsx",
+      "slots": [
+        "request",
+        "actions",
+        "feedback"
+      ],
+      "states": [
+        "ready",
+        "busy",
+        "failed",
+        "unknown"
+      ],
+      "variation": "请求正文及已有决策动作",
+      "acceptance": "关键参数可核对，动作和结果可达"
+    },
+    {
+      "id": "P-DETAIL",
+      "intent": "阅读或编辑详情",
+      "components": [
+        "SettingsDialog",
+        "SettingsDisclosure",
+        "Feedback"
+      ],
+      "reference": "renderer/src/settings/common.tsx",
+      "slots": [
+        "body",
+        "actions"
+      ],
+      "states": [
+        "ready",
+        "busy",
+        "failed"
+      ],
+      "variation": "表单字段、正文及受控 footer",
+      "acceptance": "返回/关闭路径和焦点恢复；不叠多层弹窗"
+    },
+    {
+      "id": "P-STATUS",
+      "intent": "了解状态并恢复",
+      "components": [
+        "Feedback",
+        "EmptySettings"
+      ],
+      "reference": "renderer/src/settings/ServiceStatusSettings.tsx",
+      "slots": [
+        "status",
+        "recovery"
+      ],
+      "states": [
+        "loading",
+        "empty",
+        "ready",
+        "failed",
+        "unknown"
+      ],
+      "variation": "状态说明、必要详情及可行恢复入口",
+      "acceptance": "离线/失败/未知区分，静默刷新保留已确认内容"
+    }
+  ],
+  "baseCandidate": {
+    "id": "desktop-core",
+    "version": "0.1.4",
+    "foundations": [
+      "文字",
+      "表面与反馈",
+      "尺寸与间距",
+      "形状与动效"
+    ],
+    "primitives": [
+      "Button",
+      "ActionButton",
+      "Switch",
+      "Select",
+      "Feedback"
+    ],
+    "compositions": [
+      "SettingsPage",
+      "SettingsSection",
+      "SettingsGroupCard",
+      "SettingsRow",
+      "SettingsSelect",
+      "SettingsSegmentedTabs",
+      "SettingsDisclosure",
+      "DecisionCard",
+      "ApprovalRequest",
+      "CollapsibleText",
+      "Messages",
+      "TurnProgress",
+      "TurnExecution",
+      "ToolEvent"
+    ],
+    "patterns": [
+      "P-SETTINGS",
+      "P-DECISION"
+    ],
+    "acceptance": [
+      "角色引用现有生产来源；目录不存数值副本",
+      "公共控件覆盖默认、禁用、处理中、失败和待确认",
+      "设置组合挂载真实 SettingsPage 上下文；不只展示脱离页面的库默认",
+      "明暗、14/18 字号、宽/窄与键盘交互有独立运行断言",
+      "决策与长文本保留原权威状态、全文和焦点可达性",
+      "设置单选沿SettingsSelect公共sm变体；普通设置开关使用default，不由调用方另改尺寸",
+      "活跃设置说明保留独立角色、对比度偏好与自定义前景色，不连带修改禁用或过程信息",
+      "对话过程组合在逐步投影中验证接受消息占位、可见阅读锚点、返回最新、完成收敛及人工详情保留；异常不因final默认隐藏",
+      "输入表面由宿主显式选择default/compact；Side不继承全屏主输入器布局；业务草稿、模型与提交归属不共享"
+    ],
+    "limits": [
+      "候选集不是已冻结 Base，不代表用户视觉验收完成",
+      "证据仅覆盖生产 renderer 组件和本地 fixture，不覆盖 Core、真实供应商或安装包",
+      "未覆盖全仓组件、其它平台和所有自定义主题；未完成独立做题实验",
+      "仅准入过程/阅读组合；复合fixture补充命令、图片和子对话组合证据，完整P-CONVERSATION、生产App宿主、重连和真实执行仍未准入"
+    ]
+  },
+  "interactionFamilies": [
+    {
+      "id": "I-NAV",
+      "intent": "定位与切换",
+      "patterns": [
+        "P-SETTINGS",
+        "P-RESOURCES"
+      ],
+      "components": [
+        "SettingsNavigation"
+      ],
+      "rules": [
+        "NAV-CONTEXT-01",
+        "NAV-DEFAULT-01"
+      ],
+      "ruleSource": "design-system/interactions.md"
+    },
+    {
+      "id": "I-INPUT",
+      "intent": "输入与提交",
+      "patterns": [
+        "P-CONVERSATION",
+        "P-SETTINGS",
+        "P-DETAIL"
+      ],
+      "components": [
+        "ConversationComposer",
+        "SettingsRow"
+      ],
+      "rules": [
+        "INPUT-TRUTH-01",
+        "INPUT-DEFAULT-01"
+      ],
+      "ruleSource": "design-system/interactions.md"
+    },
+    {
+      "id": "I-OBSERVE",
+      "intent": "等待与观察",
+      "patterns": [
+        "P-CONVERSATION",
+        "P-STATUS",
+        "P-SETTINGS"
+      ],
+      "components": [
+        "TurnExecution",
+        "TurnProgress",
+        "Feedback"
+      ],
+      "rules": [
+        "OBSERVE-TRUTH-01",
+        "OBSERVE-DEFAULT-01"
+      ],
+      "ruleSource": "design-system/interactions.md"
+    },
+    {
+      "id": "I-READ",
+      "intent": "阅读与探索",
+      "patterns": [
+        "P-CONVERSATION",
+        "P-DETAIL",
+        "P-SETTINGS"
+      ],
+      "components": [
+        "CollapsibleText",
+        "SettingsDisclosure"
+      ],
+      "rules": [
+        "READ-CONTINUITY-01",
+        "READ-DEFAULT-01"
+      ],
+      "ruleSource": "design-system/interactions.md"
+    },
+    {
+      "id": "I-RETURN",
+      "intent": "打开与返回",
+      "patterns": [
+        "P-CONVERSATION",
+        "P-DETAIL",
+        "P-SETTINGS"
+      ],
+      "components": [
+        "AgentConversationPane",
+        "SettingsDialog",
+        "SidePane",
+        "SideChatPane"
+      ],
+      "rules": [
+        "RETURN-CONTEXT-01",
+        "RETURN-DEFAULT-01"
+      ],
+      "ruleSource": "design-system/interactions.md"
+    },
+    {
+      "id": "I-DECIDE",
+      "intent": "选择与确认",
+      "patterns": [
+        "P-DECISION",
+        "P-SETTINGS",
+        "P-DETAIL"
+      ],
+      "components": [
+        "SettingsSelect",
+        "Switch",
+        "DecisionCard"
+      ],
+      "rules": [
+        "DECIDE-RESULT-01",
+        "DECIDE-DEFAULT-01"
+      ],
+      "ruleSource": "design-system/interactions.md"
+    },
+    {
+      "id": "I-MANAGE",
+      "intent": "调整与管理",
+      "patterns": [
+        "P-SETTINGS",
+        "P-RESOURCES"
+      ],
+      "components": [
+        "SettingsPage",
+        "SettingsSection",
+        "SettingsGroupCard",
+        "SettingsRow"
+      ],
+      "rules": [
+        "MANAGE-OWNER-01",
+        "MANAGE-DEFAULT-01"
+      ],
+      "ruleSource": "design-system/interactions.md"
+    },
+    {
+      "id": "I-RECOVER",
+      "intent": "异常与恢复",
+      "patterns": [
+        "P-STATUS",
+        "P-CONVERSATION",
+        "P-SETTINGS",
+        "P-RESOURCES",
+        "P-DETAIL",
+        "P-DECISION"
+      ],
+      "components": [
+        "Feedback",
+        "EmptySettings"
+      ],
+      "rules": [
+        "RECOVER-TRUTH-01",
+        "RECOVER-DEFAULT-01"
+      ],
+      "ruleSource": "design-system/interactions.md"
+    }
+  ]
+}

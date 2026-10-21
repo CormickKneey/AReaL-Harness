@@ -1,3 +1,4 @@
+import { useI18n, type UiMessage } from "../i18n/IntlProvider.js";
 import { SettingsDisclosure } from "./SettingsDisclosure.js";
 import { useEffect, useState } from "react";
 import { Button } from "../components/ui/button.js";
@@ -9,6 +10,7 @@ export function PluginAuthConfiguration({ pluginId, server, digest, disabled, co
   pluginId: string; server: Data; digest: string; disabled: boolean;
   command: (operation: string, values: Data) => Promise<Data>; onSaved: () => void; onActivityChange?: (id: string, pending: boolean) => void;
 }) {
+  const { t } = useI18n();
   const requirements = server.config?.authenticationRequirements ?? {};
   const [clientSecret, setClientSecret] = useState("");
   const [privateKeyPem, setPrivateKeyPem] = useState("");
@@ -17,8 +19,8 @@ export function PluginAuthConfiguration({ pluginId, server, digest, disabled, co
   const [clientMetadataUrl, setClientMetadataUrl] = useState("");
   const [callbackUrl, setCallbackUrl] = useState("");
   const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
+  const [message, setMessage] = useState<UiMessage | string>("");
+  const [error, setError] = useState<UiMessage | string>("");
   const [pendingId, setPendingId] = useState<string>();
   useEffect(() => {
     const id = `${pluginId}:${server.serverId}:${digest}`;
@@ -43,10 +45,10 @@ export function PluginAuthConfiguration({ pluginId, server, digest, disabled, co
           ...(callbackUrl.trim() ? {callbackUrl: callbackUrl.trim()} : {}),
         },
       });
-      setMessage("认证配置已保存。启用认证后核对状态，再连接插件。"); onSaved();
+      setMessage({ id: "settings.pluginAuthConfiguration.authenticationConfigurationSavedEnableAuthenticationAndCheck" }); onSaved();
     } catch (cause) {
       const failure = cause as {message?: string; submissionUnknown?: boolean};
-      setError(failure.message ?? "认证配置未完成");
+      setError(failure.message ?? { id: "settings.pluginAuthConfiguration.authenticationConfigurationIncomplete" });
       if (failure.submissionUnknown) setPendingId(requestId);
     } finally { setBusy(false); }
   };
@@ -55,26 +57,26 @@ export function PluginAuthConfiguration({ pluginId, server, digest, disabled, co
     setBusy(true); setError("");
     try {
       const receipt = await command("pluginSubmission", {mutation:"pluginAuthConfigure",requestId:pendingId});
-      if (!receipt.confirmed) {setMessage("结果仍待核对，请稍后查询。");return;}
+      if (!receipt.confirmed) {setMessage({ id: "settings.pluginAuthConfiguration.theResultIsStillUnconfirmedCheckAgain" });return;}
       setPendingId(undefined);
-      if (!receipt.accepted) setError(receipt.error?.message ?? "认证配置未被接受");
-      else {setMessage("认证配置已确认保存。");onSaved();}
+      if (!receipt.accepted) setError(receipt.error?.message ?? { id: "settings.pluginAuthConfiguration.authenticationConfigurationWasNotAccepted" });
+      else {setMessage({ id: "settings.pluginAuthConfiguration.authenticationConfigurationConfirmedSaved" });onSaved();}
     } catch (cause) {setError((cause as Error).message);} finally {setBusy(false);}
   };
-  return <SettingsDisclosure title={<> 认证配置 </>}>
-    <p>先断开插件。凭据通过系统安全存储保存，插件只收到认证所需的请求凭据。</p>
-    {requirements.clientSecret && <label>OAuth 客户端秘密<Input type="password" autoComplete="new-password" value={clientSecret} disabled={blocked} onChange={event=>setClientSecret(event.target.value)} /></label>}
+  return <SettingsDisclosure title={<> {t("settings.pluginAuthConfiguration.authenticationConfiguration")}</>}>
+    <p>{t("settings.pluginAuthConfiguration.disconnectThePluginFirstCredentialsAreSaved")}</p>
+    {requirements.clientSecret && <label>{t("settings.pluginAuthConfiguration.oauthClientSecret")}<Input type="password" autoComplete="new-password" value={clientSecret} disabled={blocked} onChange={event=>setClientSecret(event.target.value)} /></label>}
     {requirements.privateKey && <>
-      <label>OAuth 签名私钥（PEM）<textarea autoComplete="off" value={privateKeyPem} disabled={blocked} onChange={event=>setPrivateKeyPem(event.target.value)} /></label>
-      <label>签名密钥 ID<Input value={privateKeyId} disabled={blocked} onChange={event=>setPrivateKeyId(event.target.value)} /></label>
+      <label>{t("settings.pluginAuthConfiguration.oauthSigningPrivateKeyPEM")}<textarea autoComplete="off" value={privateKeyPem} disabled={blocked} onChange={event=>setPrivateKeyPem(event.target.value)} /></label>
+      <label>{t("settings.pluginAuthConfiguration.signingKeyID")}<Input value={privateKeyId} disabled={blocked} onChange={event=>setPrivateKeyId(event.target.value)} /></label>
     </>}
-    {requirements.apiKey && <label>{requirements.headerScheme === "basic" ? "API 凭据（用户名:密码）" : "API 凭据"}<Input type="password" autoComplete="new-password" value={apiKey} disabled={blocked} onChange={event=>setApiKey(event.target.value)} /></label>}
+    {requirements.apiKey && <label>{requirements.headerScheme === "basic" ? t("settings.pluginAuthConfiguration.apiCredentialsUsernamePassword") : t("settings.pluginAuthConfiguration.apiCredentials")}<Input type="password" autoComplete="new-password" value={apiKey} disabled={blocked} onChange={event=>setApiKey(event.target.value)} /></label>}
     {!requirements.apiKey && <>
-      <label>CIMD 客户端元数据 URL（可选）<Input type="url" value={clientMetadataUrl} disabled={blocked} onChange={event=>setClientMetadataUrl(event.target.value)} placeholder="https://example.com/oauth/client.json" /></label>
-      <label>已登记的 loopback 回调 URL（可选）<Input type="url" value={callbackUrl} disabled={blocked} onChange={event=>setCallbackUrl(event.target.value)} placeholder="http://127.0.0.1:PORT/callback" /></label>
+      <label>{t("settings.pluginAuthConfiguration.cimdClientMetadataURLOptional")}<Input type="url" value={clientMetadataUrl} disabled={blocked} onChange={event=>setClientMetadataUrl(event.target.value)} placeholder="https://example.com/oauth/client.json" /></label>
+      <label>{t("settings.pluginAuthConfiguration.registeredLoopbackCallbackURLOptional")}<Input type="url" value={callbackUrl} disabled={blocked} onChange={event=>setCallbackUrl(event.target.value)} placeholder="http://127.0.0.1:PORT/callback" /></label>
     </>}
     <Feedback error={error} message={message} />
-    <Button variant="outline" disabled={blocked || (requirements.clientSecret && !clientSecret) || (requirements.privateKey && !privateKeyPem) || (requirements.apiKey && !apiKey)} onClick={()=>void save()}>保存认证配置</Button>
-    {pendingId && <Button variant="outline" disabled={busy} onClick={()=>void recover()}>核对认证配置提交</Button>}
+    <Button variant="outline" disabled={blocked || (requirements.clientSecret && !clientSecret) || (requirements.privateKey && !privateKeyPem) || (requirements.apiKey && !apiKey)} onClick={()=>void save()}>{t("settings.pluginAuthConfiguration.saveAuthenticationConfiguration")}</Button>
+    {pendingId && <Button variant="outline" disabled={busy} onClick={()=>void recover()}>{t("settings.pluginAuthConfiguration.checkAuthenticationSubmission")}</Button>}
   </SettingsDisclosure>;
 }

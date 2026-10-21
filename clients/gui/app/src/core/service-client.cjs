@@ -1,4 +1,5 @@
 'use strict';
+const diagnostics = require('./diagnostics.cjs');
 const { startupTrace } = require('./startup-timing.cjs');
 const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
@@ -11,6 +12,7 @@ const { serviceIdentity } = require('./service-config.cjs');
 const { inspectCoreCapabilities } = require('./core-capabilities.cjs');
 const { desktopExecutables } = require('./desktop-executables.cjs');
 const { sameOwner, scrubOwnerEnvironment } = require('./application-owner.cjs');
+let diagnosticsConnectionGeneration = 0;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const currentCommands = new Set(['send', 'editMessage', 'continue', 'prepareCreator', 'feedback']);
 const currentManagePrefixes = ['plugin', 'marketplace', 'mcpApp', 'mcpForm'];
@@ -97,7 +99,10 @@ class ServiceConnection {
       || !Number.isSafeInteger(metadata.pid) || metadata.pid <= 1) throw new Error('本地后台服务连接元数据无效');
     const socket = this.socket = new WebSocket(url, { headers: { Authorization: `Bearer ${metadata.token}` }, followRedirects: false, maxPayload: 256 * 1024 * 1024 });
     const projection = new ProjectionReader();
-    socket.on('error', () => {});
+    const target = Object.freeze({ boundary: 'main-desktop', hostPid: metadata.pid, coreGeneration: metadata.desktopGeneration, connectionGeneration: ++diagnosticsConnectionGeneration });
+    socket.on('open', () => diagnostics.record({ type: 'socket-open', ...target }));
+    socket.on('error', error => diagnostics.record({ type: 'socket-error', ...target, code: error.code }));
+    socket.on('close', closeCode => diagnostics.record({ type: 'socket-close', ...target, closeCode }));
     socket.on('message', bytes => {
       if (this.socket !== socket) return;
       let message;
@@ -391,13 +396,15 @@ class SharedCoreBackend {
           retryLaunch = false;
           const child = spawn(executable, args, { detached: true,
             stdio: ['ignore', log.fd, log.fd, ...(this.applicationOwner ? ['pipe'] : [])], env, windowsHide: true });
+          child.once('spawn', () => diagnostics.record({ type: 'desktop-spawn', pid: child.pid }));
+          child.once('exit', (exitCode, signal) => diagnostics.record({ type: 'desktop-exit', pid: child.pid, exitCode, signal }));
           if (this.applicationOwner) {
             const lifetime = child.stdio[3];
             this.desktopLifetimes.add(lifetime);
             lifetime.on('error', () => {});
             child.once('exit', () => { lifetime.destroy(); this.desktopLifetimes.delete(lifetime); });
           }
-          child.once('error', e => { launchError = e; });
+          child.once('error', e => { diagnostics.record({ type: 'desktop-spawn-error', code: e.code }); launchError = e; });
           child.once('exit', code => { retryLaunch = code === 0; }); child.unref();
         };
         launch();
@@ -455,7 +462,7 @@ class SharedCoreBackend {
     const { guiOwned, ...params } = request;
     // 队列业务键跨 GUI/共享服务连接保留，外层丢失响应后也能只读核对。
     if (['queueEdit', 'send', 'editMessage', 'continue'].includes(name)) params.requestId ??= randomUUID();
-    const pending = this.connection.request('command', { name, request: name === 'media' ? encodeMedia(params) : params }, true).then(value => {
+    const pending = this.connection.request('command', { name, request: name === 'media' ? encodeMedia(params) : params }, !(name === 'providers' && params.operation === 'revealKey')).then(value => {
       if (ownedRecovery && value.confirmed) {
         this.guiTerminals.set(value.result.id, { projectId: request.projectId, threadId: request.threadId, id: value.result.id });
       }
@@ -497,11 +504,11 @@ class SharedCoreBackend {
     };
   }
   get serviceExited() { return !!this.exitConfirmation && this.exitConfirmation === this.metadata; }
-  async observeLifecycle(forUpdate = true) {
+  async observeLifecycle(forUpdate = true, { purpose = 'manage' } = {}) {
     if (this.serviceExited) return { ifIdle: true, exited: true, blockers: [] };
     if (!this.status.connected) return { ifIdle: false, blockers: ['disconnected'] };
     const { DesktopLifecycle } = require('./lifecycle.cjs');
-    return new DesktopLifecycle({ connection: this.connection, metadata: this.metadata, home: this.home, forUpdate }).observe();
+    return new DesktopLifecycle({ connection: this.connection, metadata: this.metadata, home: this.home, forUpdate, purpose }).observe();
   }
   lifecycleProjection() {
     const visible = new Map(this.lifecycleReceipts);
@@ -724,7 +731,8 @@ class SharedCoreBackend {
     }
     const { DesktopLifecycle } = require('./lifecycle.cjs');
     const intent = await new DesktopLifecycle({ connection: this.connection, metadata: this.metadata,
-      forUpdate: desktopKind(kind) }).prepare({ kind, mode, observed, projectId, threadId, turnId });
+      forUpdate: desktopKind(kind), purpose: kind === 'stopDesktop' && observed?.purpose === 'quit' ? 'quit' : 'manage',
+    }).prepare({ kind, mode, observed, projectId, threadId, turnId });
     const reference = { requestId, kind, mode, desktopGeneration: intent.expectedDesktopGeneration,
       targets: intent.expectedTargets, desktop: { pid: this.metadata.pid, identity: this.metadata.identity },
       ...(kind === 'interruptTurn' ? { threadId, turnId } : {}) };

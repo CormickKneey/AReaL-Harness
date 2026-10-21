@@ -1,3 +1,4 @@
+import { ApplicationIntlProvider } from "../i18n/IntlProvider.js";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "../styles.css";
@@ -12,18 +13,23 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Switch } from "../components/ui/switch.js";
 import { SettingsSegmentedTabs } from "../settings/SettingsSegmentedTabs.js";
 import { SettingsDisclosure } from "../settings/SettingsDisclosure.js";
-import { SettingsGroupCard, SettingsRow, SettingsSelect } from "../settings/SettingsPageParts.js";
+import { SettingsPage } from "../settings/SettingsWorkspace.js";
+import { SettingsGroupCard, SettingsRow, SettingsSelect, SettingsSection } from "../settings/SettingsPageParts.js";
 import { Button } from "../components/ui/button.js";
 import { Feedback } from "../components/ui/feedback.js";
 import { TooltipProvider } from "../components/ui/tooltip.js";
 import { MessageResponse } from "../components/ai-elements/message.js";
 import { TurnActivity } from "../TurnExecution.js";
 import { Messages } from "../Messages.js";
+import { DecisionTransferExercise } from "./DecisionTransferExercise.js";
+import { SettingsReflowExercise } from "./SettingsReflowExercise.js";
+import { ConversationFlowExercise } from "./ConversationFlowExercise.js";
+import { SharedWorkspacePreview } from "./SharedWorkspacePreview.js";
 import { SettingsPreview } from "./SettingsPreview.js";
 import { ConversationTimelinePreview } from "./ConversationTimelinePreview.js";
 import type { LexicalChatInputHandle } from "../LexicalChatInput.js";
 import type { Action, CommandName } from "../services.js";
-import { tokenGroups } from "./catalog.js";
+import { tokenGroups, baseCandidate } from "./catalog.js";
 import { setApplicationPreferences, useAppearance } from "../settings/applicationPreferences.js";
 
 const project = {
@@ -84,9 +90,17 @@ function Preview() {
   const [panelLocation, setPanelLocation] = useState<"bottom" | "right">("bottom");
   const [message, setMessage] = useState("");
   const [reducedMotion, setReducedMotion] = useState(false);
+  const sharedWorkspace = new URLSearchParams(window.location.search).has("shared-workspace");
+  const conversationExercise = new URLSearchParams(window.location.search).has("conversation-exercise");
+  const decisionExercise = new URLSearchParams(window.location.search).has("decision-exercise");
+  const exercise = new URLSearchParams(window.location.search).has("settings-exercise");
+  const [exerciseContent, setExerciseContent] = useState("reference");
   const [values, setValues] = useState<Record<string, string>>({});
   const api = useRef<LexicalChatInputHandle | null>(null);
   useAppearance(dark);
+  useLayoutEffect(() => {
+    if (conversationExercise) setApplicationPreferences({ contentSize: Number(fontSize) });
+  }, [conversationExercise, fontSize]);
   useLayoutEffect(() => { setApplicationPreferences({ reducedMotion: reducedMotion ? "on" : "off" }); }, [reducedMotion]);
   useEffect(() => { document.querySelector(".design-preview")?.scrollTo(0, 0); }, []);
   useLayoutEffect(() => {
@@ -111,21 +125,24 @@ function Preview() {
   const disabled = state === "busy" || state === "unknown";
   return <main className="design-preview" data-width={width} data-view={new URLSearchParams(window.location.search).has("conversation") ? "conversation" : new URLSearchParams(window.location.search).has("settings") ? "settings" : undefined}>
     <header className="design-preview-header">
-      <div><h1>客户端设计系统</h1><p>生产组件与语义 Token · 本地预览</p></div>
+      <div><h1>客户端设计系统</h1><p>生产组件与语义 Token · Base 候选 {baseCandidate.version}（未冻结）</p></div>
       <label>主题<select aria-label="主题" value={dark ? "dark" : "light"} onChange={event => setDark(event.target.value === "dark")}><option value="light">明亮</option><option value="dark">深色</option></select></label>
       <label>字号<select aria-label="字号" value={fontSize} onChange={event => setFontSize(event.target.value)}><option value="14">14</option><option value="18">18</option></select></label>
       <label>面板宽度<select aria-label="面板宽度" value={width} onChange={event => setWidth(event.target.value)}><option value="wide">宽面板</option><option value="narrow">窄面板</option></select></label>
       <label>状态<select aria-label="状态" value={state} onChange={event => { setState(event.target.value as PreviewState); setMessage(""); }}>{Object.entries(states).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
       <label>减少动态效果<input type="checkbox" checked={reducedMotion} onChange={event => setReducedMotion(event.target.checked)} /></label>
+      {exercise && <label>题目内容<select aria-label="题目内容" value={exerciseContent} onChange={event => setExerciseContent(event.target.value)}><option value="reference">参考内容</option><option value="stress">长文案</option></select></label>}
     </header>
+    {sharedWorkspace ? <SharedWorkspacePreview dark={dark} /> : conversationExercise ? <ConversationFlowExercise dark={dark} /> : decisionExercise ? <DecisionTransferExercise key={state} state={state} /> : exercise ? <SettingsReflowExercise key={exerciseContent} stress={exerciseContent === "stress"} state={state} /> : <>
     <SettingsPreview />
     <section className="design-preview-panel" aria-label="公共控件">
       <h2>设置控件 · 按交互选择</h2>
       <p className="text-ui-sm text-foreground-subtle">执行操作用按钮，开启或关闭用开关，多项选择用下拉，仅两个选项直接并排选择。</p>
+      <SettingsPage><SettingsSection>
       <SettingsGroupCard>
         <SettingsRow label="导入配置" description="点击后执行一次操作；普通操作直接显示文字。" control={<ActionButton onClick={() => setMessage("导入入口仅作组件预览。")}>导入</ActionButton>} />
         <SettingsRow label="聊天存储位置" description="项目外聊天的默认位置。" control={<ActionButton onClick={() => setMessage("目录选择仅作组件预览。")}>更改</ActionButton>} />
-        <SettingsRow label="显示底部面板" description="开或关：切换后立即更新，用左右滑动的开关表示状态。" control={<Switch size="sm" aria-label="显示底部面板" checked={showPanel} onCheckedChange={setShowPanel} />} />
+        <SettingsRow label="显示底部面板" description="开或关：切换后立即更新，用左右滑动的开关表示状态。" control={<Switch aria-label="显示底部面板" checked={showPanel} onCheckedChange={setShowPanel} />} />
         <SettingsRow label="默认终端位置" description="只有两个互斥选项：直接展示两个选项，选中项保持高亮。" control={<SettingsSegmentedTabs ariaLabel="默认终端位置" items={[{value: "bottom", label: "底部"}, {value: "right", label: "右侧"}]} value={panelLocation} onValueChange={setPanelLocation} />} />
         <SettingsRow label="关闭窗口前确认" description="三个及以上选项：下拉按钮显示当前值，展开后选择。" control={
           <SettingsSelect aria-label="关闭窗口前确认" value={closeBehavior ?? "never"} onValueChange={setCloseBehavior}>
@@ -134,7 +151,7 @@ function Preview() {
         <SettingsRow label="开源许可" description="查看随应用分发的第三方声明。" control={<ActionButton onClick={() => setMessage("许可入口仅作组件预览。")}>查看</ActionButton>} />
       </SettingsGroupCard>
       <SettingsDisclosure title="高级设置详情"><p>原地展开保留明确的展开 / 收起动作和键盘语义。</p></SettingsDisclosure>
-      <h3>样式与状态</h3>
+      </SettingsSection><SettingsSection title="样式与状态">
       <div className="design-preview-actions" aria-label="按钮样式与状态">
         <Button size="sm">主要操作</Button>
         <ActionButton>普通操作</ActionButton>
@@ -147,6 +164,7 @@ function Preview() {
         <Button size="icon-sm" variant="ghost" aria-label="刷新预览" onClick={() => setMessage("状态已刷新。 ")}><RefreshIcon /></Button>
       </div>
       <Feedback error={state === "failed" ? "操作未受理，请检查后重试。" : undefined} message={state === "unknown" ? "结果待核对，保留当前内容。" : "反馈跟随所属组件，错误与等待保持不同含义。"} />
+      </SettingsSection></SettingsPage>
     </section>
     <section className="design-preview-panel" aria-label="Composer 预览">
       <h2>Composer</h2>
@@ -170,12 +188,13 @@ function Preview() {
       <h2>审批卡片</h2><ApprovalRequest key={state} item={approval} projectId="design-preview" action={action} />
     </section>
     <section className="design-preview-panel design-preview-side" aria-label="Side 预览">
-      <h2>Side Chat</h2><SideChatPane project={project} source={source} action={action} dark={dark}
+      <h2>Side Chat</h2><SideChatPane project={project} source={source} action={action} dark={dark} executionBlocked={false}
         onReturn={() => setMessage("关闭入口仅作预览。")} onPanel={() => setMessage("面板入口仅作预览。")} />
     </section>
     <section className="design-preview-tokens" aria-label="Token 目录">
       <h2>Token 角色与当前值</h2>{tokenGroups.map(group => <div key={group.title}><h3>{group.title}</h3><dl>{group.tokens.map(([name, role]) => <div key={name}><dt><code>{name}</code><span>{role}</span></dt><dd data-token={name}>{values[name]}</dd></div>)}</dl></div>)}
     </section>
+    </>}
   </main>;
 }
-createRoot(document.getElementById("root")!).render(<TooltipProvider><Preview /></TooltipProvider>);
+createRoot(document.getElementById("root")!).render(<ApplicationIntlProvider><TooltipProvider><Preview /></TooltipProvider></ApplicationIntlProvider>);

@@ -10,11 +10,13 @@ const labels: Record<string, string> = {
     medium: "中",
     high: "高",
     xhigh: "极高",
+    max: "最高",
 };
 export interface ComposerModelOption {
     value: string;
     label: string;
     efforts?: readonly string[];
+    reasoning?: boolean;
     unavailableReason?: string;
 }
 /** 可用性直接投影 Core 目录，不在 Renderer 重新判断凭据。 */
@@ -23,6 +25,7 @@ export function composerModelOption(model: {
     modelId: string;
     displayName?: string;
     reasoningEffortOptions?: readonly string[];
+    capabilities?: { reasoning: boolean };
     available?: boolean;
     credentialState?: string;
 }): ComposerModelOption {
@@ -30,6 +33,7 @@ export function composerModelOption(model: {
         value: model.providerId ? `${model.providerId}/${model.modelId}` : "",
         label: model.displayName ?? model.modelId,
         efforts: model.reasoningEffortOptions,
+        reasoning: model.capabilities?.reasoning,
         unavailableReason: model.available === false
             ? model.credentialState === "unavailable" ? "缺少 API Key" : "模型不可用"
             : undefined,
@@ -59,8 +63,10 @@ export function ComposerModelMenu({
     const [page, setPage] = useState<"effort" | "models">("effort");
     const model = options.find((option) => option.value === value);
     const label = model?.label ?? "请选择模型";
+    const reasoning = !!model && model.reasoning !== false;
     const efforts = model?.efforts ?? [];
-    const index = effort ? efforts.indexOf(effort) : -1;
+    const selectedEffort = effort && (!model?.efforts || efforts.includes(effort)) ? effort : undefined;
+    const index = selectedEffort ? efforts.indexOf(selectedEffort) : -1;
     // Native range thumbs travel between half-thumb insets, including both endpoints.
     const sliderPosition = (step: number) => {
         const fraction = Math.max(0, step) / Math.max(1, efforts.length - 1);
@@ -77,7 +83,7 @@ export function ComposerModelMenu({
             open={open}
             onOpenChange={(next) => {
                 setOpen(next);
-                if (next) setPage(model && !model.unavailableReason ? "effort" : "models");
+                if (next) setPage(model && !model.unavailableReason && model.reasoning !== false ? "effort" : "models");
             }}
         >
             <PopoverTrigger
@@ -94,12 +100,12 @@ export function ComposerModelMenu({
             >
                 <span>
                     {label}
-                    {` ${effort ? labels[effort] ?? effort : "供应商默认"}`}
+                    {reasoning && ` ${selectedEffort ? labels[selectedEffort] ?? selectedEffort : "供应商默认"}`}
                 </span>
                 <MenuChevronIcon size={14} aria-hidden="true" />
             </PopoverTrigger>
             <PopoverContent
-                aria-label={page === "effort" ? "模型与思考强度" : "选择模型"}
+                aria-label={page === "effort" && reasoning ? "模型与思考强度" : "选择模型"}
                 side="top"
                 align="end"
                 sideOffset={8}
@@ -112,9 +118,9 @@ export function ComposerModelMenu({
                 {page === "effort" ? (
                     <>
                         <div className="composer-effort-center">
-                            <strong>
-                                {effort ? (labels[effort] ?? effort) : "供应商默认"}
-                            </strong>
+                            {reasoning && <strong>
+                                {selectedEffort ? (labels[selectedEffort] ?? selectedEffort) : "供应商默认"}
+                            </strong>}
                             <button
                                 type="button"
                                 aria-label="选择模型"
@@ -123,7 +129,7 @@ export function ComposerModelMenu({
                                 {label} ›
                             </button>
                         </div>
-                        {efforts.length && onEffortChange ? (
+                        {reasoning && efforts.length > 0 && onEffortChange ? (
                             <div className="composer-slider-shell">
                                 <div className="composer-slider-track" aria-hidden="true">
                                     <div
@@ -145,7 +151,7 @@ export function ComposerModelMenu({
                                     type="range"
                                     aria-label="思考强度"
                                     aria-valuetext={
-                                        index >= 0 ? (labels[effort!] ?? effort) : "供应商默认"
+                                        selectedEffort ? (labels[selectedEffort] ?? selectedEffort) : "供应商默认"
                                     }
                                     min={0}
                                     max={efforts.length - 1}
@@ -156,22 +162,22 @@ export function ComposerModelMenu({
                                     }
                                 />
                             </div>
-                        ) : (
+                        ) : reasoning ? (
                             <p className="composer-effort-unavailable">此模型未提供可选强度</p>
-                        )}
-                        {onEffortChange && <Button type="button" variant="ghost" aria-label="使用模型默认"
+                        ) : null}
+                        {reasoning && onEffortChange && <Button type="button" variant="ghost" aria-label="使用模型默认"
                             onClick={() => onEffortChange("")}>使用模型默认</Button>}
                     </>
                 ) : (
                     <>
                         <div className="composer-model-heading">
-                            <button
+                            {reasoning && <button
                                 type="button"
                                 aria-label="返回思考强度"
                                 onClick={() => setPage("effort")}
                             >
                                 ‹
-                            </button>
+                            </button>}
                             选择模型
                         </div>
                         <div role="radiogroup" aria-label="模型列表">
@@ -185,7 +191,8 @@ export function ComposerModelMenu({
                                     disabled={!!option.unavailableReason}
                                     onClick={() => {
                                         onChange(option.value);
-                                        setPage("effort");
+                                        if (option.reasoning === false) setOpen(false);
+                                        else setPage("effort");
                                     }}
                                 >
                                     <span>{option.label}{option.unavailableReason && <small>{option.unavailableReason}</small>}</span>

@@ -1,3 +1,4 @@
+import { useI18n } from "../i18n/IntlProvider.js";
 import { useState } from "react";
 import { ActionButton } from "../components/ui/action-button.js";
 import { SettingsDialog } from "./common.js";
@@ -6,30 +7,31 @@ import type { Data } from "../services.js";
 
 /** Read-only deployment projection; viewing it never connects or starts Core. */
 export function CoreCapabilitiesSettings({ projects, connected }: { projects: Data[]; connected: boolean }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
-  return <SettingsSection title="运行环境">
+  return <SettingsSection title={t("settings.coreCapabilitiesSettings.runtimeEnvironment")}>
     <SettingsGroupCard>
-      <SettingsRow label="Core 连接与能力" control={<ActionButton onClick={() => setOpen(true)}>查看详情</ActionButton>} />
+      <SettingsRow label={t("settings.coreCapabilitiesSettings.coreConnectionAndCapabilities")} control={<ActionButton onClick={() => setOpen(true)}>{t("settings.coreCapabilitiesSettings.viewDetails")}</ActionButton>} />
     </SettingsGroupCard>
-    {open && <SettingsDialog title="Core 连接与能力" description="各工作区的运行环境与功能支持。" onClose={() => setOpen(false)}>
+    {open && <SettingsDialog title={t("settings.coreCapabilitiesSettings.coreConnectionAndCapabilities")} description={t("settings.coreCapabilitiesSettings.runtimeEnvironmentAndFeatureSupportForEach")} onClose={() => setOpen(false)}>
     <div className="settings-sections">
-      {!projects.length && <p role="status">尚未连接工作区，能力信息尚未读取。</p>}
+      {!projects.length && <p role="status">{t("settings.coreCapabilitiesSettings.noWorkspaceIsConnectedCapabilitiesHaveNot")}</p>}
       {projects.map(project => {
         const core = project.core, available = connected && !!project.state?.connected;
         const error = project.error || project.state?.error;
         return <SettingsGroupCard key={project.id}>
-          <SettingsRow label={project.root.split(/[\\/]/).filter(Boolean).at(-1) || "工作区"}
-            control={<span>{available ? "Core 已连接" : "Core 未连接，上次能力信息可能已过期。"}</span>} />
+          <SettingsRow label={project.root.split(/[\\/]/).filter(Boolean).at(-1) || t("settings.coreCapabilitiesSettings.workspace")}
+            control={<span>{available ? t("settings.coreCapabilitiesSettings.coreConnected") : t("settings.coreCapabilitiesSettings.coreDisconnectedPreviousCapabilityInformationMayBe")}</span>} />
           {error && <p role="alert" className="px-4 text-destructive">{error}</p>}
-          {core?.binary && <SettingsRow control={null} label="Core 程序" description={<span className="break-all">{core.binary}</span>} />}
-          {core?.apiVersion && <SettingsRow label="Core 接口版本" control={<span>{core.apiVersion}</span>} />}
-          {core?.runtimeEpoch && <SettingsRow control={null} label="Runtime 实例" description={<span className="break-all">{core.runtimeEpoch}</span>} />}
-          {!core?.features ? <p role="status" className="px-4">尚未取得 Core 能力；连接成功后可核对。</p> : <>
-            <SettingsRow control={null} label="会话与对话" description={core.features.conversation ? "对话执行可用" : "当前 Core 未提供对话执行能力。"} />
-            <SettingsRow control={null} label="持续目标" description={core.features.goals ? "持续目标可用" : "当前 Core 未提供持续目标能力。"} />
-            <SettingsRow control={null} label="任务与收件箱" description={core.features.tasks ? "任务与收件箱可用" : "当前 Core 未提供任务与收件箱能力。"} />
-            <SettingsRow control={null} label="受管进程与终端" description={core.features.processes ? "受管进程与终端可用" : core.runtimeAvailable === false ? "当前 Core 未连接 Runtime，受管进程与终端不可用。" : "当前 Core 未提供完整的受管进程能力，请使用支持此功能的 Core。"} />
-            <SettingsRow control={null} label="子任务执行" description={core.features.executions ? "Core 自动安排子任务，统一返回进度与交付结果。" : "当前 Core 未提供统一子任务接口，可读取兼容任务历史。"} />
+          {core?.binary && <SettingsRow control={null} label={t("settings.coreCapabilitiesSettings.coreExecutable")} description={<span className="break-all">{core.binary}</span>} />}
+          {core?.apiVersion && <SettingsRow label={t("settings.coreCapabilitiesSettings.coreAPIVersion")} control={<span>{core.apiVersion}</span>} />}
+          {core?.runtimeEpoch && <SettingsRow control={null} label={t("settings.coreCapabilitiesSettings.runtimeInstance")} description={<span className="break-all">{core.runtimeEpoch}</span>} />}
+          {!core?.features ? <p role="status" className="px-4">{t("settings.coreCapabilitiesSettings.coreCapabilitiesAreNotAvailableYetCheck")}</p> : <>
+            <SettingsRow control={null} label={t("settings.coreCapabilitiesSettings.sessionsAndConversations")} description={core.features.conversation ? t("settings.coreCapabilitiesSettings.conversationExecutionAvailable") : t("settings.coreCapabilitiesSettings.thisCoreDoesNotProvideConversationExecution")} />
+            <SettingsRow control={null} label={t("settings.coreCapabilitiesSettings.ongoingGoal")} description={core.features.goals ? t("settings.coreCapabilitiesSettings.ongoingGoalsAvailable") : t("settings.coreCapabilitiesSettings.thisCoreDoesNotProvideOngoingGoals")} />
+            <SettingsRow control={null} label={t("settings.coreCapabilitiesSettings.tasksAndInbox")} description={core.features.tasks ? t("settings.coreCapabilitiesSettings.tasksAndInboxAvailable") : t("settings.coreCapabilitiesSettings.thisCoreDoesNotProvideTasksAnd")} />
+            <SettingsRow control={null} label={t("settings.coreCapabilitiesSettings.managedProcessesAndTerminals")} description={core.features.processes ? t("settings.coreCapabilitiesSettings.managedProcessesAndTerminalsAvailable") : core.runtimeAvailable === false ? t("settings.coreCapabilitiesSettings.thisCoreIsNotConnectedToRuntime") : t("settings.coreCapabilitiesSettings.thisCoreDoesNotProvideFullManaged")} />
+            <SettingsRow control={null} label={t("settings.coreCapabilitiesSettings.subtaskExecution")} description={core.features.executions ? t("settings.coreCapabilitiesSettings.coreSchedulesSubtasksAndReturnsTheirProgress") : t("settings.coreCapabilitiesSettings.thisCoreDoesNotProvideTheUnified")} />
           </>}
         </SettingsGroupCard>;
       })}

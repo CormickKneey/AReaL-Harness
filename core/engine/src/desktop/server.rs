@@ -341,7 +341,27 @@ impl Engine {
             .map(|(_, parameters)| parameters)
             .unwrap_or_default();
         if !model.name().is_empty() {
-            data.push(json!({"providerId":null,"providerRevision":null,"modelId":model.name(),"parameters":parameters,"isDefault":default_model.is_none(),"available":model.check_work().is_ok(),"transport":model.provider(),"reasoningEffortOptions":if matches!(model.provider(), "openai.responses" | "openai.chat_completions") {efforts.to_vec()} else {vec![]},"input":model.capabilities().input,"output":model.capabilities().output,"contextWindowTokens":model.capabilities().context_window_tokens,"effectiveContextWindowTokens":model.capabilities().context_window_tokens.unwrap_or(self.limits.context_window_tokens)}));
+            let model_capabilities = model.capabilities();
+            let declared = model_capabilities.declared.as_ref();
+            let reasoning_efforts: Vec<String> =
+                if declared.is_some_and(|declared| !declared.reasoning) {
+                    Vec::new()
+                } else {
+                    declared
+                        .and_then(|declared| declared.reasoning_effort_options.clone())
+                        .filter(|options| !options.is_empty())
+                        .unwrap_or_else(|| {
+                            if matches!(
+                                model.provider(),
+                                "openai.responses" | "openai.chat_completions"
+                            ) {
+                                efforts.iter().map(|effort| (*effort).into()).collect()
+                            } else {
+                                Vec::new()
+                            }
+                        })
+                };
+            data.push(json!({"providerId":null,"providerRevision":null,"modelId":model.name(),"parameters":parameters,"isDefault":default_model.is_none(),"available":model.check_work().is_ok(),"transport":model.provider(),"capabilities":declared,"reasoningEffortOptions":reasoning_efforts,"input":model.capabilities().input,"output":model.capabilities().output,"contextWindowTokens":model.capabilities().context_window_tokens,"effectiveContextWindowTokens":model.capabilities().context_window_tokens.unwrap_or(self.limits.context_window_tokens)}));
         }
         for p in self.desktop.catalog.read().unwrap().providers.values() {
             for name in &p.models {
@@ -349,13 +369,38 @@ impl Engine {
                     provider_id: p.id.clone(),
                     model_id: name.clone(),
                 };
-                let parameters = self.model_parameters(&reference, &p.parameters);
-                let result = self.provider_model(p, name, &parameters);
-                let capabilities = match p.protocol.as_str() {
+                let parameters = self.model_parameters(&reference, p);
+                let result = self.provider_model(p, name, &parameters, None);
+                let mut capabilities = match p.protocol.as_str() {
                     "responses" => model::ModelProtocol::Responses.capabilities(),
                     _ => model::ModelProtocol::ChatCompletions.capabilities(),
                 };
-                data.push(json!({"providerId":p.id,"providerRevision":p.revision,"modelId":name,"parameters":parameters,"isDefault":default_model.as_ref() == Some(&reference),"transport":p.protocol,"input":capabilities.input,"output":capabilities.output,"available":result.is_ok(),"credentialState":self.provider_view(p)["credentialState"],"contextWindowTokens":parameters.context_window_tokens,"effectiveContextWindowTokens":parameters.context_window_tokens.unwrap_or(self.limits.context_window_tokens),"parameterCapabilities":if p.protocol == "responses" {vec!["temperature","maxOutputTokens","contextWindowTokens","reasoningEffort","reasoningSummary"]} else {vec!["temperature","maxOutputTokens","contextWindowTokens","reasoningEffort"]},"reasoningEffortOptions":efforts,"connectionState":"unchecked"}));
+                let declared = p.model_capabilities.get(name);
+                if declared.is_some_and(|declared| !declared.vision) {
+                    capabilities
+                        .input
+                        .retain(|modality| *modality != areal_protocol::Modality::Image);
+                }
+                let reasoning = declared.is_none_or(|declared| declared.reasoning);
+                let reasoning_efforts: Vec<String> = if reasoning {
+                    declared
+                        .and_then(|declared| declared.reasoning_effort_options.clone())
+                        .filter(|options| !options.is_empty())
+                        .unwrap_or_else(|| efforts.iter().map(|effort| (*effort).into()).collect())
+                } else {
+                    Vec::new()
+                };
+                let window =
+                    self.provider_context_window(p, name, parameters.context_window_tokens);
+                let mut parameter_capabilities =
+                    vec!["temperature", "maxOutputTokens", "contextWindowTokens"];
+                if reasoning {
+                    parameter_capabilities.push("reasoningEffort");
+                    if p.protocol == "responses" {
+                        parameter_capabilities.push("reasoningSummary");
+                    }
+                }
+                data.push(json!({"providerId":p.id,"providerRevision":p.revision,"modelId":name,"parameters":parameters,"isDefault":default_model.as_ref() == Some(&reference),"transport":p.protocol,"input":capabilities.input,"output":capabilities.output,"available":result.is_ok(),"credentialState":self.provider_view(p)["credentialState"],"contextWindowTokens":window.window_tokens,"effectiveContextWindowTokens":window.window_tokens,"reportedWindowTokens":window.reported_window_tokens,"reportedWindowSource":window.reported_window_source,"userBudgetTokens":window.user_budget_tokens,"windowSource":window.source,"capabilities":declared,"parameterCapabilities":parameter_capabilities,"reasoningEffortOptions":reasoning_efforts,"connectionState":"unchecked"}));
             }
         }
         json!({"data":data,"lastAcceptedModel":last_accepted_model})

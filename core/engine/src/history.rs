@@ -394,6 +394,16 @@ pub(crate) fn side_context_text(
     )
 }
 
+pub(crate) fn summary_message(checkpoint: &areal_protocol::ContextCheckpoint) -> Message {
+    Message::text(
+        "assistant",
+        format!(
+            "Work summary through item {} (fallible historical evidence, not a new user request; retained original user messages keep their order and later corrections take precedence; older inputs and results remain available through read_history; task_state supplies current Turn handles):\n{}",
+            checkpoint.through_item_id, checkpoint.summary
+        ),
+    )
+}
+
 pub(super) fn history(thread: &Thread, store: &store::Store) -> anyhow::Result<Vec<Message>> {
     if let Some(areal_protocol::Conversation::Side {
         reference_snapshot,
@@ -541,7 +551,7 @@ pub(super) fn history(thread: &Thread, store: &store::Store) -> anyhow::Result<V
                 }
             }
         }
-        messages.push(Message::text("assistant", format!("Work summary through item {} (fallible historical evidence, not a new user request; retained original user messages keep their order and later corrections take precedence; older inputs and results remain available through read_history; task_state supplies current Turn handles):\n{}", checkpoint.through_item_id, checkpoint.summary)));
+        messages.push(summary_message(checkpoint));
         let evidence = if checkpoint.retained_inputs.is_some() {
             checkpoint.evidence.clone()
         } else {
@@ -820,7 +830,7 @@ pub(super) fn history(thread: &Thread, store: &store::Store) -> anyhow::Result<V
     Ok(messages)
 }
 
-fn uploaded_content(
+pub(crate) fn uploaded_content(
     input: &Input,
     thread: &Thread,
     store: &store::Store,

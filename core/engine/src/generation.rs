@@ -150,17 +150,14 @@ impl Engine {
         let mut child_results = Value::Null;
         let mut observed_children = HashSet::new();
         let mut child_observations = agents::ChildResultObservations::default();
-        let mut instructions = self.project_instructions(cell).await?;
-        if let Some(workspace) = self.workspace_context(cell) {
-            // 工作区和部署能力在本轮冻结，放入已有指令快照，避免逐轮累积或挡住用户输入。
-            let text = instructions.get_or_insert_with(String::new);
-            text.push_str("\n\n");
-            text.push_str(&workspace.text_content());
-        }
+        let projected = self.project_instructions(cell).await?;
+        let instructions = projected.as_ref().map(|(text, _)| text.clone());
         if instructions.is_some() {
             let mut state = cell.state.lock().await;
             let mut candidate = state.thread.clone();
             candidate.turns.last_mut().unwrap().instruction_snapshot = instructions.clone();
+            candidate.turns.last_mut().unwrap().instruction_attribution =
+                projected.map(|(_, attribution)| attribution);
             self.persist(&candidate).await?;
             state.thread = candidate;
         }
@@ -533,6 +530,14 @@ impl Engine {
                 },
                 max_buffer_bytes: self.limits.max_tool_buffer_bytes,
             };
+            self.publish_context_usage(
+                cell,
+                &messages,
+                &tool_definitions,
+                &configuration,
+                model.as_ref(),
+            )
+            .await?;
             self.reserve_agent_model_request(cell)?;
             let mut network_retries: usize = 0;
             'request: loop {
@@ -606,12 +611,22 @@ impl Engine {
                     emit_item(cell, "item/started", &thread_id, &turn_id, &item);
                 }
                 let mut completion_items = HashSet::from([item_id.clone()]);
+                let generation = cell
+                    .state
+                    .lock()
+                    .await
+                    .active
+                    .as_ref()
+                    .unwrap()
+                    .generation
+                    .clone();
                 let response = {
                     let pending_response = tokio::time::timeout(
                         self.limits.stream_idle_timeout,
                         model::REQUEST_OWNER
                             .scope((thread_id.clone(), turn_id.clone()), async {
                                 anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
+                                let meter = crate::request_meter::RequestMeter::new(generation);
                                 model
                                     .chat_with_limits(
                                         messages.clone(),
@@ -621,6 +636,7 @@ impl Engine {
                                         None,
                                     )
                                     .await
+                                    .map(|stream| meter.wrap(stream))
                             })
                             .instrument(model_span.clone()),
                     );
@@ -1409,6 +1425,23 @@ mod cancellation_usage_tests {
                 .unwrap();
             engine.shutdown().await;
             let turn = settled.turns.last().unwrap();
+            let stats = turn.generation.as_ref().unwrap();
+            assert_eq!(stats.usage_requests, 1, "{mode}");
+            assert_eq!(
+                stats.missing_usage_requests,
+                u64::from(mode != "cancel"),
+                "{mode}"
+            );
+            assert_eq!(
+                stats.measured_requests, 0,
+                "single-event streams cannot produce a rate: {mode}"
+            );
+            assert_eq!(
+                stats.unmeasured_requests,
+                if mode == "cancel" { 1 } else { 2 },
+                "{mode}"
+            );
+            assert_eq!((stats.output_tokens, stats.duration_ms), (0, 0), "{mode}");
             let usage = turn.usage.as_ref().unwrap();
             assert_eq!(
                 (

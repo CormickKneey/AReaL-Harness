@@ -7,6 +7,8 @@ import { TECHNICAL_INPUT_ATTRIBUTES } from "../../lib/technicalInputAttributes.j
 
 export function ApiKeyInput({
   value,
+  configured,
+  loading,
   visible,
   readOnly,
   onChange,
@@ -17,6 +19,8 @@ export function ApiKeyInput({
   onToggleVisibility,
 }: {
   value: string;
+  configured?: boolean;
+  loading?: boolean;
   visible: boolean;
   readOnly?: boolean;
   onChange: (value: string) => void;
@@ -26,7 +30,7 @@ export function ApiKeyInput({
   onCompositionEnd?: () => void;
   onToggleVisibility: () => void;
 }) {
-  const { intl } = useZCodeIntl();
+  const { t, intl } = useZCodeIntl();
 
   return (
     <div className="relative">
@@ -36,7 +40,7 @@ export function ApiKeyInput({
         size="lg"
         aria-label="API Key" data-testid={TID_MODEL_PROVIDER_API_KEY_INPUT}
         className="pr-10 h-9"
-        placeholder={intl.formatMessage({
+        placeholder={configured ? "••••••••" : intl.formatMessage({
           id: "settings.modelProvider.apiKeyPlaceholder",
         })}
         value={value}
@@ -56,9 +60,10 @@ export function ApiKeyInput({
         type="button"
         variant="ghost"
         size="icon"
-        disabled={readOnly}
+        disabled={readOnly || loading || (!value && !configured)}
         className="absolute top-1/2 right-1.5 -translate-y-1/2"
-        aria-label={visible ? "隐藏 API Key" : "显示 API Key"} onClick={onToggleVisibility}
+        aria-busy={loading}
+        aria-label={visible ? t("settings.apiKeyInput.hideAPIKey") : t("settings.apiKeyInput.showAPIKey")} onClick={onToggleVisibility}
       >
         {visible ? <EyeOffIcon className="size-3.5" /> : <EyeIcon className="size-3.5" />}
       </Button>

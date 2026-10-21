@@ -1,3 +1,4 @@
+import { useI18n } from "../i18n/IntlProvider.js";
 import { SettingsSelect } from "./SettingsPageParts.js";
 import { SettingsDisclosure } from "./SettingsDisclosure.js";
 import { useState } from "react";
@@ -13,6 +14,7 @@ export function McpConfigEditor({
   value: string;
   onChange: (value: string) => void;
 }) {
+  const { t } = useI18n();
   const [mode, setMode] = useState<"form" | "json">("form");
   let config: Data | null = null;
   try {
@@ -29,7 +31,7 @@ export function McpConfigEditor({
     <>
       <SettingsSegmentedTabs
         items={[
-          { value: "form", label: "表单" },
+          { value: "form", label: t("settings.mcpConfigEditor.form") },
           { value: "json", label: "JSON" },
         ]}
         value={mode}
@@ -37,34 +39,31 @@ export function McpConfigEditor({
       />
       {mode === "json" || !config ? (
         <label>
-          MCP 配置 JSON
-          <textarea
+          {t("settings.mcpConfigEditor.mcpConfigurationJSON")}<textarea
             rows={12}
             spellCheck={false}
             value={value}
             onChange={(e) => onChange(e.target.value)}
           />
-          {!config && <small>请先修正 JSON，再切换到表单。</small>}
+          {!config && <small>{t("settings.mcpConfigEditor.fixTheJSONBeforeSwitchingToThe")}</small>}
         </label>
       ) : (
         <>
           <div className="settings-choice-field">
-            类型
-            <SettingsSelect aria-label="类型" value={transport.type} onValueChange={selectedValue => update({
+            {t("settings.mcpConfigEditor.type")}<SettingsSelect aria-label={t("settings.mcpConfigEditor.type")} value={transport.type} onValueChange={selectedValue => update({
                   transport:
                     selectedValue === "stdio"
                       ? { type: "stdio", command: "", args: [] }
                       : { type: "streamableHttp", url: "" },
                 })}>
-              <option value="stdio">stdio（本地命令）</option>
-              <option value="streamableHttp">HTTP（Streamable HTTP）</option>
+              <option value="stdio">{t("settings.mcpConfigEditor.stdioLocalCommand")}</option>
+              <option value="streamableHttp">{t("settings.mcpConfigEditor.streamableHttp")}</option>
             </SettingsSelect>
           </div>
           {transport.type === "stdio" ? (
             <>
               <label>
-                命令
-                <Input
+                {t("settings.mcpConfigEditor.command")}<Input
                   required
                   value={transport.command ?? ""}
                   onChange={(e) => updateTransport({ command: e.target.value })}
@@ -72,8 +71,7 @@ export function McpConfigEditor({
                 />
               </label>
               <label>
-                参数（每行一个）
-                <textarea
+                {t("settings.mcpConfigEditor.argumentsOnePerLine")}<textarea
                   rows={2}
                   value={(transport.args ?? []).join("\n")}
                   onChange={(e) =>
@@ -88,8 +86,7 @@ export function McpConfigEditor({
           ) : (
             <>
               <label>
-                服务器 URL
-                <Input
+                {t("settings.mcpConfigEditor.serverURL")}<Input
                   required
                   type="url"
                   value={transport.url ?? ""}
@@ -98,8 +95,7 @@ export function McpConfigEditor({
                 />
               </label>
               <label>
-                认证环境变量（可选）
-                <Input
+                {t("settings.mcpConfigEditor.authenticationEnvironmentVariableOptional")}<Input
                   value={transport.bearerTokenEnv ?? ""}
                   onChange={(e) =>
                     updateTransport({ bearerTokenEnv: e.target.value || null })
@@ -109,12 +105,11 @@ export function McpConfigEditor({
               </label>
             </>
           )}
-          <SettingsDisclosure title={<> 高级设置 </>}>
+          <SettingsDisclosure title={<> {t("settings.mcpConfigEditor.advancedSettings")}</>}>
             <div className="settings-form mt-3">
               {transport.type === "stdio" && <>
               <label>
-                工作目录（可选）
-                <Input
+                {t("settings.mcpConfigEditor.workingDirectoryOptional")}<Input
                   value={transport.cwd ?? ""}
                   onChange={(e) =>
                     updateTransport({ cwd: e.target.value || null })
@@ -122,8 +117,7 @@ export function McpConfigEditor({
                 />
               </label>
               <label>
-                继承环境变量（每行一个名称）
-                <textarea
+                {t("settings.mcpConfigEditor.inheritedEnvironmentVariablesOneNamePerLine")}<textarea
                   rows={2}
                   value={(transport.envVars ?? []).join("\n")}
                   onChange={(e) =>
@@ -133,12 +127,11 @@ export function McpConfigEditor({
                   }
                   placeholder="MY_SERVICE_TOKEN"
                 />
-                <small>填写启动环境中的变量名称，不在此处保存密钥。</small>
+                <small>{t("settings.mcpConfigEditor.enterVariableNamesFromTheStartupEnvironment")}</small>
               </label>
               </>}
           <label>
-            启动超时（毫秒）
-            <Input
+            {t("settings.mcpConfigEditor.startupTimeoutMs")}<Input
               type="number"
               min={1}
               placeholder="30000"
@@ -153,8 +146,7 @@ export function McpConfigEditor({
             />
           </label>
           <label>
-            调用超时（毫秒）
-            <Input
+            {t("settings.mcpConfigEditor.callTimeoutMs")}<Input
               type="number"
               min={1}
               placeholder="120000"

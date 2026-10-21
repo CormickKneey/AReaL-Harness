@@ -1,3 +1,4 @@
+import { useI18n } from "../../i18n/IntlProvider.js";
 import * as React from "react";
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 
@@ -53,6 +54,7 @@ function DialogContent({
   showOverlay?: boolean;
   overlayClassName?: string;
 }) {
+  const { t } = useI18n();
   return (
     <DialogPortal>
       {showOverlay ? <DialogOverlay className={overlayClassName} /> : null}
@@ -78,7 +80,7 @@ function DialogContent({
             />}
           >
             <XIcon />
-            <span className="sr-only">关闭弹窗</span>
+            <span className="sr-only">{t("common.closeDialog")}</span>
           </DialogPrimitive.Close>
         )}
       </DialogPrimitive.Popup>
@@ -100,6 +102,7 @@ function DialogFooter({
 }: React.ComponentProps<"div"> & {
   showCloseButton?: boolean;
 }) {
+  const { t } = useI18n();
   return (
     <div
       data-slot="dialog-footer"
@@ -108,7 +111,7 @@ function DialogFooter({
     >
       {children}
       {showCloseButton && (
-        <DialogPrimitive.Close render={<Button variant="outline" />}>关闭</DialogPrimitive.Close>
+        <DialogPrimitive.Close render={<Button variant="outline" />}>{t("common.close")}</DialogPrimitive.Close>
       )}
     </div>
   );

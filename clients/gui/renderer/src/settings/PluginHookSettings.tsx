@@ -1,3 +1,4 @@
+import { useI18n, UiMessageError, type UiMessage } from "../i18n/IntlProvider.js";
 import { SettingsDisclosure } from "./SettingsDisclosure.js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "../components/ui/button.js";
@@ -31,36 +32,37 @@ type Props = {
 const object = (value: unknown): value is RecordValue =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 function readView(value: unknown, id: string, digest: string): HookView {
-  if (!object(value) || !Array.isArray(value.data)) throw new Error("插件钩子响应格式无效。");
+  if (!object(value) || !Array.isArray(value.data)) throw new UiMessageError({ id: "settings.pluginHookSettings.thePluginHookResponseFormatIsInvalid" });
   const row: unknown = value.data.find((entry: unknown) => object(entry) && entry.pluginId === id);
-  if (!object(row)) throw new Error("当前插件的钩子不可用，请刷新插件详情。");
-  if (row.installedDigest !== digest) throw new Error("已安装包已变化，请刷新插件详情后重新审阅。");
+  if (!object(row)) throw new UiMessageError({ id: "settings.pluginHookSettings.hooksAreUnavailableForThisPluginRefresh" });
+  if (row.installedDigest !== digest) throw new UiMessageError({ id: "settings.pluginHookSettings.theInstalledPackageChangedRefreshThePlugin" });
   if (typeof row.definitionDigest !== "string" || !row.definitionDigest || !Array.isArray(row.definitions)
     || !Array.isArray(row.diagnostics) || !row.diagnostics.every((d: unknown) => typeof d === "string")) {
-    throw new Error("插件钩子响应格式无效。");
+    throw new UiMessageError({ id: "settings.pluginHookSettings.thePluginHookResponseFormatIsInvalid" });
   }
   const definitions = row.definitions.map((entry: unknown) => {
-    if (!object(entry) || typeof entry.trusted !== "boolean" || typeof entry.readOnlyCommandTrusted !== "boolean" || !object(entry.definition)) throw new Error("钩子定义格式无效。");
+    if (!object(entry) || typeof entry.trusted !== "boolean" || typeof entry.readOnlyCommandTrusted !== "boolean" || !object(entry.definition)) throw new UiMessageError({ id: "settings.pluginHookSettings.theHookDefinitionFormatIsInvalid" });
     const definition = entry.definition;
     if (typeof definition.id !== "string" || typeof definition.event !== "string"
       || (definition.matcher !== null && typeof definition.matcher !== "string")
       || !object(definition.handler) || typeof definition.timeout_secs !== "number"
       || !Number.isFinite(definition.timeout_secs) || typeof definition.async !== "boolean"
       || (definition.status_message != null && typeof definition.status_message !== "string")) {
-      throw new Error("钩子定义格式无效。");
+      throw new UiMessageError({ id: "settings.pluginHookSettings.theHookDefinitionFormatIsInvalid" });
     }
     return { definition: definition as Definition, trusted: entry.trusted, readOnlyCommandTrusted: entry.readOnlyCommandTrusted };
   });
   return { pluginId: id, installedDigest: digest, definitionDigest: row.definitionDigest,
     definitions, diagnostics: row.diagnostics as string[] };
 }
-const message = (error: unknown) => error instanceof Error ? error.message : "读取插件钩子失败。";
+const message = (error: unknown): string | UiMessage => error instanceof UiMessageError ? error.descriptor : error instanceof Error ? error.message : { id: "settings.pluginHookSettings.couldNotLoadPluginHooks" };
 
 export function PluginHookSettings({ id, installedDigest, disabled, api, onConfigure, refreshKey }: Props) {
+  const { t } = useI18n();
   const [view, setView] = useState<HookView>();
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<UiMessage | string>("");
   const [reviewedIdentity, setReviewedIdentity] = useState<string>();
   const [readOnlyReviewedIdentity, setReadOnlyReviewedIdentity] = useState<string>();
   const generation = useRef(0);
@@ -106,50 +108,48 @@ export function PluginHookSettings({ id, installedDigest, disabled, api, onConfi
         enabled: trusted, trusted, allowReadOnlyCommands });
       if (generation.current === request) { setBusy(false); await refresh(); }
     } catch (cause) {
-      if (generation.current === request) setError(cause instanceof Error ? cause.message : "钩子配置未完成，请核对提交状态。");
+      if (generation.current === request) setError(cause instanceof UiMessageError ? cause.descriptor : cause instanceof Error ? cause.message : { id: "settings.pluginHookSettings.hookConfigurationIsIncompleteCheckSubmissionStatus" });
     } finally {
       if (generation.current === request) setBusy(false);
     }
   };
   if (current && current.definitions.length === 0 && current.diagnostics.length === 0 && !error) return null;
-  return <section aria-label="插件钩子" className="plugin-detail-resources space-y-3">
+  return <section aria-label={t("settings.pluginHookSettings.pluginHooks")} className="plugin-detail-resources space-y-3">
     <div className="flex items-center justify-between gap-2">
-      <h4>插件钩子</h4>
-      <Button variant="outline" size="sm" disabled={disabled || busy || loading} onClick={() => void refresh()}>刷新钩子</Button>
+      <h4>{t("settings.pluginHookSettings.pluginHooks")}</h4>
+      <Button variant="outline" size="sm" disabled={disabled || busy || loading} onClick={() => void refresh()}>{t("settings.pluginHookSettings.refreshHooks")}</Button>
     </div>
-    <p className="text-foreground-subtle text-ui-sm">钩子可运行 shell 命令或调用已连接的 MCP 工具。安装、启用插件或连接 MCP 均不会授予钩子信任。</p>
-    <Feedback error={error} message={loading ? "正在读取当前安装包的钩子…" : undefined} />
+    <p className="text-foreground-subtle text-ui-sm">{t("settings.pluginHookSettings.hooksCanRunShellCommandsOrCall")}</p>
+    <Feedback error={error} message={loading ? t("settings.pluginHookSettings.loadingHooksFromTheInstalledPackage") : undefined} />
     {current && <>
-      <SettingsDisclosure title="钩子摘要"><dl className="text-ui-sm space-y-1">
-        <dt>已安装包摘要</dt><dd className="break-all font-mono">{current.installedDigest}</dd>
-        <dt>当前定义摘要</dt><dd className="break-all font-mono">{current.definitionDigest}</dd>
+      <SettingsDisclosure title={t("settings.pluginHookSettings.hookSummary")}><dl className="text-ui-sm space-y-1">
+        <dt>{t("settings.pluginHookSettings.installedPackageDigest")}</dt><dd className="break-all font-mono">{current.installedDigest}</dd>
+        <dt>{t("settings.pluginHookSettings.currentDefinitionDigest")}</dt><dd className="break-all font-mono">{current.definitionDigest}</dd>
       </dl></SettingsDisclosure>
       {current.diagnostics.map((diagnostic, index) => <p className="text-ui-sm" key={index}>{diagnostic}</p>)}
-      {current.definitions.length === 0 ? <p>当前安装包没有可执行的钩子定义。</p> : <>
+      {current.definitions.length === 0 ? <p>{t("settings.pluginHookSettings.theInstalledPackageHasNoExecutableHook")}</p> : <>
         <ul className="space-y-3">
           {current.definitions.map(({ definition, trusted, readOnlyCommandTrusted }, index) => <li key={`${definition.id}:${index}`} className="space-y-1 rounded-md border p-3">
-            <p><strong>{definition.event}</strong> · {trusted ? "当前定义已获信任" : "尚未授予信任"}</p>
-            {definition.handler.type === "command" && <p className="text-ui-sm">普通只读子任务命令许可：{readOnlyCommandTrusted ? "当前定义已单独获准" : "尚未单独授权"}</p>}
-            <p className="text-ui-sm">匹配：{definition.matcher || "全部"} · 超时：{definition.timeout_secs} 秒 · {definition.async ? "后台执行" : "同步执行"}</p>
-            {definition.status_message && <p className="text-ui-sm">状态提示：{definition.status_message}</p>}
-            <p className="text-ui-sm">{definition.handler.type === "command" ? "Shell 命令" : "MCP 工具及参数"}</p>
+            <p><strong>{definition.event}</strong> · {trusted ? t("settings.pluginHookSettings.currentDefinitionsTrusted") : t("settings.pluginHookSettings.trustNotGranted")}</p>
+            {definition.handler.type === "command" && <p className="text-ui-sm">{t("settings.pluginHookSettings.readOnlyCommandPermission", { trusted: String(readOnlyCommandTrusted) })}</p>}
+            <p className="text-ui-sm">{t("settings.pluginHookSettings.hookExecutionSummary", { matcher: definition.matcher || t("settings.pluginHookSettings.all"), timeout: definition.timeout_secs, mode: definition.async ? "background" : "synchronous" })}</p>
+            {definition.status_message && <p className="text-ui-sm">{t("settings.pluginHookSettings.statusMessageValue", { message: definition.status_message })}</p>}
+            <p className="text-ui-sm">{definition.handler.type === "command" ? t("settings.pluginHookSettings.shellCommand") : t("settings.pluginHookSettings.mcpToolAndArguments")}</p>
             <pre className="whitespace-pre-wrap break-all text-ui-sm">{definition.handler.type === "command"
               ? String(definition.handler.command ?? "") : JSON.stringify(definition.handler, null, 2)}</pre>
-            {typeof definition.handler.command_windows === "string" && <p className="whitespace-pre-wrap break-all text-ui-sm">Windows 命令：{definition.handler.command_windows}</p>}
-            <SettingsDisclosure title={<> 完整定义 </>}><pre className="whitespace-pre-wrap break-all text-ui-sm">{JSON.stringify(definition, null, 2)}</pre></SettingsDisclosure>
+            {typeof definition.handler.command_windows === "string" && <p className="whitespace-pre-wrap break-all text-ui-sm">{t("settings.pluginHookSettings.windowsCommandValue", { command: definition.handler.command_windows })}</p>}
+            <SettingsDisclosure title={<> {t("settings.pluginHookSettings.fullDefinition")}</>}><pre className="whitespace-pre-wrap break-all text-ui-sm">{JSON.stringify(definition, null, 2)}</pre></SettingsDisclosure>
           </li>)}
         </ul>
         <label className="flex items-start gap-2 text-ui-sm">
           <input type="checkbox" checked={reviewed} disabled={blocked} onChange={event => { setReviewedIdentity(event.target.checked ? identity : undefined); if (!event.target.checked) setReadOnlyReviewedIdentity(undefined); }} />
-          我已审阅以上安装包摘要、全部钩子定义及其执行内容，允许当前定义运行。
-        </label>
+          {t("settings.pluginHookSettings.iHaveReviewedThePackageDigestAll")}</label>
         {hasCommands && <label className="flex items-start gap-2 text-ui-sm">
           <input type="checkbox" checked={readOnlyReviewed} disabled={blocked || !reviewed} onChange={event => setReadOnlyReviewedIdentity(event.target.checked ? identity : undefined)} />
-          单独允许以上命令钩子在普通只读子任务运行：工作区只读；私有临时目录及插件数据可写；无网络访问；不提供供应商凭据。此许可仅适用于命令钩子；Side、研究模式及受限 Profile 除外。
-        </label>}
+          {t("settings.pluginHookSettings.separatelyAllowTheCommandHooksAboveTo")}</label>}
         <div className="settings-form-actions">
-          <Button disabled={blocked || !reviewed} onClick={() => void configure(true)}>信任并启用当前钩子</Button>
-          <Button variant="outline" disabled={blocked || !current.definitions.some(entry => entry.trusted || entry.readOnlyCommandTrusted)} onClick={() => void configure(false)}>撤销钩子信任并停用</Button>
+          <Button disabled={blocked || !reviewed} onClick={() => void configure(true)}>{t("settings.pluginHookSettings.trustAndEnableCurrentHooks")}</Button>
+          <Button variant="outline" disabled={blocked || !current.definitions.some(entry => entry.trusted || entry.readOnlyCommandTrusted)} onClick={() => void configure(false)}>{t("settings.pluginHookSettings.revokeHookTrustAndDisable")}</Button>
         </div>
       </>}
     </>}

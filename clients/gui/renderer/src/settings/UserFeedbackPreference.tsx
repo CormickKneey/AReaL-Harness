@@ -1,3 +1,4 @@
+import { useI18n } from "../i18n/IntlProvider.js";
 import { useState } from "react";
 import type { Action } from "../services.js";
 import { refreshFeedbackAvailability, useFeedbackAvailability } from "../user-feedback-status.js";
@@ -11,6 +12,7 @@ export function UserFeedbackPreference({
     action: Action;
     connected: boolean;
 }) {
+  const { t } = useI18n();
     const value = useFeedbackAvailability(action, connected);
     const [busy, setBusy] = useState(false),
         [error, setError] = useState("");
@@ -28,14 +30,14 @@ export function UserFeedbackPreference({
         }
     };
     return (
-        <SettingsSection title="回答评价" description="自愿提交点赞或点踩，帮助改进回答质量。">
+        <SettingsSection title={t("settings.userFeedbackPreference.responseFeedback")} description={t("settings.userFeedbackPreference.optionallySubmitAThumbsUpOrThumbs")}>
             <SettingsGroupCard>
                 <SettingsRow
-                    label="显示点赞和点踩"
-                    description="启用数据飞轮并连接支持评价的接收端后，在回复下方显示。点击图标不会自动提交。"
+                    label={t("settings.userFeedbackPreference.showThumbsUpAndThumbsDown")}
+                    description={t("settings.userFeedbackPreference.shownBelowResponsesWhenDataFeedbackIs")}
                     control={
                         <Switch
-                            aria-label="显示点赞和点踩"
+                            aria-label={t("settings.userFeedbackPreference.showThumbsUpAndThumbsDown")}
                             checked={value.opted_in}
                             disabled={!connected || busy || !value.supported}
                             onCheckedChange={(enabled) => void change(enabled)}
@@ -45,8 +47,7 @@ export function UserFeedbackPreference({
             </SettingsGroupCard>
             {connected && !value.supported && (
                 <p role="status" className="settings-section-desc">
-                    当前后台未提供可用的评价状态，暂时无法更改。
-                </p>
+                    {t("settings.userFeedbackPreference.feedbackStatusIsUnavailableFromTheBackend")}</p>
             )}
             {error && (
                 <p role="alert" className="text-destructive">

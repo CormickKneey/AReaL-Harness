@@ -2,7 +2,7 @@
 
 # Context management
 
-Core owns request budgeting, compaction and durable history. The [Core contract](../api/core.en.md) defines the public projection; the [configuration guide](../guides/configuration.en.md) describes settings. The fallback window is 131072 tokens and default HTTP output cap is 16384 tokens.
+Core owns request budgeting, compaction and durable history. The [Core contract](../api/core.en.md) defines the public projection; the [configuration guide](../guides/configuration.en.md) describes settings. Explicit context-window settings take precedence over the known-model defaults. Unknown model IDs use the global 131072-token fallback. The default HTTP output cap remains 16384 tokens.
 
 ## Problem and goal
 
@@ -12,7 +12,7 @@ One allocator plans complete requests, retaining the latest real user request an
 
 | Setting | Behavior |
 |---|---|
-| `model.context_window_tokens` | Common setting declaring the actual window; global fallback is 131072 tokens |
+| `model.context_window_tokens` | Sets the user working budget, capped by a service-reported window when available |
 | `model.max_output_tokens` | Common setting; overridable per-model HTTP request default of 16384, strictly positive |
 | `context.mode` | Keep auto / manual / disabled |
 | `context.target_tokens`, `context.recent_tokens` | Automatic target/recent defaults are 0; positive legacy values remain compatibility boundary preferences with source diagnostics |
@@ -23,9 +23,27 @@ One allocator plans complete requests, retaining the latest real user request an
 
 Do not add a retained-input quota setting. Common settings are window, output and compaction mode, preserving provider/model parameter precedence. Summary-specific reasoning effort and output settings remain advanced options rather than becoming ineffective configuration.
 
+## Known model windows
+
+The service-reported window and the user's working budget are retained separately. Account `context_window` is the currently reported window; optional `max_context_window` does not replace it. The working window is the smaller of the reported window and an explicit user budget. The UI shows the report source, reported capacity, and user budget separately. Accounts without a reported window use the global fallback, never the public API's model-name defaults. Custom endpoints use exact-ID defaults only when neither a report nor a user budget is available. Unknown IDs use the global fallback.
+
+An idle conversation's context query projects the next new request. At admission, reported capacity and model capabilities refresh only when provider identity, endpoint, protocol, and credential reference match. Historical Turns, active Turns, and already accepted queue items retain their frozen snapshots. Capacity updates do not switch accounts or rebind endpoints. User budgets still use `model.context_window_tokens` in standalone TOML and `contextWindowTokens` in desktop parameters. Legacy snapshots cannot distinguish an automatically filled window from an equal explicit budget. Saved window parameters are conservatively retained as budgets, so a larger report cannot silently increase them. New snapshots retain budgets and reports separately.
+
+The defaults were checked on 2026-10-20. Exact supported IDs are owned by `core/engine/src/model/context_windows.rs`.
+
+| Model IDs | Window | Official source |
+|---|---:|---|
+| `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-astra`, `gpt-6-luna` | 1,050,000 | [OpenAI models](https://developers.openai.com/api/docs/models), [Sol comparison](https://developers.openai.com/api/docs/models/compare?model=gpt-6-sol&model=gpt-6.1-sol) |
+| `gpt-5.6-sol`, `gpt-5.6` | 1,050,000 | [GPT-5.6 Sol](https://developers.openai.com/api/docs/models/gpt-5.6-sol) |
+| Claude IDs listed in the Core table | 1,000,000 | [Claude context windows](https://platform.claude.com/docs/en/build-with-claude/context-windows) |
+| `deepseek-flash`, `deepseek-v4-pro` and documented V4 Flash aliases | 1,000,000 | [DeepSeek models](https://api-docs.deepseek.com/quick_start/pricing/) |
+| `glm-5` | 200,000 | [GLM-5](https://docs.z.ai/guides/llm/glm-5) |
+
+Gemini was reviewed but is not assigned a default. Gemini 3 and 2.5 have separate input and output budgets. Gemini 4 shares one window. Treating an input-only limit as a shared window would change its meaning. See [Gemini token limits](https://ai.google.dev/gemini-api/docs/tokens).
+
 ## Unified planning for complete requests
 
-For window W, reserve R is the larger of the request output cap and explicit reserve floor. Available input is W − R, giving default HTTP requests 114688 tokens for the entire input. Planning and sending share message construction and accounting, including live instructions, tool schemas, media and protocol envelopes. Preserve full provider input-usage calibration and conservative headroom for media estimates. Compaction also obeys the same raw conservative estimate used by final preflight: smaller historical usage cannot bypass the hard window gate, while larger actual usage can still trigger earlier compaction.
+For window W, reserve R is the larger of the request output cap and explicit reserve floor. Available input is W − R. An unknown model using the fallback and default HTTP output cap has 114688 tokens for the entire input. Planning and sending share message construction and accounting, including live instructions, tool schemas, media and protocol envelopes. Preserve full provider input-usage calibration and conservative headroom for media estimates. Compaction also obeys the same raw conservative estimate used by final preflight: smaller historical usage cannot bypass the hard window gate, while larger actual usage can still trigger earlier compaction.
 
 Allocate in this order, retaining original roles and chronology:
 

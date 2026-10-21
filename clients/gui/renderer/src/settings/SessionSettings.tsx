@@ -1,3 +1,4 @@
+import { useI18n, UiMessageError, type UiMessage } from "../i18n/IntlProvider.js";
 import { SettingsSelect } from "./SettingsPageParts.js";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../components/ui/button.js";
@@ -57,19 +58,20 @@ const wireParameters = (parameters: Data, clear: boolean) => clear ? {} : {
 
 /** 会话配置只影响 Core 接受后的后续轮次。草稿和未知结果留在本页，不自动重发。 */
 export function SessionSettings({ project, thread, action }: { project?: Data; thread?: Data; action: Action }) {
+  const { t, locale } = useI18n();
   const configuration = thread && project?.configurations?.[thread.id];
   const storageKey = storageKeyFor(project?.id, thread?.id);
   const ready = useRef(false);
   const clean = useRef("");
-  const saveRef = useRef<(revision: number, overrides?: Data) => Promise<void>>(async () => { throw new Error("请先选择任务，以编辑会话配置。"); });
+  const saveRef = useRef<(revision: number, overrides?: Data) => Promise<void>>(async () => { throw new UiMessageError({ id: "settings.sessionSettings.selectATaskToEditItsSession" }); });
   const [draft, setDraft] = useState<Data | null>(null);
   const [conflict, setConflict] = useState(false);
   const [readback, setReadback] = useState<Data | null>(null);
   const [rereadRevision, setRereadRevision] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [defaultBusy, setDefaultBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
+  const [error, setError] = useState<string | UiMessage>("");
+  const [message, setMessage] = useState<string | UiMessage>("");
   const threadPending = (project?.pending ?? []).filter((entry: Data) => entry.params?.threadId === thread?.id);
   const pendingConfig = threadPending.some((entry: Data) => entry.method === "areal/thread/configure" && !entry.awaitingResponse);
   const unknown = !!draft?.unknown || pendingConfig;
@@ -93,7 +95,7 @@ export function SessionSettings({ project, thread, action }: { project?: Data; t
   }, [draft, storageKey]);
   const dirty = !!draft && clean.current !== "" && JSON.stringify({ ...draft, unknown: false }) !== clean.current;
   useDraftBlocker({
-    label: "会话配置",
+    label: { id: "settings.sessionSettings.sessionSettings" },
     dirty,
     busy: busy || defaultBusy,
     discard: () => {
@@ -110,19 +112,19 @@ export function SessionSettings({ project, thread, action }: { project?: Data; t
       setRereadRevision(null);
     },
     save: async () => {
-      if (unknown) throw new Error("配置结果待核对，不会自动重发。");
-      if (conflict) throw new Error("会话配置已变化，请重新读取后再决定是否提交。草稿已保留。");
+      if (unknown) throw new UiMessageError({ id: "settings.sessionSettings.theConfigurationResultNeedsCheckingItWill" });
+      if (conflict) throw new UiMessageError({ id: "settings.sessionSettings.sessionSettingsChangedReloadBeforeDecidingWhether" });
       await saveRef.current(draft?.baseRevision);
     },
   });
   const newSessionSetting = <NewSessionModelSetting action={action} disabled={busy || dirty} onBusyChange={setDefaultBusy} />;
-  if (!project || !thread || !configuration || !draft) return <>{newSessionSetting}<EmptySettings>请先选择任务，以编辑会话配置。</EmptySettings></>;
+  if (!project || !thread || !configuration || !draft) return <>{newSessionSetting}<EmptySettings>{t("settings.sessionSettings.selectATaskToEditItsSession")}</EmptySettings></>;
   const profileLocked = configuration.profile?.readOnly === true;
   const profileSkills: Data[] = configuration.profile?.skills ?? [];
   const models = (project.models ?? []).filter((model: Data) => model.providerId && model.modelId && model.available !== false);
   if (draft.model && !models.some((model: Data) => model.providerId === draft.model.providerId && model.modelId === draft.model.modelId)) models.unshift(draft.model);
   const selectedSkills = draft.skillMode === "profile" ? [] : (draft.skills as string[]).map(parseSkill);
-  const applyLatest = (latest: Data, notice: string) => {
+  const applyLatest = (latest: Data, notice: UiMessage) => {
     const next = fromConfig(latest);
     clean.current = JSON.stringify(next);
     setDraft(next);
@@ -135,7 +137,7 @@ export function SessionSettings({ project, thread, action }: { project?: Data; t
   const payloadFor = (revision: number, overrides: Data = {}) => {
     const clear = overrides.clear === true;
     const skills = overrides.selectedSkills ?? (clear ? [] : selectedSkills);
-    if (!clear && draft.skillMode === "custom" && skills.length === 0) throw new Error("请至少选择一个技能，或改回使用预设全部技能。");
+    if (!clear && draft.skillMode === "custom" && skills.length === 0) throw new UiMessageError({ id: "settings.sessionSettings.selectAtLeastOneSkillOrUse" });
     return {
       projectId: project.id,
       threadId: thread.id,
@@ -152,8 +154,8 @@ export function SessionSettings({ project, thread, action }: { project?: Data; t
     try {
       await action("configure", payloadFor(revision, overrides));
       const latest = await action("manage", { projectId: project.id, threadId: thread.id, operation: "inspect" });
-      if (!latest?.configuration) throw new Error("会话配置已保存，但读回失败。请重新读取。");
-      applyLatest(latest.configuration, "会话配置已保存");
+      if (!latest?.configuration) throw new UiMessageError({ id: "settings.sessionSettings.sessionSettingsWereSavedButCouldNot" });
+      applyLatest(latest.configuration, { id: "settings.sessionSettings.sessionSettingsSaved" });
     } catch (cause) {
       const failure = cause as Error & { submissionUnknown?: boolean };
       if (failure.submissionUnknown) {
@@ -164,10 +166,10 @@ export function SessionSettings({ project, thread, action }: { project?: Data; t
       }
       if (/已变化|conflict/i.test(failure.message)) {
         setConflict(true);
-        setError("会话配置已变化，请重新读取后再决定是否提交。草稿已保留。");
+        setError({ id: "settings.sessionSettings.sessionSettingsChangedReloadBeforeDecidingWhether" });
         return;
       }
-      setError(failure.message);
+      setError(cause instanceof UiMessageError ? cause.descriptor : failure.message);
     } finally { setBusy(false); }
   };
   const update = (patch: Data) => setDraft(current => current ? { ...current, ...patch, unknown: false } : current);
@@ -178,8 +180,8 @@ export function SessionSettings({ project, thread, action }: { project?: Data; t
       const latest = await action("manage", { projectId: project.id, threadId: thread.id, operation: "inspect" });
       setReadback(latest.configuration);
       setRereadRevision(latest.configuration.revision);
-      setMessage("已读回当前会话配置。草稿仍保留，可以重新提交或采用最新配置。");
-    } catch (cause) { setError((cause as Error).message); }
+      setMessage({ id: "settings.sessionSettings.currentSessionSettingsReloadedYourDraftIs" });
+    } catch (cause) { setError(cause instanceof UiMessageError ? cause.descriptor : (cause as Error).message); }
     finally { setBusy(false); }
   };
   const verify = async () => {
@@ -189,91 +191,91 @@ export function SessionSettings({ project, thread, action }: { project?: Data; t
       await action("reconcile", { projectId: project.id });
       const latest = await action("manage", { projectId: project.id, threadId: thread.id, operation: "inspect" });
       setReadback(latest.configuration);
-      setMessage("已读回当前会话配置。未自动重发未确认的修改。");
-    } catch (cause) { setError((cause as Error).message); }
+      setMessage({ id: "settings.sessionSettings.currentSessionSettingsReloadedUnconfirmedChangesWere" });
+    } catch (cause) { setError(cause instanceof UiMessageError ? cause.descriptor : (cause as Error).message); }
     finally { setBusy(false); }
   };
   return (
     <>{newSessionSetting}<form className="settings-form" noValidate onSubmit={event => { event.preventDefault(); if (!fieldsDisabled && !conflict) void saveRef.current(draft.baseRevision); }}>
       <fieldset disabled={fieldsDisabled} className="m-0 space-y-6 border-0 p-0">
-        <SettingsSection title="会话模型" description="新消息使用此模型，已入队消息保持不变。">
+        <SettingsSection title={t("settings.sessionSettings.sessionModel")} description={t("settings.sessionSettings.newMessagesUseThisModelQueuedMessages")}>
           <SettingsGroupCard>
-            <SettingsRow label="模型"  control={
-              <SettingsSelect aria-label="会话模型" value={modelValue(draft.model)} onValueChange={selectedValue => update({ model: parseModel(selectedValue) })}>
-                <option value="">预设或服务默认</option>
+            <SettingsRow label={t("settings.sessionSettings.model")}  control={
+              <SettingsSelect aria-label={t("settings.sessionSettings.sessionModel")} value={modelValue(draft.model)} onValueChange={selectedValue => update({ model: parseModel(selectedValue) })}>
+                <option value="">{t("settings.sessionSettings.presetOrServiceDefault")}</option>
                 {models.map((model: Data) => <option key={modelValue(model)} value={modelValue(model)}>{model.displayName || model.modelId}</option>)}
               </SettingsSelect>
             } />
           </SettingsGroupCard>
         </SettingsSection>
-        <SettingsSection title="会话权限与安全" description="用于新消息，仍受部署与预设的权限上限约束。">
+        <SettingsSection title={t("settings.sessionSettings.sessionPermissionsAndSafety")} description={t("settings.sessionSettings.appliesToNewMessagesWithinDeploymentAnd")}>
           <SettingsGroupCard>
-            <SettingsRow label="只读模式" description={profileLocked ? "当前预设强制只读。" : "限制写操作与高危行为。"} control={
-              <Switch aria-label="只读模式" checked={profileLocked || draft.options.readOnly === true} disabled={fieldsDisabled || profileLocked} onCheckedChange={readOnly => update({ options: { ...draft.options, readOnly } })} />
+            <SettingsRow label={t("settings.sessionSettings.readOnlyMode")} description={profileLocked ? t("settings.sessionSettings.theCurrentPresetRequiresReadOnlyMode") : t("settings.sessionSettings.restrictWritesAndHighRiskOperations")} control={
+              <Switch aria-label={t("settings.sessionSettings.readOnlyMode")} checked={profileLocked || draft.options.readOnly === true} disabled={fieldsDisabled || profileLocked} onCheckedChange={readOnly => update({ options: { ...draft.options, readOnly } })} />
             } />
-            <SettingsRow label="单轮最大模型调用次数" description="安全上限：1–1024。" control={
+            <SettingsRow label={t("settings.sessionSettings.maximumModelCallsPerTurn")} description={t("settings.sessionSettings.safetyLimit11024")} control={
               <div className="flex items-center gap-1.5">
-                <Input type="number" aria-label="单轮最大模型调用次数" min={1} max={1024} value={draft.options.maxModelRounds ?? ""} className="w-20 text-center" onChange={event => update({ options: { ...draft.options, maxModelRounds: event.target.value === "" ? null : Number(event.target.value) } })} />
-                <span className="text-ui-sm text-foreground-subtle">次</span>
+                <Input type="number" aria-label={t("settings.sessionSettings.maximumModelCallsPerTurn")} min={1} max={1024} value={draft.options.maxModelRounds ?? ""} className="w-20 text-center" onChange={event => update({ options: { ...draft.options, maxModelRounds: event.target.value === "" ? null : Number(event.target.value) } })} />
+                <span className="text-ui-sm text-foreground-subtle">{t("settings.sessionSettings.calls")}</span>
               </div>
             } />
           </SettingsGroupCard>
         </SettingsSection>
-        <SettingsSection title="指令设置" description="追加到之后的新消息；恢复默认可清除追加内容。">
+        <SettingsSection title={t("settings.sessionSettings.instructions")} description={t("settings.sessionSettings.appendedToFutureMessagesRestoreDefaultsTo")}>
           <SettingsGroupCard>
             <div className="space-y-2 p-4">
-              <div className="settings-field-label">附加指令</div>
-              <textarea rows={4} aria-label="附加指令" value={draft.options.appendInstructions ?? ""} onChange={event => update({ options: { ...draft.options, appendInstructions: event.target.value } })} />
+              <div className="settings-field-label">{t("settings.sessionSettings.additionalInstructions")}</div>
+              <textarea rows={4} aria-label={t("settings.sessionSettings.additionalInstructions")} value={draft.options.appendInstructions ?? ""} onChange={event => update({ options: { ...draft.options, appendInstructions: event.target.value } })} />
             </div>
           </SettingsGroupCard>
         </SettingsSection>
-        <SettingsSection title="会话技能" description="选择之后执行时可用的技能。">
+        <SettingsSection title={t("settings.sessionSettings.sessionSkills")} description={t("settings.sessionSettings.chooseSkillsAvailableForFutureExecution")}>
           <SettingsGroupCard>
-            <SettingsRow label="技能范围" control={<SettingsSelect aria-label="会话技能范围" value={draft.skillMode} onValueChange={selectedValue => update({ skillMode: selectedValue, skills: selectedValue === "profile" ? [] : draft.skills })}>
-                <option value="profile">预设全部</option>
-                <option value="custom">所选技能</option>
+            <SettingsRow label={t("settings.sessionSettings.skillScope")} control={<SettingsSelect aria-label={t("settings.sessionSettings.sessionSkillScope")} value={draft.skillMode} onValueChange={selectedValue => update({ skillMode: selectedValue, skills: selectedValue === "profile" ? [] : draft.skills })}>
+                <option value="profile">{t("settings.sessionSettings.allPresetSkills")}</option>
+                <option value="custom">{t("settings.sessionSettings.selectedSkills")}</option>
               </SettingsSelect>} />
             <div className="space-y-3 px-4 pb-4">
               {draft.skillMode === "custom" && profileSkills.map(skill => {
                 const key = skillKey(skill);
                 return <label key={key} className="flex items-center gap-2"><input type="checkbox" aria-label={`${skill.id} · ${skill.revision}`} checked={draft.skills.includes(key)} onChange={event => update({ skills: event.target.checked ? [...draft.skills, key] : draft.skills.filter((item: string) => item !== key) })} />{skill.id} · {skill.revision}</label>;
               })}
-              {draft.skillMode === "custom" && !profileSkills.length && <p>当前预设没有可选择的技能。</p>}
+              {draft.skillMode === "custom" && !profileSkills.length && <p>{t("settings.sessionSettings.noSelectableSkillsInTheCurrentPreset")}</p>}
             </div>
           </SettingsGroupCard>
         </SettingsSection>
-        <SettingsSection title="模型参数" description="留空使用模型默认值。">
+        <SettingsSection title={t("settings.sessionSettings.modelParameters")} description={t("settings.sessionSettings.leaveBlankToUseModelDefaults")}>
           <SettingsGroupCard>
-            <SettingsRow label="温度 (Temperature)" description="采样随机性（0.0 - 2.0）。" control={
-              <Input type="number" aria-label="温度" min={0} max={2} step={0.1} value={draft.parameters.temperature ?? ""} className="w-24 text-center" onChange={event => update({ parameters: { ...draft.parameters, temperature: event.target.value === "" ? null : Number(event.target.value) } })} />
+            <SettingsRow label={t("settings.sessionSettings.temperature")} description={t("settings.sessionSettings.samplingRandomness0020")} control={
+              <Input type="number" aria-label={t("settings.sessionSettings.temperature2")} min={0} max={2} step={0.1} value={draft.parameters.temperature ?? ""} className="w-24 text-center" onChange={event => update({ parameters: { ...draft.parameters, temperature: event.target.value === "" ? null : Number(event.target.value) } })} />
             } />
-            <SettingsRow label="最大输出 Token" description="单次模型响应允许生成的最大 Token 限制。" control={
-              <Input type="number" aria-label="最大输出 Token" min={1} value={draft.parameters.maxOutputTokens ?? ""} className="w-24 text-center" onChange={event => update({ parameters: { ...draft.parameters, maxOutputTokens: event.target.value === "" ? null : Number(event.target.value) } })} />
+            <SettingsRow label={t("settings.sessionSettings.maximumOutputTokens")} description={t("settings.sessionSettings.maximumTokensGeneratedInOneModelResponse")} control={
+              <Input type="number" aria-label={t("settings.sessionSettings.maximumOutputTokens")} min={1} value={draft.parameters.maxOutputTokens ?? ""} className="w-24 text-center" onChange={event => update({ parameters: { ...draft.parameters, maxOutputTokens: event.target.value === "" ? null : Number(event.target.value) } })} />
             } />
           </SettingsGroupCard>
         </SettingsSection>
       </fieldset>
-      {running && <p role="status">任务正在执行，完成或停止后才能修改配置。</p>}
-      {thread.desktop?.archived && <p role="status">已归档任务只读，不能修改会话配置。</p>}
-      {unknown && <p role="status">配置结果待核对。草稿已保留，不会自动重发。</p>}
+      {running && <p role="status">{t("settings.sessionSettings.thisTaskIsRunningChangeSettingsAfter")}</p>}
+      {thread.desktop?.archived && <p role="status">{t("settings.sessionSettings.archivedTasksAreReadOnlySessionSettings")}</p>}
+      {unknown && <p role="status">{t("settings.sessionSettings.theConfigurationResultNeedsCheckingYourDraft")}</p>}
       <Feedback error={error} message={message} />
       <div className="settings-form-actions">
-        <Button type="submit" disabled={fieldsDisabled || conflict}>保存会话配置</Button>
-        <Button type="button" variant="outline" disabled={fieldsDisabled || conflict} onClick={() => void saveRef.current(draft.baseRevision, { clear: true, model: null, selectedSkills: [], options: { ...draft.options, readOnly: profileLocked, appendInstructions: "", maxModelRounds: null } })}>恢复默认配置</Button>
-        {conflict && <Button type="button" variant="outline" disabled={busy} onClick={() => void read()}>重新读取</Button>}
-        {conflict && <Button type="button" disabled={busy || rereadRevision == null} onClick={() => void saveRef.current(rereadRevision as number)}>用当前草稿重新提交</Button>}
-        {conflict && <Button type="button" variant="outline" disabled={busy || !readback} onClick={() => applyLatest(readback as Data, "已采用最新配置。尚未再次保存。")}>采用最新配置</Button>}
-        {unknown && <Button type="button" variant="outline" disabled={busy} onClick={() => void verify()}>核对会话配置</Button>}
+        <Button type="submit" disabled={fieldsDisabled || conflict}>{t("settings.sessionSettings.saveSessionSettings")}</Button>
+        <Button type="button" variant="outline" disabled={fieldsDisabled || conflict} onClick={() => void saveRef.current(draft.baseRevision, { clear: true, model: null, selectedSkills: [], options: { ...draft.options, readOnly: profileLocked, appendInstructions: "", maxModelRounds: null } })}>{t("settings.sessionSettings.restoreDefaults")}</Button>
+        {conflict && <Button type="button" variant="outline" disabled={busy} onClick={() => void read()}>{t("settings.sessionSettings.reload")}</Button>}
+        {conflict && <Button type="button" disabled={busy || rereadRevision == null} onClick={() => void saveRef.current(rereadRevision as number)}>{t("settings.sessionSettings.resubmitCurrentDraft")}</Button>}
+        {conflict && <Button type="button" variant="outline" disabled={busy || !readback} onClick={() => applyLatest(readback as Data, { id: "settings.sessionSettings.latestSettingsAdoptedTheyHaveNotBeen" })}>{t("settings.sessionSettings.useLatestSettings")}</Button>}
+        {unknown && <Button type="button" variant="outline" disabled={busy} onClick={() => void verify()}>{t("settings.sessionSettings.reviewSessionSettings")}</Button>}
       </div>
-      {readback && <section aria-label="已读回的会话配置">
-        <p>版本：{readback.revision}</p>
-        <p>模型：{readback.model ? `${readback.model.providerId}/${readback.model.modelId}` : "预设或服务默认"}</p>
-        <p>附加指令：{readback.options?.appendInstructions || "无"}</p>
-        <p>技能：{readback.selectedSkills?.length ? readback.selectedSkills.map((skill: Data) => `${skill.id} · ${skill.revision}`).join("、") : "预设全部技能"}</p>
-        <p>单轮最大模型调用次数：{readback.options?.maxModelRounds ?? "未限制"}</p>
-        <p>温度：{readback.parameters?.temperature ?? "默认"}</p>
-        <p>最大输出 Token：{readback.parameters?.maxOutputTokens ?? "默认"}</p>
-        <p>只读：{readback.readOnly === true ? "是" : "否"}</p>
+      {readback && <section aria-label={t("settings.sessionSettings.reloadedSessionSettings")}>
+        <p>{t("settings.sessionSettings.revision")}{readback.revision}</p>
+        <p>{t("settings.sessionSettings.model2")}{readback.model ? `${readback.model.providerId}/${readback.model.modelId}` : t("settings.sessionSettings.presetOrServiceDefault")}</p>
+        <p>{t("settings.sessionSettings.additionalInstructions2")}{readback.options?.appendInstructions || t("settings.sessionSettings.none")}</p>
+        <p>{t("settings.sessionSettings.skills")}{readback.selectedSkills?.length ? readback.selectedSkills.map((skill: Data) => `${skill.id} · ${skill.revision}`).join(locale === "zh-CN" ? "、" : ", ") : t("settings.sessionSettings.allPresetSkills2")}</p>
+        <p>{t("settings.sessionSettings.maximumModelCallsPerTurn2")}{readback.options?.maxModelRounds ?? t("settings.sessionSettings.unlimited")}</p>
+        <p>{t("settings.sessionSettings.temperature3")}{readback.parameters?.temperature ?? t("settings.sessionSettings.default")}</p>
+        <p>{t("settings.sessionSettings.maximumOutputTokens2")}{readback.parameters?.maxOutputTokens ?? t("settings.sessionSettings.default")}</p>
+        <p>{t("settings.sessionSettings.readOnly")}{readback.readOnly === true ? t("settings.sessionSettings.yes") : t("settings.sessionSettings.no")}</p>
       </section>}
     </form></>
   );

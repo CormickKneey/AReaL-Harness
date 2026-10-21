@@ -363,7 +363,7 @@ pub(crate) fn valid(field: &str, entry: &Entry) -> Result<()> {
         "reasoning_effort" | "summary_reasoning_effort" => {
             if !matches!(
                 value.as_str(),
-                "none" | "minimal" | "low" | "medium" | "high" | "xhigh"
+                "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
             ) {
                 return Err(reject("unsupported reasoning effort"));
             }
@@ -814,6 +814,16 @@ pub(crate) fn load_mode(
         }
     }
     let provider = values["model.provider"].value.clone();
+    let selected_capabilities = catalog
+        .iter()
+        .find(|entry| entry.id == provider)
+        .and_then(|entry| {
+            entry
+                .models
+                .iter()
+                .find(|model| model.id == values["model.name"].value)
+        })
+        .and_then(|model| model.capabilities.clone());
     // 参数按全局显式值、模型默认值、供应商默认值逐层补齐；环境和 CLI 已在上方覆盖。
     if let Some(entry) = catalog.iter().find(|p| p.id == provider) {
         let model = values
@@ -962,6 +972,7 @@ pub(crate) fn load_mode(
             .get("tools.extensions_file")
             .map(|v| PathBuf::from(&v.value)),
         model: SelectedModelConfig {
+            capabilities: selected_capabilities,
             context_window_tokens: values
                 .get("model.context_window_tokens")
                 .map(|v| v.value.parse().unwrap()),

@@ -19,10 +19,24 @@ await mkdir(workspace); await mkdir(join(userHome, ".areal"), { recursive: true 
 execFileSync("git", ["init", "-b", "main"], { cwd: workspace, stdio: "ignore" });
 const requests = [];
 const modelRequests = [];
+const probeRequests = [];
 let releaseHeldReply;
 const server = createServer(async (request, response) => {
+  if (request.method === "GET" && request.url.endsWith("/models")) {
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ data: [] }));
+    return;
+  }
   let body = ""; for await (const chunk of request) body += chunk;
   const payload = JSON.parse(body);
+  if (payload.messages?.length === 1 && payload.messages[0].content === "Reply with OK.") {
+    const probe = { terminalSent: true, closed: false };
+    probeRequests.push(probe);
+    response.on("close", () => { probe.closed = true; });
+    response.writeHead(200, { "Content-Type": "text/event-stream" });
+    response.write('data: {"choices":[{"index":0,"delta":{"content":"OK"},"finish_reason":null}]}\n\ndata: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n');
+    return;
+  }
   const naming = payload.messages?.some(message => message.role === "system" && JSON.stringify(message.content).includes("Generate a concise semantic session title"));
   if (!naming) {
     requests.push({ model: payload.model, authenticated: request.headers.authorization === "Bearer fixture-key", authorizationPresent: request.headers.authorization !== undefined });
@@ -40,7 +54,7 @@ const server = createServer(async (request, response) => {
 });
 await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
 const config = join(userHome, ".areal", "config.toml");
-await writeFile(config, `schema_version=1\n[model]\ncatalog_version=1\nprovider="theta"\nname="theta-model"\n` + ["theta", "arena"].map(id => `\n[model.providers.${id}]\nname="${id}"\nendpoint="http://127.0.0.1:${server.address().port}/v1/chat/completions"\nprotocol="chat-completions"\napi_key_env="AREAL_CREDENTIAL_MISSING_${id}"\nmodels=[{id="${id}-model",enabled=true}]\n`).join(""));
+await writeFile(config, `schema_version=1\n[model]\ncatalog_version=1\nprovider="theta"\nname="theta-model"\n` + ["theta", "arena"].map(id => `\n[model.providers.${id}]\nname="${id}"\nendpoint="http://127.0.0.1:${server.address().port}/v1/chat/completions"\nprotocol="chat-completions"\napi_key_env="AREAL_CREDENTIAL_MISSING_${id}"\nmodels=[{id="${id}-model",enabled=true${id === "theta" ? ",parameters={temperature=0.3}" : ""}}]\n`).join(""));
 await writeFile(config, (await readFile(config, "utf8")) + `\n[model.providers.env]\nname="env"\nenabled=false\nendpoint="http://127.0.0.1:${server.address().port}/v1/chat/completions"\nprotocol="chat-completions"\napi_key_env="AREAL_CREDENTIAL_fixture_env"\nmodels=[{id="env-model",enabled=true}]\n`);
 const env = { ...process.env, AREAL_GUI_USER_DATA: join(scratch, "electron"),
   AREAL_CORE_HOME: join(scratch, "core"), AREAL_CORE_USER_HOME: userHome,
@@ -63,23 +77,11 @@ const checks = [], errors = [];
 const stoppedServices = [];
 const button = name => page.getByRole("button", { name, exact: true });
 async function saveProvider() {
-  const before = await call("providers", { operation: "list" });
-  for (let attempt = 0; attempt < 4; attempt++) {
-    await button("保存").click();
-    await button("返回应用").click({ trial: true, timeout: 180_000 });
-    if (await button("保存").isDisabled()) {
-      assert.equal(await button("应用模型配置").count(), 0);
-      return;
-    }
-    const rejected = page.getByText("任务或操作正在进行，完成后再保存；修改仍保留。", { exact: true });
-    assert.equal(await rejected.isVisible(), true, "failed saves must identify a known pre-submission busy rejection");
-    const after = await call("providers", { operation: "list" });
-    assert.equal(after.revision, before.revision, "busy refusal must not commit the provider draft");
-    assert.deepEqual(after.data, before.data);
-    assert.equal(after.pendingApply, false);
-    checks.push("known busy refusal retains the uncommitted provider draft and unchanged authoritative catalog before explicit UI retry");
-  }
-  assert.fail("provider remained busy after four explicit UI attempts");
+  await button("保存").click();
+  await button("返回应用").click({ trial: true, timeout: 180_000 });
+  assert.equal(await button("保存").isDisabled(), true, "One Save persists the draft without a busy retry");
+  await until(async () => (await call("providers", { operation: "list" })).pendingApply === false, "saved configuration is applied");
+  assert.equal(await button("应用模型配置").count(), 0);
 }
 
 const state = () => page.evaluate(() => window.arealDesktop.snapshot());
@@ -90,7 +92,7 @@ async function call(name, params) {
 }
 async function until(predicate, label) {
   const deadline = Date.now() + 30000;
-  while (Date.now() < deadline) { const snapshot = await state(); if (predicate(snapshot)) return snapshot; await new Promise(resolve => setTimeout(resolve, 80)); }
+  while (Date.now() < deadline) { const snapshot = await state(); if (await predicate(snapshot)) return snapshot; await new Promise(resolve => setTimeout(resolve, 80)); }
   throw new Error(`Timeout: ${label}`);
 }
 async function stopService() {
@@ -157,6 +159,139 @@ async function closeGui() {
   while (child.exitCode === null && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
   assert.notEqual(child.exitCode, null, "owned Electron process exits");
   app = undefined;
+}
+async function verifyModelCapabilities() {
+  await page.waitForFunction(async () => {
+    const reply = await window.arealDesktop.command("serviceStatus", {});
+    return reply.ok && !reply.value.busy && !reply.value.activeCommands && !reply.value.starting && !reply.value.providerUpdating;
+  });
+  const previous = await call("providers", { operation: "list" });
+  const seeded = await call("providers", { operation: "saveAndApply", expectedRevision: previous.revision, authentication: "none", provider: {
+    name: "Capabilities", baseUrl: `http://127.0.0.1:${server.address().port}/v1`, protocol: "chatCompletions", enabled: true, parameters: {},
+    models: [{ id: "legacy-capabilities", enabled: true, parameters: {} }],
+  } });
+  const provider = seeded.data.find(item => item.name === "Capabilities");
+  await button("刷新供应商").click();
+  await page.locator(".provider-catalog-row").filter({ hasText: "Capabilities" }).click();
+  await button("添加模型").click();
+  let editor = page.getByRole("dialog", { name: "添加模型", exact: true });
+  await editor.waitFor();
+  assert.equal(await editor.getByRole("switch", { name: "工具调用", exact: true }).getAttribute("aria-checked"), "true");
+  assert.equal(await editor.getByRole("switch", { name: "视觉输入", exact: true }).getAttribute("aria-checked"), "false");
+  assert.equal(await editor.getByRole("switch", { name: "推理能力", exact: true }).getAttribute("aria-checked"), "true");
+  assert.equal(await editor.getByRole("spinbutton", { name: "模型温度", exact: true }).count(), 0);
+  for (const name of ["低", "中", "高", "极高"]) assert.equal(await editor.getByRole("checkbox", { name, exact: true }).isChecked(), true);
+  for (const name of ["无", "最少", "最高"]) assert.equal(await editor.getByRole("checkbox", { name, exact: true }).isChecked(), false);
+  const fields = {
+    id: editor.getByRole("textbox", { name: "模型 ID", exact: true }),
+    name: editor.getByRole("textbox", { name: "显示名称", exact: true }),
+    context: editor.getByRole("spinbutton", { name: "模型上下文 Token", exact: true }),
+    output: editor.getByRole("spinbutton", { name: "模型最大输出 Token", exact: true }),
+  };
+  await fields.id.fill("capability-model"); await fields.name.fill("Capability model");
+  await fields.context.fill("500000"); await fields.output.fill("12000");
+  const boxes = Object.fromEntries(await Promise.all(Object.entries(fields).map(async ([key, locator]) => [key, await locator.boundingBox()])));
+  assert.ok(Math.abs(boxes.id.y - boxes.name.y) <= 2 && boxes.id.x + boxes.id.width <= boxes.name.x, "model ID and name share a two-column row");
+  assert.ok(Math.abs(boxes.context.y - boxes.output.y) <= 2 && boxes.context.x + boxes.context.width <= boxes.output.x, "context and output budgets share a two-column row");
+  await page.screenshot({ path: join(scratch, "custom-model-defaults.png"), animations: "disabled" });
+  await editor.getByRole("button", { name: "保存模型", exact: true }).click(); await saveProvider();
+  const configuredModel = async () => (await call("providers", { operation: "list" })).data.find(item => item.id === provider.id).models.find(item => item.id === "capability-model");
+  const saved = await configuredModel();
+  assert.deepEqual(saved.capabilities, { tools: true, vision: false, reasoning: true, reasoningEffortOptions: ["low", "medium", "high", "xhigh"] });
+  assert.equal(saved.parameters.contextWindowTokens, 500000); assert.equal(saved.parameters.maxOutputTokens, 12000);
+  await until(snapshot => fixtureProject(snapshot)?.models.some(model => model.modelId === "capability-model"), "custom capabilities reach Core catalog");
+  const catalogModel = snapshot => fixtureProject(snapshot).models.find(model => model.modelId === "capability-model");
+  assert.deepEqual(catalogModel(await state()).reasoningEffortOptions, ["low", "medium", "high", "xhigh"]);
+  await button("返回应用").click(); await createProjectConversation(page, "workspace");
+  await button("模型").click();
+  await page.getByRole("radio", { name: "Capability model", exact: true }).click(); await page.keyboard.press("Escape");
+  const send = async (text, expected) => {
+    const before = modelRequests.length;
+    const currentId = await page.getByTestId("areal-workbench").getAttribute("data-thread-id");
+    const beforeTurns = fixtureProject(await state())?.state?.threads?.[currentId]?.turns?.length ?? 0;
+    await page.getByTestId("chat-input").fill(text); await button("发送").click();
+    await page.waitForFunction(() => document.querySelector('[data-testid="areal-workbench"]')?.dataset.threadId);
+    const threadId = await page.getByTestId("areal-workbench").getAttribute("data-thread-id");
+    await until(snapshot => fixtureProject(snapshot)?.state?.threads?.[threadId]?.turns?.length === beforeTurns + 1 && fixtureProject(snapshot).state.threads[threadId].turns.at(-1).status === "completed" && modelRequests.length === before + 1, text);
+    assert.deepEqual(modelRequests.at(-1), expected);
+  };
+  await button("模型").click();
+  assert.equal(await page.getByRole("slider", { name: "思考强度", exact: true }).getAttribute("max"), "3");
+  if (await button("使用模型默认").isEnabled()) await button("使用模型默认").click();
+  await page.keyboard.press("Escape");
+  await send("New reasoning model retains supplier default", { model: "capability-model", effort: null, hasEffort: false });
+  await button("模型").click();
+  await page.getByRole("slider", { name: "思考强度", exact: true }).press("End");
+  await page.waitForFunction(() => document.querySelector('[aria-label="思考强度"]')?.getAttribute("aria-valuetext") === "极高");
+  await page.keyboard.press("Escape");
+  await send("Recommended extra-high effort reaches provider", { model: "capability-model", effort: "xhigh", hasEffort: true });
+  const editCapabilities = async () => {
+    await button("模型").click(); await button("配置模型").click();
+    await page.locator(".provider-catalog-row").filter({ hasText: "Capabilities" }).click();
+    await button("模型 Capability model 更多操作").click();
+    await page.getByRole("menuitem", { name: "编辑模型 capability-model", exact: true }).click();
+    editor = page.getByRole("dialog", { name: "编辑模型", exact: true }); await editor.waitFor();
+  };
+  await editCapabilities();
+  await editor.getByRole("switch", { name: "推理能力", exact: true }).click();
+  await editor.getByRole("button", { name: "保存模型", exact: true }).click(); await saveProvider();
+  assert.equal((await configuredModel()).capabilities.reasoning, false);
+  await button("返回应用").click();
+  await send("Explicitly disabled reasoning omits the selected effort", { model: "capability-model", effort: null, hasEffort: false });
+  await editCapabilities();
+  await editor.getByRole("switch", { name: "推理能力", exact: true }).click();
+  const effortGroup = editor.getByRole("group", { name: "允许的推理强度", exact: true });
+  for (const checkbox of await effortGroup.getByRole("checkbox").all()) if (await checkbox.isChecked()) await checkbox.click();
+  await effortGroup.getByRole("checkbox", { name: "低", exact: true }).click();
+  await effortGroup.getByRole("checkbox", { name: "高", exact: true }).click();
+  await page.screenshot({ path: join(scratch, "custom-model-reasoning-options.png"), animations: "disabled" });
+  await editor.getByRole("button", { name: "保存模型", exact: true }).click(); await saveProvider();
+  assert.deepEqual((await configuredModel()).capabilities, { tools: true, vision: false, reasoning: true, reasoningEffortOptions: ["low", "high"] });
+  await until(snapshot => JSON.stringify(catalogModel(snapshot)?.reasoningEffortOptions) === JSON.stringify(["low", "high"]), "configured effort subset reaches Composer catalog");
+  await button("返回应用").click(); await button("模型").click();
+  let slider = page.getByRole("slider", { name: "思考强度", exact: true });
+  assert.equal(await slider.getAttribute("max"), "1");
+  await slider.press("End");
+  await page.waitForFunction(() => document.querySelector('[aria-label="思考强度"]')?.getAttribute("aria-valuetext") === "高");
+  await slider.press("Home");
+  await page.waitForFunction(() => document.querySelector('[aria-label="思考强度"]')?.getAttribute("aria-valuetext") === "低");
+  await page.keyboard.press("Escape");
+  await send("Configured lower effort reaches provider", { model: "capability-model", effort: "low", hasEffort: true });
+  await button("模型").click(); await slider.press("End");
+  await page.waitForFunction(() => document.querySelector('[aria-label="思考强度"]')?.getAttribute("aria-valuetext") === "高");
+  await page.keyboard.press("Escape");
+  await send("Configured upper effort reaches provider", { model: "capability-model", effort: "high", hasEffort: true });
+  await editCapabilities(); await editor.getByRole("switch", { name: "推理能力", exact: true }).click();
+  await editor.getByRole("button", { name: "保存模型", exact: true }).click(); await saveProvider();
+  assert.deepEqual((await configuredModel()).capabilities, { tools: true, vision: false, reasoning: false });
+  await button("返回应用").click();
+  await send("Disabling reasoning with a saved subset clears its options", { model: "capability-model", effort: null, hasEffort: false });
+  await editCapabilities(); await editor.getByRole("switch", { name: "推理能力", exact: true }).click();
+  for (const checkbox of await effortGroup.getByRole("checkbox").all()) if (await checkbox.isChecked()) await checkbox.click();
+  await editor.getByRole("button", { name: "保存模型", exact: true }).click(); await saveProvider();
+  assert.deepEqual((await configuredModel()).capabilities.reasoningEffortOptions ?? [], []);
+  await until(snapshot => JSON.stringify(catalogModel(snapshot)?.reasoningEffortOptions) === JSON.stringify(["none", "minimal", "low", "medium", "high", "xhigh"]), "empty configured subset uses the standard effort options");
+  await button("返回应用").click(); await button("模型").click();
+  slider = page.getByRole("slider", { name: "思考强度", exact: true });
+  assert.equal(await slider.getAttribute("max"), "5"); await slider.press("End");
+  await page.waitForFunction(() => document.querySelector('[aria-label="思考强度"]')?.getAttribute("aria-valuetext") === "极高");
+  await page.screenshot({ path: join(scratch, "custom-model-effort-fallback.png"), animations: "disabled" }); await page.keyboard.press("Escape");
+  await send("Empty effort subset uses the standard maximum", { model: "capability-model", effort: "xhigh", hasEffort: true });
+  await editCapabilities(); await editor.getByRole("switch", { name: "推理能力", exact: true }).click();
+  await editor.getByRole("button", { name: "保存模型", exact: true }).click(); await saveProvider();
+  await button("返回应用").click(); await button("模型").click();
+  assert.equal(await page.getByRole("slider", { name: "思考强度", exact: true }).count(), 0); await page.keyboard.press("Escape");
+  await send("Disabling reasoning removes a prior selected effort", { model: "capability-model", effort: null, hasEffort: false });
+  checks.push("custom model defaults, paired budget fields, persisted capabilities, configured effort subset, empty-list fallback, and reasoning disablement govern actual Core requests");
+  await button("模型").click(); await button("配置模型").click();
+  await page.locator(".provider-catalog-row").filter({ hasText: "Capabilities" }).waitFor();
+  await page.waitForFunction(async () => {
+    const reply = await window.arealDesktop.command("serviceStatus", {});
+    return reply.ok && !reply.value.busy && !reply.value.activeCommands && !reply.value.starting && !reply.value.providerUpdating;
+  });
+  const current = await call("providers", { operation: "list" });
+  await call("providers", { operation: "removeAndApply", id: provider.id, expectedRevision: current.revision });
+  await button("刷新供应商").click();
 }
 async function verifyModelDefaults(projectId) {
   await page.waitForFunction(async () => {
@@ -310,7 +445,7 @@ async function verifyModelDefaults(projectId) {
   const secondWorkspace = join(scratch, "second-workspace");
   await mkdir(secondWorkspace); execFileSync("git", ["init", "-b", "main"], { cwd: secondWorkspace, stdio: "ignore" });
   await app.evaluate(({ dialog }, path) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] }); }, secondWorkspace);
-  await page.evaluate(() => window.arealDesktop.chooseProject());
+  await button("打开项目").click();
   await until(snapshot => snapshot.projects.find(item => item.root === secondWorkspace)?.state?.connected, "second project ready");
   await createProjectConversation(page, "second-workspace"); await expectModel("Alpha", "高");
   await page.screenshot({ path: join(scratch, "last-model-cross-project.png"), animations: "disabled" });
@@ -353,7 +488,7 @@ async function verifyModelDefaults(projectId) {
 }
 try {
   await launch();
-  await page.evaluate(() => window.arealDesktop.chooseProject());
+  await button("打开项目").click();
   await createProjectConversation(page, "workspace");
   const ready = await until(s => fixtureProject(s)?.state?.connected && fixtureProject(s).models.length === 3, "unavailable Core catalog");
   const projectId = fixtureProject(ready).id;
@@ -398,7 +533,7 @@ try {
   assert.equal(await page.getByRole("status", { name: "模型 theta-model 状态", exact: true }).count(), 0, "compact model rows show the name only");
   assert.equal(await page.getByText("帮助", { exact: true }).count(), 0);
   assert.equal(await page.getByText("凭据来源", { exact: true }).count(), 0);
-  assert.equal(await page.getByRole("tab", { name: "模型", exact: true }).getAttribute("aria-selected"), "true");
+  assert.equal(await page.getByRole("tab", { name: "模型", exact: true }).count(), 0, "Connection fields and models share one page");
   assert.equal(await page.getByRole("combobox", { name: "备用默认模型", exact: true }).count(), 0, "global default belongs to session settings");
   const search = page.getByRole("searchbox", { name: "搜索模型名称或 ID", exact: true });
   const modelRow = page.locator(".provider-model-row").filter({ hasText: "theta-model" });
@@ -419,27 +554,46 @@ try {
   await page.getByRole("button", { name: "模型 theta-model 更多操作", exact: true }).click();
   await page.getByRole("menuitem", { name: "编辑模型 theta-model", exact: true }).click();
   editor = page.getByRole("dialog", { name: "编辑模型", exact: true });
-  await editor.getByRole("spinbutton", { name: "模型温度", exact: true }).fill("0.3");
+  assert.equal(await editor.getByRole("spinbutton", { name: "模型温度", exact: true }).count(), 0);
+  await editor.getByRole("spinbutton", { name: "模型上下文 Token", exact: true }).fill("500000");
+  await editor.getByRole("spinbutton", { name: "模型最大输出 Token", exact: true }).fill("12000");
   await page.screenshot({ path: join(scratch, "model-editor-dialog.png"), animations: "disabled" });
   await editor.getByRole("button", { name: "保存模型", exact: true }).click();
-  await page.getByRole("tab", { name: "连接配置", exact: true }).click();
-  assert.equal(await page.getByTestId("provider-base-url").isVisible(), true, "connection tab exposes endpoint");
-  await page.getByRole("tab", { name: "模型", exact: true }).click();
-  assert.equal(await button("保存").isEnabled(), true, "tab switches preserve provider draft");
+  assert.equal(await page.getByTestId("provider-base-url").isVisible(), true, "The same page exposes the connection endpoint");
+  assert.equal(await button("保存").isEnabled(), true, "Model edits remain an unsaved provider draft");
   await page.screenshot({ path: join(scratch, "model-settings-models.png"), animations: "disabled" });
-  checks.push("provider model search precedes results, centered editor discards edits, and tabs preserve the provider draft");
-  await page.getByRole("tab", { name: "连接配置", exact: true }).click();
+  checks.push("provider model search precedes results, centered editor discards edits, and the same page retains the unsaved provider draft");
   await page.getByRole("textbox", { name: "API Key", exact: true }).fill("fixture-key");
   assert.match(await providerStatus.innerText(), /缺少凭据/, "unsaved credentials cannot claim readiness");
   await saveProvider();
   const saved = await call("providers", { operation: "list" });
   assert.equal(saved.credentialStates.theta, "available");
-  assert.equal(saved.data.find(p => p.id === "theta").models[0].parameters.temperature, 0.3, "model dialog changes persist through the provider save");
+  assert.deepEqual(saved.data.find(p => p.id === "theta").models[0].parameters, { temperature: 0.3, contextWindowTokens: 500000, maxOutputTokens: 12000 }, "model budget edits persist and preserve API-configured temperature");
   assert.equal(saved.credentialSources.theta, "stored");
   assert.equal(saved.pendingApply, false, "save confirms persistence and Core synchronization");
   await until(s => fixtureProject(s).models.some(m => m.available === true), "single save makes model available in Core");
   await page.screenshot({ path: join(scratch, "saved-model-configuration.png"), animations: "disabled" });
+  await button("测试连接").click();
+  await page.getByText("模型 theta-model 连接成功", { exact: true }).waitFor({ timeout: 5000 });
+  assert.equal(await button("测试连接").isEnabled(), true);
+  await until(() => probeRequests.length === 1 && probeRequests[0].closed, "successful probe releases the held HTTP stream");
+  await page.screenshot({ path: join(scratch, "connection-probe-terminal.png"), animations: "disabled" });
+  checks.push("The settings Test connection action succeeds and releases a gateway stream that sends a valid terminal event without closing");
   await button("返回应用").click();
+  await createProjectConversation(page, "workspace");
+  await page.getByTestId("chat-input").fill("OPEN_PROJECT_CANCEL_DRAFT");
+  const projectBeforeCancel = await page.getByTestId("areal-workbench").getAttribute("data-project-id");
+  await app.evaluate(({ dialog }) => { dialog.showOpenDialog = async () => ({ canceled: true, filePaths: [] }); });
+  await button("打开项目").click();
+  assert.equal((await page.getByTestId("chat-input").textContent()).trim(), "OPEN_PROJECT_CANCEL_DRAFT");
+  assert.equal(await page.getByTestId("areal-workbench").getAttribute("data-project-id"), projectBeforeCancel);
+  assert.equal((await state()).projects.filter(item => item.root === workspace).length, 1);
+  await app.evaluate(({ dialog }, path) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] }); }, workspace);
+  await button("打开项目").click();
+  assert.equal((await state()).projects.filter(item => item.root === workspace).length, 1, "opening an existing project does not duplicate it");
+  await page.getByTestId("chat-input").fill("");
+  await page.screenshot({ path: join(scratch, "open-project-entry.png"), animations: "disabled" });
+  checks.push("Projects + opens the existing picker directly; cancel preserves the project and draft; reopening a directory keeps one registration");
   await button("定时任务").click();
   await button("新建自动化").click();
   await page.getByTestId("chat-input").waitFor();
@@ -491,7 +645,6 @@ try {
   checks.push("single save confirms persistence/Core readiness; user chooses a model in the existing Composer and Core executes it");
   // 启用开关、凭据与配置应用分别验收；两个可用模型之间必须能实际切换。
   await page.locator(".provider-catalog-row").filter({ hasText: "arena" }).click();
-  await page.getByRole("tab", { name: "连接配置", exact: true }).click();
   await page.getByRole("textbox", { name: "API Key", exact: true }).fill("fixture-key");
   // 真实 Core 完成保存/同步后暂留回执，稳定覆盖目录已刷新但设置操作尚未结算的窗口。
   await app.evaluate(({ app }) => {
@@ -503,7 +656,7 @@ try {
     globalThis.modelApplyReceipt = { ready, release, restore: () => { ServiceConnection.prototype.request = original; } };
     ServiceConnection.prototype.request = async function (method, params, mutation) {
       const result = await original.call(this, method, params, mutation);
-      if (method === "command" && params.name === "providers" && params.request.operation === "saveAndApply") {
+      if (method === "command" && params.name === "providers" && params.request.operation === "save") {
         reached(); await held;
       }
       return result;
@@ -531,7 +684,6 @@ try {
   assert.deepEqual(requests.at(-1), { model: "arena-model", authenticated: true, authorizationPresent: true });
   await button("模型").click(); await button("配置模型").click();
   await page.locator(".provider-catalog-row").filter({ hasText: "arena" }).click();
-  await page.getByRole("tab", { name: "连接配置", exact: true }).click();
   // 无需认证是同一 Core 文件的编辑；不能继续发送已退役的保存凭据。
   await page.getByRole("tablist", { name: "认证方式", exact: true }).getByRole("tab", { name: "无需认证", exact: true }).click();
   assert.match(await providerStatus.innerText(), /可用/);
@@ -572,7 +724,6 @@ try {
   await button("模型").click(); await button("配置模型").click();
   await page.locator(".provider-catalog-row").filter({ hasText: /^env/ }).click();
   assert.match(await providerStatus.innerText(), /已停用/);
-  await page.getByRole("tab", { name: "连接配置", exact: true }).click();
   await page.getByRole("textbox", { name: "API Key", exact: true }).fill("");
   await page.getByRole("switch", { name: "启用供应商", exact: true }).click();
   await saveProvider();
@@ -615,10 +766,29 @@ try {
   await button("返回应用").click();
   await createProjectConversation(page, "workspace");
   await until(s => fixtureProject(s).models.length === 0, "empty Core catalog");
+  const fallbackNotice = page.getByRole("status").filter({ hasText: "上次使用的模型" });
+  await fallbackNotice.waitFor();
+  assert.doesNotMatch(await fallbackNotice.innerText(), /已显示备用默认模型/);
+  assert.equal(await button("发送").isDisabled(), true);
+  for (const width of [1440, 980]) {
+    await app.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0].setSize(width, 960), width);
+    await page.waitForFunction(width => innerWidth === width, width);
+    await page.waitForFunction(() => {
+      const bar = document.querySelector(".composer-project-bar")?.getBoundingClientRect();
+      const surface = document.querySelector(".draft-composer .composer-surface")?.getBoundingClientRect();
+      return bar && surface && surface.top <= bar.bottom + 1;
+    });
+    const rect = await fallbackNotice.boundingBox();
+    assert.ok(rect && rect.x >= 0 && rect.width > 0 && rect.x + rect.width <= width);
+    await page.screenshot({ path: join(scratch, `fallback-notice-${width}.png`), animations: "disabled" });
+  }
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1440, 960));
+  checks.push("Missing fallback displays truthful text; the project bar stays attached to the composer in normal and narrow windows");
   assert.equal(await button("模型").isEnabled(), true);
   await button("模型").click();
   await page.getByRole("heading", { name: "模型设置", exact: true }).waitFor();
   checks.push("an empty model catalog opens model settings directly");
+  await verifyModelCapabilities();
   await verifyModelDefaults(projectId);
   assert.deepEqual(errors, []); passed = true;
 } catch (error) {
@@ -650,6 +820,7 @@ try {
   const hashes = Object.fromEntries(await Promise.all(files.map(async file => [file, createHash("sha256").update(await readFile(join(gui, file))).digest("hex")])));
   const coreUnchanged = createHash("sha256").update(await readFile(coreBinary)).digest("hex") === coreSha256;
   await writeFile(join(scratch, "model-requests.json"), JSON.stringify(modelRequests, null, 2));
+  await writeFile(join(scratch, "probe-requests.json"), JSON.stringify(probeRequests, null, 2));
   if (!coreUnchanged) { errors.push("Core binary changed during acceptance"); passed = false; process.exitCode = 1; }
   await writeFile(join(scratch, "manifest.json"), JSON.stringify({ passed, checks, errors, failure, stoppedServices, source: execFileSync("git", ["rev-parse", "HEAD"], { cwd: gui, encoding: "utf8" }).trim(), hashes, core: { binary: coreBinary, sha256: coreSha256, unchanged: coreUnchanged }, executable: process.env.AREAL_GUI_EXECUTABLE || "source Electron", scope: "isolated Electron/Core model selection, defaults, and cold recovery; deterministic local authenticated fixture" }, null, 2));
   console.log(JSON.stringify({ passed, evidence: scratch, checks, errors }));

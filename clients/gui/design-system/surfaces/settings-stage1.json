@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "id": "settings-stage1",
+  "intent": "调整界面偏好，检查结果后返回原任务",
+  "pattern": "P-SETTINGS",
+  "target": "renderer/src/settings/DisplaySettings.tsx",
+  "runtime": "desktop",
+  "reference": {
+    "kind": "existing-code",
+    "path": "renderer/src/settings/DisplaySettings.tsx",
+    "visualTarget": null
+  },
+  "slots": {
+    "label": [
+      "SettingsRow"
+    ],
+    "control": [
+      "ActionButton",
+      "Switch",
+      "SettingsSelect",
+      "SettingsSegmentedTabs"
+    ],
+    "detail": [
+      "SettingsDisclosure"
+    ]
+  },
+  "states": [
+    {
+      "id": "default",
+      "condition": "状态=可操作",
+      "expected": "导入、更改、开关、二值和多值选择在同一分组；值可读"
+    },
+    {
+      "id": "busy",
+      "condition": "状态=提交中",
+      "expected": "刷新状态按钮禁止重复触发并保留标签"
+    },
+    {
+      "id": "failed",
+      "condition": "状态=明确失败",
+      "expected": "就近显示 alert，错误与普通反馈分开"
+    },
+    {
+      "id": "unknown",
+      "condition": "状态=结果待核对",
+      "expected": "待核对状态有文字，不假称成功或自动重试"
+    },
+    {
+      "id": "disabled",
+      "condition": "不可用按钮始终存在",
+      "expected": "禁用动作保留可读标签且不可触发"
+    }
+  ],
+  "conditions": {
+    "themes": [
+      "light",
+      "dark"
+    ],
+    "fontSizes": [
+      14,
+      18
+    ],
+    "widthModes": [
+      "wide",
+      "narrow"
+    ],
+    "reducedMotion": [
+      false,
+      true
+    ]
+  },
+  "invariants": [
+    "复用生产设置、偏好与Core保存所有者",
+    "页面由交互族组合，不生成运行时DSL",
+    "专用设置按主题展开，不隐藏关键操作",
+    "不将目录通过当作视觉验收"
+  ],
+  "evidence": {
+    "status": "pending",
+    "artifacts": [],
+    "gaps": [
+      "所选真实Electron场景有本地前后运行证据，公开合同不携带私有档案",
+      "用户已认可本阶段效果；不提升整个设置中心或Base准入",
+      "失败/UNKNOWN全矩阵、安装包和其他平台不在此次运行范围"
+    ]
+  },
+  "interactionFamilies": [
+    "I-MANAGE",
+    "I-DECIDE",
+    "I-READ"
+  ]
+}

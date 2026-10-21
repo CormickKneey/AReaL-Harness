@@ -792,6 +792,18 @@ fn configured_models(
             .into(),
             credential_ref: reference,
             models,
+            model_parameters: std::collections::BTreeMap::new(),
+            model_capabilities: item
+                .models
+                .iter()
+                .filter_map(|model| {
+                    model
+                        .capabilities
+                        .as_ref()
+                        .map(|capabilities| (model.id.clone(), model_capabilities(capabilities)))
+                })
+                .collect(),
+            context_source: None,
             parameters: parameters(&item.parameters),
         });
         for model in &item.models {
@@ -832,6 +844,17 @@ fn configured_models(
 /// 返回输入二进制内嵌的构建身份，打包不能用当前 checkout 冒充。
 pub fn build_info() -> serde_json::Value {
     serde_json::json!({"sourceRevision":env!("AREAL_BUILD_REVISION"),"workingTree":env!("AREAL_BUILD_DIRTY"),"inputHash":env!("AREAL_BUILD_INPUT_HASH"),"apiVersion":areal_protocol::desktop::API_VERSION,"stateVersion":areal_engine::state_version()})
+}
+
+fn model_capabilities(
+    value: &areal_config::models::ModelCapabilities,
+) -> areal_protocol::desktop::ModelCapabilityConfig {
+    areal_protocol::desktop::ModelCapabilityConfig {
+        tools: value.tools,
+        vision: value.vision,
+        reasoning: value.reasoning,
+        reasoning_effort_options: value.reasoning_effort_options.clone(),
+    }
 }
 
 #[cfg(test)]

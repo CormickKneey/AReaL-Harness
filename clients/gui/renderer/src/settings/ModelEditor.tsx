@@ -1,82 +1,126 @@
-import { SettingsSelect } from "./SettingsPageParts.js";
+import { recommendedReasoningEfforts } from "@areal/provider-config";
+import { useI18n, type UiMessage } from "../i18n/IntlProvider.js";
 import { useId, useRef, useState } from "react";
 import { Button } from "../components/ui/button.js";
 import { Input } from "../components/ui/input.js";
+import { Switch } from "../components/ui/switch.js";
 import { Feedback } from "../components/ui/feedback.js";
 import { SettingsDialog } from "./common.js";
 import type { Data } from "../services.js";
 import "./ModelEditor.css";
 
+const reasoningEfforts = [
+  ["none", "settings.modelEditor.effortNone"], ["minimal", "settings.modelEditor.effortMinimal"], ["low", "settings.modelEditor.effortLow"], ["medium", "settings.modelEditor.effortMedium"],
+  ["high", "settings.modelEditor.effortHigh"], ["xhigh", "settings.modelEditor.effortExtraHigh"], ["max", "settings.modelEditor.effortMaximum"],
+] as const;
+
 export function ModelEditor({ model, editing, ids, onSave, onClose }: {
   model: Data; editing: boolean; ids: string[]; onSave: (model: Data) => void; onClose: () => void;
 }) {
+  const { t } = useI18n();
   const [id, setId] = useState(model.id ?? "");
   const [name, setName] = useState(model.displayName ?? "");
+  const [context, setContext] = useState(String(model.parameters?.contextWindowTokens ?? ""));
   const [maximum, setMaximum] = useState(String(model.parameters?.maxOutputTokens ?? ""));
-  const [temperature, setTemperature] = useState(String(model.parameters?.temperature ?? ""));
-  const [effort, setEffort] = useState(model.parameters?.reasoningEffort ?? "");
-  const [error, setError] = useState("");
+  const initialTools = model.capabilities?.tools ?? true;
+  const initialVision = model.capabilities?.vision ?? editing;
+  const initialReasoning = model.capabilities?.reasoning ?? true;
+  const initialEfforts: string[] = model.capabilities?.reasoningEffortOptions ?? (editing ? [] : [...recommendedReasoningEfforts]);
+  const [tools, setTools] = useState(initialTools);
+  const [vision, setVision] = useState(initialVision);
+  const [reasoning, setReasoning] = useState(initialReasoning);
+  const [efforts, setEfforts] = useState<string[]>(initialEfforts);
+  const [error, setError] = useState<UiMessage>();
   const [invalidField, setInvalidField] = useState("");
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const idInput = useRef<HTMLInputElement>(null);
+  const contextInput = useRef<HTMLInputElement>(null);
   const maximumInput = useRef<HTMLInputElement>(null);
-  const temperatureInput = useRef<HTMLInputElement>(null);
   const errorId = useId();
+  const capabilitiesChanged = tools !== initialTools || vision !== initialVision || reasoning !== initialReasoning
+    || JSON.stringify(efforts) !== JSON.stringify(initialEfforts);
   const dirty = id !== (model.id ?? "") || name !== (model.displayName ?? "")
+    || context !== String(model.parameters?.contextWindowTokens ?? "")
     || maximum !== String(model.parameters?.maxOutputTokens ?? "")
-    || temperature !== String(model.parameters?.temperature ?? "")
-    || effort !== (model.parameters?.reasoningEffort ?? "");
+    || capabilitiesChanged;
   const requestClose = () => dirty ? setConfirmDiscard(true) : onClose();
   const invalid = (field: string) => ({
     "aria-invalid": invalidField === field || undefined,
     "aria-describedby": invalidField === field ? errorId : undefined,
   });
-  const fail = (field: string, message: string, input: HTMLInputElement | null) => {
+  const fail = (field: string, message: UiMessage, input: HTMLInputElement | null) => {
     setInvalidField(field);
     setError(message);
     input?.focus();
   };
-  return <SettingsDialog title={editing ? "编辑模型" : "添加模型"} description="为模型设置独立名称和生成参数。" className="model-editor-dialog" onClose={requestClose}>
+  return <SettingsDialog title={editing ? t("settings.modelEditor.editModel") : t("settings.modelEditor.addModel")} description={t("settings.modelEditor.setTheModelNameLimitsAndSupported")} className="model-editor-dialog" onClose={requestClose}>
     <form className="model-editor" noValidate onSubmit={e => {
       e.preventDefault();
-      if (!id.trim() || ids.includes(id.trim())) { fail("id", "模型 ID 不能为空或重复", idInput.current); return; }
-      if (maximumInput.current?.validity.badInput || (maximum && (!Number.isSafeInteger(Number(maximum)) || Number(maximum) <= 0))) {
-        fail("maximum", "最大输出必须是正整数", maximumInput.current); return;
+      if (!id.trim() || ids.includes(id.trim())) { fail("id", { id: "settings.modelEditor.modelIDMustBeUniqueAndCannot" }, idInput.current); return; }
+      if (contextInput.current?.validity.badInput || (context && (!Number.isSafeInteger(Number(context)) || Number(context) <= 0 || Number(context) > 2_000_000))) {
+        fail("context", { id: "settings.modelEditor.contextLengthMustBeAnIntegerBetween" }, contextInput.current); return;
       }
-      if (temperatureInput.current?.validity.badInput || (temperature && (!Number.isFinite(Number(temperature)) || Number(temperature) < 0 || Number(temperature) > 2))) {
-        fail("temperature", "温度须在 0 到 2 之间", temperatureInput.current); return;
+      if (maximumInput.current?.validity.badInput || (maximum && (!Number.isSafeInteger(Number(maximum)) || Number(maximum) <= 0))) {
+        fail("maximum", { id: "settings.modelEditor.maximumOutputMustBeAPositiveInteger" }, maximumInput.current); return;
       }
       const parameters = { ...model.parameters };
+      delete parameters.contextWindowTokens;
       delete parameters.maxOutputTokens;
-      delete parameters.temperature;
-      delete parameters.reasoningEffort;
-      onSave({ ...model, id: id.trim(), displayName: name.trim(), parameters: {
-        ...parameters,
-        ...(maximum ? { maxOutputTokens: Number(maximum) } : {}),
-        ...(temperature ? { temperature: Number(temperature) } : {}),
-        ...(effort ? { reasoningEffort: effort } : {}),
-      } });
+      if (!editing || capabilitiesChanged) {
+        if (!reasoning) {
+          delete parameters.reasoningEffort;
+          delete parameters.reasoningSummary;
+        } else if (efforts.length > 0 && parameters.reasoningEffort && !efforts.includes(parameters.reasoningEffort)) {
+          delete parameters.reasoningEffort;
+        }
+      }
+      onSave({ ...model, id: id.trim(), displayName: name.trim(),
+        ...(!editing || capabilitiesChanged ? { capabilities: {
+          tools, vision, reasoning,
+          ...(reasoning && efforts.length ? { reasoningEffortOptions: efforts } : {}),
+        } } : {}),
+        parameters: {
+          ...parameters,
+          ...(context ? { contextWindowTokens: Number(context) } : {}),
+          ...(maximum ? { maxOutputTokens: Number(maximum) } : {}),
+        },
+      });
     }}>
       <div className="model-editor-grid">
-        <label>模型 ID<Input ref={idInput} {...invalid("id")} aria-label="模型 ID" required maxLength={256} placeholder="服务提供的模型 ID" value={id} onChange={e => setId(e.target.value)} /></label>
-        <label>显示名称<Input aria-label="显示名称" maxLength={128} placeholder="留空使用模型 ID" value={name} onChange={e => setName(e.target.value)} /></label>
+        <label>{t("settings.modelEditor.modelID")}<Input ref={idInput} {...invalid("id")} aria-label={t("settings.modelEditor.modelID")} required maxLength={256} placeholder={t("settings.modelEditor.modelIDProvidedByTheService")} value={id} onChange={e => setId(e.target.value)} /></label>
+        <label>{t("settings.modelEditor.displayName")}<Input aria-label={t("settings.modelEditor.displayName")} maxLength={128} placeholder={t("settings.modelEditor.leaveBlankToUseModelID")} value={name} onChange={e => setName(e.target.value)} /></label>
       </div>
-      <section className="model-editor-parameters" aria-label="模型生成参数">
-        <h3>生成参数</h3><p>留空沿用供应商默认值。</p>
+      <section className="model-editor-parameters" aria-label={t("settings.modelEditor.modelGenerationParameters")}>
         <div className="model-editor-grid">
-          <label>最大输出 Token<Input ref={maximumInput} {...invalid("maximum")} aria-label="模型最大输出 Token" type="number" min={1} step={1} placeholder="供应商默认" value={maximum} onChange={e => setMaximum(e.target.value)} /></label>
-          <label>温度<Input ref={temperatureInput} {...invalid("temperature")} aria-label="模型温度" type="number" min={0} max={2} step="any" placeholder="供应商默认" value={temperature} onChange={e => setTemperature(e.target.value)} /></label>
+          <label>{t("settings.modelEditor.contextLengthInTokens")}<Input ref={contextInput} {...invalid("context")} aria-label={t("settings.modelEditor.modelContextTokens")} type="number" min={1} max={2_000_000} step={1} placeholder={t("settings.modelEditor.providerDefault")} value={context} onChange={e => setContext(e.target.value)} /></label>
+          <label>{t("settings.modelEditor.maximumOutputTokens")}<Input ref={maximumInput} {...invalid("maximum")} aria-label={t("settings.modelEditor.modelMaximumOutputTokens")} type="number" min={1} step={1} placeholder={t("settings.modelEditor.providerDefault")} value={maximum} onChange={e => setMaximum(e.target.value)} /></label>
         </div>
-        <div className="model-editor-effort"><span>推理强度<small>仅适用于支持推理参数的模型</small></span><SettingsSelect aria-label="模型推理强度" value={effort || "inherit"} onValueChange={selectedValue => setEffort(selectedValue === "inherit" ? "" : selectedValue)}><option value="inherit">供应商默认</option><option value="none">无</option><option value="minimal">最低</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="xhigh">最高</option></SettingsSelect></div>
+        <p className="model-editor-inherit-note">{t("settings.modelEditor.leaveBlankToUseProviderDefaults")}</p>
+      </section>
+      <section className="model-editor-capabilities" aria-label={t("settings.modelEditor.modelCapabilities")}>
+        <div className="model-capability-row"><span>{t("settings.modelEditor.toolCalling")}</span><Switch aria-label={t("settings.modelEditor.toolCalling")} checked={tools} onCheckedChange={setTools} /></div>
+        <div className="model-capability-row"><span>{t("settings.modelEditor.visionInput")}</span><Switch aria-label={t("settings.modelEditor.visionInput")} checked={vision} onCheckedChange={setVision} /></div>
+        <div className="model-capability-row"><span>{t("settings.modelEditor.reasoning")}</span><Switch aria-label={t("settings.modelEditor.reasoning")} checked={reasoning} onCheckedChange={setReasoning} /></div>
+        {reasoning && <div className="model-editor-efforts" role="group" aria-label={t("settings.modelEditor.allowedReasoningEfforts")}>
+          <span>{t("settings.modelEditor.allowedReasoningEfforts")}</span>
+          <div className="model-effort-options">{reasoningEfforts.map(([value, label]) => <label className="model-effort-option" key={value}>
+            <Input type="checkbox" checked={efforts.includes(value)} onChange={event => {
+              const checked = event.target.checked;
+              setEfforts(previous => reasoningEfforts.map(([option]) => option).filter(option => option === value ? checked : previous.includes(option)));
+            }} />
+            <span>{t(label)}</span>
+          </label>)}</div>
+          <p>{t("settings.modelEditor.leaveUnselectedToKeepTheAvailableReasoning")}</p>
+        </div>}
       </section>
       <Feedback id={errorId} error={error} />
-      <p className="settings-muted model-editor-save-note">保存到供应商草稿，保存供应商后生效。</p>
-      <footer><Button type="button" variant="outline" onClick={requestClose}>取消</Button><Button type="submit">保存模型</Button></footer>
+      <p className="settings-muted model-editor-save-note">{t("settings.modelEditor.savedToTheProviderDraftTakesEffect")}</p>
+      <footer><Button type="button" variant="outline" onClick={requestClose}>{t("settings.modelEditor.cancel")}</Button><Button type="submit">{t("settings.modelEditor.saveModel")}</Button></footer>
     </form>
-    {confirmDiscard && <SettingsDialog title="放弃模型修改？" description="尚未保存的模型名称和生成参数将丢失。" onClose={() => setConfirmDiscard(false)}>
+    {confirmDiscard && <SettingsDialog title={t("settings.modelEditor.discardModelChanges")} description={t("settings.modelEditor.unsavedModelSettingsWillBeLost")} onClose={() => setConfirmDiscard(false)}>
       <div className="flex justify-end gap-2">
-        <Button variant="outline" onClick={() => setConfirmDiscard(false)}>继续编辑</Button>
-        <Button variant="destructive" onClick={onClose}>放弃修改</Button>
+        <Button variant="outline" onClick={() => setConfirmDiscard(false)}>{t("settings.modelEditor.keepEditing")}</Button>
+        <Button variant="destructive" onClick={onClose}>{t("settings.modelEditor.discardChanges")}</Button>
       </div>
     </SettingsDialog>}
   </SettingsDialog>;

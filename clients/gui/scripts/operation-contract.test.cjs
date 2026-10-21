@@ -43,3 +43,19 @@ test("critical operation responses fail malformed identity, pages and recovery o
         ),
     );
 });
+
+test("saved-key reveal accepts only a bounded provider/revision request and key response", () => {
+    const request = { operation: "revealKey", id: "provider", expectedRevision: "revision" };
+    assert.doesNotThrow(() => validateCommand("providers", request));
+    for (const bad of [{ ...request, id: "" }, { ...request, expectedRevision: null }, { ...request, reference: "OTHER_SECRET" }])
+        assert.throws(() => validateCommand("providers", bad));
+    assert.doesNotThrow(() => validateCommandResponse("providers", request, { apiKey: "synthetic-key" }));
+    for (const bad of [{}, { apiKey: "" }, { apiKey: 1 }, { apiKey: "key", snapshot: {} }])
+        assert.throws(() => validateCommandResponse("providers", request, bad));
+});
+
+test("remote control cannot reveal local provider credentials", async () => {
+    const { DesktopService } = require("../app/src/core/service-protocol.cjs");
+    const service = { backend: { command: () => assert.fail("Remote reveal must not reach credentials") } };
+    await assert.rejects(DesktopService.prototype.executeRemote.call(service, "providers", { operation: "revealKey", id: "p", expectedRevision: "r" }), /本机/);
+});

@@ -11,6 +11,8 @@ import { fileURLToPath } from "node:url";
 import { captureSmokeFailure, selectConversation } from "./smoke-navigation.mjs";
 import { withSmokeDeadline } from "./smoke-deadline.mjs";
 
+const sharedWorkspace = process.argv.includes("--shared-workspace");
+const baselineLayout = process.argv.includes("--baseline");
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const root = resolve(gui, "../..");
 const desktop = join(gui, "app");
@@ -484,6 +486,7 @@ try {
   await anchor.getByRole("button", { name: "从此轮创建聊天分支", exact: true }).click();
   let forkDialog = page.getByRole("dialog", { name: "从这里创建聊天分支", exact: true });
   await forkDialog.waitFor();
+  assert.equal(await page.getByRole("menuitem", { name: /在此轮(之前|之后)分支/ }).count(), 0, "Branch opens its target dialog directly");
   assert.equal(await forkDialog.getByText("在当前工作区中创建", { exact: true }).count(), 1);
   assert.equal(await forkDialog.getByText("在新工作树中创建", { exact: true }).count(), 0);
   assert.equal(await forkDialog.getByRole("button").count(), 1);
@@ -545,8 +548,7 @@ try {
   await shot("02-fork-empty.png");
   checks.push("AC01/02/06: older Turn GUI fork is idle, empty, source-owned, current shared workspace and bounded inherited history");
   const requestsBeforeNested = requests.length;
-  await inherited.locator(`[data-turn-id="${anchorTurnId}"]`).getByRole("button", { name: /^轮次操作 / }).click();
-  await page.getByRole("menuitem", { name: "在此轮之后分支", exact: true }).click();
+  await inherited.locator(`[data-turn-id="${anchorTurnId}"]`).getByRole("button", { name: "从此轮创建聊天分支", exact: true }).click();
   await forkDialog.getByRole("button", { name: "创建分支", exact: true }).click();
   await page.waitForFunction(id => {
     const current = document.querySelector('[data-testid="areal-workbench"]')?.dataset.threadId;
@@ -594,20 +596,14 @@ try {
   const selectSideExcerpt = () => selectMessageExcerpt(
     page.locator(`[data-turn-id="${anchorTurnId}"] [data-side-item-id] .conversation-markdown`).first(), unicodeExcerpt);
   await selectSideExcerpt();
-  const sideTrigger = page.getByRole("menuitem", { name: "在旁路中询问所选内容" });
+  const sideTrigger = page.getByRole("button", { name: "在旁路中询问所选内容", exact: true });
   assert.equal(await page.locator(".side-selection-action").count(), 0, "选中文本后不再展示浮动旁路提示");
-  assert.equal(await sideTrigger.count(), 0, "旁路选区入口仅在主动打开轮次菜单后展示");
+  assert.equal(await sideTrigger.count(), 1, "旁路选区入口是轮次操作行中的独立按钮");
+  assert.equal(await sideTrigger.locator("..").getAttribute("class"), "message-actions", "Side selection shares the turn action row");
   await page.locator(`[data-turn-id="${anchorTurnId}"] [data-side-item-id] .conversation-markdown`).first().scrollIntoViewIfNeeded();
   await shot("04a-selection-without-floating-prompt.png");
-  await page.locator(`[data-turn-id="${anchorTurnId}"]`).getByRole("button", { name: /^轮次操作 / }).click();
-  await sideTrigger.press("Escape");
-  await page.getByRole("menu").waitFor({ state: "hidden" });
   await selectConversation(page, targetThreadId);
-  await page.getByRole("button", { name: /^轮次操作 / }).first().click();
-  await page.getByRole("menuitem").first().waitFor();
   assert.equal(await sideTrigger.count(), 0, "来源 A 的选区不能在切换后的 B 会话显示或提交");
-  await page.getByRole("menuitem").first().press("Escape");
-  await page.getByRole("menu").waitFor({ state: "hidden" });
   await selectConversation(page, sourceThreadId);
   // 导航会补全默认模型的权威版本；在打开 Side 前固定完整配置基线。
   const refreshedSource = await until(s => {
@@ -617,10 +613,8 @@ try {
   }, "source configured fixture model restored after navigation");
   const mainConfigBefore = JSON.stringify(project(refreshedSource).configurations[sourceThreadId]);
   await selectSideExcerpt();
-  checks.push("AC55: Side selection stays in the explicit Turn menu, never floats, and switching the source Thread invalidates its owner");
-  const selectionMenuTrigger = page.locator(`[data-turn-id="${anchorTurnId}"]`).getByRole("button", { name: /^轮次操作 / });
-  await selectionMenuTrigger.evaluate(element => { window.__scfSideTrigger = element; });
-  await selectionMenuTrigger.click();
+  checks.push("AC55: Side selection uses a separate Turn action button, never floats, and switching the source Thread invalidates its owner");
+  await sideTrigger.evaluate(element => { window.__scfSideTrigger = element; });
   await sideTrigger.focus();
   await sideTrigger.press("Enter");
   const sidePane = page.getByRole("region", { name: "旁路讨论" });
@@ -705,6 +699,50 @@ try {
   await shot("05-side-answered-frozen.png");
   checks.push("AC30/39: Side answers during a live source Runtime command; Unicode source selection is verified and frozen evidence is visible");
   const bringBackOwner = { projectId, threadId: sourceThreadId };
+  if (sharedWorkspace) {
+    const currentModels = project(await state()).configurations;
+    const modelOwners = Object.fromEntries([sourceThreadId, sideThreadId].map(id =>
+      [id, JSON.stringify(currentModels[id])]));
+    const sample = async name => {
+      await page.waitForFunction(() => !document.querySelector('.work-surface')?.hasAttribute('data-panel-transition'));
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      const facts = await page.evaluate(() => {
+        const inspect = selector => { const input=document.querySelector(selector); if(!input) return null; const root=input.closest('.composer-surface'),css=getComputedStyle(root);return {layout:root.dataset.layout,display:css.display,padding:css.padding,font:getComputedStyle(input).fontSize,draft:input.textContent,width:root.clientWidth,overflow:root.scrollWidth-root.clientWidth}; };
+        return {mode:document.querySelector('[data-workspace-view]')?.dataset.workspaceView,theme:document.documentElement.classList.contains('dark')?'dark':'light',font:getComputedStyle(document.documentElement).getPropertyValue('--ui-font-size'),viewport:[innerWidth,innerHeight],main:inspect('[data-testid="chat-input"]'),side:inspect('[data-testid="side-chat-input"]')};
+      });
+      events.push({sharedCheckpoint:name,facts,hostTime:Date.now()});await shot(name+'.png');await writeFile(join(scratch,'shared-events.json'),JSON.stringify(events.filter(e=>e.sharedCheckpoint),null,2));return facts;
+    };
+    await showMainConversation();
+    const mainInput=page.getByTestId('chat-input');await composeText(mainInput,'共享主草稿：继续检查返回','shared main draft');
+    const mainEditor = await mainInput.elementHandle();
+    await showSideConversation();await composeText(sidePane.getByTestId('side-chat-input'),'共享Side草稿：暂不发送','shared side draft');
+    const exitFull=page.getByRole('button',{name:'退出完整视图',exact:true});if(await exitFull.isVisible())await exitFull.click();
+    const split=await sample('shared-01-split');
+    await page.getByRole('button',{name:'进入完整视图',exact:true}).click();
+    const full=await sample('shared-02-side-full');
+    if(!baselineLayout){assert.equal(full.side.padding,split.side.padding);assert.equal(full.side.display,split.side.display);assert.equal(full.side.layout,'default');}
+    await sidePane.getByRole('button',{name:'模型',exact:true}).click();await page.keyboard.press('Escape');
+    assert.equal(await sidePane.getByTestId('side-chat-input').innerText(),'共享Side草稿：暂不发送');
+    await sidePane.getByRole('button',{name:'返回主会话',exact:true}).click();assert.equal(await mainInput.innerText(),'共享主草稿：继续检查返回');
+    assert.ok(await mainEditor.evaluate(el => el === document.querySelector('[data-testid="chat-input"]')),
+      'panel navigation keeps the main editor mounted');
+    await sample('shared-03-main-return');
+    const settingsButton = page.getByRole('button',{name:'设置',exact:true});
+    await settingsButton.click();
+    await page.getByRole('button',{name:'返回应用',exact:true}).click();
+    assert.equal(await mainInput.innerText(),'共享主草稿：继续检查返回');
+    await page.waitForFunction(el => el === document.activeElement, await settingsButton.elementHandle());
+    await showSideConversation();assert.equal(await sidePane.getByTestId('side-chat-input').innerText(),'共享Side草稿：暂不发送');
+    const returned = project(await state());
+    for (const id of [sourceThreadId, sideThreadId]) assert.equal(JSON.stringify(returned.configurations[id]), modelOwners[id],
+      'navigation preserves each Core model configuration');
+    await sample('shared-04-settings-return');
+    await writeFile(toolRelease,'release\n');await until(s=>project(s)?.state?.threads?.[sourceThreadId]?.turns?.at(-1)?.status==='completed','source command completes after shared UI inspection');
+    assert.equal(project(await state()).state.threads[sideThreadId].turns.length,1,'navigation never sends a draft');
+    assert.equal(await hash(fixturePath),workspaceBefore);
+    await sample('shared-05-completed');
+    checks.push('Shared UI: actual main/Side drafts and Core model ownership survive split/full, model-menu dismissal, panel return and settings return; real source Runtime command completes independently');
+  } else {
   const beforeBring = { requests: requests.length, commands: (await app.evaluate(() => globalThis.__scfMutations)).length,
     sourceTurns: project(sideStarted).state.threads[sourceThreadId].turns.length,
     sideTurns: side.turns.length, workspaceSha256: await hash(fixturePath) };
@@ -771,7 +809,6 @@ try {
   assert.equal(project(await state()).state.threads[sideThreadId].id, sideThreadId);
   checks.push("AC47/52/53/54/55/74: bring-back appends to the concurrent main draft with its attachment and model; edited preview survives Side switching; Chromium composition Enter submits neither editor; narrow return restores the original trigger or main editor fallback");
   const activeAnchor = page.locator(`[data-turn-id="${activeTurnId}"]`);
-  assert.equal(await activeAnchor.getByRole("button", { name: /^轮次操作 / }).count(), 0, "streaming turns have no menu");
   assert.equal(await activeAnchor.getByRole("button", { name: "从此轮创建聊天分支", exact: true }).count(), 0, "streaming turns have no Fork action");
   const requestsBeforeActiveFork = requests.length;
   // Core still supports the safe before boundary; the streaming GUI exposes no action row.
@@ -804,8 +841,7 @@ try {
   const requestsBeforeRawFork = requests.length;
   const completedActions = activeAnchor.locator(".message-actions").filter({ has: page.getByRole("button", { name: "从此轮创建聊天分支", exact: true }) });
   assert.equal(await completedActions.getByRole("button", { name: "复制消息", exact: true }).count(), 1, "completed Fork and copy share one action row");
-  await activeAnchor.getByRole("button", { name: /^轮次操作 / }).click();
-  await page.getByRole("menuitem", { name: "在此轮之后分支", exact: true }).click();
+  await activeAnchor.getByRole("button", { name: "从此轮创建聊天分支", exact: true }).click();
   await forkDialog.getByRole("button", { name: "创建分支", exact: true }).click();
   await page.waitForFunction(id => document.querySelector('[data-testid="areal-workbench"]')?.dataset.threadId !== id, sourceThreadId);
   rawThreadId = await page.getByTestId("areal-workbench").getAttribute("data-thread-id");
@@ -961,8 +997,7 @@ try {
   await streamingBody.getByText(streamExcerpt, { exact: true }).waitFor();
   await selectMessageExcerpt(streamingBody, streamExcerpt);
   assert.equal(await page.locator(".side-selection-action").count(), 0);
-  await page.locator(`[data-turn-id="${streamingTurnId}"]`).getByRole("button", { name: /^轮次操作 / }).click();
-  await page.getByRole("menuitem", { name: "在旁路中询问所选内容" }).click();
+  await page.locator(`[data-turn-id="${streamingTurnId}"]`).getByRole("button", { name: "在旁路中询问所选内容", exact: true }).click();
   await openSideContext(sidePane);
   await sidePane.locator("blockquote.notice").filter({ hasText: "用户引文，来源未确认" }).waitFor();
   await openSideContext(sidePane);
@@ -1090,23 +1125,22 @@ try {
   const unknownDraft = "保持草稿，先检查来源未知结果";
   await showMainConversation();
   await page.getByTestId("chat-input").fill(unknownDraft);
-  await page.locator(`[data-turn-id="${activeTurnId}"]`).getByRole("button", { name: /^轮次操作 / }).click();
-  assert.ok(await page.getByRole("menuitem", { name: "在此轮之后分支", exact: true }).isDisabled());
-  await page.getByText("历史包含未结算或未核查的操作；请在来源核查或选择更早边界", { exact: true }).waitFor();
-  await page.getByRole("menuitem", { name: "查看来源轮次的核查入口", exact: true }).waitFor();
+  const unresolvedAnchor = page.locator(`[data-turn-id="${activeTurnId}"]`);
+  assert.ok(await unresolvedAnchor.getByRole("button", { name: "从此轮创建聊天分支", exact: true }).isDisabled());
+  await unresolvedAnchor.getByText("历史包含未结算或未核查的操作；请在来源核查或选择更早轮次", { exact: true }).waitFor();
+  await unresolvedAnchor.getByRole("button", { name: "查看来源轮次的核查入口", exact: true }).click();
   assert.equal(await page.getByTestId("chat-input").innerText(), unknownDraft);
   await shot("10-unknown-source-refusal.png");
-  await page.getByRole("menuitem", { name: "在此轮之前分支", exact: true }).click();
+  await page.locator(`[data-turn-id="${anchorTurnId}"]`).getByRole("button", { name: "从此轮创建聊天分支", exact: true }).click();
   await forkDialog.getByRole("button", { name: "创建分支", exact: true }).waitFor();
   await page.keyboard.press("Escape");
   await forkDialog.waitFor({ state: "hidden" });
   assert.equal(requests.length, preRestart.requests);
-  checks.push("AC21: real restarted Core restores persisted UNKNOWN; GUI disables the unsafe boundary, offers source inspection, retains the draft and leaves the earlier boundary available without execution");
+  checks.push("AC21: real restarted Core restores persisted UNKNOWN; GUI disables Branch with its reason, offers source inspection, retains the draft and lets an earlier completed turn open the target dialog without execution");
   await selectConversation(page, rawThreadId);
   await page.getByTestId("chat-input").fill("冷历史损坏时保留这份草稿");
   const corruptHistory = page.locator(".messages .message-column");
-  await corruptHistory.locator(`[data-turn-id="${activeTurnId}"]`).getByRole("button", { name: /^轮次操作 / }).click();
-  await page.getByRole("menuitem", { name: "在此轮之后分支", exact: true }).click();
+  await corruptHistory.locator(`[data-turn-id="${activeTurnId}"]`).getByRole("button", { name: "从此轮创建聊天分支", exact: true }).click();
   const rawSnapshot = project(await state()).state.threads[rawThreadId].conversation.historySeed.snapshotId;
   const snapshotPath = join(scratch, "core", projectId, "state", "history", rawSnapshot);
   const validSnapshotBytes = await readFile(snapshotPath);
@@ -1154,6 +1188,7 @@ try {
   events.push({ unknownFixtureInspection: { sourceThreadId, turnId: activeTurnId, itemId: unknownItem.id,
     processId: originalReceipt.processId, inspection, outcome: inspectedItem.execution.outcome } });
   checks.push("after AC21/AC11 refusals, public inspection preserves the injected UNKNOWN and original completed Runtime receipt without replay or a model request");
+  }
   assert.deepEqual(pageErrors, []);
   passed = true;
 } catch (error) {
@@ -1205,10 +1240,12 @@ try {
   const sourceDiff = execFileSync("git", ["diff", "--binary"], { cwd: root });
   const sourceStatus = execFileSync("git", ["status", "--porcelain=v1"], { cwd: root, encoding: "utf8" });
   const manifest = {
-    passed, failure, checks, events, pageErrors, electronStderr, frames, sourceCommit,
-    command: "pnpm --dir clients/gui run test:conversation-derivation",
+    passed, failure, scenario: sharedWorkspace ? "shared-workspace" : "conversation-derivation", baselineLayout, checks, events, pageErrors, electronStderr, frames, sourceCommit,
+    command: `pnpm --dir clients/gui run test:conversation-derivation${sharedWorkspace ? " --shared-workspace" : ""}${baselineLayout ? " --baseline" : ""}`,
     runtime: "source Electron renderer + Rust Core + actual Runtime run_command + deterministic local HTTP/SSE model",
-    limitations: ["local fixture model, not a real provider", "source build, not a copied installed package", "native project chooser, archive confirmation and download save location are fixtures and have no native-dialog acceptance claim", "Browser preview is outside this journey", "IME uses Chromium CDP composition and a candidate Enter event, not a physical input method", "UNKNOWN uses a persisted test record after safe Core stop, not an induced process crash"],
+    limitations: ["local fixture model, not a real provider", "source build, not a copied installed package", "native project chooser, archive confirmation and download save location are fixtures and have no native-dialog acceptance claim", "Browser preview is outside this journey", "IME uses Chromium CDP composition and a candidate Enter event, not a physical input method", ...(sharedWorkspace
+      ? ["bounded shared-workspace journey only; restart, bring-back and persisted UNKNOWN recovery matrix are not run"]
+      : ["UNKNOWN uses a persisted test record after safe Core stop, not an induced process crash"])],
     operatingSystem: { platform: process.platform, release: (await import("node:os")).release(), architecture: process.arch },
     windowBounds, videoPath, videoSegments: [{ path: videoPath, process: "initial Electron run", continuous: true },
       { path: restartVideoPath, process: "restarted Electron run", continuous: true }],

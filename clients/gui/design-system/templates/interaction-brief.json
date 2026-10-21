@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Design-time brief; not a runtime page DSL. Example for settings stage one.",
+  "intent": "调整界面偏好，检查结果后返回原任务",
+  "interactionFamilies": [
+    "I-MANAGE",
+    "I-DECIDE",
+    "I-READ"
+  ],
+  "supportingFamilies": [
+    "I-NAV",
+    "I-INPUT",
+    "I-RETURN",
+    "I-OBSERVE",
+    "I-RECOVER"
+  ],
+  "composition": "P-SETTINGS",
+  "components": [
+    "SettingsPage",
+    "SettingsSection",
+    "SettingsGroupCard",
+    "SettingsRow",
+    "SettingsSelect",
+    "Switch",
+    "SettingsDisclosure"
+  ],
+  "must": [
+    "MANAGE-OWNER-01",
+    "DECIDE-RESULT-01",
+    "READ-CONTINUITY-01"
+  ],
+  "defaults": [
+    "MANAGE-DEFAULT-01",
+    "DECIDE-DEFAULT-01",
+    "READ-DEFAULT-01"
+  ],
+  "decisions": [
+    {
+      "rule": "READ-DEFAULT-01",
+      "choice": "默认显示界面和动效；按主题展开阅读与代码、配色微调",
+      "reason": "降低初始选择负担；需用户视觉审查，不声称来自Codex原样布局"
+    }
+  ],
+  "exceptions": [],
+  "conditions": {
+    "themes": [
+      "dark",
+      "light"
+    ],
+    "fontSizes": [
+      14,
+      18
+    ],
+    "windowContentSizes": [
+      [
+        1440,
+        960
+      ],
+      [
+        1000,
+        720
+      ]
+    ]
+  },
+  "acceptance": [
+    "控件读写真值，菜单返回焦点",
+    "展开和配色切换不丢值、不隐式切换应用主题",
+    "实际Electron重开后偏好仍在",
+    "窄窗大字号控件可达",
+    "返回原任务保留草稿"
+  ],
+  "unknowns": [
+    "未注入所有保存故障",
+    "未做独立泛化或安装包验证"
+  ],
+  "evidenceOwner": "exercises/settings-stage1.md"
+}

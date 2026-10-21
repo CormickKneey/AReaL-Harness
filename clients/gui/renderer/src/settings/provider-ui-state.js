@@ -1,3 +1,5 @@
+import { withDefaultModelCapabilities } from "@areal/provider-config";
+
 const labels = {
   ready: "可用",
   refreshing: "正在刷新凭据",
@@ -32,8 +34,8 @@ export function newConnectionDraft(definition, authentication, revision) {
     definitionId: definitionId ?? definition.definitionId,
     authentication,
     enabled: true,
-    parameters: {},
-    models: structuredClone(definition.models ?? []),
+    parameters: structuredClone(definition.parameters ?? {}),
+    models: structuredClone(definition.models ?? []).map(model => withDefaultModelCapabilities(model, definition.parameters)),
     basedOnRevision: revision,
   };
 }

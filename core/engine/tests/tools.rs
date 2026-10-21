@@ -7,6 +7,7 @@ use areal_protocol::{Input, Item, ToolOutcome, TurnStatus};
 use areal_runtime_client::Client;
 use async_trait::async_trait;
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -375,6 +376,17 @@ async fn known_scope_rejection_is_a_failed_tool_and_current_workspace_remains_ob
             .unwrap();
         let finished = bounded(engine.wait(&thread.id)).await.unwrap();
         assert_eq!(finished.turns[0].status, TurnStatus::Completed);
+        let instructions = finished.turns[0].instruction_snapshot.as_ref().unwrap();
+        assert!(instructions.contains("Execution environment facts: "));
+        assert_eq!(
+            finished.turns[0]
+                .instruction_attribution
+                .as_ref()
+                .unwrap()
+                .sha256,
+            format!("{:x}", Sha256::digest(instructions.as_bytes())),
+            "工作区事实必须属于已冻结且已归因的指令快照"
+        );
         let calls: Vec<_> = finished.turns[0]
             .items
             .iter()

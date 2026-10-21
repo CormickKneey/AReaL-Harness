@@ -1,3 +1,4 @@
+import { useI18n, UiMessageError, type UiMessage, formatUiMessage } from "../i18n/IntlProvider.js";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { BookOpen, Check, MoreHorizontal } from "lucide-react";
 import { Button } from "../components/ui/button.js";
@@ -20,7 +21,7 @@ export type CenterSkill = {
   description: string;
   enabled: boolean;
   scope: "user" | "project" | "plugin";
-  sourceLabel: string;
+  sourceLabel: string | UiMessage;
   projectId?: string;
   pluginId?: string;
   catalogRevision?: number;
@@ -30,10 +31,10 @@ export type CenterSkill = {
 async function skillBody(action: Action, skill: CenterSkill, project?: Data) {
   if (skill.scope !== "plugin") {
     const result = await action("resources", { operation: "skillRead", scope: skill.scope, projectId: skill.projectId, id: skill.id });
-    if (result.truncated) throw new Error("Skill 正文超过可读取的 256 KiB 上限。");
+    if (result.truncated) throw new UiMessageError({ id: "settings.pluginSkillsPage.theSkillContentExceedsTheReadableLimit" });
     return String(result.content);
   }
-  if (!project?.state?.connected) throw new Error("连接所属项目后读取 Skill 正文。");
+  if (!project?.state?.connected) throw new UiMessageError({ id: "settings.pluginSkillsPage.connectTheOwningProjectToReadThe" });
   const profile = project.profiles.find((item: Data) => item.id === "areal-standard") ?? project.profiles[0];
   const chunks: Uint8Array[] = [];
   let offset = 0;
@@ -41,10 +42,10 @@ async function skillBody(action: Action, skill: CenterSkill, project?: Data) {
     const page = await action("manage", { operation: "skill", projectId: project.id,
       agentProfile: { id: profile?.id, revision: profile?.revision }, skill: { id: skill.id, revision: skill.revision },
       resource: "SKILL.md", offset, maxBytes: 8192 });
-    if (page.sizeBytes > 256 * 1024) throw new Error("Skill 正文超过可读取的 256 KiB 上限。");
+    if (page.sizeBytes > 256 * 1024) throw new UiMessageError({ id: "settings.pluginSkillsPage.theSkillContentExceedsTheReadableLimit" });
     chunks.push(Uint8Array.from(atob(page.dataBase64), char => char.charCodeAt(0)));
     if (page.eof) break;
-    if (!Number.isSafeInteger(page.nextOffset) || page.nextOffset <= offset) throw new Error("Skill 分页无效。");
+    if (!Number.isSafeInteger(page.nextOffset) || page.nextOffset <= offset) throw new UiMessageError({ id: "settings.pluginSkillsPage.theSkillPageIsInvalid" });
     offset = page.nextOffset;
   }
   const body = new Uint8Array(chunks.reduce((length, chunk) => length + chunk.length, 0));
@@ -68,13 +69,16 @@ export function PluginSkillsPage({ action, projects, project, packageSkills, sel
   onCreate: () => void;
   createBusy: boolean;
 }) {
+  const { t, intl } = useI18n();
+  const sourceLabel = (skill: CenterSkill) => formatUiMessage(t, skill.sourceLabel);
+  const [loadFailures, setLoadFailures] = useState<{ source: string | UiMessage; error: string }[]>([]);
   const [items, setItems] = useState<CenterSkill[]>([]);
   const [query, setQuery] = useState("");
   const [scopeId, setScopeId] = useState("user");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const listId = useId();
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
+  const [error, setError] = useState<UiMessage | string>("");
+  const [message, setMessage] = useState<UiMessage | string>("");
   const [busy, setBusy] = useState(false);
   const [content, setContent] = useState("");
   const [contentLoading, setContentLoading] = useState(false);
@@ -82,18 +86,19 @@ export function PluginSkillsPage({ action, projects, project, packageSkills, sel
   const projectKey = projects.filter(item => !item.projectless).map(item => `${item.id}:${item.root}`).join("|");
   const refresh = useCallback(async () => {
     const version = ++generation.current;
-    const owners = [{ scope: "user" as const, projectId: undefined, label: "个人" },
+    const owners = [{ scope: "user" as const, projectId: undefined, label: { id: "settings.pluginSkillsPage.personal" } as UiMessage },
       ...projects.filter(item => !item.projectless).map(item => ({ scope: "project" as const, projectId: item.id as string, label: item.name || item.root.split(/[\\/]/).pop() }))];
     const results = await Promise.allSettled(owners.map(owner => action("resources", { operation: "skills", scope: owner.scope, projectId: owner.projectId })));
     if (generation.current !== version) return;
-    const failures: string[] = [];
+    const failures: { source: string | UiMessage; error: string }[] = [];
     setItems(results.flatMap((result, index) => {
       const owner = owners[index];
-      if (result.status === "rejected") { failures.push(`${owner.label} · ${result.reason.message}`); return []; }
+      if (result.status === "rejected") { failures.push({ source: owner.label, error: result.reason.message }); return []; }
       return (result.value.data ?? []).map((item: Data) => ({ ...item, key: `${owner.scope}:${owner.projectId || "user"}:${item.id}`,
         scope: owner.scope, projectId: owner.projectId, sourceLabel: owner.label, catalogRevision: result.value.revision }));
     }));
-    setError(failures.join(" "));
+    setError("");
+    setLoadFailures(failures);
   }, [action, projectKey]);
   useEffect(() => {
     void refresh();
@@ -109,75 +114,76 @@ export function PluginSkillsPage({ action, projects, project, packageSkills, sel
       setContentLoading(false); setError("");
       return;
     }
-    setContentLoading(true); setError("");
+    setContentLoading(true); setError(""); setLoadFailures([]);
     void skillBody(action, selected, projects.find(item => item.id === selected.projectId) ?? project)
       .then(value => { if (current) setContent(value); })
-      .catch(cause => { if (current) setError(cause.message); })
+      .catch(cause => { if (current) setError(cause instanceof UiMessageError ? cause.descriptor : cause.message); })
       .finally(() => { if (current) setContentLoading(false); });
     return () => { current = false; };
   }, [selected?.key, selected?.revision, action, project?.state?.connected]);
+  const displayedError = [formatUiMessage(t, error), ...loadFailures.map(failure => `${formatUiMessage(t, failure.source)} · ${failure.error}`)].filter(Boolean).join(" ");
   const run = async (work: () => Promise<void>) => {
-    setBusy(true); setError(""); setMessage("");
+    setBusy(true); setError(""); setLoadFailures([]); setMessage("");
     try { await work(); await refresh(); }
-    catch (cause) { setError((cause as Error).message); }
+    catch (cause) { setError(cause instanceof UiMessageError ? cause.descriptor : (cause as Error).message); }
     finally { setBusy(false); }
   };
   const toggle = (skill: CenterSkill) => run(async () => {
     await action("resources", { operation: "skillToggle", scope: skill.scope, projectId: skill.projectId,
       id: skill.id, enabled: !skill.enabled, expectedRevision: skill.catalogRevision });
-    setMessage("已保存，将在新任务中生效。");
+    setMessage({ id: "settings.pluginSkillsPage.savedChangesTakeEffectInNewTasks" });
   });
   const startDraft = (skill: CenterSkill) => run(async () => onStartDraft({
-    text: `请使用 ${skill.name} 帮助我完成任务。`,
-    skill: { id: skill.id, revision: skill.revision, name: skill.name, description: skill.description, source: skill.sourceLabel },
+    text: t("settings.pluginSkillsPage.pleaseUseValueToHelpMeComplete", { value0: skill.name }),
+    skill: { id: skill.id, revision: skill.revision, name: skill.name, description: skill.description, source: sourceLabel(skill) },
   }));
   if (selected) return <article className="plugin-detail-page" data-testid="skill-detail-page">
     <header className="plugin-detail-header"><span className="plugin-resource-icon"><BookOpen size={28} /></span><div><h1>{selected.name}</h1><p>{selected.description}</p></div><div className="plugin-detail-actions">
-      {selected.pluginId && <Button variant="outline" onClick={() => onManagePlugin(selected.pluginId!)}>管理插件</Button>}
-      <Button disabled={busy || !selected.enabled || !!selected.error} onClick={() => void startDraft(selected)}>试用</Button>
-      <DropdownMenu><DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label="更多 Skill 操作"><MoreHorizontal size={18} /></Button>} /><DropdownMenuContent align="end"><DropdownMenuItem onClick={() => void navigator.clipboard.writeText(selected.id)}>复制 Skill 标识</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
+      {selected.pluginId && <Button variant="outline" onClick={() => onManagePlugin(selected.pluginId!)}>{t("settings.pluginSkillsPage.managePlugin")}</Button>}
+      <Button disabled={busy || !selected.enabled || !!selected.error} onClick={() => void startDraft(selected)}>{t("settings.pluginSkillsPage.tryIt")}</Button>
+      <DropdownMenu><DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label={t("settings.pluginSkillsPage.moreSkillActions")}><MoreHorizontal size={18} /></Button>} /><DropdownMenuContent align="end"><DropdownMenuItem onClick={() => void navigator.clipboard.writeText(selected.id)}>{t("settings.pluginSkillsPage.copySkillID")}</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
     </div></header>
-    <Feedback error={error} message={message} />
-    <dl className="plugin-metadata"><dt>来源</dt><dd>{selected.sourceLabel}</dd><dt>Skill 标识</dt><dd>{selected.id}</dd><dt>版本</dt><dd>{selected.revision}</dd><dt>状态</dt><dd>{selected.enabled ? "已启用" : "已停用"}</dd></dl>
-    {selected.scope === "plugin" && !selected.enabled && <p role="status">启用所属插件后可读取 Skill 正文。</p>}
-    {contentLoading && <p role="status">正在读取 Skill 内容…</p>}
+    <Feedback error={displayedError} message={message} />
+    <dl className="plugin-metadata"><dt>{t("settings.pluginSkillsPage.source")}</dt><dd>{sourceLabel(selected)}</dd><dt>{t("settings.pluginSkillsPage.skillID")}</dt><dd>{selected.id}</dd><dt>{t("settings.pluginSkillsPage.version")}</dt><dd>{selected.revision}</dd><dt>{t("settings.pluginSkillsPage.status")}</dt><dd>{selected.enabled ? t("settings.pluginSkillsPage.enabled") : t("settings.pluginSkillsPage.disabled")}</dd></dl>
+    {selected.scope === "plugin" && !selected.enabled && <p role="status">{t("settings.pluginSkillsPage.enableTheOwningPluginToReadThe")}</p>}
+    {contentLoading && <p role="status">{t("settings.pluginSkillsPage.loadingSkillContent")}</p>}
     <div className="plugin-skill-content"><MessageResponse>{content}</MessageResponse></div>
   </article>;
   const all = [...items, ...packageSkills];
-  const matches = (item: CenterSkill) => `${item.name} ${item.id} ${item.description} ${item.sourceLabel}`.toLowerCase().includes(query.trim().toLowerCase());
+  const matches = (item: CenterSkill) => `${item.name} ${item.id} ${item.description} ${sourceLabel(item)}`.toLowerCase().includes(query.trim().toLowerCase());
   const visible = all.filter(matches);
-  const owners = [{ label: "个人", value: "user" }, ...projects.filter(item => !item.projectless).map(item => ({ label: item.name || item.root.split(/[\\/]/).pop(), value: item.id as string }))];
+  const owners = [{ label: t("settings.pluginSkillsPage.personal"), value: "user" }, ...projects.filter(item => !item.projectless).map(item => ({ label: item.name || item.root.split(/[\\/]/).pop(), value: item.id as string }))];
   const activeScope = owners.some(owner => owner.value === scopeId) ? scopeId : "user";
   const scoped = visible.filter(item => activeScope === "user" ? item.scope === "user" : item.projectId === activeScope);
-  const search = <SettingsSearchInput aria-label="搜索 Skills" placeholder="搜索 Skills…" value={query} onChange={event => setQuery(event.target.value)} onClear={() => setQuery("")} clearLabel="清除 Skill 搜索" />;
-  const row = (item: CenterSkill) => <article className="plugin-catalog-row" key={item.key} aria-label={`${item.name} · ${item.sourceLabel}`}>
-    <button className="plugin-row-info" aria-label={`查看技能 ${item.id}`} disabled={busy || !!item.error} onClick={() => onOpen(item)}>
+  const search = <SettingsSearchInput aria-label={t("settings.pluginSkillsPage.searchSkills")} placeholder={t("settings.pluginSkillsPage.searchSkills2")} value={query} onChange={event => setQuery(event.target.value)} onClear={() => setQuery("")} clearLabel={t("settings.pluginSkillsPage.clearSkillSearch")} />;
+  const row = (item: CenterSkill) => <article className="plugin-catalog-row" key={item.key} aria-label={`${item.name} · ${sourceLabel(item)}`}>
+    <button className="plugin-row-info" aria-label={t("settings.pluginSkillsPage.viewSkillValue", { value0: item.id })} disabled={busy || !!item.error} onClick={() => onOpen(item)}>
       <span className="plugin-resource-icon plugin-skill-icon" aria-hidden="true"><svg width="16" height="18" viewBox="0 0 16 18"><path d="M8 1 14 4.5 8 8 2 4.5Z" fill="#ffd38a" /><path d="M2 4.5 8 8 8 16 2 12.5Z" fill="#ffe8bc" /><path d="M8 8 14 4.5 14 12.5 8 16Z" fill="#ad8be5" /></svg></span>
-      <span><strong title={`${item.name} · ${item.sourceLabel}`}>{item.name}</strong><small className={compact ? undefined : "sr-only"}>{item.sourceLabel}</small><small>{item.error || item.description || item.id}</small></span>
+      <span><strong title={`${item.name} · ${sourceLabel(item)}`}>{item.name}</strong><small className={compact ? undefined : "sr-only"}>{sourceLabel(item)}</small><small>{item.error || item.description || item.id}</small></span>
     </button>
-    {compact && item.pluginId ? <Button variant="ghost" onClick={() => onManagePlugin(item.pluginId!)}>管理插件</Button> : compact ? <Switch aria-label={`${item.enabled ? "停用" : "启用"}技能 ${item.id}`} checked={item.enabled} disabled={busy || !!item.error} onCheckedChange={() => void toggle(item)} /> : item.enabled && <Check size={14} className="plugin-skill-installed" aria-label="已启用" />}
+    {compact && item.pluginId ? <Button variant="ghost" onClick={() => onManagePlugin(item.pluginId!)}>{t("settings.pluginSkillsPage.managePlugin")}</Button> : compact ? <Switch aria-label={t("settings.pluginSkillsPage.valueSkillValue", { value0: item.enabled ? t("settings.pluginSkillsPage.disable") : t("settings.pluginSkillsPage.enable"), value1: item.id })} checked={item.enabled} disabled={busy || !!item.error} onCheckedChange={() => void toggle(item)} /> : item.enabled && <Check size={14} className="plugin-skill-installed" aria-label={t("settings.pluginSkillsPage.enabled")} />}
   </article>;
   const preview = (values: CenterSkill[], key: string, label: string) => {
     const shown = expanded[key] || query.trim() ? values : values.slice(0, 6);
     const id = `${listId}-${key}`;
     return <section className="plugin-skill-section" aria-label={label}>
       <div id={id} className="plugin-catalog-grid">{shown.map(row)}</div>
-      {!values.length && <p className="plugin-skill-empty">{query.trim() ? "没有匹配的 Skill" : "尚未安装 Skills"}</p>}
-      {values.length > 6 && !query.trim() && <button className="plugin-skills-more" aria-expanded={!!expanded[key]} aria-controls={id} onClick={() => setExpanded(current => ({ ...current, [key]: !current[key] }))}>{expanded[key] ? "收起" : `查看更多，另有 ${values.length - 6} 个 Skill`}</button>}
+      {!values.length && <p className="plugin-skill-empty">{query.trim() ? t("settings.pluginSkillsPage.noMatchingSkills") : t("settings.pluginSkillsPage.noSkillsInstalled")}</p>}
+      {values.length > 6 && !query.trim() && <button className="plugin-skills-more" aria-expanded={!!expanded[key]} aria-controls={id} onClick={() => setExpanded(current => ({ ...current, [key]: !current[key] }))}>{expanded[key] ? t("settings.pluginSkillsPage.collapse") : t("settings.pluginSkillsPage.showMoreValueMoreSkills", { value0: values.length - 6 })}</button>}
     </section>;
   };
   if (compact) return <section className="plugin-skills plugin-skills-compact">
-    <div className="plugin-skills-toolbar"><h2>已安装 <small>{all.length}</small></h2>{search}<Button disabled={createBusy} onClick={onCreate}>创建 Skill</Button></div>
-    <Feedback error={error} message={message} />
+    <div className="plugin-skills-toolbar"><h2>{t("settings.pluginSkillsPage.installed")}<small>{intl.formatNumber(all.length)}</small></h2>{search}<Button disabled={createBusy} onClick={onCreate}>{t("settings.pluginSkillsPage.createSkill")}</Button></div>
+    <Feedback error={displayedError} message={message} />
     <div className="plugin-row-list">{visible.map(row)}</div>
-    {!visible.length && <div className="resource-empty"><BookOpen size={28} /><strong>{query ? "没有匹配的 Skill" : "尚未安装 Skills"}</strong><p>{query ? "试试其他名称或关键词。" : "创建可复用的 Skill，或从插件市场安装。"}</p></div>}
+    {!visible.length && <div className="resource-empty"><BookOpen size={28} /><strong>{query ? t("settings.pluginSkillsPage.noMatchingSkills") : t("settings.pluginSkillsPage.noSkillsInstalled")}</strong><p>{query ? t("settings.pluginSkillsPage.tryAnotherNameOrKeyword") : t("settings.pluginSkillsPage.createAReusableSkillOrInstallOne")}</p></div>}
   </section>;
   return <section className="plugin-skills plugin-skills-workspace">
-    <header className="plugin-center-header plugin-skills-header"><div><h1>Skills</h1><p>为不同任务添加可复用的专业能力。</p></div><div className="plugin-center-toolbar">{search}<Button disabled={createBusy} onClick={onCreate} title={`在${project?.name || "所选项目"}中创建 Skill`}>创建 Skill</Button></div></header>
-    <Feedback error={error} message={message} />
-    <div className="plugin-skill-section-heading"><h2>已安装 <small>{all.length}</small></h2></div>
-    {preview(visible, "installed", "已安装 Skills")}
-    <div className="plugin-skill-source-tabs"><SettingsSegmentedTabs ariaLabel="Skill 来源" items={owners} value={activeScope} onValueChange={setScopeId} /></div>
-    {preview(scoped, `scope-${activeScope}`, `${owners.find(owner => owner.value === activeScope)?.label}的 Skills`)}
+    <header className="plugin-center-header plugin-skills-header"><div><h1>Skills</h1><p>{t("settings.pluginSkillsPage.addReusableExpertiseForDifferentTasks")}</p></div><div className="plugin-center-toolbar">{search}<Button disabled={createBusy} onClick={onCreate} title={t("settings.pluginSkillsPage.createASkillInValue", { value0: project?.name || t("settings.pluginSkillsPage.selectedProject") })}>{t("settings.pluginSkillsPage.createSkill")}</Button></div></header>
+    <Feedback error={displayedError} message={message} />
+    <div className="plugin-skill-section-heading"><h2>{t("settings.pluginSkillsPage.installed")}<small>{intl.formatNumber(all.length)}</small></h2></div>
+    {preview(visible, "installed", t("settings.pluginSkillsPage.installedSkills"))}
+    <div className="plugin-skill-source-tabs"><SettingsSegmentedTabs ariaLabel={t("settings.pluginSkillsPage.skillSource")} items={owners} value={activeScope} onValueChange={setScopeId} /></div>
+    {preview(scoped, `scope-${activeScope}`, t("settings.pluginSkillsPage.skillsForValue", { value0: owners.find(owner => owner.value === activeScope)?.label }))}
   </section>;
 }

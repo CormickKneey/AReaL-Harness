@@ -1,3 +1,4 @@
+import { useI18n, UiMessageError, type UiMessage } from "../i18n/IntlProvider.js";
 import { SettingsSelect } from "./SettingsPageParts.js";
 import { useRef, useState } from "react";
 import type { Action, Data } from "../services.js";
@@ -5,34 +6,35 @@ import { Feedback } from "../components/ui/feedback.js";
 import { SettingsSection, SettingsGroupCard, SettingsRow, SettingsSwitch } from "./SettingsPageParts.js";
 
 export function NotificationSettings({ settings, action, connected }: { settings: Data; action?: Action; connected: boolean }) {
+  const { t } = useI18n();
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<string | UiMessage>("");
   const saving = useRef(false);
   const disabled = !connected || !action || busy;
   const save = async (key: string, value: string | boolean) => {
     if (saving.current || !connected || !action) return;
     saving.current = true; setBusy(true); setError("");
     try { await action("library", { operation: "settings", key, value }); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : "通知设置保存失败"); }
+    catch (cause) { setError(cause instanceof UiMessageError ? cause.descriptor : cause instanceof Error ? cause.message : { id: "settings.notificationSettings.failedToSaveNotificationSettings" }); }
     finally { saving.current = false; setBusy(false); }
   };
-  return <SettingsSection title="通知">
+  return <SettingsSection title={t("settings.notificationSettings.notifications")}>
     <Feedback error={error} />
     <SettingsGroupCard>
-      <SettingsRow label="轮次完成通知" description="设置任务完成后何时提醒" control={
-        <SettingsSelect aria-label="轮次完成通知" disabled={disabled} value={settings.turnNotifications ?? "unfocused"} onValueChange={selectedValue => void save("turnNotifications", selectedValue)}>
-          <option value="always">始终</option><option value="unfocused">仅在未聚焦时</option><option value="never">从不</option>
+      <SettingsRow label={t("settings.notificationSettings.turnCompletionNotifications")} description={t("settings.notificationSettings.chooseWhenToBeNotifiedAfterA")} control={
+        <SettingsSelect aria-label={t("settings.notificationSettings.turnCompletionNotifications")} disabled={disabled} value={settings.turnNotifications ?? "unfocused"} onValueChange={selectedValue => void save("turnNotifications", selectedValue)}>
+          <option value="always">{t("settings.notificationSettings.always")}</option><option value="unfocused">{t("settings.notificationSettings.whenUnfocused")}</option><option value="never">{t("settings.notificationSettings.never")}</option>
         </SettingsSelect>
       } />
-      <SettingsRow label="启用权限通知" description="需要你批准工具操作时显示提醒" control={
-        <SettingsSwitch aria-label="启用权限通知" disabled={disabled} checked={settings.permissionNotifications !== false} onCheckedChange={v => void save("permissionNotifications", v)} />
+      <SettingsRow label={t("settings.notificationSettings.permissionNotifications")} description={t("settings.notificationSettings.notifyWhenAToolOperationNeedsYour")} control={
+        <SettingsSwitch aria-label={t("settings.notificationSettings.permissionNotifications")} disabled={disabled} checked={settings.permissionNotifications !== false} onCheckedChange={v => void save("permissionNotifications", v)} />
       } />
-      <SettingsRow label="启用问题通知" description="需要输入才能继续时显示提醒" control={
-        <SettingsSwitch aria-label="启用问题通知" disabled={disabled} checked={settings.questionNotifications !== false} onCheckedChange={v => void save("questionNotifications", v)} />
+      <SettingsRow label={t("settings.notificationSettings.questionNotifications")} description={t("settings.notificationSettings.notifyWhenInputIsNeededToContinue")} control={
+        <SettingsSwitch aria-label={t("settings.notificationSettings.questionNotifications")} disabled={disabled} checked={settings.questionNotifications !== false} onCheckedChange={v => void save("questionNotifications", v)} />
       } />
-      <SettingsRow label="通知声音" description="任务完成、权限请求和提问时播放的声音" control={
-        <SettingsSelect aria-label="通知声音" disabled={disabled} value={settings.notificationSound ?? "default"} onValueChange={selectedValue => void save("notificationSound", selectedValue)}>
-          <option value="default">默认</option><option value="silent">无</option>
+      <SettingsRow label={t("settings.notificationSettings.notificationSound")} description={t("settings.notificationSettings.soundForTaskCompletionPermissionRequestsAnd")} control={
+        <SettingsSelect aria-label={t("settings.notificationSettings.notificationSound")} disabled={disabled} value={settings.notificationSound ?? "default"} onValueChange={selectedValue => void save("notificationSound", selectedValue)}>
+          <option value="default">{t("settings.notificationSettings.default")}</option><option value="silent">{t("settings.notificationSettings.none")}</option>
         </SettingsSelect>
       } />
     </SettingsGroupCard>

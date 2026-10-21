@@ -170,6 +170,12 @@ pub async fn run(command: Command, runtime_bin: PathBuf) -> Result<()> {
             )?
             .with_audit_directory(config.data_dir.join("model-requests"))
             .with_options(ModelOptions {
+                capabilities: config
+                    .model
+                    .capabilities
+                    .as_ref()
+                    .map(crate::model_capabilities),
+                context_window: None,
                 context_window_tokens: config.model.context_window_tokens,
                 responses_websocket: config.model.responses_websocket,
                 reasoning_effort: config.model.reasoning_effort.clone(),

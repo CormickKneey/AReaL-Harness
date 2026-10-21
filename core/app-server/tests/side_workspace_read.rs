@@ -36,6 +36,8 @@ impl Model for ReadModel {
     }
     fn capabilities(&self) -> ModelCapabilities {
         ModelCapabilities {
+            declared: None,
+            context_window: None,
             context_window_tokens: None,
             max_output_tokens: None,
             summary_output_tokens: None,

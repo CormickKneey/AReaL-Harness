@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "id": "settings-controls",
+  "intent": "使用公共控件修改设置，并区分一次操作、布尔值和互斥选择",
+  "pattern": "P-SETTINGS",
+  "target": "renderer/src/design-system/main.tsx",
+  "runtime": "component-preview",
+  "reference": {
+    "kind": "existing-code",
+    "path": "renderer/src/settings/DisplaySettings.tsx",
+    "visualTarget": null
+  },
+  "slots": {
+    "label": [
+      "SettingsRow"
+    ],
+    "control": [
+      "ActionButton",
+      "Switch",
+      "SettingsSelect",
+      "SettingsSegmentedTabs"
+    ],
+    "detail": [
+      "SettingsDisclosure"
+    ]
+  },
+  "states": [
+    {
+      "id": "default",
+      "condition": "状态=可操作",
+      "expected": "导入、更改、开关、二值和多值选择在同一分组；值可读"
+    },
+    {
+      "id": "busy",
+      "condition": "状态=提交中",
+      "expected": "刷新状态按钮禁止重复触发并保留标签"
+    },
+    {
+      "id": "failed",
+      "condition": "状态=明确失败",
+      "expected": "就近显示 alert，错误与普通反馈分开"
+    },
+    {
+      "id": "unknown",
+      "condition": "状态=结果待核对",
+      "expected": "待核对状态有文字，不假称成功或自动重试"
+    },
+    {
+      "id": "disabled",
+      "condition": "不可用按钮始终存在",
+      "expected": "禁用动作保留可读标签且不可触发"
+    }
+  ],
+  "conditions": {
+    "themes": [
+      "light",
+      "dark"
+    ],
+    "fontSizes": [
+      14,
+      18
+    ],
+    "widthModes": [
+      "wide",
+      "narrow"
+    ],
+    "reducedMotion": [
+      false,
+      true
+    ]
+  },
+  "invariants": [
+    "复用生产组件，不连接桌面 bridge/Core/供应商",
+    "不改变调用方的提交和权限合同",
+    "同组右边缘对齐，窄面板不裁掉动作"
+  ],
+  "evidence": {
+    "status": "pending",
+    "artifacts": [],
+    "gaps": [
+      "v1 合同声明不是已经完成的运行验收",
+      "视觉目标尚未采集，不能声称 Codex 高保真对齐"
+    ]
+  }
+}

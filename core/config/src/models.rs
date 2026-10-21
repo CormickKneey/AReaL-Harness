@@ -74,6 +74,16 @@ impl Parameters {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ModelCapabilities {
+    pub tools: bool,
+    pub vision: bool,
+    pub reasoning: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort_options: Option<Vec<String>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ModelConfig {
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -82,6 +92,8 @@ pub struct ModelConfig {
     pub enabled: bool,
     #[serde(default)]
     pub parameters: Parameters,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<ModelCapabilities>,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -196,6 +208,36 @@ fn validate(data: &[ProviderConfig], default: Option<&ModelRef>, at: &ConfigSour
                 return Err(invalid(at, "invalid or duplicate model ID or display name"));
             }
             model.parameters.validate(at)?;
+            if let Some(capabilities) = &model.capabilities
+                && let Some(options) = &capabilities.reasoning_effort_options
+                && (options.len() > 7
+                    || options.iter().collect::<BTreeSet<_>>().len() != options.len()
+                    || options.iter().any(|value| {
+                        !matches!(
+                            value.as_str(),
+                            "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
+                        )
+                    })
+                    || (!capabilities.reasoning && !options.is_empty()))
+            {
+                return Err(invalid(at, "invalid model reasoning effort options"));
+            }
+            if let Some(capabilities) = &model.capabilities
+                && capabilities.reasoning
+                && let Some(options) = &capabilities.reasoning_effort_options
+                && !options.is_empty()
+                && model
+                    .parameters
+                    .reasoning_effort
+                    .as_ref()
+                    .or(provider.parameters.reasoning_effort.as_ref())
+                    .is_some_and(|effort| !options.contains(effort))
+            {
+                return Err(invalid(
+                    at,
+                    "configured reasoning effort is not supported by the model",
+                ));
+            }
         }
     }
     if let Some(default) = default {
@@ -230,6 +272,7 @@ fn json_value(item: &Item, at: &ConfigSource) -> Result<Value> {
                 "max_output_tokens" => "maxOutputTokens",
                 "context_window_tokens" => "contextWindowTokens",
                 "reasoning_effort" => "reasoningEffort",
+                "reasoning_effort_options" => "reasoningEffortOptions",
                 value => value,
             };
             object.insert(key.to_owned(), json_value(value, at)?);
@@ -472,6 +515,7 @@ fn toml_value(value: Value) -> toml_edit::Value {
                     "maxOutputTokens" => "max_output_tokens",
                     "contextWindowTokens" => "context_window_tokens",
                     "reasoningEffort" => "reasoning_effort",
+                    "reasoningEffortOptions" => "reasoning_effort_options",
                     key => key,
                 };
                 table.insert(key, toml_value(value));

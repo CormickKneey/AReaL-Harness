@@ -15,6 +15,8 @@ if (process.platform !== "darwin" || process.arch !== "arm64")
   throw new Error("Local package acceptance currently targets macOS arm64");
 const release = process.env.AREAL_GUI_RELEASE === "1";
 const unsignedLocal = process.env.AREAL_GUI_UNSIGNED_LOCAL === "1";
+const dmgOnly = process.argv.includes("--dmg-only");
+assert.ok(!dmgOnly || (!release && !unsignedLocal), "DMG-only packaging requires local ad-hoc mode");
 assert.ok(!(release && unsignedLocal), "Unsigned local packaging cannot enable release mode");
 const output = resolve(
   process.env.AREAL_GUI_PACKAGE_DIR || join(gui, "dist", `local-${Date.now()}`),
@@ -125,8 +127,8 @@ if (!unsignedLocal) {
   }
 }
 verifyCoreBundle(join(app, "Contents/Resources"), { hashes: true });
-const archive = join(output, "AReaL-Harness-GUI-mac-arm64.zip");
-execFileSync("/usr/bin/ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", app, archive]);
+const archive = dmgOnly ? undefined : join(output, "AReaL-Harness-GUI-mac-arm64.zip");
+if (archive) execFileSync("/usr/bin/ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", app, archive]);
 const dmg = !unsignedLocal && !release ? await buildMacOSDmg({
   app, destination: join(output, "AReaL-Harness-GUI-mac-arm64.dmg"), volumeName: "AReaL Harness Preview",
 }) : undefined;

@@ -80,6 +80,8 @@ Homebrew/Linux 发行产物、安装验收与 draft 发布流程见[发行流程
 
 ## 桌面 GUI
 
+页面、组件、布局、样式、动效和 UI 文案变更先读[设计系统入口](../../clients/gui/design-system/README.md#开工顺序)。增量审计随 GUI `verify` 执行；本地和 CI 的比较基线、覆盖与限制见[增量设计检查](../../clients/gui/design-system/automation.md#增量设计检查)，交付按[完成条件](../../clients/gui/design-system/governance.md#完成条件)报告设计选择和证据。
+
 GUI 使用独立 pnpm 11.7.0 workspace。运行 `make gui-install`、`make gui-build`、`make gui-smoke`；启动、打包与隔离配置见 [GUI 指南](../../clients/gui/README.md)。
 
 `make setup-node` 仅安装锁定的 Node 开发依赖，供不运行格式检查的原生 CI 使用；本地完整开发仍使用 `make setup`。

@@ -3,7 +3,7 @@ const { startupTrace } = require('./startup-timing.cjs');
 const startupTraceMain = startupTrace('gui.startup');
 startupTraceMain.advance('imports');
 
-const { app, BrowserWindow, Menu, dialog, ipcMain, protocol, nativeTheme, WebContentsView, shell, powerMonitor, Notification } = require('electron');
+const { app, BrowserWindow, Menu, dialog, ipcMain, protocol, nativeTheme, WebContentsView, shell, powerMonitor, Notification, crashReporter } = require('electron');
 const { readFile, realpath, stat, writeFile } = require('node:fs/promises');
 const { join, resolve, extname, sep } = require('node:path');
 const { randomUUID } = require('node:crypto');
@@ -19,7 +19,8 @@ const { McpAppsHost, parseDeepLink } = require('./mcp-apps.cjs');
 const { McpMetadataImages } = require('./mcp-apps-images.cjs');
 const { validateCommand, validatePreview, desktopError } = require('@areal/workbench/desktop-contract');
 const { CorePreview } = require('./preview.cjs');
-const { configureUserData, serviceOptions } = require('./service-config.cjs');
+const diagnostics = require('./diagnostics.cjs');
+const { configureUserData, serviceOptions, serviceHome } = require('./service-config.cjs');
 const { SharedCoreBackend } = require('./service-client.cjs');
 const { recoverConnectedService } = require('./startup-recovery.cjs');
 const { loadThemes, engineCss, panelCss } = require('../themes');
@@ -35,6 +36,12 @@ if (!app.requestSingleInstanceLock()) {
   console.info('AReaL Harness 界面已在运行，已请求显示已有窗口。');
   startupTraceMain.finish('skipped'); app.exit(0); return;
 }
+const diagnosticsRoots = { mainRoot: join(applicationOwner.profile, 'diagnostics', 'main'), desktopRoot: join(serviceHome(app), 'diagnostics', 'desktop') };
+diagnostics.start({ role: 'main', root: diagnosticsRoots.mainRoot, appRunId: applicationOwner.appRunId, version: app.getVersion() });
+diagnostics.startCrashReporter({ app, crashReporter });
+app.on('child-process-gone', (_event, details) => diagnostics.record({ type: 'child-process-gone', processType: details.type, reason: details.reason, exitCode: details.exitCode }));
+app.on('render-process-gone', (_event, _contents, details) => diagnostics.record({ type: 'renderer-gone', reason: details.reason, exitCode: details.exitCode }));
+app.on('will-quit', () => diagnostics.record({ type: 'exit-requested', exitCode: 0 }));
 protocol.registerSchemesAsPrivileged([{ scheme: 'areal-mcp', privileges: { standard: true, secure: true, supportFetchAPI: true } }, { scheme: 'areal-ui', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 
 const guiRoot = app.isPackaged ? join(process.resourcesPath, 'areal-gui') : resolve(__dirname, '../../../renderer/dist');
@@ -122,6 +129,15 @@ function requestQuit(intent = 'application') {
     }
   });
   return attempt.promise;
+}
+async function exportDiagnostics() {
+  try {
+    const options = { title: '导出诊断包', defaultPath: `areal-diagnostics-${new Date().toISOString().replace(/[:.]/g, '-')}.json`, filters: [{ name: 'JSON', extensions: ['json'] }] };
+    const result = await (window && !window.isDestroyed() ? dialog.showSaveDialog(window, options) : dialog.showSaveDialog(options));
+    if (result.canceled || !result.filePath) return { canceled: true };
+    await diagnostics.exportTo(result.filePath, diagnosticsRoots);
+    return { path: result.filePath };
+  } catch { throw Object.assign(new Error('诊断包保存失败，请选择其他位置后重试。'), { code: 'DIAGNOSTICS_EXPORT_FAILED' }); }
 }
 const requestStopAndQuit = () => requestQuit('stop');
 const stopAndQuitFromMenu = () => { void requestStopAndQuit().catch(error => { backend?.reportLifecycleError(error); revealWindow(); }); };
@@ -225,6 +241,8 @@ async function createWindow() {
         return response === 1 && current();
       });
     preview.onRevoke = identity => { void backend.browserRevoke(identity).catch(() => {}); };
+    window.on('unresponsive', () => diagnostics.record({ type: 'renderer-unresponsive' }));
+    window.on('responsive', () => diagnostics.record({ type: 'renderer-responsive' }));
     const owner = window.webContents;
     owner.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => {
       if (mainFrame && !inPlace) projections.delete(owner);
@@ -448,6 +466,7 @@ app.whenReady().then(async () => {
     trusted(event);
     try {
       validateCommand(name, params);
+      if (name === 'exportDiagnostics') return { ok: true, value: await exportDiagnostics() };
       if (name === 'manage' && ['pluginArchivePick', 'pluginArchiveImport'].includes(params.operation))
         return { ok: true, value: await pluginArchives.command(params, () => trusted(event)) };
       if (name === 'remoteControl') return { ok: true, value: await backend.remoteControl(params) };
@@ -528,7 +547,7 @@ app.whenReady().then(async () => {
     notify: options => dialog.showMessageBox(window, options), purpose: 'stop' });
 
   Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { label: 'AReaL Harness', submenu: [{ role: 'about' }, { label: '检查更新…', click: () => { void updates.check(true); } }, { label: '检查后台资源…', click: () => { void backend.checkLifecycle().catch(error => backend.reportLifecycleError(error)); } }, { label: '停止后台 Core 服务…', click: async () => {
+    { label: 'AReaL Harness', submenu: [{ role: 'about' }, { label: '检查更新…', click: () => { void updates.check(true); } }, { label: '导出诊断包…', click: async () => { try { await exportDiagnostics(); } catch { dialog.showErrorBox('诊断包保存失败', '请选择其他位置后重试。'); } } }, { label: '检查后台资源…', click: () => { void backend.checkLifecycle().catch(error => backend.reportLifecycleError(error)); } }, { label: '停止后台 Core 服务…', click: async () => {
       try { await requestStopService(); } catch (error) { backend.reportLifecycleError(error); }
     } }, { type: 'separator' },
     { label: '退出 AReaL Harness', accelerator: 'CmdOrCtrl+Q', click: () => app.quit() }] },
@@ -560,7 +579,7 @@ app.whenReady().then(async () => {
   sampleActivity();
   await serviceStarted;
   sampleActivity();
-}).catch(error => { startupTraceMain.finish('error', error); if (error.code !== 'STARTUP_CANCELLED') { console.error(error); dialog.showErrorBox('AReaL 启动失败', error.message); } app.exit(error.code === 'STARTUP_CANCELLED' ? 0 : 1); });
+}).catch(error => { startupTraceMain.finish('error', error); if (error.code !== 'STARTUP_CANCELLED') { console.error(error); dialog.showErrorBox('AReaL 启动失败', error.message); } diagnostics.record({ type: 'exit-requested', exitCode: error.code === 'STARTUP_CANCELLED' ? 0 : 1 }); app.exit(error.code === 'STARTUP_CANCELLED' ? 0 : 1); });
 
 app.on('activate', revealWindow);
 app.on('window-all-closed', () => {});

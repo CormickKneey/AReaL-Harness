@@ -1,3 +1,4 @@
+import { useI18n, formatUiMessage, type UiMessage } from "../i18n/IntlProvider.js";
 import { SettingsDisclosure } from "./SettingsDisclosure.js";
 import { useRef, useState } from "react";
 import type { TrajectoryStatus } from "@areal/workbench/desktop-contract";
@@ -15,29 +16,18 @@ import {
 } from "./SettingsPageParts.js";
 
 const recordLabels = {
-    pending: "待上传",
-    uploading: "上传中",
-    failed: "上传失败",
-    uploaded: "已上传",
-    evicted: "已淘汰",
-};
+    pending: "settings.trajectorySettings.recordStatus.pending",
+    uploading: "settings.trajectorySettings.recordStatus.uploading",
+    failed: "settings.trajectorySettings.recordStatus.failed",
+    uploaded: "settings.trajectorySettings.uploaded",
+    evicted: "settings.trajectorySettings.recordStatus.evicted",
+} as const;
 const stateLabels = {
-    disabled: "已关闭",
-    ready: "就绪",
-    degraded: "需要检查",
-    invalid: "配置无效",
-};
-const size = (bytes: number) =>
-    bytes < 1024
-        ? `${bytes} B`
-        : bytes < 1024 ** 2
-          ? `${(bytes / 1024).toFixed(1)} KiB`
-          : `${(bytes / 1024 ** 2).toFixed(1)} MiB`;
-const date = (value: number | null) =>
-    value == null ? "暂无记录" : new Date(value).toLocaleString();
-const duration = (value: number | null | undefined) =>
-    value == null ? "未知" : `${value.toLocaleString(undefined, { maximumFractionDigits: 3 })} ms`;
-
+    disabled: "settings.trajectorySettings.captureState.disabled",
+    ready: "settings.trajectorySettings.captureState.ready",
+    degraded: "settings.trajectorySettings.captureState.degraded",
+    invalid: "settings.trajectorySettings.captureState.invalid",
+} as const;
 export function TrajectorySettings({
     action,
     connected,
@@ -47,12 +37,18 @@ export function TrajectorySettings({
     connected: boolean;
     onStatus: (status: TrajectoryStatus | null) => void;
 }) {
+    const { t, intl } = useI18n();
+    const size = (bytes: number) => bytes < 1024
+        ? intl.formatNumber(bytes, { style: "unit", unit: "byte", unitDisplay: "short" })
+        : intl.formatNumber(bytes / (bytes < 1024 ** 2 ? 1024 : 1024 ** 2), { maximumFractionDigits: 1, minimumFractionDigits: 1 }) + (bytes < 1024 ** 2 ? " KiB" : " MiB");
+    const date = (value: number | null) => value == null ? t("settings.trajectorySettings.noRecords") : intl.formatDate(value, { dateStyle: "medium", timeStyle: "medium" });
+    const duration = (value: number | null | undefined) => value == null ? t("settings.trajectorySettings.unknownDuration") : intl.formatNumber(value, { style: "unit", unit: "millisecond", unitDisplay: "short", maximumFractionDigits: 3 });
     const [status, setStatus] = useState<TrajectoryStatus | null>(null);
     const [busy, setBusy] = useState<TrajectoryOperation | null>(null);
     const [working, setWorking] = useState(false);
-    const [error, setError] = useState(""),
-        [notice, setNotice] = useState(""),
-        [checkedAt, setCheckedAt] = useState("");
+    const [error, setError] = useState<string | UiMessage>(""),
+        [notice, setNotice] = useState<string | UiMessage>(""),
+        [checkedAt, setCheckedAt] = useState<number | null>(null);
     const lastStatus = useRef<TrajectoryStatus | null>(null);
     const refresh = useTrajectoryPolling(action, {
         connected,
@@ -61,21 +57,21 @@ export function TrajectorySettings({
             lastStatus.current = value;
             setStatus(value);
             setError("");
-            setCheckedAt(new Date().toLocaleTimeString());
+            setCheckedAt(Date.now());
             onStatus(value);
-            if (operation === "retry") setNotice("已请求重试，上传进度将自动更新。");
+            if (operation === "retry") setNotice({ id: "settings.trajectorySettings.retryRequestedUploadProgressWillUpdateAutomatically" });
             if (operation === "enable" || operation === "disable")
                 setNotice(
                     value.capture_apply_error ||
                         (value.capture_apply_pending
-                            ? "上传控制已应用；当前任务结束且 Core 空闲后自动应用采集设置。"
+                            ? { id: "settings.trajectorySettings.uploadControlsAppliedCaptureSettingsWillApply" }
                             : operation === "enable"
-                              ? "数据飞轮已开启，保留的待传和失败轨迹将由后台继续上传。"
-                              : "数据飞轮已关闭，已保存的轨迹保留在本地。"),
+                              ? { id: "settings.trajectorySettings.dataFlywheelIsOnTheBackgroundService" }
+                              : { id: "settings.trajectorySettings.dataFlywheelIsOffSavedTrajectoriesRemain" }),
                 );
         },
         onError(cause) {
-            setError(cause instanceof Error ? cause.message : "无法读取轨迹上传状态。");
+            setError(cause instanceof Error ? cause.message : { id: "settings.trajectorySettings.couldNotReadTrajectoryUploadStatus" });
             onStatus(null);
         },
         onBusy(operation) {
@@ -92,11 +88,11 @@ export function TrajectorySettings({
     };
     const stale = !connected || !!error;
     return (
-        <div className="settings-sections" aria-label="数据飞轮状态">
+        <div className="settings-sections" aria-label={t("settings.trajectorySettings.dataFlywheelStatus")}>
             <UserFeedbackPreference action={action} connected={connected} />
             <SettingsSection
-                title="轨迹上传"
-                description="后台自动上传，状态定期更新。"
+                title={t("settings.trajectorySettings.trajectoryUploads")}
+                description={t("settings.trajectorySettings.uploadsRunInTheBackgroundStatusUpdates")}
                 action={
                     <Button
                         size="sm"
@@ -104,44 +100,42 @@ export function TrajectorySettings({
                         disabled={!connected || working}
                         onClick={() => void run("status")}
                     >
-                        刷新上传状态
-                    </Button>
+                        {t("settings.trajectorySettings.refreshUploadStatus")}</Button>
                 }
             >
                 {!connected && (
                     <p role="status" className="settings-section-desc">
-                        后台未连接
-                    </p>
+                        {t("settings.trajectorySettings.backgroundServiceDisconnected")}</p>
                 )}
                 <p role="status" className="settings-section-desc">
                     {busy === "status"
-                        ? "读取中…"
+                        ? t("settings.trajectorySettings.reading")
                         : busy === "retry"
-                          ? "请求重试中…"
+                          ? t("settings.trajectorySettings.requestingRetry")
                           : busy === "enable" || busy === "disable"
-                            ? "应用开关中…"
+                            ? t("settings.trajectorySettings.applyingChange")
                             : checkedAt
-                              ? `上次读取：${checkedAt}${stale ? "（可能已过期）" : ""}`
-                              : "尚未读取上传状态"}
+                              ? t("settings.trajectorySettings.lastChecked", { time: intl.formatTime(checkedAt, { timeStyle: "medium" }), stale: String(stale) })
+                              : t("settings.trajectorySettings.uploadStatusHasNotBeenRead")}
                 </p>
                 {error && (
                     <p role="alert" className="text-destructive">
-                        {error}
-                        {status && " 上次读取结果可能已过期。"}
+                        {formatUiMessage(t, error)}
+                        {status && <> {t("settings.trajectorySettings.staleResult")}</>}
                     </p>
                 )}
-                {notice && <p role="status">{notice}</p>}
+                {notice && <p role="status">{formatUiMessage(t, notice)}</p>}
                 {status && (
                     <SettingsGroupCard>
                         <SettingsRow
-                            label="数据飞轮开关"
+                            label={t("settings.trajectorySettings.dataFlywheel")}
                             description={
                                 status.enabled
                                     ? status.capture_apply_error ||
                                       (status.capture_apply_pending
-                                          ? "后台上传已开启；Core 空闲后自动应用新采集设置，不取消当前任务。"
-                                          : "已启用后台轨迹上传；重新开启会补传仍保留的待传和失败记录。")
-                                    : "未开启轨迹导出；已有配置和磁盘缓存保留，重新开启后继续上传。"
+                                          ? t("settings.trajectorySettings.backgroundUploadsAreOnNewCaptureSettings")
+                                          : t("settings.trajectorySettings.backgroundTrajectoryUploadsAreOnReEnabling"))
+                                    : t("settings.trajectorySettings.trajectoryExportIsOffConfigurationAndDisk")
                             }
                             control={
                                 <TrajectoryToggle
@@ -153,30 +147,30 @@ export function TrajectorySettings({
                             }
                         />
                         <SettingsRow
-                            label="配置状态"
-                            control={<SettingsBadge>{stateLabels[status.state]}</SettingsBadge>}
+                            label={t("settings.trajectorySettings.configurationStatus")}
+                            control={<SettingsBadge>{t(stateLabels[status.state])}</SettingsBadge>}
                             description={
                                 status.config_revision === "missing"
-                                    ? "请先通过用户配置或独立接入脚本配置接收地址和认证。"
+                                    ? t("settings.trajectorySettings.configureTheDestinationAndAuthenticationInUser")
                                     : !/^[a-f0-9]{64}$/.test(status.config_revision ?? "")
-                                      ? "当前 Core 未提供开关控制版本，请升级 Core；接收地址需先通过用户配置或独立接入脚本配置。"
-                                      : "上传地址、认证和容量通过用户配置或独立接入脚本维护，开关只改变启停。"
+                                      ? t("settings.trajectorySettings.thisCoreDoesNotProvideAControl")
+                                      : t("settings.trajectorySettings.manageTheDestinationAuthenticationAndCapacityIn")
                             }
                         />
                         <SettingsRow
-                            label="上传进程"
+                            label={t("settings.trajectorySettings.uploadProcess")}
                             description={
                                 status.worker_running
-                                    ? "后台上传进程正在运行。"
-                                    : "刷新不会启动上传进程。"
+                                    ? t("settings.trajectorySettings.theBackgroundUploadProcessIsRunning")
+                                    : t("settings.trajectorySettings.refreshingDoesNotStartTheUploadProcess")
                             }
-                            control={<span>{status.worker_running ? "运行中" : "未运行"}</span>}
+                            control={<span>{status.worker_running ? t("settings.trajectorySettings.running") : t("settings.trajectorySettings.notRunning")}</span>}
                         />
                         <SettingsRow
-                            label="上传地址"
+                            label={t("settings.trajectorySettings.uploadDestination")}
                             control={null}
                             description={
-                                <span className="break-all">{status.endpoint || "尚未配置"}</span>
+                                <span className="break-all">{status.endpoint || t("settings.trajectorySettings.notConfigured")}</span>
                             }
                         />
                     </SettingsGroupCard>
@@ -185,8 +179,8 @@ export function TrajectorySettings({
             {status && (
                 <>
                     <SettingsSection
-                        title="队列与失败"
-                        description="仅反映上传队列，不代表远端已完成数据分析或入库。"
+                        title={t("settings.trajectorySettings.queueAndFailures")}
+                        description={t("settings.trajectorySettings.thisReflectsTheUploadQueueOnlyIt")}
                         action={
                             <Button
                                 size="sm"
@@ -204,27 +198,26 @@ export function TrajectorySettings({
                                 }
                                 onClick={() => void run("retry")}
                             >
-                                重试上传
-                            </Button>
+                                {t("settings.trajectorySettings.retryUploads")}</Button>
                         }
                     >
                         <SettingsGroupCard>
                             <SettingsRow
-                                label="待上传 / 上传中 / 失败"
+                                label={t("settings.trajectorySettings.pendingUploadingFailed")}
                                 control={
                                     <span>
-                                        {status.queue.pending} / {status.queue.uploading} /{" "}
-                                        {status.queue.failed}
+                                        {intl.formatNumber(status.queue.pending)} / {intl.formatNumber(status.queue.uploading)} /{" "}
+                                        {intl.formatNumber(status.queue.failed)}
                                     </span>
                                 }
                             />
                             <SettingsRow
-                                label="已上传"
-                                control={<span>{status.queue.uploaded}</span>}
-                                description={`最近成功：${date(status.last_success_at)}`}
+                                label={t("settings.trajectorySettings.uploaded")}
+                                control={<span>{intl.formatNumber(status.queue.uploaded)}</span>}
+                                description={t("settings.trajectorySettings.lastSuccessfulUploadValue", { value0: date(status.last_success_at) })}
                             />
                             <SettingsRow
-                                label="队列占用"
+                                label={t("settings.trajectorySettings.queueStorage")}
                                 control={
                                     <span>
                                         {size(status.queue.bytes)} / {size(status.queue.max_bytes)}
@@ -232,39 +225,39 @@ export function TrajectorySettings({
                                 }
                             />
                             <SettingsRow
-                                label="已淘汰 / 内存丢弃 / 过大丢弃"
+                                label={t("settings.trajectorySettings.evictedDroppedFromMemoryTooLarge")}
                                 control={
                                     <span>
-                                        {status.queue.evicted} / {status.queue.dropped_memory} /{" "}
-                                        {status.queue.dropped_oversize}
+                                        {intl.formatNumber(status.queue.evicted)} / {intl.formatNumber(status.queue.dropped_memory)} /{" "}
+                                        {intl.formatNumber(status.queue.dropped_oversize)}
                                     </span>
                                 }
-                                description="已淘汰或丢弃的数据无法重试恢复。"
+                                description={t("settings.trajectorySettings.evictedOrDroppedDataCannotBeRecovered")}
                             />
                             <SettingsRow
-                                label="最近失败原因"
+                                label={t("settings.trajectorySettings.latestFailure")}
                                 control={null}
                                 description={
                                     <span className="break-all">
-                                        {status.last_error || "暂无失败记录"}
+                                        {status.last_error || t("settings.trajectorySettings.noFailuresRecorded")}
                                     </span>
                                 }
                             />
                         </SettingsGroupCard>
                     </SettingsSection>
                     <SettingsSection
-                        title="模型调用耗时"
-                        description={`最近 ${status.model_call_summary?.records_considered ?? status.records.length} 条记录；包含请求准备、网络、排队与重试耗时。`}
+                        title={t("settings.trajectorySettings.modelCallDuration")}
+                        description={t("settings.trajectorySettings.recentModelRecords", { value0: status.model_call_summary?.records_considered ?? status.records.length })}
                     >
                         {status.model_call_summary ? (
                             <SettingsGroupCard>
                                 <SettingsRow
-                                    label="有耗时记录的模型调用"
-                                    control={<span>{status.model_call_summary.model_calls}</span>}
-                                    description="最近最多 100 条；重试不重复计数，缺失耗时保持未知。"
+                                    label={t("settings.trajectorySettings.modelCallsWithDurationData")}
+                                    control={<span>{intl.formatNumber(status.model_call_summary.model_calls)}</span>}
+                                    description={t("settings.trajectorySettings.upToTheLatest100RecordsRetries")}
                                 />
                                 <SettingsRow
-                                    label="调用耗时总和 / 平均 / 最大"
+                                    label={t("settings.trajectorySettings.totalAverageMaximumCallDuration")}
                                     control={null}
                                     description={[
                                         duration(status.model_call_summary.total_duration_ms),
@@ -275,17 +268,16 @@ export function TrajectorySettings({
                             </SettingsGroupCard>
                         ) : (
                             <p className="settings-section-desc">
-                                当前 Core 未提供模型调用耗时汇总，耗时未知。
-                            </p>
+                                {t("settings.trajectorySettings.thisCoreDoesNotProvideAModel")}</p>
                         )}
                     </SettingsSection>
                     <SettingsSection
-                        title="最近上传记录"
-                        description="最多展示最近 100 条；事件发生、记录创建与上传成功时间分别显示。"
+                        title={t("settings.trajectorySettings.recentUploadRecords")}
+                        description={t("settings.trajectorySettings.showsUpToTheLatest100Records")}
                     >
                         <SettingsGroupCard>
                             {status.records.length === 0 ? (
-                                <p className="p-4 settings-section-desc">暂无轨迹上传记录。</p>
+                                <p className="p-4 settings-section-desc">{t("settings.trajectorySettings.noTrajectoryUploadRecordsYet")}</p>
                             ) : (
                                 status.records.map((record) => (
                                     <SettingsRow
@@ -293,23 +285,23 @@ export function TrajectorySettings({
                                         label={<span className="break-all">{record.id}</span>}
                                         control={
                                             <SettingsBadge>
-                                                {recordLabels[record.status]}
+                                                {t(recordLabels[record.status])}
                                             </SettingsBadge>
                                         }
                                         description={
                                             <>
                                                 {record.turn_id && (
                                                     <p className="break-all">
-                                                        Turn {record.turn_id}
+                                                        {t("settings.trajectorySettings.recordTurn", { turn: record.turn_id })}
                                                     </p>
                                                 )}
                                                 {(record.model_name || record.harness_version) && (
                                                     <p className="break-all">
                                                         {[
                                                             record.model_name &&
-                                                                `模型 ${record.model_name}`,
+                                                                t("settings.trajectorySettings.modelValue", { value0: record.model_name }),
                                                             record.harness_version &&
-                                                                `Harness ${record.harness_version}`,
+                                                                t("settings.trajectorySettings.recordHarness", { version: record.harness_version }),
                                                         ]
                                                             .filter(Boolean)
                                                             .join(" · ")}
@@ -317,38 +309,33 @@ export function TrajectorySettings({
                                                 )}
                                                 {record.event_name && (
                                                     <p className="break-all">
-                                                        事件 {record.event_name}
+                                                        {t("settings.trajectorySettings.recordEvent", { event: record.event_name })}
                                                     </p>
                                                 )}
                                                 {record.occurred_at != null &&
                                                     record.occurred_at > 0 && (
-                                                        <p>事件发生 {date(record.occurred_at)}</p>
+                                                        <p>{t("settings.trajectorySettings.recordEventTime", { date: date(record.occurred_at) })}</p>
                                                     )}
                                                 {record.execution_duration_ms != null && (
                                                     <p>
-                                                        Agent 执行耗时（含工具/等待）{" "}
-                                                        {duration(record.execution_duration_ms)}
+                                                        {t("settings.trajectorySettings.recordAgentDuration", { duration: duration(record.execution_duration_ms) })}
                                                     </p>
                                                 )}
                                                 {record.model_call_duration_ms != null && (
                                                     <p>
-                                                        模型调用耗时（含网络/重试）{" "}
-                                                        {duration(record.model_call_duration_ms)}
+                                                        {t("settings.trajectorySettings.recordModelDuration", { duration: duration(record.model_call_duration_ms) })}
                                                     </p>
                                                 )}
                                                 <span>
-                                                    记录创建 {date(record.created_at)} ·{" "}
-                                                    {size(record.bytes)} · 已尝试 {record.attempts}{" "}
-                                                    次
-                                                </span>
+                                                    {t("settings.trajectorySettings.recordCreatedDetails", { date: date(record.created_at), size: size(record.bytes), attempts: record.attempts })}</span>
                                                 {record.uploaded_at != null && (
-                                                    <p>上传成功 {date(record.uploaded_at)}</p>
+                                                    <p>{t("settings.trajectorySettings.recordUploadTime", { date: date(record.uploaded_at) })}</p>
                                                 )}
                                                 {record.next_attempt_at != null &&
                                                     record.status !== "uploaded" &&
                                                     record.status !== "evicted" && (
                                                         <p>
-                                                            下次尝试 {date(record.next_attempt_at)}
+                                                            {t("settings.trajectorySettings.recordNextAttempt", { date: date(record.next_attempt_at) })}
                                                         </p>
                                                     )}
                                                 {record.error && (
@@ -365,31 +352,24 @@ export function TrajectorySettings({
                     </SettingsSection>
                 </>
             )}
-            <SettingsDisclosure title="上传配置与限制">
+            <SettingsDisclosure title={t("settings.trajectorySettings.uploadConfigurationAndLimits")}>
                 {status && <SettingsGroupCard>
                         {status.configPath && (
                             <SettingsRow
-                                label="配置文件"
+                                label={t("settings.trajectorySettings.configurationFile")}
                                 control={null}
                                 description={<span className="break-all">{status.configPath}</span>}
                             />
                         )}
                         <SettingsRow
-                            label="本地上传缓存"
+                            label={t("settings.trajectorySettings.localUploadCache")}
                             control={null}
                             description={<span className="break-all">{status.spool_dir}</span>}
                         />
-                    <SettingsRow label="重试与缓冲限制" control={null} description={`最多重试 ${status.limits.max_retries} 次 · 上传间隔 ${status.limits.upload_interval_ms} ms · 内存上限 ${size(status.limits.max_memory_bytes)}`} />
+                    <SettingsRow label={t("settings.trajectorySettings.retryAndBufferLimits")} control={null} description={t("settings.trajectorySettings.retryLimits", { value0: status.limits.max_retries, value1: duration(status.limits.upload_interval_ms), value2: size(status.limits.max_memory_bytes) })} />
                 </SettingsGroupCard>}
-                <p className="settings-section-desc">首次使用需先配置上传地址与认证。</p>
-                <p className="settings-section-desc">
-                    编辑本页显示的配置文件中的 <code>[trajectory]</code>，设置开关、
-                    <code>endpoint</code> 和凭据引用。修改后执行{" "}
-                    <code>areal trajectory sync-config --config 配置文件路径</code>{" "}
-                    应用上传控制；本页开关会在 Core 空闲后自动安全应用启停设置。
-                    手工修改其它采集参数时仍需安全重启 Core。
-                    凭据由配置与环境管理，本页不显示凭据内容。
-                </p>
+                <p className="settings-section-desc">{t("settings.trajectorySettings.configureTheUploadDestinationAndAuthenticationBefore")}</p>
+                <p className="settings-section-desc">{t("settings.trajectorySettings.configurationInstructions")}</p>
             </SettingsDisclosure>
         </div>
     );

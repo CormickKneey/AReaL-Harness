@@ -61,6 +61,28 @@ function fixture({ busy = false, writeFails = false, syncFails = false, lostAppl
   return { service, backend, project, calls, original, request, operations, holdWrite() { let resolve; release = { promise: new Promise(r => { resolve = r; }), resolve: () => resolve() }; return release; } };
 }
 
+test("explicit key reveal is revision-bound and never writes or publishes a secret", async () => {
+  const f = fixture({ busy: true });
+  f.service.config.value.data[0].apiKeyEnv = "AREAL_CREDENTIAL_fixture";
+  f.service.config.key = item => { assert.equal(item.id, "demo"); return "synthetic-reveal-key"; };
+  assert.deepEqual(await f.service.command({ operation: "revealKey", id: "demo", expectedRevision: "old" }), { apiKey: "synthetic-reveal-key" });
+  assert.equal(JSON.stringify(f.service.public()).includes("synthetic-reveal-key"), false);
+  assert.deepEqual(f.calls, []);
+  await assert.rejects(f.service.command({ operation: "revealKey", id: "demo", expectedRevision: "stale" }));
+  await assert.rejects(f.service.command({ operation: "revealKey", id: "missing", expectedRevision: "old" }));
+  await assert.rejects(f.service.command({ operation: "revealKey", id: "demo", expectedRevision: "old", reference: "OTHER_SECRET" }));
+});
+
+test("key reveal returns a safe failure for missing or locked credentials", async () => {
+  const f = fixture();
+  const request = { operation: "revealKey", id: "demo", expectedRevision: "old" };
+  await assert.rejects(f.service.command(request));
+  f.service.config.value.data[0].apiKeyEnv = "AREAL_CREDENTIAL_fixture";
+  f.service.config.key = () => { throw new Error("untrusted-synthetic-secret"); };
+  await assert.rejects(f.service.command(request), error => !String(error.stack).includes("untrusted-synthetic-secret"));
+  assert.deepEqual(f.calls, []);
+});
+
 test("one save returns only after the same Core proves the revision and its catalog is refreshed", async () => {
   const f = fixture();
   const response = await f.service.command(f.request);
@@ -80,6 +102,93 @@ test("running task save fails before persistence or Core mutation", async () => 
   assert.deepEqual(f.service.config.value, f.original);
   assert.deepEqual(f.project.configurations.running, { model: "old-model" });
   assert.equal(f.backend.providerUpdating, false);
+});
+
+test("save persists during active work while the applied catalog and task configuration remain unchanged", async () => {
+  const f = fixture({ busy: true });
+  const response = await f.service.command({ ...f.request, operation: "save" });
+  assert.notEqual(response.revision, f.original.revision);
+  assert.equal(response.data[0].name, "Updated");
+  assert.equal(response.data[0].models[0].id, "new-model");
+  assert.equal(response.pendingApply, true);
+  assert.equal(response.projects[0].applied, false);
+  assert.deepEqual(f.project.models, [{ id: "old-model" }]);
+  assert.deepEqual(f.project.configurations.running, { model: "old-model" });
+  assert.equal(f.calls.filter(([method]) => method === applyMethod).length, 0);
+  assert.equal(f.service.pendingApplications.size, 0, "An unsent deferred apply has no request receipt");
+  assert.equal(f.backend.providerUpdating, false);
+  await f.service.close();
+});
+
+test("save accepts a new zero-model provider without discovery or an implicit model request", async () => {
+  const f = fixture({ busy: true });
+  f.service.network = async () => assert.fail("Saving an empty catalog must not require discovery");
+  const provider = { ...f.request.provider, models: [] };
+  delete provider.id;
+  const response = await f.service.command({ ...f.request, operation: "save", provider });
+  assert.equal(response.data.length, 2);
+  assert.equal(response.data[1].name, "Updated");
+  assert.deepEqual(response.data[1].models, []);
+  assert.equal(response.pendingApply, true);
+  await f.service.close();
+});
+
+test("draft discovery uses unsaved normalized connection and transient key without persistence", async () => {
+  const f = fixture({ busy: true });
+  const secret = "synthetic-draft-discovery-key";
+  const requests = [];
+  f.service.config.credential = async () => assert.fail("Discovery cannot allocate or persist a credential");
+  f.service.network = async () => ({ fetch: async (url, options) => {
+    requests.push({ url, method: options.method, authorization: options.headers.Authorization, redirect: options.redirect });
+    return Response.json({ data: [{ id: "draft-model", context_window: 160000 }, { id: secret }] });
+  } });
+  const result = await f.service.command({ operation: "discover", connection: {
+    protocol: "responses", baseUrl: "https://unsaved.fixture.invalid/v1/responses/",
+    credential: { kind: "draft", value: secret },
+  } });
+  assert.deepEqual(requests, [{ url: "https://unsaved.fixture.invalid/v1/models", method: "GET", authorization: `Bearer ${secret}`, redirect: "error" }]);
+  assert.deepEqual(result, { models: ["draft-model"], modelParameters: { "draft-model": { contextWindowTokens: 160000 } } });
+  assert.deepEqual(f.service.config.value, f.original);
+  assert.deepEqual(f.service.config.vault.keys, {});
+  assert.equal(f.calls.some(([method]) => method === "write" || method === applyMethod), false);
+});
+
+test("saved-key draft discovery resolves only the requested current provider revision", async () => {
+  const f = fixture();
+  f.service.config.value.data[0].apiKeyEnv = "AREAL_CREDENTIAL_existing";
+  const requests = [];
+  f.service.config.key = item => {
+    assert.equal(item.id, "demo");
+    assert.equal(item.apiKeyEnv, "AREAL_CREDENTIAL_existing");
+    return "synthetic-stored-key";
+  };
+  f.service.network = async () => ({ fetch: async (url, options) => {
+    requests.push({ url, authorization: options.headers.Authorization });
+    return Response.json({ data: [{ id: "stored-model" }] });
+  } });
+  const connection = { protocol: "chatCompletions", baseUrl: "https://draft.fixture.invalid/v1", credential: { kind: "saved", providerId: "demo", expectedRevision: "old" } };
+  assert.deepEqual(await f.service.command({ operation: "discover", connection }), { models: ["stored-model"] });
+  assert.deepEqual(requests, [{ url: "https://draft.fixture.invalid/v1/models", authorization: "Bearer synthetic-stored-key" }]);
+  await assert.rejects(f.service.command({ operation: "discover", connection: { ...connection, credential: { ...connection.credential, expectedRevision: "stale" } } }));
+  assert.equal(requests.length, 1, "Stale credential metadata must fail before a network request");
+  assert.equal(f.calls.some(([method]) => method === "write"), false);
+});
+
+test("draft discovery redacts a transient key when response body iteration fails", async () => {
+  const f = fixture();
+  const secret = "synthetic-transient-stream-key";
+  let consumed = false;
+  f.service.network = async () => ({ fetch: async () => ({ ok: true, body: {
+    async *[Symbol.asyncIterator]() { consumed = true; throw new Error(`upstream failed for ${secret}`); },
+  } }) });
+  await assert.rejects(f.service.command({ operation: "discover", connection: {
+    protocol: "responses", baseUrl: "https://stream.fixture.invalid/v1", credential: { kind: "draft", value: secret },
+  } }), error => {
+    assert.equal(consumed, true, "The test must reach the response body failure");
+    assert.equal(`${error.stack} ${JSON.stringify(error)}`.includes(secret), false);
+    return true;
+  });
+  assert.equal(f.calls.some(([method]) => method === "write"), false);
 });
 
 test("old Core fails capability preflight before touching the document", async () => {
@@ -160,18 +269,27 @@ test("repeated save cannot overlap persistence and explicit retry succeeds after
 
 test("new connection discovers models before persistence and leaves default choice unchanged", async () => {
   const f = fixture();
-  f.request.provider = { ...f.request.provider, id: undefined, models: [] };
+  f.request.provider = { ...f.request.provider, id: undefined, models: [], parameters: {} };
   f.service.testConnection = async (provider, request) => {
     assert.equal(request.operation, "discover");
     assert.equal(provider.endpoint, "http://fixture.invalid/v1/chat/completions");
     assert.equal(f.calls.some(v => v[0] === "write"), false);
-    return { models: ["remote-first", "remote-second", "remote-first"] };
+    return { models: ["remote-first", "remote-second", "remote-first"], modelParameters: { "remote-first": { contextWindowTokens: 500000 } } };
   };
   const result = await f.service.command(f.request);
   assert.deepEqual(result.data.at(-1).models.map(m => m.id), ["remote-first", "remote-second"]);
+  assert.deepEqual(result.data.at(-1).models[0].parameters, { contextWindowTokens: 500000 });
+  assert.deepEqual(result.data.at(-1).models[1].parameters, {});
+  for (const model of result.data.at(-1).models) assert.deepEqual(model.capabilities, { tools: true, vision: false, reasoning: true, reasoningEffortOptions: ["low", "medium", "high", "xhigh"] });
   assert.equal(result.defaultModel, null);
   assert.equal(result.pendingApply, false);
   assert.ok(f.project.models.some(m => m.id === "remote-second"));
+  const explicit = fixture();
+  explicit.request.provider = { ...explicit.request.provider, id: undefined, models: [] };
+  explicit.service.testConnection = async () => ({ models: ["remote-first"], modelParameters: { "remote-first": { contextWindowTokens: 500000 } } });
+  const configured = await explicit.service.command(explicit.request);
+  assert.equal(configured.data.at(-1).parameters.contextWindowTokens, 64000);
+  assert.deepEqual(configured.data.at(-1).models[0].parameters, {});
 });
 
 test("discovery failure does not persist a new provider", async () => {
@@ -284,4 +402,44 @@ test("the original terminal applied record wins over an explicit RPC refusal", a
   assert.equal(f.project.models[0].id, "new-model");
   assert.equal(f.service.pendingApplications.size, 0);
   assert.equal(f.calls.filter(v => v[0] === "write").length, 1);
+});
+
+
+test("discovery preserves endpoint context without using maximum opt-in capacity", async () => {
+  const f = fixture();
+  f.service.network = async () => ({ fetch: async () => Response.json({ data: [
+    { id: "openai/gpt-6.1-sol", context_window: 500000, max_context_window: 872000 },
+    { id: "bad", context_window: "1050000" },
+    { id: "negative", context_window: -1 },
+    { id: "maximum-only", max_context_window: 872000 },
+  ] }) });
+  const result = await f.service.testConnection(f.service.config.value.data[0], { operation: "discover" });
+  assert.deepEqual(result.models, ["openai/gpt-6.1-sol", "bad", "negative", "maximum-only"]);
+  assert.deepEqual(result.modelParameters, { "openai/gpt-6.1-sol": { contextWindowTokens: 500000 } });
+});
+
+
+test("custom model capability declarations survive the desktop save boundary", async () => {
+  const f = fixture();
+  const capabilities = { tools: true, vision: false, reasoning: true, reasoningEffortOptions: ["low", "high", "max"] };
+  f.request.provider.models[0].capabilities = capabilities;
+  f.request.provider.models[0].parameters = { reasoningEffort: "max" };
+  const result = await f.service.command(f.request);
+  assert.deepEqual(result.data[0].models[0].capabilities, capabilities);
+  assert.equal(result.data[0].models[0].parameters.reasoningEffort, "max");
+  assert.deepEqual(f.calls.find(([method]) => method === "write")[1].data[0].models[0].capabilities, capabilities);
+});
+
+test("invalid custom capability declarations are rejected before persistence", async () => {
+  for (const capabilities of [
+    { tools: "yes", vision: false, reasoning: false },
+    { tools: true, vision: false, reasoning: true, reasoningEffortOptions: ["invented"] },
+    { tools: true, vision: false, reasoning: true, reasoningEffortOptions: ["low", "low"] },
+    { tools: true, vision: false, reasoning: false, media: true },
+  ]) {
+    const f = fixture();
+    f.request.provider.models[0].capabilities = capabilities;
+    await assert.rejects(f.service.command(f.request), /模型能力/);
+    assert.equal(f.calls.some(([method]) => method === "write"), false);
+  }
 });

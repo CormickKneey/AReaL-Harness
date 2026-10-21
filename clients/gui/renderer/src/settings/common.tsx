@@ -1,3 +1,4 @@
+import { useI18n } from "../i18n/IntlProvider.js";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { RefreshCw } from "lucide-react";
 import { Button } from "../components/ui/button.js";
@@ -56,7 +57,7 @@ export function SettingsToolbar({
   disabled,
   onRefresh,
   onAdd,
-  addLabel = "新建",
+  addLabel,
   addDisabled,
 }: {
   description: string;
@@ -67,6 +68,7 @@ export function SettingsToolbar({
   addLabel?: string;
   addDisabled?: boolean;
 }) {
+  const { t } = useI18n();
   return (
     <div className="settings-toolbar">
       <p>{description}</p>
@@ -75,7 +77,7 @@ export function SettingsToolbar({
           <Button
             variant="ghost"
             size="icon-md"
-            aria-label="刷新"
+            aria-label={t("settings.common.refresh")}
             disabled={disabled || loading}
             onClick={onRefresh}
           >
@@ -85,7 +87,7 @@ export function SettingsToolbar({
         {onAdd && (
           <Button disabled={disabled || addDisabled} onClick={onAdd}>
 
-            {addLabel}
+            {addLabel ?? t("settings.common.new")}
           </Button>
         )}
       </div>
