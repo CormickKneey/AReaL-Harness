@@ -33,8 +33,10 @@ Exact typography, colors, spacing and shape remain in [foundations](foundations.
 
 Use the [interaction brief](templates/interaction-brief.json) to record intent, families, components, defaults/deviations, acceptance states and unknowns. This is design-time input, not a runtime page DSL. Reuse first; promote recurring exceptions only with cross-context evidence and update the canonical rule/owner rather than copying it into pages.
 
-Report business results, interaction continuity, visual consistency and platform behavior separately. Catalog checks validate declarations/references, not aesthetics or full production coverage. Base candidate 0.1.3 admission is unchanged. The settings migration is a first pilot in the same session, not an independent generalization test; the user authorized production conversation as stage two.
+Report business results, interaction continuity, visual consistency and platform behavior separately. Catalog checks validate declarations/references, not aesthetics or full production coverage. Base admission remains bounded by [base.md](base.md). The settings migration is a first pilot in the same session, not an independent generalization test; the user authorized production conversation as stage two.
 
 ## Production application in conversation stage two
 
 Process disclosure names its contents and action; command details expose authoritative textual state nearby; child entries and panels use the original assignment with the existing identity fallback. Existing owners retain send/return state. See [stage two](exercises/conversation-stage2.en.md) for decisions and repeatable checks; global values and Base admission remain unchanged.
+
+Hosts explicitly select default/compact editor layout; full resource views do not restyle Side. Draft/model/submission ownership remains separate; see [shared workspace](exercises/shared-workspace.en.md).

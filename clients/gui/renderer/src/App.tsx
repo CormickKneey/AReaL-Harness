@@ -1696,6 +1696,7 @@ function AppContent({ services }: { services: PlatformServices }) {
                         {mcpWorkspace.formsView}
                         {mcpMentionsOpen && <McpMentionsPicker servers={mcpWorkspace.servers} projectId={project.id} threadId={thread.id} action={resourceAction} onClose={()=>setMcpMentionsOpen(false)}/>}
                         <Composer
+                          surfaceLayout={workspaceView === "panel" ? "compact" : "default"}
                           onAnnotate={openImageAnnotation}
                           key={`${project.id}:${thread.id}`}
                           onMcpMention={()=>setMcpMentionsOpen(true)}
@@ -1773,6 +1774,7 @@ function AppContent({ services }: { services: PlatformServices }) {
                       </div>
                       {project ? (
                           <DraftComposer
+                            surfaceLayout={workspaceView === "panel" ? "compact" : "default"}
                             onAnnotate={openImageAnnotation}
                             key={project.id}
                             project={project}

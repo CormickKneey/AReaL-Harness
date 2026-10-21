@@ -11,6 +11,8 @@ import { fileURLToPath } from "node:url";
 import { captureSmokeFailure, selectConversation } from "./smoke-navigation.mjs";
 import { withSmokeDeadline } from "./smoke-deadline.mjs";
 
+const sharedWorkspace = process.argv.includes("--shared-workspace");
+const baselineLayout = process.argv.includes("--baseline");
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const root = resolve(gui, "../..");
 const desktop = join(gui, "app");
@@ -697,6 +699,50 @@ try {
   await shot("05-side-answered-frozen.png");
   checks.push("AC30/39: Side answers during a live source Runtime command; Unicode source selection is verified and frozen evidence is visible");
   const bringBackOwner = { projectId, threadId: sourceThreadId };
+  if (sharedWorkspace) {
+    const currentModels = project(await state()).configurations;
+    const modelOwners = Object.fromEntries([sourceThreadId, sideThreadId].map(id =>
+      [id, JSON.stringify(currentModels[id])]));
+    const sample = async name => {
+      await page.waitForFunction(() => !document.querySelector('.work-surface')?.hasAttribute('data-panel-transition'));
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      const facts = await page.evaluate(() => {
+        const inspect = selector => { const input=document.querySelector(selector); if(!input) return null; const root=input.closest('.composer-surface'),css=getComputedStyle(root);return {layout:root.dataset.layout,display:css.display,padding:css.padding,font:getComputedStyle(input).fontSize,draft:input.textContent,width:root.clientWidth,overflow:root.scrollWidth-root.clientWidth}; };
+        return {mode:document.querySelector('[data-workspace-view]')?.dataset.workspaceView,theme:document.documentElement.classList.contains('dark')?'dark':'light',font:getComputedStyle(document.documentElement).getPropertyValue('--ui-font-size'),viewport:[innerWidth,innerHeight],main:inspect('[data-testid="chat-input"]'),side:inspect('[data-testid="side-chat-input"]')};
+      });
+      events.push({sharedCheckpoint:name,facts,hostTime:Date.now()});await shot(name+'.png');await writeFile(join(scratch,'shared-events.json'),JSON.stringify(events.filter(e=>e.sharedCheckpoint),null,2));return facts;
+    };
+    await showMainConversation();
+    const mainInput=page.getByTestId('chat-input');await composeText(mainInput,'共享主草稿：继续检查返回','shared main draft');
+    const mainEditor = await mainInput.elementHandle();
+    await showSideConversation();await composeText(sidePane.getByTestId('side-chat-input'),'共享Side草稿：暂不发送','shared side draft');
+    const exitFull=page.getByRole('button',{name:'退出完整视图',exact:true});if(await exitFull.isVisible())await exitFull.click();
+    const split=await sample('shared-01-split');
+    await page.getByRole('button',{name:'进入完整视图',exact:true}).click();
+    const full=await sample('shared-02-side-full');
+    if(!baselineLayout){assert.equal(full.side.padding,split.side.padding);assert.equal(full.side.display,split.side.display);assert.equal(full.side.layout,'default');}
+    await sidePane.getByRole('button',{name:'模型',exact:true}).click();await page.keyboard.press('Escape');
+    assert.equal(await sidePane.getByTestId('side-chat-input').innerText(),'共享Side草稿：暂不发送');
+    await sidePane.getByRole('button',{name:'返回主会话',exact:true}).click();assert.equal(await mainInput.innerText(),'共享主草稿：继续检查返回');
+    assert.ok(await mainEditor.evaluate(el => el === document.querySelector('[data-testid="chat-input"]')),
+      'panel navigation keeps the main editor mounted');
+    await sample('shared-03-main-return');
+    const settingsButton = page.getByRole('button',{name:'设置',exact:true});
+    await settingsButton.click();
+    await page.getByRole('button',{name:'返回应用',exact:true}).click();
+    assert.equal(await mainInput.innerText(),'共享主草稿：继续检查返回');
+    await page.waitForFunction(el => el === document.activeElement, await settingsButton.elementHandle());
+    await showSideConversation();assert.equal(await sidePane.getByTestId('side-chat-input').innerText(),'共享Side草稿：暂不发送');
+    const returned = project(await state());
+    for (const id of [sourceThreadId, sideThreadId]) assert.equal(JSON.stringify(returned.configurations[id]), modelOwners[id],
+      'navigation preserves each Core model configuration');
+    await sample('shared-04-settings-return');
+    await writeFile(toolRelease,'release\n');await until(s=>project(s)?.state?.threads?.[sourceThreadId]?.turns?.at(-1)?.status==='completed','source command completes after shared UI inspection');
+    assert.equal(project(await state()).state.threads[sideThreadId].turns.length,1,'navigation never sends a draft');
+    assert.equal(await hash(fixturePath),workspaceBefore);
+    await sample('shared-05-completed');
+    checks.push('Shared UI: actual main/Side drafts and Core model ownership survive split/full, model-menu dismissal, panel return and settings return; real source Runtime command completes independently');
+  } else {
   const beforeBring = { requests: requests.length, commands: (await app.evaluate(() => globalThis.__scfMutations)).length,
     sourceTurns: project(sideStarted).state.threads[sourceThreadId].turns.length,
     sideTurns: side.turns.length, workspaceSha256: await hash(fixturePath) };
@@ -1142,6 +1188,7 @@ try {
   events.push({ unknownFixtureInspection: { sourceThreadId, turnId: activeTurnId, itemId: unknownItem.id,
     processId: originalReceipt.processId, inspection, outcome: inspectedItem.execution.outcome } });
   checks.push("after AC21/AC11 refusals, public inspection preserves the injected UNKNOWN and original completed Runtime receipt without replay or a model request");
+  }
   assert.deepEqual(pageErrors, []);
   passed = true;
 } catch (error) {
@@ -1193,10 +1240,12 @@ try {
   const sourceDiff = execFileSync("git", ["diff", "--binary"], { cwd: root });
   const sourceStatus = execFileSync("git", ["status", "--porcelain=v1"], { cwd: root, encoding: "utf8" });
   const manifest = {
-    passed, failure, checks, events, pageErrors, electronStderr, frames, sourceCommit,
-    command: "pnpm --dir clients/gui run test:conversation-derivation",
+    passed, failure, scenario: sharedWorkspace ? "shared-workspace" : "conversation-derivation", baselineLayout, checks, events, pageErrors, electronStderr, frames, sourceCommit,
+    command: `pnpm --dir clients/gui run test:conversation-derivation${sharedWorkspace ? " --shared-workspace" : ""}${baselineLayout ? " --baseline" : ""}`,
     runtime: "source Electron renderer + Rust Core + actual Runtime run_command + deterministic local HTTP/SSE model",
-    limitations: ["local fixture model, not a real provider", "source build, not a copied installed package", "native project chooser, archive confirmation and download save location are fixtures and have no native-dialog acceptance claim", "Browser preview is outside this journey", "IME uses Chromium CDP composition and a candidate Enter event, not a physical input method", "UNKNOWN uses a persisted test record after safe Core stop, not an induced process crash"],
+    limitations: ["local fixture model, not a real provider", "source build, not a copied installed package", "native project chooser, archive confirmation and download save location are fixtures and have no native-dialog acceptance claim", "Browser preview is outside this journey", "IME uses Chromium CDP composition and a candidate Enter event, not a physical input method", ...(sharedWorkspace
+      ? ["bounded shared-workspace journey only; restart, bring-back and persisted UNKNOWN recovery matrix are not run"]
+      : ["UNKNOWN uses a persisted test record after safe Core stop, not an induced process crash"])],
     operatingSystem: { platform: process.platform, release: (await import("node:os")).release(), architecture: process.arch },
     windowBounds, videoPath, videoSegments: [{ path: videoPath, process: "initial Electron run", continuous: true },
       { path: restartVideoPath, process: "restarted Electron run", continuous: true }],

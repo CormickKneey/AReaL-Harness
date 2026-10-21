@@ -4,7 +4,7 @@
 
 <!-- BEGIN GENERATED: base -->
 
-候选 ID：`desktop-core`；版本：`0.1.3`。该版本尚未冻结。
+候选 ID：`desktop-core`；版本：`0.1.4`。该版本尚未冻结。
 
 | 层 | 准入范围 |
 | --- | --- |
@@ -23,6 +23,7 @@
 - 设置单选沿SettingsSelect公共sm变体；普通设置开关使用default，不由调用方另改尺寸
 - 活跃设置说明保留独立角色、对比度偏好与自定义前景色，不连带修改禁用或过程信息
 - 对话过程组合在逐步投影中验证接受消息占位、可见阅读锚点、返回最新、完成收敛及人工详情保留；异常不因final默认隐藏
+- 输入表面由宿主显式选择default/compact；Side不继承全屏主输入器布局；业务草稿、模型与提交归属不共享
 
 ### 边界
 
@@ -62,3 +63,5 @@ pnpm --dir clients/gui test:design --conversation-exercise
 [内容/决策迁移题](exercises/decision-transfer.md)固定候选0.1.2作为输入，组合现有 CollapsibleText 与 ApprovalRequest。长内容、窄容器、大字号与回执/失败/未知的探索不增加生产样式；窄卡正文沿用内部滚动，页脚动作留在滚动区外。该题保留候选版本，不因新增fixture提升Base版本，也不据一个额外题目声称通用性或盲测通过。
 
 候选`0.1.3`将Messages、TurnProgress、TurnExecution和ToolEvent的过程/阅读切片纳入组合层，依据[动态信息流题](exercises/conversation-flow.md)。共享所有者统一phased/legacy过程收敛，工具详情保持挂载；正常终态与工具失败、UNKNOWN、未结算分别验证。正文增长时的可见锚点及显式返回通过生产阅读逻辑处理；预览尺寸只约束题目容器，不添加产品设计值。完整P-CONVERSATION仍在候选范围外，资源宿主返回、重连、真实执行及桌面验收未覆盖。
+
+候选0.1.4协调当前生产设置变体与共享输入布局；SettingsSelect使用其既有sm，主满屏资源输入显式compact，Side默认布局不被祖先改变。较早题目的0.1.1/0.1.3尺寸与图片展开方式属于对应快照，不能覆盖当前生产所有者。该修订不冻结视觉基线，不将整个SidePane或完整资源生命周期纳入Base准入。

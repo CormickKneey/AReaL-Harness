@@ -587,10 +587,6 @@ button.composer-project:hover > svg,
 }
 .sidebar-resize::after { content: ""; position: absolute; inset: 0 8px 0 7px; }
 .sidebar-resize:hover::after, .sidebar-resize:focus-visible::after { background: var(--color-border-hover); }
-.composer-model-trigger { max-width: 220px; min-width: 0; height: 28px; padding: 4px 8px; gap: 4px; border-radius: 12.5px; font-size: var(--text-ui-caption); font-weight: 430; }
-.composer-model-trigger > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.composer-model-menu { width: 254px; }
-.composer-model-menu [role="menuitemradio"] { font-size: var(--text-ui-caption); font-weight: 430; padding-block: 5px; border-radius: 15px; }
 .messages {
   flex: 1;
   min-height: 0;
@@ -883,9 +879,6 @@ button.composer-project:hover > svg,
   }
   .composer-dock {
     padding: 12px 16px;
-  }
-  .composer-model-trigger {
-    max-width: 120px;
   }
   .settings-page {
     padding: 0 24px 32px;
@@ -1685,18 +1678,6 @@ button.composer-project:hover > svg,
 .work-area[data-workspace-view="panel"] :is(.active-composer, .draft-composer) { position: absolute; inset: auto 0 0; width: min(100%, var(--reading-width, 768px)); margin: auto; visibility: visible; pointer-events: auto; }
 /* 满屏 Side 自有输入器；主草稿保持挂载，但不能盖住 Side 的模型与发送操作。 */
 .work-area[data-workspace-view="panel"]:has(> .workspace-side-panel .side-chat-pane) > .work-surface :is(.active-composer, .draft-composer) { visibility: hidden; pointer-events: none; }
-.work-area[data-workspace-view="panel"] .composer-surface { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; padding: 4px 12px; gap: 8px; border-radius: 28px; }
-.work-area[data-workspace-view="panel"] .composer-surface > :not(.composer-editor):not(.composer-toolbar) { grid-column: 1 / -1; grid-row: 1; }
-.work-area[data-workspace-view="panel"] .composer-surface:has(> :not(.composer-editor):not(.composer-toolbar)) :is(.composer-editor, [data-composer-leading-actions], [data-composer-trailing-actions]) { grid-row: 2; }
-.work-area[data-workspace-view="panel"] .composer-editor { grid-column: 2; grid-row: 1; padding: 0; }
-.work-area[data-workspace-view="panel"] .composer-editor :is([contenteditable], textarea) { min-height: 36px; max-height: 80px; }
-.work-area[data-workspace-view="panel"] .composer-toolbar { display: contents; }
-.work-area[data-workspace-view="panel"] [data-composer-leading-actions] { grid-column: 1; grid-row: 1; }
-.work-area[data-workspace-view="panel"] [data-composer-trailing-actions] { grid-column: 3; grid-row: 1; }
-@container full-workspace (max-width: 620px) {
-  .work-area[data-workspace-view="panel"] .composer-surface { display: flex; padding: 14px 8px 8px; border-radius: var(--radius-composer); }
-  .work-area[data-workspace-view="panel"] .composer-toolbar { display: flex; }
-}
 .provider-status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--color-foreground-subtlest); margin-left: auto; }
 .provider-status-dot.enabled { background: #d68712; }
 
@@ -2517,13 +2498,8 @@ body { font-family: var(--font-sans); }
 .composer-slider-shell input::-webkit-slider-thumb { appearance: none; width: 28px; height: 28px; border-radius: 50%; background: white; box-shadow: 0 1px 4px #0003, 0 0 0 1px #0000000d; }
 .composer-slider-shell input:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 3px; border-radius: 20px; }
 .composer-effort-unavailable { font-size: 12px; color: var(--color-foreground-subtle); margin-top: 8px; text-align: center; }
-.composer-model-menu { padding: 7px 4px 6px; }
 .composer-model-heading { padding: 2px 8px 7px; font-size: 13px; color: var(--color-foreground-subtle); }
 .composer-model-heading button { margin-right: 8px; }
-.composer-model-menu [role="radio"] { display: flex; justify-content: space-between; align-items: center; width: 100%; text-align: left; padding: 5px 8px; border-radius: 11px; font-size: 14px; min-height: 29px; }
-.composer-model-menu [role="radio"]:enabled:is(:hover, :focus-visible) { background: var(--color-hover); }
-.composer-model-menu [role="radio"]:disabled { color: var(--color-foreground-subtle); }
-.composer-model-menu [role="radio"] small { display: block; font-size: 12px; }
 .composer-model-configure { width: 100%; margin-top: 8px; border-top: 1px solid var(--color-border); border-radius: 0; }
 .composer-effort-menu .composer-model-configure { height: 30px; padding-block: 0; color: var(--color-foreground-subtle); font-size: 12px; font-weight: 450; }
 @media (max-width: 760px) {
@@ -2531,7 +2507,6 @@ body { font-family: var(--font-sans); }
   .composer-catalog-row { font-size: 13px; }
   .composer-catalog-source { font-size: 11px; }
   .composer-image-card { width: 100px; height: 100px; }
-  .composer-toolbar { flex-wrap: wrap; }
 }
 .composer-skill-preview-trigger { display: inline-flex; align-items: center; gap: 5px; text-align: left; }
 .composer-skill-tag .composer-skill-preview-trigger { border-radius: 4px; padding: 0; }

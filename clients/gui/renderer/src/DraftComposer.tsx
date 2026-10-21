@@ -37,7 +37,9 @@ export function DraftComposer({
   draftKey,
   prepareProject,
   onAnnotate,
+  surfaceLayout = "default",
 }: {
+  surfaceLayout?: "default" | "compact";
   project: Data;
   action: Action;
   readAction?: Action;
@@ -283,6 +285,7 @@ export function DraftComposer({
       <div className="composer-input-stack">
       <div ref={setMenuAnchor} className="composer-menu-anchor" />
       <ChatPromptEditor
+        surfaceLayout={surfaceLayout}
         triggerPanelContainer={menuAnchor}
         shellClassName="@container/composer"
         workspacePath={project.root}

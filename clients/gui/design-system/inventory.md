@@ -36,6 +36,7 @@
 | AgentConversationPane | [AgentConversationPane](../renderer/src/AgentConversationPane.tsx) | 绑定父子身份的独立子对话阅读 |
 | SentAttachment | [SentAttachment](../renderer/src/MessageAttachment.tsx) | 已发送媒体的生产预览与关闭返回 |
 | SettingsNavigation | [SettingsNavigation](../renderer/src/settings/SettingsWorkspace.tsx) | 定位、筛选设置分类并沿原导航守卫返回 |
+| SidePane | [SidePane](../renderer/src/app-shell/SidePane.tsx) | 窗口局部的面板标签、视图切换与关闭焦点；资源生命周期沿原所有者 |
 
 <!-- END GENERATED: components -->
 
@@ -54,3 +55,5 @@
 E1 真实对话、E2 指定连续动效及 E3 指定窗口/焦点/原生组合输入与新内容切片已有有界验收；E4补充原生网页与同应用窗口切片；独立候选窗口及完整 Electron 宿主、未关闭动效差异的后续覆盖按[推进计划](roadmap.md)执行；计划阶段不能写为当前已通过范围。
 
 新增公共组件或页面模式时维护 `registry.json`，再运行 `design:sync` 更新本目录；只有一个特定页面需要的局部布局留在原所有者，避免“为了统一”增加无消费者的封装。
+
+输入表面的几何、模型入口基本样式归 ComposerSurface.css；App 显式选择满屏资源下的 compact，Side 保持 default。SidePane 的标签/视图仍为窗口局部状态。共享路径与有界检查见[组合说明](exercises/shared-workspace.md)。

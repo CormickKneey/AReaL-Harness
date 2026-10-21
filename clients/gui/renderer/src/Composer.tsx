@@ -63,7 +63,9 @@ export function Composer({
   onSide,
   onMcpMention,
   onAnnotate,
+  surfaceLayout = "default",
 }: {
+  surfaceLayout?: "default" | "compact";
   project: Data;
   thread: Data;
   action: Action;
@@ -371,6 +373,7 @@ export function Composer({
         }}>查看关联工作流结果</Button>
       </div>}
       <ConversationComposer
+        surfaceLayout={surfaceLayout}
         project={project}
         contextControl={<ContextMeter key={`${project.id}:${thread.id}`} project={project} thread={thread} action={readAction} anchor={menuAnchor} />}
         modelConfig={config}

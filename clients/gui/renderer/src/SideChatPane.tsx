@@ -7,6 +7,7 @@ import type { LexicalChatInputHandle } from "./LexicalChatInput.js";
 import { useApplicationPreferences } from "./settings/applicationPreferences.js";
 import { SideChatIcon, MoreOptionsIcon, CloseIcon, StopIcon } from "./interfaceIcons.js";
 import { AddPanelIcon } from "./app-shell/panelIcons.js";
+import { Feedback } from "./components/ui/feedback.js";
 import { Button } from "./components/ui/button.js";
 import { Popover, PopoverContent, PopoverTrigger } from "./components/ui/popover.js";
 import { RelatedSideChats } from "./RelatedSideChats.js";
@@ -295,8 +296,8 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
           <button type="button" onClick={() => { setBringPreview(null); setBringResult(""); }}>取消</button>
         </div>
       </section>}
-      {bringResult && <p role="status">{bringResult}</p>}
-      {error && <p role="alert">{error}</p>}
+      <Feedback message={bringResult} />
+      <Feedback error={error} />
       {restoreState === "error" && <button type="button" disabled={!project.state?.connected} onClick={() => { if (restore.retry()) { setError(""); setRestoreState("idle"); } }}>重试恢复旁路</button>}
       {unsettled && !active && <p role="status">提交结果尚未确认；不会自动重发。<button type="button" onClick={() => { void action("reconcile", { projectId: project.id }).catch((cause: Error) => setError(cause.message)); }}>核对受理状态</button></p>}
       {pendingId && <button type="button" onClick={() => void recover()} disabled={busy}>核对首问结果</button>}

@@ -53,3 +53,33 @@
 .interaction-composer-compact [data-composer-leading-actions] { position: absolute; left: 10px; bottom: 6px; width: 32px; }
 .interaction-composer-compact :is([aria-label="更改权限"], [aria-label="退出计划模式"], [aria-label="退出目标模式"]) { display: none; }
 .interaction-composer-compact .composer-model-trigger { max-width: 200px; }
+
+/* 宿主显式选择布局；面板祖先不能改变另一输入器的几何。 */
+.composer-dock { container: composer-dock / inline-size; }
+.composer-surface[data-layout="compact"] { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; padding: 4px 12px; gap: 8px; border-radius: 28px; }
+.composer-surface[data-layout="compact"] > :not(.composer-editor):not(.composer-toolbar) { grid-column: 1 / -1; grid-row: 1; }
+.composer-surface[data-layout="compact"]:has(> :not(.composer-editor):not(.composer-toolbar)) :is(.composer-editor, [data-composer-leading-actions], [data-composer-trailing-actions]) { grid-row: 2; }
+.composer-surface[data-layout="compact"] .composer-editor { grid-column: 2; grid-row: 1; padding: 0; max-height: 80px; }
+.composer-surface[data-layout="compact"] .composer-editor :is([contenteditable], textarea) { min-height: 36px; }
+.composer-surface[data-layout="compact"] .composer-toolbar { display: contents; }
+.composer-surface[data-layout="compact"] [data-composer-leading-actions] { grid-column: 1; grid-row: 1; }
+.composer-surface[data-layout="compact"] [data-composer-trailing-actions] { grid-column: 3; grid-row: 1; }
+@container composer-dock (max-width: 620px) {
+  .composer-surface[data-layout="compact"] { display: flex; flex-direction: column; align-items: stretch; padding: 14px 8px 8px; border-radius: var(--radius-composer); }
+  .composer-surface[data-layout="compact"] .composer-toolbar { display: flex; }
+  .composer-surface[data-layout="compact"] .composer-model-trigger { max-width: 120px; }
+}
+
+/* 模型入口属于共享输入表面，主/Side/草稿不各自定义文字角色。 */
+.composer-model-trigger { max-width: 220px; min-width: 0; height: 28px; padding: 4px 8px; gap: 4px; border-radius: 12.5px; font-size: var(--text-ui-caption); font-weight: 430; }
+.composer-model-trigger > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composer-model-menu { width: 254px; }
+.composer-model-menu [role="menuitemradio"] { font-size: var(--text-ui-caption); font-weight: 430; padding-block: 5px; border-radius: 15px; }
+.composer-model-menu { padding: 7px 4px 6px; }
+.composer-model-menu [role="radio"] { display: flex; justify-content: space-between; align-items: center; width: 100%; text-align: left; padding: 5px 8px; border-radius: 11px; font-size: var(--text-ui-base); min-height: 29px; }
+.composer-model-menu [role="radio"]:enabled:is(:hover, :focus-visible) { background: var(--color-hover); }
+.composer-model-menu [role="radio"]:disabled { color: var(--color-foreground-subtle); }
+.composer-model-menu [role="radio"] small { display: block; font-size: var(--text-ui-sm); }
+
+@media (max-width: 1100px) { .composer-model-trigger { max-width: 120px; } }
+@media (max-width: 760px) { .composer-toolbar { flex-wrap: wrap; } }

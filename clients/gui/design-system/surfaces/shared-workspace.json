@@ -1,0 +1,157 @@
+{
+  "schemaVersion": 1,
+  "id": "shared-workspace",
+  "intent": "主会话与Side独立输入，切换面板、模型菜单和设置后返回原草稿",
+  "pattern": "P-CONVERSATION",
+  "target": "renderer/src/App.tsx",
+  "runtime": "desktop",
+  "reference": {
+    "kind": "existing-code",
+    "path": "renderer/src/design-system/SharedWorkspacePreview.tsx",
+    "visualTarget": "同场景的整合后生产Electron基线；布局串扰的产品修复，非新的Codex像素对齐"
+  },
+  "rules": [
+    "CONV-OWNER-01",
+    "CONV-INPUT-01",
+    "CONV-CONTENT-01",
+    "CONV-GROUP-01",
+    "CONV-DISCLOSURE-01",
+    "CONV-READ-01",
+    "CONV-RESOURCE-01",
+    "CONV-COMMAND-01",
+    "CONV-PARALLEL-01",
+    "CONV-SCENARIO-01"
+  ],
+  "slots": {
+    "timeline": [
+      "Messages",
+      "TurnProgress",
+      "TurnExecution",
+      "ToolEvent",
+      "CollapsibleText",
+      "CommandDetails"
+    ],
+    "composer": [
+      "ConversationComposer",
+      "ComposerSurface"
+    ],
+    "context": [
+      "ToolEvent",
+      "AgentConversationPane",
+      "SentAttachment",
+      "SideChatPane",
+      "SidePane",
+      "Feedback"
+    ]
+  },
+  "states": [
+    {
+      "id": "ready",
+      "condition": "已有合成历史，当前未执行；新消息尚未接受",
+      "expected": "保留历史身份和未发送输入；建议文字不进入已受理历史"
+    },
+    {
+      "id": "busy",
+      "condition": "接受一条新消息，依次投影短过程、具名工具运行/结果与正文增量",
+      "expected": "工具状态取自投影而非正文自述；过程和当前正文可分辨，保留事件顺序"
+    },
+    {
+      "id": "failed",
+      "condition": "独立投影明确失败的轮次或工具",
+      "expected": "失败、原始输出及适用动作可发现，不用final或收敛掩盖失败"
+    },
+    {
+      "id": "unknown",
+      "condition": "独立投影已提交但结果待核对的工具",
+      "expected": "保留原身份和核对入口；展开、刷新或返回最新不重新提交"
+    },
+    {
+      "id": "reading-history",
+      "condition": "目标助手正文仍增长，实际向上滚动至同一可见旧段落；至少两个后续增量",
+      "expected": "任务仍执行而阅读保持历史；记录可见锚点及正文变化，不仅比较scrollTop"
+    },
+    {
+      "id": "following-latest",
+      "condition": "显式返回最新；分别观察滚动过渡与实际到达，再推进至少两个正文增量",
+      "expected": "实际到达后继续跟随；不因点击成功或一次尺寸变化就判定到达"
+    },
+    {
+      "id": "tool-details",
+      "condition": "运行中人工展开具名工具，追加结果；完成后打开原父组及同一工具详情",
+      "expected": "默认与人工选择分开；相同身份的详情选择保留，新组不继承另一组状态"
+    },
+    {
+      "id": "completed",
+      "condition": "正常完成且有明确final，原始过程与活动已结算；另列未结算资源反例",
+      "expected": "常规过程默认进入可展开总组，final独立；原文顺序保留，异常和未结算资源可发现"
+    },
+    {
+      "id": "command-streaming",
+      "condition": "同一processId先启动，至少两批输出读取，最后退出；期间人工展开",
+      "expected": "只形成一张命令卡，输出依序累加；状态不由工具返回成功推断，展开保留"
+    },
+    {
+      "id": "parallel-working",
+      "condition": "父命令与子代理并行；父命令先结束，子任务随后结束，父final最后出现",
+      "expected": "创建回执、命令、子任务、父轮次四种事实分开；子任务入口状态随独立投影更新"
+    },
+    {
+      "id": "image-preview",
+      "condition": "主任务运行时打开生产图片预览，等待后续事件，关闭图片",
+      "expected": "图像字节实际加载；缩放比例与几何一致，100%为自然CSS尺寸，放大可平移且适应后无溢出；关闭恢复触发焦点、父身份和详情，不重放执行"
+    },
+    {
+      "id": "child-conversation",
+      "condition": "运行中从子代理行打开独立对话，观察完成，关闭并在父完成后重访",
+      "expected": "复用生产子对话，父保持挂载；宽并排窄覆盖，返回不丢失父阅读状态"
+    }
+  ],
+  "conditions": {
+    "themes": [
+      "light",
+      "dark"
+    ],
+    "fontSizes": [
+      14,
+      18
+    ],
+    "widthModes": [
+      "wide",
+      "narrow"
+    ],
+    "reducedMotion": [
+      false,
+      true
+    ]
+  },
+  "invariants": [
+    "这些是观察检查点的组合，不是新建的Core状态枚举；执行、内容和阅读状态分别拥有",
+    "业务页面可填消息内容、真实资源和合法动作，不能另定分组、展开默认值、滚动阈值或主题数值",
+    "采用既有生产组件处理输入投影，不直接设置期望的follow/open结果，不新建历史store或页面DSL",
+    "合成工具投影仅验收renderer，真实执行另需Core/Runtime证据",
+    "参考数值0.5px不是产品容差；同状态比较需记录内容、字体、宽度、主题、DPR和运动条件",
+    "参考工具轮次、文字补采和完成帧独立关联，不拼成无缺口旅程",
+    "同一输入场景用父子Thread、processId和资源URI关联；浏览器帧与事件日志记录实际状态，不直接注入follow或open期望值",
+    "复合fixture输入来源为renderer/src/design-system/conversationScenario.ts；参考原件不进入源码",
+    "发送、命令、子线程和返回使用原生产所有者；任务名称来自原始委派，不新建执行状态",
+    "旧新版按语义状态匹配，动态ID和计时不同；原始录像保持各自独立",
+    "surfaceLayout显式选择当前输入器布局，祖先Panel状态不能改变Side输入器",
+    "Side复用Feedback展示既有错误和消息，不改requestId、submissionUnknown或重试语义",
+    "共享页面合同声明条件与必要状态；预览、桌面实际运行及缺口分别记录"
+  ],
+  "evidence": {
+    "status": "pending",
+    "artifacts": [],
+    "gaps": [
+      "本地保存同状态原图、运行和源码/产物身份；公开合同不携带私有档案",
+      "完整浏览器代表条件与真实Electron主/Side共享路径分别验收；视觉审查由用户决定",
+      "不声明真实供应商、物理IME、原生通知送达、安装包或其他OS通过；全部恢复与资源生命周期不由该切片覆盖"
+    ]
+  },
+  "interactionFamilies": [
+    "I-INPUT",
+    "I-OBSERVE",
+    "I-READ",
+    "I-RETURN"
+  ]
+}

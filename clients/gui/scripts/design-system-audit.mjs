@@ -9,7 +9,7 @@ import { join } from "node:path";
 const catalog = await verifyDesignCatalog();
 
 const root = fileURLToPath(new URL("../renderer/src/", import.meta.url));
-const files = ["DecisionCard.css", "prompt-editor/ComposerSurface.css", "SideChat.css", "components/ui/feedback.css", "settings/SettingsPageParts.css", "settings/SettingsPageParts.tsx"];
+const files = ["DecisionCard.css", "prompt-editor/ComposerSurface.css", "SideChat.css", "components/ui/feedback.css", "settings/SettingsPageParts.css", "settings/SettingsPageParts.tsx", "prompt-editor/ComposerSurface.tsx", "prompt-editor/ChatPromptEditor.tsx", "SideChatPane.tsx", "app-shell/SidePane.tsx", "app-shell/SidePaneTabTrigger.tsx"];
 
 assert.equal(cssFindings(".x{font-size:12px;color:#fff;padding:12px}").length, 2);
 assert.equal(cssFindings(".x{color:red;background:transparent}").length, 1);

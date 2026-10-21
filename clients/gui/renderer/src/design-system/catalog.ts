@@ -136,7 +136,7 @@ export const tokenGroups = [
 ] as const;
 export const baseCandidate = {
   "id": "desktop-core",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "foundations": [
     "文字",
     "表面与反馈",
@@ -178,7 +178,8 @@ export const baseCandidate = {
     "决策与长文本保留原权威状态、全文和焦点可达性",
     "设置单选沿SettingsSelect公共sm变体；普通设置开关使用default，不由调用方另改尺寸",
     "活跃设置说明保留独立角色、对比度偏好与自定义前景色，不连带修改禁用或过程信息",
-    "对话过程组合在逐步投影中验证接受消息占位、可见阅读锚点、返回最新、完成收敛及人工详情保留；异常不因final默认隐藏"
+    "对话过程组合在逐步投影中验证接受消息占位、可见阅读锚点、返回最新、完成收敛及人工详情保留；异常不因final默认隐藏",
+    "输入表面由宿主显式选择default/compact；Side不继承全屏主输入器布局；业务草稿、模型与提交归属不共享"
   ],
   "limits": [
     "候选集不是已冻结 Base，不代表用户视觉验收完成",

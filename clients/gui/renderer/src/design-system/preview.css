@@ -43,3 +43,9 @@
 .design-settings-preview [data-settings-host] { min-width: 0; }
 .design-settings-state { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spacing-inline); }
 .design-settings-state select { color: var(--color-foreground); background: var(--color-background); border: 1px solid var(--color-border); border-radius: var(--radius-control); padding: var(--spacing-inline); }
+
+/* 固定题目的布局容器，内容与面板仍使用生产组件。 */
+.design-shared-workspace { height: 720px; display: flex; min-width: 0; position: relative; }
+.design-shared-workspace .workspace-content, .design-shared-workspace .conversation-column, .design-shared-workspace .conversation-pane { height: 100%; min-height: 0; }
+.design-shared-workspace .conversation-pane { display: flex; flex-direction: column; }
+.design-shared-workspace .active-composer { flex: none; }

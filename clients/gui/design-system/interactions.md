@@ -15,7 +15,7 @@
 | 默认 default | 直接采用已有结构与视觉角色；偏离时记录具体用户理由及验证 |
 | 可探索 explore | 允许领域内容、信息组织和专属可视化变化；沿用基础语言 |
 
-模式卡是设计建议与约束，不表示所有生产页面已迁移或所有状态已验证。目录检查只核验声明和引用；视觉质量、原生体验与业务正确性分别验证。Base 0.1.3 的准入边界不因新增分类扩大。
+模式卡是设计建议与约束，不表示所有生产页面已迁移或所有状态已验证。目录检查只核验声明和引用；视觉质量、原生体验与业务正确性分别验证。Base 候选与准入边界见 [base.md](base.md)，新增分类本身不扩大覆盖。
 
 ## 分类索引
 
@@ -27,7 +27,7 @@
 | I-INPUT 输入与提交 | P-CONVERSATION, P-SETTINGS, P-DETAIL | ConversationComposer, SettingsRow | INPUT-TRUTH-01, INPUT-DEFAULT-01 |
 | I-OBSERVE 等待与观察 | P-CONVERSATION, P-STATUS, P-SETTINGS | TurnExecution, TurnProgress, Feedback | OBSERVE-TRUTH-01, OBSERVE-DEFAULT-01 |
 | I-READ 阅读与探索 | P-CONVERSATION, P-DETAIL, P-SETTINGS | CollapsibleText, SettingsDisclosure | READ-CONTINUITY-01, READ-DEFAULT-01 |
-| I-RETURN 打开与返回 | P-CONVERSATION, P-DETAIL, P-SETTINGS | AgentConversationPane, SettingsDialog | RETURN-CONTEXT-01, RETURN-DEFAULT-01 |
+| I-RETURN 打开与返回 | P-CONVERSATION, P-DETAIL, P-SETTINGS | AgentConversationPane, SettingsDialog, SidePane, SideChatPane | RETURN-CONTEXT-01, RETURN-DEFAULT-01 |
 | I-DECIDE 选择与确认 | P-DECISION, P-SETTINGS, P-DETAIL | SettingsSelect, Switch, DecisionCard | DECIDE-RESULT-01, DECIDE-DEFAULT-01 |
 | I-MANAGE 调整与管理 | P-SETTINGS, P-RESOURCES | SettingsPage, SettingsSection, SettingsGroupCard, SettingsRow | MANAGE-OWNER-01, MANAGE-DEFAULT-01 |
 | I-RECOVER 异常与恢复 | P-STATUS, P-CONVERSATION, P-SETTINGS, P-RESOURCES, P-DETAIL, P-DECISION | Feedback, EmptySettings | RECOVER-TRUTH-01, RECOVER-DEFAULT-01 |
@@ -126,3 +126,5 @@
 ## 对话阶段二的生产应用
 
 默认的过程入口同时说明内容和展开动作；命令详情就近显示权威文字状态；子代理入口与面板使用原始委派任务名，缺失时沿既有身份回退。发送和打开返回继续由原生产所有者管理。适用范围、裁决依据与可重复检查见[对话阶段二](exercises/conversation-stage2.md)，不新增全局值，也不扩大 Base 准入。
+
+共享输入的 default/compact 由当前宿主显式选择；全屏资源不改变 Side 的布局。草稿、模型和提交保持独立；生产组合与验证边界见[共享工作区](exercises/shared-workspace.md)。

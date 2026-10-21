@@ -23,7 +23,7 @@
 | 三个及以上候选值中选择一个 | 下拉按钮与菜单 | 复用 `Select`；收起时显示当前值和右侧小箭头，展开后显示候选项与选中标记；不把选项摊成一排按钮 |
 | 两个互斥值中选择一个 | 并排的两个选项 | 复用 `SettingsSegmentedTabs`，如“底部 / 右侧”；全部可见，选中项高亮，不再套下拉菜单 |
 
-设置行默认使用 `Switch` 的 default 尺寸（`SettingsSwitch` 同样默认）；三项及以上使用 `SettingsSelect` 拥有的常规 control 尺寸与 navigation 圆角。紧凑 sm 仅用于已登记的高密度场景，页面不得临时选小一档。尺寸与水平留白归公共实现，不在页面覆盖。
+设置行默认使用 `Switch` 的 default 尺寸（`SettingsSwitch` 同样默认）；三项及以上沿用 `SettingsSelect` 当前公共 sm 变体；具体尺寸、形状由组件决定，页面不得自行改档。尺寸与水平留白归公共实现，不在页面覆盖。
 
 此处“多项选择”指多个候选值的单选，不等于一次选择多个值。真正允许多值选择时沿用支持复选语义的现有控件，不能假装成单选菜单。导航 Tab 与设置值选择也不能混为一谈。
 
@@ -143,3 +143,9 @@ pnpm --dir clients/gui test:design --settings-only
 生产样式改变需查看相关组件和原消费者；变体变化看默认、焦点、禁用和提交状态。Composer、审批、Side 的业务兼容继续使用已有 `test:composer`、`test:interactions`、`test:conversation-derivation`，它们与组件预览各自提供不同证据。物理 IME、真实供应商及安装包需单独验收。
 
 新增或重构页面先读[用户交互模式](design-system/interactions.md)，按 must/default/explore 约束选已有组合。设置首阶段的设计输入与实际Electron验证合同见[迁移题](design-system/exercises/settings-stage1.md)。
+
+## 共享输入与面板组合
+
+`ChatPromptEditor.surfaceLayout` 透传 `ComposerSurface.layout`，仅有 default / compact。App 为满屏资源下的主 Composer / DraftComposer 选择 compact；Side 不继承工作区祖先的输入布局。变体、容器重排和模型入口基础样式归 ComposerSurface.css，不能在页面复制全屏选择器。ConversationComposer 仍理解模型目录和继承；主/Side 的草稿、来源、配置、提交及未知受理归原业务所有者。Side 的错误与带回反馈复用 Feedback。
+
+`design-system.html?shared-workspace` 组合真实主输入、SideChatPane、SidePane 与 portal 设置；本地动作不执行任务。运行 `node clients/gui/scripts/design-system-smoke.mjs --shared-workspace` 验证代表条件；真实发送和模型隔离使用 `conversation-derivation-smoke.mjs --shared-workspace` 与已核对的 AREAL_CORE_BIN。设计裁决、规则强度与范围归[共享工作区合同](design-system/exercises/shared-workspace.md)。

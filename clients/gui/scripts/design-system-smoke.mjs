@@ -1,3 +1,4 @@
+import { runSharedWorkspace } from "./design-system-shared-workspace.mjs";
 import { runConversationExercise } from "./design-system-conversation-exercise.mjs";
 import { runConversationDemo } from "./design-system-conversation-demo.mjs";
 import { runDecisionExercise } from "./design-system-decision-exercise.mjs";
@@ -24,7 +25,8 @@ const conversationDemo = process.argv.includes("--conversation-demo");
 const decisionExercise = process.argv.includes("--decision-exercise");
 const settingsContrast = process.argv.includes("--settings-contrast");
 const settingsExercise = process.argv.includes("--settings-exercise") || settingsContrast;
-const namedExercise = conversationExercise || conversationDemo || decisionExercise || settingsExercise;
+const sharedWorkspace = process.argv.includes("--shared-workspace");
+const namedExercise = sharedWorkspace || conversationExercise || conversationDemo || decisionExercise || settingsExercise;
 const exercise = { steps: [], checks: [] };
 const settingsOnly = process.argv.includes("--settings-only");
 const html = await readFile(join(dist, "design-system.html"), "utf8");
@@ -251,11 +253,12 @@ try {
       }
     };
   });
-  await page.goto(`${origin}/design-system.html${conversationExercise ? "?conversation-exercise" : conversationDemo ? "?conversation" : decisionExercise ? "?decision-exercise" : settingsExercise ? "?settings-exercise" : settingsOnly ? "?settings" : ""}`);
+  await page.goto(`${origin}/design-system.html${sharedWorkspace ? "?shared-workspace" : conversationExercise ? "?conversation-exercise" : conversationDemo ? "?conversation" : decisionExercise ? "?decision-exercise" : settingsExercise ? "?settings-exercise" : settingsOnly ? "?settings" : ""}`);
   await page.getByRole("heading", { name: "客户端设计系统", exact: true }).waitFor();
   assert.equal(await page.evaluate(() => typeof window.arealDesktop), "undefined");
   if (namedExercise) {
-    if (conversationExercise) await runConversationExercise(page, scratch, gui, exercise);
+    if (sharedWorkspace) await runSharedWorkspace(page, scratch, exercise, baseline);
+    else if (conversationExercise) await runConversationExercise(page, scratch, gui, exercise);
     else if (conversationDemo) await runConversationDemo(page, scratch, exercise.checks);
     else if (decisionExercise) await runDecisionExercise(page, scratch, gui, exercise);
     else if (settingsContrast) await runSettingsContrast(page, scratch, gui, exercise);

@@ -8,7 +8,7 @@
 | --- | --- | --- | --- |
 | P-SETTINGS 修改偏好或配置 | SettingsPage + SettingsSection + SettingsGroupCard + SettingsRow；[参考](../renderer/src/settings/DisplaySettings.tsx) | 分组、字段、文案与现有控件类型 | 标签/控件对齐，窄窗换行，值和反馈真实 |
 | P-RESOURCES 查找并管理资源 | SettingsSection + ActionButton + Feedback；[参考](../renderer/src/settings/PluginCenter.tsx) | 搜索、筛选、资源状态与详情 | 安装/连接状态分开；列表和详情职责清楚 |
-| P-CONVERSATION 阅读并推进任务 | Messages + TurnProgress + TurnExecution + ToolEvent + ConversationComposer + CommandDetails + AgentConversationPane + SentAttachment；[参考](../renderer/src/design-system/ConversationFlowExercise.tsx) | 消息类型、工具结果、合法动作与上下文 | 权威状态、内容层级与阅读意图独立；按信息流合同验收完成收敛、人工展开和返回最新；未知提交不重放 |
+| P-CONVERSATION 阅读并推进任务 | Messages + TurnProgress + TurnExecution + ToolEvent + ConversationComposer + CommandDetails + AgentConversationPane + SentAttachment + ComposerSurface + SideChatPane + SidePane + Feedback；[参考](../renderer/src/design-system/ConversationFlowExercise.tsx) | 消息类型、工具结果、合法动作与上下文 | 权威状态、内容层级与阅读意图独立；按信息流合同验收完成收敛、人工展开和返回最新；未知提交不重放 |
 | P-DECISION 回答或批准请求 | DecisionCard + ApprovalRequest + Feedback；[参考](../renderer/src/ApprovalRequest.tsx) | 请求正文及已有决策动作 | 关键参数可核对，动作和结果可达 |
 | P-DETAIL 阅读或编辑详情 | SettingsDialog + SettingsDisclosure + Feedback；[参考](../renderer/src/settings/common.tsx) | 表单字段、正文及受控 footer | 返回/关闭路径和焦点恢复；不叠多层弹窗 |
 | P-STATUS 了解状态并恢复 | Feedback + EmptySettings；[参考](../renderer/src/settings/ServiceStatusSettings.tsx) | 状态说明、必要详情及可行恢复入口 | 离线/失败/未知区分，静默刷新保留已确认内容 |
