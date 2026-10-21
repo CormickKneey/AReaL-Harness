@@ -176,6 +176,10 @@ features.goals=true 表示服务支持 Goal，无需单独配置开关；Goal �
 
 Desktop owner 在副作用前保存持久回执，记录逐目标 Host requestId 与状态。整体 phase 为 acceptedPending、blocked、partial、admissionUnconfirmed、settlementIncomplete 或 completed。Desktop 停止的目标全部完成后，仅记录 desktopExit=requested；Main 核验原 Desktop 确实退出才显示完成。Main 在写入前持久保存原请求引用，不维护另一份执行权威。响应丢失或换代后读取原回执，已完成目标不重做；未知目标限制相关项目，其他项目保留可用。
 
+应用退出前的资源观察使用 `purpose="quit"`。Desktop 保留完整所属目标范围，状态读取共享 5 秒预算，断连目标不先重连。连接不可用或读取超时的目标返回 `observation="unavailable"`，不填充空闲状态或空任务列表，并要求原生确认后提交原代际的 cancel 请求。确认后再次核对目标、代际和影响，观察可用性变化也会使确认失效。登记、归属、Core 明确返回的 RPC 错误和无效结果结构仍阻止操作。连接关闭仅表示观察不可用；Host 仍独立核验原身份和清理回执。更新与资源管理保留严格观察。
+
+所有 Host 目标完成后，Desktop 等待库与配置写入并保存 `desktopExit=requested`，再关闭连接。Desktop 的 `before-quit`、SIGTERM、SIGINT 和已完成生命周期共用一个 5 秒收尾期限，覆盖连接关闭和连接元数据清理。超时记录退出原因与阶段，以非零状态退出并关闭所属生命期管道，不改写 Host 清理回执。外部退出和 owner 丢失只触发既有监督清理，不证明资源已完成结算。
+
 普通启动只连接；GUI Main 的 serviceLifecycle 入口只接受 `{operation:update|stop|check}`。check 不改变执行状态。显式 update 先结算原目标并确认原 Desktop 退出，再启动替代部署；失败保留引用。旧适配器缺少上述能力时只读观察，不探测新写入、不跨层代取消。
 
 ## Task Mode 接入

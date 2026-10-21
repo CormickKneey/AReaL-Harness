@@ -300,7 +300,9 @@ class DesktopService {
       if (method === 'resources') {
         if (params?.operation === 'inspect') {
           this.inflight++;
-          try { this.send(socket, { id, result: await inspectResources(this.backend, { includeTasks: params.includeTasks === true }) }); }
+          try { this.send(socket, { id, result: await inspectResources(this.backend, {
+            includeTasks: params.includeTasks === true, purpose: params.purpose === 'quit' ? 'quit' : undefined,
+          }) }); }
           finally { this.inflight--; }
           return;
         }

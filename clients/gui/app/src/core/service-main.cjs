@@ -22,23 +22,48 @@ const { desktopExecutables } = require('./desktop-executables.cjs');
 app.setName('AReaL Harness GUI');
 const guiUserData = configureUserData(app);
 let backend, service, descriptor, home, power;
-let exiting = false;
+const FINALIZATION_TIMEOUT_MS = 5000;
+let finalization, finalizationTimer, exited = false;
 let applicationLifetime;
 const { parseOwner, watchApplicationLifetime, scrubOwnerEnvironment } = require('./application-owner.cjs');
 
-async function finish() {
-  if (exiting) return; exiting = true;
-  power?.close();
-  service?.close();
-  if (descriptor) {
-    try {
-      const path = join(home, 'service.json');
-      if (JSON.parse(await readFile(path, 'utf8')).token === descriptor.token) await rm(path);
-    } catch (e) { if (e.code !== 'ENOENT') console.error('后台连接元数据清理失败'); }
+function exitProcess(exitCode) {
+  if (exited) return;
+  exited = true;
+  clearTimeout(finalizationTimer);
+  try {
+    for (const entry of backend?.ownedEngines?.values() ?? []) {
+      for (const lifetime of entry.lifetimes ?? []) {
+        try { lifetime.destroy(); } catch { exitCode = 1; }
+      }
+    }
+  } finally {
+    try { applicationLifetime?.destroy(); } catch { exitCode = 1; }
+    try { diagnostics.record({ type: 'exit-requested', exitCode }); }
+    finally { app.exit(exitCode); }
   }
-  applicationLifetime?.destroy();
-  diagnostics.record({ type: 'exit-requested', exitCode: 0 });
-  app.exit(0);
+}
+function finish(cause) {
+  if (finalization || exited) return finalization;
+  let stage = 'disconnect';
+  finalizationTimer = setTimeout(() => {
+    try { diagnostics.record({ type: 'desktop-exit-timeout', cause, stage }); }
+    finally { exitProcess(1); }
+  }, FINALIZATION_TIMEOUT_MS);
+  finalization = Promise.resolve().then(async () => {
+    power?.close();
+    service?.close();
+    await backend?.disconnect();
+    stage = 'metadata';
+    if (descriptor) {
+      try {
+        const path = join(home, 'service.json');
+        if (JSON.parse(await readFile(path, 'utf8')).token === descriptor.token) await rm(path);
+      } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    }
+    exitProcess(0);
+  }).catch(() => { exitProcess(1); });
+  return finalization;
 }
 async function start() {
   // Stopping an existing service needs only its private connection metadata,
@@ -70,10 +95,8 @@ async function start() {
   }
   parseOwner(process.env.AREAL_GUI_OWNER);
   applicationLifetime = watchApplicationLifetime(() => {
-    diagnostics.record({ type: 'application-owner-lost' });
-    for (const entry of backend?.ownedEngines?.values() ?? []) for (const lifetime of entry.lifetimes ?? []) lifetime.destroy();
-    diagnostics.record({ type: 'exit-requested', exitCode: 1 });
-    app.exit(1);
+    try { diagnostics.record({ type: 'application-owner-lost' }); }
+    finally { exitProcess(1); }
   });
   startupTraceService.advance('prepare_home');
   const options = serviceOptions(app);
@@ -114,7 +137,7 @@ async function start() {
     child.unref();
   });
   power = new SharedPowerMonitor(backend, powerSaveBlocker);
-  service = new DesktopService(backend, await serviceIdentity(options), () => { void finish(); }, notifications, power);
+  service = new DesktopService(backend, await serviceIdentity(options), () => { void finish('completed-lifecycle'); }, notifications, power);
   service.remote = new RemoteControl(service, safeStorage);
   startupTraceService.advance('remote_init');
   await service.remote.init();
@@ -128,8 +151,8 @@ async function start() {
   startupTraceService.finish('ok');
 }
 app.on('window-all-closed', () => {});
-app.on('before-quit', event => { event.preventDefault(); });
+app.on('before-quit', event => { event.preventDefault(); void finish('external-quit'); });
 for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => {
-  void (async () => { try { await backend?.disconnect(); } finally { await finish(); } })();
+  void finish('signal');
 });
 void start().catch(async error => { startupTraceService.finish('error', error); console.error(backend?.providers.redact(error.message) ?? error.message); service?.close(); await backend?.proxyRelay?.close(); diagnostics.record({ type: 'exit-requested', exitCode: 1 }); app.exit(1); });

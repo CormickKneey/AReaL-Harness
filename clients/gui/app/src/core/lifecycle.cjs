@@ -38,8 +38,8 @@ const blockerMessage = blockers => blockers.map(code => ({ peerGui: '请先退�
   providerUpdating: '请等待模型配置更新完成', starting: '请等待项目启动完成' })[code] ?? '请等待后台状态核对').join('；');
 function recoveryView(service, projects, forUpdate = true) {
   const blockers = desktopBlockers(service, forUpdate);
-  const unsafe = projects.some(p => p.lifecycle ? !p.lifecycle.ifIdle.allowed
-    : !p.restartSafe || p.activeTasks || p.goalThreads?.length || p.waitingMessages)
+  const unsafe = projects.some(p => p.observation === 'unavailable' || (p.lifecycle ? !p.lifecycle.ifIdle.allowed
+    : !p.restartSafe || p.activeTasks || p.goalThreads?.length || p.waitingMessages))
     || projects.some(p => p.tasks?.some(task => !task.paused))
     || service.remote?.enabled === true || service.remote?.connections > 0;
   const legacyBusy = service.lifecycle?.version !== 2 && (service.busy || !!service.stopReport);
@@ -63,13 +63,14 @@ function assertLifecycleSupport(service, kind) {
   return lifecycle;
 }
 class DesktopLifecycle {
-  constructor({ connection, metadata, home, forUpdate = true }) {
-    this.connection = connection; this.metadata = metadata; this.home = home; this.forUpdate = forUpdate;
+  constructor({ connection, metadata, home, forUpdate = true, purpose = 'manage' }) {
+    this.connection = connection; this.metadata = metadata; this.home = home; this.forUpdate = forUpdate; this.purpose = purpose;
   }
   async observe() {
-    const projects = await this.connection.request('resources', { operation: 'inspect', includeTasks: true });
+    const projects = await this.connection.request('resources', { operation: 'inspect', includeTasks: true,
+      ...(this.purpose === 'quit' ? { purpose: 'quit' } : {}) });
     const { service } = await this.connection.request('snapshot');
-    return { ...recoveryView(service, projects, this.forUpdate), targets: targets(service.targets ?? projects) };
+    return { ...recoveryView(service, projects, this.forUpdate), targets: targets(service.targets ?? projects), purpose: this.purpose };
   }
   async stop({ mode = 'ifIdle', observed } = {}) {
     const { SharedCoreBackend } = require('./service-client.cjs');
@@ -97,8 +98,11 @@ class DesktopLifecycle {
       || !require('node:util').isDeepStrictEqual(before.targets, current.targets))
       throw Object.assign(new Error('后台实例或项目范围已变化，请重新确认'), { code: 'CONFIRMATION_STALE' });
     if (current.blockers.length) throw Object.assign(new Error(blockerMessage(current.blockers)), { code: 'LIFECYCLE_BLOCKED' });
-    if (mode === 'cancel' || before.confirmedImpact) {
-      const impact = value => ({ remote: value.service.remote, projects: value.projects.map(project => ({
+    if (mode === 'cancel' || before.confirmedImpact || this.purpose === 'quit') {
+      const impact = value => ({ remote: value.service.remote, projects: value.projects.map(project => project.observation === 'unavailable' ? {
+        projectId: project.projectId, serviceId: project.serviceId, generation: project.generation, observation: 'unavailable',
+      } : ({
+        observation: 'known',
         projectId: project.projectId, lifecycle: project.lifecycle, activeThreads: project.activeThreads,
         goals: project.goals, tasks: project.tasks, resources: project.resources, queues: project.queues,
         pendingRequests: project.pendingRequests,

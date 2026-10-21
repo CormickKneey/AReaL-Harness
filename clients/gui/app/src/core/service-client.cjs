@@ -504,11 +504,11 @@ class SharedCoreBackend {
     };
   }
   get serviceExited() { return !!this.exitConfirmation && this.exitConfirmation === this.metadata; }
-  async observeLifecycle(forUpdate = true) {
+  async observeLifecycle(forUpdate = true, { purpose = 'manage' } = {}) {
     if (this.serviceExited) return { ifIdle: true, exited: true, blockers: [] };
     if (!this.status.connected) return { ifIdle: false, blockers: ['disconnected'] };
     const { DesktopLifecycle } = require('./lifecycle.cjs');
-    return new DesktopLifecycle({ connection: this.connection, metadata: this.metadata, home: this.home, forUpdate }).observe();
+    return new DesktopLifecycle({ connection: this.connection, metadata: this.metadata, home: this.home, forUpdate, purpose }).observe();
   }
   lifecycleProjection() {
     const visible = new Map(this.lifecycleReceipts);
@@ -731,7 +731,8 @@ class SharedCoreBackend {
     }
     const { DesktopLifecycle } = require('./lifecycle.cjs');
     const intent = await new DesktopLifecycle({ connection: this.connection, metadata: this.metadata,
-      forUpdate: desktopKind(kind) }).prepare({ kind, mode, observed, projectId, threadId, turnId });
+      forUpdate: desktopKind(kind), purpose: kind === 'stopDesktop' && observed?.purpose === 'quit' ? 'quit' : 'manage',
+    }).prepare({ kind, mode, observed, projectId, threadId, turnId });
     const reference = { requestId, kind, mode, desktopGeneration: intent.expectedDesktopGeneration,
       targets: intent.expectedTargets, desktop: { pid: this.metadata.pid, identity: this.metadata.identity },
       ...(kind === 'interruptTurn' ? { threadId, turnId } : {}) };

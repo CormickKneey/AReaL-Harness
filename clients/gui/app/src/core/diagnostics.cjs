@@ -12,6 +12,7 @@ const { randomUUID } = require('node:crypto');
  * | {type:'child-process-gone',processType:unknown,reason:unknown,exitCode:unknown}
  * | {type:'resource-sample',rssBytes:number,heapUsedBytes:number,uptimeSeconds:number,eventLoopDelayMs:number}
  * | {type:'uncaught-exception',errorName:unknown,code:unknown}
+ * | {type:'desktop-exit-timeout',cause:'completed-lifecycle'|'external-quit'|'signal',stage:'disconnect'|'metadata'}
  * | {type:'exit-requested'|'process-exit',exitCode:number} | {type:'crash-reporter',state:'ready'|'unavailable'}} Incident
  */
 const RUNS = 8, SHARDS = 4, SHARD_BYTES = 256 * 1024, LINE_BYTES = 1024, READ_BYTES = 16 * 1024 * 1024, SCAN_ENTRIES = 128;
@@ -65,6 +66,10 @@ function projectIncident(event, maps) {
       break;
     case 'uncaught-exception': value.errorName = choose(ERRORS, event.errorName); value.code = choose(CODES, event.code, 'OTHER'); break;
     case 'process-exit': case 'exit-requested': value.exitCode = integer(event.exitCode, -0x80000000, 0x7fffffff); break;
+    case 'desktop-exit-timeout':
+      value.cause = choose(new Set(['completed-lifecycle', 'external-quit', 'signal']), event.cause);
+      value.stage = choose(new Set(['disconnect', 'metadata']), event.stage);
+      break;
     case 'crash-reporter': value.state = event.state === 'ready' ? 'ready' : 'unavailable'; break;
     case 'application-owner-lost': case 'renderer-unresponsive': case 'renderer-responsive': break;
     default: return null;
