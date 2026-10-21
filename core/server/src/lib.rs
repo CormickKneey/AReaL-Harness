@@ -846,6 +846,17 @@ pub fn build_info() -> serde_json::Value {
     serde_json::json!({"sourceRevision":env!("AREAL_BUILD_REVISION"),"workingTree":env!("AREAL_BUILD_DIRTY"),"inputHash":env!("AREAL_BUILD_INPUT_HASH"),"apiVersion":areal_protocol::desktop::API_VERSION,"stateVersion":areal_engine::state_version()})
 }
 
+fn model_capabilities(
+    value: &areal_config::models::ModelCapabilities,
+) -> areal_protocol::desktop::ModelCapabilityConfig {
+    areal_protocol::desktop::ModelCapabilityConfig {
+        tools: value.tools,
+        vision: value.vision,
+        reasoning: value.reasoning,
+        reasoning_effort_options: value.reasoning_effort_options.clone(),
+    }
+}
+
 #[cfg(test)]
 mod experiment_tests {
     use super::*;
@@ -889,16 +900,5 @@ mod experiment_tests {
             );
             assert!(limits.command_stdin_closed);
         }
-    }
-}
-
-fn model_capabilities(
-    value: &areal_config::models::ModelCapabilities,
-) -> areal_protocol::desktop::ModelCapabilityConfig {
-    areal_protocol::desktop::ModelCapabilityConfig {
-        tools: value.tools,
-        vision: value.vision,
-        reasoning: value.reasoning,
-        reasoning_effort_options: value.reasoning_effort_options.clone(),
     }
 }
