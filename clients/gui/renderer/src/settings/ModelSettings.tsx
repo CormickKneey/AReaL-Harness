@@ -78,9 +78,7 @@ export function ModelSettings({ action, onOpenSessionSettings }: { action: Actio
     return saved;
   };
   const baseline = items.find(item => item.id === selected);
-  const credentialSource = provider?.id && state.value?.credentialStates?.[provider.id] === "available" ? state.value?.credentialSources?.[provider.id] : "none";
-  const apiKeyStatus = credentialSource === "stored" ? t("settings.modelSettings.apiKeyStored")
-    : credentialSource === "environment" ? t("settings.modelSettings.apiKeyEnvironment") : t("settings.modelSettings.apiKeyMissing");
+  const apiKeyConfigured = !!provider?.id && state.value?.credentialStates?.[provider.id] === "available";
   // 开关与输入框是草稿；状态只投影 Core 的已保存目录和凭据诊断。
   const savedStatus = (item?: Data) => !item ? t("settings.modelSettings.unsaved") : !item.enabled ? t("settings.modelSettings.disabled")
     : state.value?.credentialStates?.[item.id] === "unavailable" ? t("settings.modelSettings.missingCredentials") : t("settings.modelSettings.available");
@@ -204,8 +202,7 @@ export function ModelSettings({ action, onOpenSessionSettings }: { action: Actio
               }}><option value="apiKey">API Key</option><option value="none">{t("settings.modelSettings.noAuthentication")}</option></SettingsSelect>
             </div>
             {authentication === "apiKey" && <div>
-              <ProviderApiKeySection apiKeyValue={key ?? ""} apiKeyVisible={keyVisible} onApiKeyChange={value => { setKey(value); editConnection({}); }} onToggleApiKeyVisibility={() => setKeyVisible(!keyVisible)} onApiKeyBlur={() => {}} />
-              <p role="status" className="settings-muted">{apiKeyStatus}</p>
+              <ProviderApiKeySection apiKeyConfigured={apiKeyConfigured} apiKeyValue={key ?? ""} apiKeyVisible={keyVisible} onApiKeyChange={value => { setKey(value); editConnection({}); }} onToggleApiKeyVisibility={() => setKeyVisible(!keyVisible)} onApiKeyBlur={() => {}} />
             </div>}
           <div className="provider-model-section">
             <div className="provider-connection-summary"><span>{dirty ? t("settings.modelSettings.unsavedChanges") : t("settings.modelSettings.connectionConfigured")}</span><Button variant="outline" disabled={busy || !provider.enabled || !provider.models.some((m: Data) => m.enabled)} onClick={() => void saveThen(async saved => { const model = saved.models.find((m: Data) => m.enabled); await api("probe", { id: saved.id, model: model.id }); setProbe(p => ({ ...p, [model.id]: true })); setMessage({ id: "settings.modelSettings.connectedToModelValue", values: { value0: model.id } }); })}>{t("settings.modelSettings.testConnection")}</Button></div>

@@ -7,6 +7,7 @@ import { TECHNICAL_INPUT_ATTRIBUTES } from "../../lib/technicalInputAttributes.j
 
 export function ApiKeyInput({
   value,
+  configured,
   visible,
   readOnly,
   onChange,
@@ -17,6 +18,7 @@ export function ApiKeyInput({
   onToggleVisibility,
 }: {
   value: string;
+  configured?: boolean;
   visible: boolean;
   readOnly?: boolean;
   onChange: (value: string) => void;
@@ -36,7 +38,7 @@ export function ApiKeyInput({
         size="lg"
         aria-label="API Key" data-testid={TID_MODEL_PROVIDER_API_KEY_INPUT}
         className="pr-10 h-9"
-        placeholder={intl.formatMessage({
+        placeholder={configured ? "••••••••" : intl.formatMessage({
           id: "settings.modelProvider.apiKeyPlaceholder",
         })}
         value={value}

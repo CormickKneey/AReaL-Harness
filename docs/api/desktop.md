@@ -321,7 +321,7 @@ GUI 服务的窄命令 `trajectory` 支持 `{operation:"status"}`、`{operation:
 
 诊断不包含原始异常、上游文本、地址查询参数或凭据。HTTP 401/403 继续返回认证提示，其他 HTTP 错误保留状态码；无效流式回复继续返回模型与协议提示。Responses 探测仍向已保存端点发送 `input`、`store:false` 和 `stream:true`，并要求有效文本及成功终态。
 
-模型设置的 API Key 输入框只保留待保存草稿，成功保存后清空。界面依据 `credentialStates` 和 `credentialSources` 显示安全保存、环境变量来源或缺少凭据；不读取已保存的密钥。留空保留现有凭据，输入新值替换。保存成功后按实际回执显示已保存、等待生效或已保存并应用；连接成功仍由单独的探测确认。
+模型设置的 API Key 输入框只保留待保存草稿，成功保存后清空。界面依据 `credentialStates` 在已配置的输入框中显示固定掩码，不额外展示来源说明，也不读取已保存的密钥；掩码不属于输入值，不参与保存。留空保留现有凭据，输入新值替换。保存成功后按实际回执显示已保存、等待生效或已保存并应用；连接成功仍由单独的探测确认。
 
 `providers` 的 `discover` 支持尚未保存的 `connection:{protocol,baseUrl,credential}`。`credential` 可以是 `{kind:"none"}`、`{kind:"draft",value}` 或 `{kind:"saved",providerId,expectedRevision}`。已保存凭据按供应商与当前文件版本解析，草稿密钥仅用于该次请求；获取模型不写配置或凭据，原有按供应商 ID 获取的入口保留。
 

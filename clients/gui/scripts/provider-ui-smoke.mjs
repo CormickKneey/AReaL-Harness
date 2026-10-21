@@ -227,7 +227,8 @@ providerUiChecks: try {
       boxes.push(await control.boundingBox());
     }
     assert.ok(boxes.every((box, index) => index === 0 || boxes[index - 1].y < box.y), "Fields appear in protocol, name, Base URL, API Key, models order");
-    await page.getByText("API Key 已安全保存。留空保留，输入新值替换。", { exact: true }).waitFor();
+    assert.equal(await page.getByTestId("provider-api-key").getAttribute("placeholder"), "••••••••");
+    assert.equal(await page.getByText("API Key 已安全保存。留空保留，输入新值替换。", { exact: true }).count(), 0);
     assert.equal(await page.getByTestId("provider-api-key").inputValue(), "");
     await page.screenshot({ path: join(evidence, "connection-single-page.png"), fullPage: true });
     await page.evaluate(() => { window.fixtureDiscoveryManual = true; window.calls = []; });
@@ -297,7 +298,7 @@ providerUiChecks: try {
     assert.equal(await page.evaluate(() => window.calls.findLast(call => call.params.operation === "save").params.expectedRevision), saved.revision, "Polling preserves the draft's original CAS baseline");
     assert.equal(await page.evaluate(() => window.fixtureProviders.data.at(-1).name), "Externally updated provider");
     assert.equal(await page.getByTestId("provider-api-key").inputValue(), "synthetic-next-unsaved-key");
-    checks.push("Single page orders protocol, name, URL, key and models; stored keys remain empty and explained; discovery uses the unsaved draft, ignores stale responses and never saves; manual models remain available after failure; active-work Save persists and reports pending application; status polling preserves the next unsaved draft and its CAS baseline");
+    checks.push("Single page orders protocol, name, URL, key and models; stored keys show an input mask while the actual value remains empty; discovery uses the unsaved draft, ignores stale responses and never saves; manual models remain available after failure; active-work Save persists and reports pending application; status polling preserves the next unsaved draft and its CAS baseline");
     assert.deepEqual(errors, []);
     passed = true;
     break providerUiChecks;
@@ -307,10 +308,11 @@ providerUiChecks: try {
   await page.screenshot({ path: join(evidence, "saved-api-key.png"), fullPage: true });
   assert.equal(
     await page.getByText(savedKeyStatus, { exact: true }).count(),
-    1,
-    "opening a stored connection must explain that its API Key is saved while the replacement draft stays empty",
+    0,
+    "Saved credentials are represented inside the input without an explanatory line",
   );
   assert.equal(await apiKey.inputValue(), "");
+  assert.equal(await apiKey.getAttribute("placeholder"), "••••••••");
   assert.equal(await apiKey.getAttribute("type"), "password");
   assert.equal(await apiKey.isEditable(), true);
   assert.equal(
@@ -329,12 +331,13 @@ providerUiChecks: try {
   await page.getByRole("button", { name: "保存", exact: true }).click();
   await page.getByText("已保存并应用。", { exact: true }).waitFor();
   assert.equal(await apiKey.inputValue(), "");
+  assert.equal(await apiKey.getAttribute("placeholder"), "••••••••");
   assert.equal(await apiKey.getAttribute("type"), "password");
   assert.equal(
     await page.getByRole("button", { name: "显示 API Key", exact: true }).isDisabled(),
     true,
   );
-  assert.equal(await page.getByText(savedKeyStatus, { exact: true }).count(), 1);
+  assert.equal(await page.getByText(savedKeyStatus, { exact: true }).count(), 0);
   assert.deepEqual(
     await page.evaluate(() => {
       const saved = window.calls.findLast(
@@ -368,7 +371,7 @@ providerUiChecks: try {
   await page.getByRole("button", { name: "放弃修改并继续", exact: true }).click();
   await page.locator(".provider-catalog-row").filter({ hasText: "ChatGPT" }).click();
   await page.locator(".provider-catalog-row").filter({ hasText: "API Fixture" }).click();
-  assert.equal(await page.getByText(savedKeyStatus, { exact: true }).count(), 1);
+  assert.equal(await page.getByText(savedKeyStatus, { exact: true }).count(), 0);
   assert.equal(await apiKey.inputValue(), "");
   assert.equal(await page.getByText("已保存并应用。", { exact: true }).count(), 1, "Reopening projects the confirmed applied revision");
   for (const [source, state, status] of [
@@ -388,18 +391,25 @@ providerUiChecks: try {
       { source, state },
     );
     await page.getByRole("button", { name: "刷新供应商", exact: true }).click();
-    await page.getByText(status, { exact: true }).waitFor();
+    const placeholder = state === "available" ? "••••••••" : "输入 API Key";
+    await page.getByPlaceholder(placeholder, { exact: true }).waitFor();
     await page.locator(".provider-catalog-row").filter({ hasText: "ChatGPT" }).click();
     await page.locator(".provider-catalog-row").filter({ hasText: "API Fixture" }).click();
-    assert.equal(await page.getByText(status, { exact: true }).count(), 1);
+    assert.equal(await page.getByText(status, { exact: true }).count(), 0);
+    assert.equal(await apiKey.getAttribute("placeholder"), placeholder);
     assert.equal(await apiKey.inputValue(), "");
     assert.equal(
       await page.getByRole("button", { name: "显示 API Key", exact: true }).isDisabled(),
       true,
     );
   }
+  await page.getByRole("textbox", { name: "供应商名称", exact: true }).fill("API Fixture Renamed");
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await page.getByText("已保存并应用。", { exact: true }).waitFor();
+  assert.equal(await apiKey.getAttribute("placeholder"), "••••••••");
+  assert.equal(await page.evaluate(() => Object.hasOwn(window.calls.findLast(call => call.params?.operation === "save").params, "apiKey")), false, "A mask must never be submitted as a replacement credential");
   checks.push(
-    "Core credential metadata distinguishes stored, environment and missing keys; replacement drafts stay editable and empty after save; save feedback clears on editing and never implies a connection probe",
+    "Available stored/environment keys show only an input mask; missing keys show the input prompt; replacement drafts clear after save; masks are never submitted; save feedback never implies a connection probe",
   );
   if (apiKeyFeedbackOnly) {
     assert.equal(await page.locator("vite-error-overlay").count(), 0);
