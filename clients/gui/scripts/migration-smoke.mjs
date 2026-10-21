@@ -465,7 +465,7 @@ try {
   assert.equal(await page.locator(`.agent-conversation-heading [data-agent-avatar="${liveChild.id}"]`).getAttribute("src"), liveAvatar);
   assert.equal(await page.locator(`[data-testid=chat-view] [data-agent-avatar="${liveChild.id}"]`).getAttribute("src"), liveAvatar);
   await shot("02a-agent-running");
-  await page.getByRole("button", { name: "关闭 子任务等待停止 标签", exact: true }).click();
+  await page.locator('[aria-label="关闭 子任务等待停止 标签"]').click();
   const afterClose = await call("manage", { projectId: pid, parentThreadId: tid, operation: "agentWait", threadIds: [liveChild.id], timeoutMs: 0 });
   assert.equal(afterClose.data[0].status, "inProgress");
   await page.locator("[data-testid=chat-view]").getByRole("button", { name: `打开 ${liveChild.id} 子对话`, exact: true }).click();
@@ -486,7 +486,7 @@ try {
   await donePane.getByRole("button", { name: "查看工具原始记录", exact: true }).click();
   await donePane.getByLabel("工具结果", { exact: true }).waitFor();
   await shot("02b-agent-completed");
-  await page.getByRole("button", { name: "关闭 子任务完成 标签", exact: true }).click();
+  await page.locator('[aria-label="关闭 子任务完成 标签"]').click();
   await page.getByRole("tab", { name: "子任务等待停止", exact: true }).click();
   await call("stop", { projectId: pid, threadId: liveChild.id, turnId: project(await state()).state.threads[liveChild.id].turns.at(-1).id, requestId: randomUUID() });
   await page.locator(`[data-agent-conversation="${liveChild.id}"] [data-turn-status=interrupted]`).waitFor();
