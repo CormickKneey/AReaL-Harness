@@ -280,6 +280,7 @@ providerUiChecks: try {
     assert.equal(saved.pending, true);
     assert.deepEqual(saved.provider.models.map(model => model.id), ["fresh-model", "manual-fallback-model"]);
     assert.equal(saved.provider.models[0].parameters.contextWindowTokens, 180000);
+    for (const model of saved.provider.models) assert.deepEqual(model.capabilities, { tools: true, vision: false, reasoning: true, reasoningEffortOptions: ["low", "medium", "high", "xhigh"] });
     assert.equal(await page.getByTestId("provider-api-key").inputValue(), "");
     assert.equal(await page.getByRole("button", { name: "保存", exact: true }).isDisabled(), true);
     await page.getByText(/已保存.*任务结束/).waitFor();

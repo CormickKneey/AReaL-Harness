@@ -1,3 +1,4 @@
+import { recommendedReasoningEfforts } from "@areal/provider-config";
 import { useI18n, type UiMessage } from "../i18n/IntlProvider.js";
 import { useId, useRef, useState } from "react";
 import { Button } from "../components/ui/button.js";
@@ -23,8 +24,8 @@ export function ModelEditor({ model, editing, ids, onSave, onClose }: {
   const [maximum, setMaximum] = useState(String(model.parameters?.maxOutputTokens ?? ""));
   const initialTools = model.capabilities?.tools ?? true;
   const initialVision = model.capabilities?.vision ?? editing;
-  const initialReasoning = model.capabilities?.reasoning ?? editing;
-  const initialEfforts: string[] = model.capabilities?.reasoningEffortOptions ?? [];
+  const initialReasoning = model.capabilities?.reasoning ?? true;
+  const initialEfforts: string[] = model.capabilities?.reasoningEffortOptions ?? (editing ? [] : [...recommendedReasoningEfforts]);
   const [tools, setTools] = useState(initialTools);
   const [vision, setVision] = useState(initialVision);
   const [reasoning, setReasoning] = useState(initialReasoning);

@@ -25,4 +25,11 @@ function connectionMetadata(provider, credentialSources = {}) {
         capabilityDefaults: preset.capabilityDefaults,
     };
 }
-module.exports = { definitions, connectionMetadata };
+const recommendedReasoningEfforts = Object.freeze(["low", "medium", "high", "xhigh"]);
+function withDefaultModelCapabilities(model, providerParameters = {}) {
+    if (model.capabilities !== undefined) return model;
+    const effort = model.parameters?.reasoningEffort ?? providerParameters.reasoningEffort;
+    return { ...model, capabilities: { tools: true, vision: false, reasoning: true,
+        reasoningEffortOptions: [...new Set([...recommendedReasoningEfforts, ...(effort ? [effort] : [])])] } };
+}
+module.exports = { definitions, connectionMetadata, recommendedReasoningEfforts, withDefaultModelCapabilities };

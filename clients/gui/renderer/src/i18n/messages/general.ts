@@ -556,8 +556,8 @@ export const generalMessages = {
     "en": "Allowed reasoning efforts"
   },
   "settings.modelEditor.leaveUnselectedToKeepTheAvailableReasoning": {
-    "zh-CN": "未选择时沿用现有可选强度。",
-    "en": "Leave unselected to keep the available reasoning efforts."
+    "zh-CN": "优先沿用模型或供应商默认；未选择时保留现有可选强度。",
+    "en": "Use model or provider defaults first. Leave unselected to keep the available reasoning efforts."
   },
   "settings.modelEditor.savedToTheProviderDraftTakesEffect": {
     "zh-CN": "保存到供应商草稿，保存供应商后生效。",

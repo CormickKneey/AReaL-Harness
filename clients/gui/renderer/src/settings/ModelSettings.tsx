@@ -1,3 +1,4 @@
+import { withDefaultModelCapabilities } from "@areal/provider-config";
 import { useI18n, UiMessageError } from "../i18n/IntlProvider.js";
 import { SettingsSelect } from "./SettingsPageParts.js";
 import { SettingsDisclosure } from "./SettingsDisclosure.js";
@@ -212,7 +213,7 @@ export function ModelSettings({ action, onOpenSessionSettings }: { action: Actio
               <span className="text-ui-base text-foreground-subtle">{t("settings.modelSettings.modelCount", { count: provider.models.length })}</span>
               <div className="flex gap-2">
                 <Button variant="secondary" disabled={!discoveryConnection || discovery.state.kind === "loading"} onClick={() => { setChecked([]); discovery.refresh(); }}>{t("settings.modelSettings.fetchModels")}</Button>
-                <Button variant="secondary" onClick={() => setModelDraft({ model: { id: "", enabled: true, parameters: {} }, index: -1 })}>{t("settings.modelSettings.addModel")}</Button>
+                <Button variant="secondary" onClick={() => setModelDraft({ model: withDefaultModelCapabilities({ id: "", enabled: true, parameters: {} }, provider.parameters), index: -1 })}>{t("settings.modelSettings.addModel")}</Button>
               </div>
             </div>
             {discovery.state.kind === "loading" && <p className="settings-muted" role="status">{t("settings.modelSettings.fetchingModels")}</p>}
@@ -223,7 +224,7 @@ export function ModelSettings({ action, onOpenSessionSettings }: { action: Actio
               {discovery.state.models.length > 0 && <Button variant="secondary" disabled={!checked.length} onClick={() => {
                 const result = discovery.state;
                 if (result.kind !== "ready") return;
-                edit({ models: [...provider.models, ...checked.filter(id => !provider.models.some((model: Data) => model.id === id)).map(id => ({ id, enabled: true, capabilities: { tools: true, vision: false, reasoning: false }, parameters: !provider.parameters?.contextWindowTokens ? result.modelParameters?.[id] ?? {} : {} }))] });
+                edit({ models: [...provider.models, ...checked.filter(id => !provider.models.some((model: Data) => model.id === id)).map(id => withDefaultModelCapabilities({ id, enabled: true, parameters: !provider.parameters?.contextWindowTokens ? result.modelParameters?.[id] ?? {} : {} }, provider.parameters))] });
                 setChecked([]);
               }}>{t("settings.modelSettings.addSelectedModels")}</Button>}
             </div>}

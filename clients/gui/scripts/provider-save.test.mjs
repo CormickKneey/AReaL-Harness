@@ -280,6 +280,7 @@ test("new connection discovers models before persistence and leaves default choi
   assert.deepEqual(result.data.at(-1).models.map(m => m.id), ["remote-first", "remote-second"]);
   assert.deepEqual(result.data.at(-1).models[0].parameters, { contextWindowTokens: 500000 });
   assert.deepEqual(result.data.at(-1).models[1].parameters, {});
+  for (const model of result.data.at(-1).models) assert.deepEqual(model.capabilities, { tools: true, vision: false, reasoning: true, reasoningEffortOptions: ["low", "medium", "high", "xhigh"] });
   assert.equal(result.defaultModel, null);
   assert.equal(result.pendingApply, false);
   assert.ok(f.project.models.some(m => m.id === "remote-second"));

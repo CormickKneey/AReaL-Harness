@@ -5,7 +5,7 @@ const { join } = require('node:path');
 const { randomUUID, randomBytes } = require('node:crypto');
 const { isDeepStrictEqual } = require('node:util');
 const { SubscriptionStore } = require('./subscription.cjs');
-const { definitions, connectionMetadata } = require('@areal/provider-config');
+const { definitions, connectionMetadata, withDefaultModelCapabilities } = require('@areal/provider-config');
 const { ModelConfiguration, protocolToCore, baseUrl: endpointBase, credentialValue } = require('./model-config.cjs');
 
 function connection(baseUrl, protocol) {
@@ -444,7 +444,7 @@ class AppProviders {
         if (request.discoverModels && !previous && item.enabled && item.models.length === 0) {
           const catalog = await this.testConnection(item, { operation: 'discover' });
           if (!catalog.models.length) throw new Error('服务未提供模型，请手动添加后保存。');
-          item.models = [...new Set(catalog.models)].map(id => ({ id, enabled: true, capabilities: { tools: true, vision: false, reasoning: false }, parameters: !item.parameters.contextWindowTokens && Object.hasOwn(catalog.modelParameters ?? {}, id) ? catalog.modelParameters[id] : {} }));
+          item.models = [...new Set(catalog.models)].map(id => withDefaultModelCapabilities({ id, enabled: true, parameters: !item.parameters.contextWindowTokens && Object.hasOwn(catalog.modelParameters ?? {}, id) ? catalog.modelParameters[id] : {} }, item.parameters));
         }
         next.data = previous ? next.data.map(p => p.id === item.id ? item : p) : [...next.data, item];
       }

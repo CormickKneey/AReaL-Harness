@@ -169,9 +169,10 @@ async function verifyModelCapabilities() {
   await editor.waitFor();
   assert.equal(await editor.getByRole("switch", { name: "工具调用", exact: true }).getAttribute("aria-checked"), "true");
   assert.equal(await editor.getByRole("switch", { name: "视觉输入", exact: true }).getAttribute("aria-checked"), "false");
-  assert.equal(await editor.getByRole("switch", { name: "推理能力", exact: true }).getAttribute("aria-checked"), "false");
+  assert.equal(await editor.getByRole("switch", { name: "推理能力", exact: true }).getAttribute("aria-checked"), "true");
   assert.equal(await editor.getByRole("spinbutton", { name: "模型温度", exact: true }).count(), 0);
-  assert.equal(await editor.getByRole("group", { name: "允许的推理强度", exact: true }).count(), 0);
+  for (const name of ["低", "中", "高", "极高"]) assert.equal(await editor.getByRole("checkbox", { name, exact: true }).isChecked(), true);
+  for (const name of ["无", "最少", "最高"]) assert.equal(await editor.getByRole("checkbox", { name, exact: true }).isChecked(), false);
   const fields = {
     id: editor.getByRole("textbox", { name: "模型 ID", exact: true }),
     name: editor.getByRole("textbox", { name: "显示名称", exact: true }),
@@ -187,11 +188,11 @@ async function verifyModelCapabilities() {
   await editor.getByRole("button", { name: "保存模型", exact: true }).click(); await saveProvider();
   const configuredModel = async () => (await call("providers", { operation: "list" })).data.find(item => item.id === provider.id).models.find(item => item.id === "capability-model");
   const saved = await configuredModel();
-  assert.deepEqual(saved.capabilities, { tools: true, vision: false, reasoning: false });
+  assert.deepEqual(saved.capabilities, { tools: true, vision: false, reasoning: true, reasoningEffortOptions: ["low", "medium", "high", "xhigh"] });
   assert.equal(saved.parameters.contextWindowTokens, 500000); assert.equal(saved.parameters.maxOutputTokens, 12000);
   await until(snapshot => fixtureProject(snapshot)?.models.some(model => model.modelId === "capability-model"), "custom capabilities reach Core catalog");
   const catalogModel = snapshot => fixtureProject(snapshot).models.find(model => model.modelId === "capability-model");
-  assert.deepEqual(catalogModel(await state()).reasoningEffortOptions, []);
+  assert.deepEqual(catalogModel(await state()).reasoningEffortOptions, ["low", "medium", "high", "xhigh"]);
   await button("返回应用").click(); await createProjectConversation(page, "workspace");
   await button("模型").click();
   await page.getByRole("radio", { name: "Capability model", exact: true }).click(); await page.keyboard.press("Escape");
@@ -206,10 +207,15 @@ async function verifyModelCapabilities() {
     assert.deepEqual(modelRequests.at(-1), expected);
   };
   await button("模型").click();
-  assert.equal(await page.getByRole("slider", { name: "思考强度", exact: true }).count(), 0);
-  assert.equal(await button("使用模型默认").count(), 0);
-  assert.equal(await page.getByRole("radio", { name: "Capability model", exact: true }).getAttribute("aria-checked"), "true"); await page.keyboard.press("Escape");
-  await send("Custom non-reasoning model omits reasoning", { model: "capability-model", effort: null, hasEffort: false });
+  assert.equal(await page.getByRole("slider", { name: "思考强度", exact: true }).getAttribute("max"), "3");
+  if (await button("使用模型默认").isEnabled()) await button("使用模型默认").click();
+  await page.keyboard.press("Escape");
+  await send("New reasoning model retains supplier default", { model: "capability-model", effort: null, hasEffort: false });
+  await button("模型").click();
+  await page.getByRole("slider", { name: "思考强度", exact: true }).press("End");
+  await page.waitForFunction(() => document.querySelector('[aria-label="思考强度"]')?.getAttribute("aria-valuetext") === "极高");
+  await page.keyboard.press("Escape");
+  await send("Recommended extra-high effort reaches provider", { model: "capability-model", effort: "xhigh", hasEffort: true });
   const editCapabilities = async () => {
     await button("模型").click(); await button("配置模型").click();
     await page.locator(".provider-catalog-row").filter({ hasText: "Capabilities" }).click();
@@ -217,6 +223,12 @@ async function verifyModelCapabilities() {
     await page.getByRole("menuitem", { name: "编辑模型 capability-model", exact: true }).click();
     editor = page.getByRole("dialog", { name: "编辑模型", exact: true }); await editor.waitFor();
   };
+  await editCapabilities();
+  await editor.getByRole("switch", { name: "推理能力", exact: true }).click();
+  await editor.getByRole("button", { name: "保存模型", exact: true }).click(); await saveProvider();
+  assert.equal((await configuredModel()).capabilities.reasoning, false);
+  await button("返回应用").click();
+  await send("Explicitly disabled reasoning omits the selected effort", { model: "capability-model", effort: null, hasEffort: false });
   await editCapabilities();
   await editor.getByRole("switch", { name: "推理能力", exact: true }).click();
   const effortGroup = editor.getByRole("group", { name: "允许的推理强度", exact: true });

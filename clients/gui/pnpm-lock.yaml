@@ -86,6 +86,8 @@ importers:
         specifier: 6.5.0
         version: 6.5.0
 
+  packages/provider-config: {}
+
   packages/remote:
     dependencies:
       '@chainsafe/libp2p-noise':
@@ -104,8 +106,6 @@ importers:
         specifier: 3.2.4
         version: 3.2.4
 
-  packages/provider-config: {}
-
   packages/runtime-client: {}
 
   packages/workbench: {}
@@ -121,6 +121,9 @@ importers:
 
   renderer:
     dependencies:
+      '@areal/provider-config':
+        specifier: workspace:*
+        version: link:../packages/provider-config
       '@areal/workbench':
         specifier: workspace:*
         version: link:../packages/workbench
