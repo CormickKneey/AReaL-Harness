@@ -1493,8 +1493,12 @@ async fn shared_budget_prioritizes_new_corrections_over_the_initial_question() {
     );
     turn(&engine, &thread.id, &initial).await;
     let base_view = engine.context_read(&thread.id, 0, 32).await.unwrap();
-    let overhead = base_view["budget"]["estimatedInputTokens"].as_u64().unwrap()
-        - base_view["budget"]["historyEstimatedTokens"].as_u64().unwrap();
+    let overhead = base_view["budget"]["estimatedInputTokens"]
+        .as_u64()
+        .unwrap()
+        - base_view["budget"]["historyEstimatedTokens"]
+            .as_u64()
+            .unwrap();
     engine.shutdown().await;
     drop(engine);
     // 软、硬窗口都以实际指令/工具开销计量，确保原文确实竞争有限额度，而非全部可容纳。
