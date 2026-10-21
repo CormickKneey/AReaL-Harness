@@ -1,0 +1,3975 @@
+{
+  "sourceRevision": "0831f3d060ad84cfa8b4e007c4be612c066e1243",
+  "evidenceLevel": "descriptive historical comparison, one independent run per model-case",
+  "formalPolicySuperioritySupported": false,
+  "samplesPerModelCase": 1,
+  "normalDoneZeroRetried": false,
+  "limitations": [
+    "failure retries5 versus historical3; unequal recovery allowance",
+    "latest main includes other fixes beyond the permission repair",
+    "all tasks are consumed development distribution",
+    "route configuration snapshots match, but actual model weight bytes and historical cumulative usage are not fully verified",
+    "only AReaL rerun versus a historical three-Harness cohort; total offered load and provider contention differ despite per-Job parallelism12",
+    "platform auto-scores are not independent semantic or visual acceptance"
+  ],
+  "rows": [
+    {
+      "model": "astra",
+      "harness": "AReaL final",
+      "failureRetries": 5,
+      "final": {
+        "tasks": 122,
+        "domain25Score": 0.8051453577826114,
+        "unweightedMean": 0.7726770491803279,
+        "done": 122,
+        "full": 89,
+        "normalZero": 23,
+        "terminalFailure": 0,
+        "scoreUnknown": 0,
+        "retriedTasks": 3,
+        "attempts": 128,
+        "states": {
+          "DONE": 122
+        },
+        "domains": {
+          "browser": {
+            "tasks": 22,
+            "score": 0.6909090909090909
+          },
+          "data": {
+            "tasks": 29,
+            "score": 0.9045965517241379
+          },
+          "documents": {
+            "tasks": 22,
+            "score": 0.9924227272727273
+          },
+          "software_engineering": {
+            "tasks": 49,
+            "score": 0.6326530612244898
+          }
+        }
+      },
+      "firstAttemptFailureZero": {
+        "tasks": 122,
+        "domain25Score": 0.7824180850553387,
+        "unweightedMean": 0.756283606557377,
+        "domains": {
+          "browser": {
+            "tasks": 22,
+            "score": 0.6
+          },
+          "data": {
+            "tasks": 29,
+            "score": 0.9045965517241379
+          },
+          "documents": {
+            "tasks": 22,
+            "score": 0.9924227272727273
+          },
+          "software_engineering": {
+            "tasks": 49,
+            "score": 0.6326530612244898
+          }
+        },
+        "view": "failure-zero observed attempts",
+        "attemptCap": 1
+      },
+      "upToFourAttemptsFailureZero": {
+        "tasks": 122,
+        "domain25Score": 0.7937817214189751,
+        "unweightedMean": 0.7644803278688524,
+        "domains": {
+          "browser": {
+            "tasks": 22,
+            "score": 0.6454545454545454
+          },
+          "data": {
+            "tasks": 29,
+            "score": 0.9045965517241379
+          },
+          "documents": {
+            "tasks": 22,
+            "score": 0.9924227272727273
+          },
+          "software_engineering": {
+            "tasks": 49,
+            "score": 0.6326530612244898
+          }
+        },
+        "view": "failure-zero observed attempts",
+        "attemptCap": 4
+      }
+    },
+    {
+      "model": "astra",
+      "harness": "areal previous",
+      "failureRetries": 3,
+      "final": {
+        "tasks": 122,
+        "domain25Score": 0.7215480551468236,
+        "unweightedMean": 0.6994532786885247,
+        "done": 120,
+        "full": 74,
+        "normalZero": 27,
+        "terminalFailure": 2,
+        "scoreUnknown": 2,
+        "retriedTasks": 19,
+        "attempts": 150,
+        "states": {
+          "DONE": 120,
+          "HARNESS_FAILED": 2
+        },
+        "domains": {
+          "browser": {
+            "tasks": 22,
+            "score": 0.6545454545454544
+          },
+          "data": {
+            "tasks": 29,
+            "score": 0.8367827586206896
+          },
+          "documents": {
+            "tasks": 22,
+            "score": 0.8030272727272728
+          },
+          "software_engineering": {
+            "tasks": 49,
+            "score": 0.5918367346938775
+          }
+        }
+      },
+      "firstAttemptFailureZero": {
+        "tasks": 122,
+        "domain25Score": 0.611639039408867,
+        "unweightedMean": 0.6103819672131148,
+        "domains": {
+          "browser": {
+            "tasks": 22,
+            "score": 0.32727272727272727
+          },
+          "data": {
+            "tasks": 29,
+            "score": 0.7448275862068966
+          },
+          "documents": {
+            "tasks": 22,
+            "score": 0.8030272727272728
+          },
+          "software_engineering": {
+            "tasks": 49,
+            "score": 0.5714285714285714
+          }
+        },
+        "view": "failure-zero observed attempts",
+        "attemptCap": 1
+      },
+      "upToFourAttemptsFailureZero": {
+        "tasks": 122,
+        "domain25Score": 0.7215480551468236,
+        "unweightedMean": 0.6994532786885247,
+        "domains": {
+          "browser": {
+            "tasks": 22,
+            "score": 0.6545454545454544
+          },
+          "data": {
+            "tasks": 29,
+            "score": 0.8367827586206896
+          },
+          "documents": {
+            "tasks": 22,
+            "score": 0.8030272727272728
+          },
+          "software_engineering": {
+            "tasks": 49,
+            "score": 0.5918367346938775
+          }
+        },
+        "view": "failure-zero observed attempts",
+        "attemptCap": 4
+      }
+    },
+    {
+      "model": "astra",
+      "harness": "dsh previous",
+      "failureRetries": 3,
+      "final": {
+        "tasks": 122,
+        "domain25Score": 0.746757978536242,
+        "unweightedMean": 0.7323081967213116,
+        "done": 122,
+        "full": 79,
+        "normalZero": 26,
+        "terminalFailure": 0,
+        "scoreUnknown": 0,
+        "retriedTasks": 24,
+        "attempts": 149,
+        "states": {
+          "DONE": 122
+        },
+        "domains": {
+          "browser": {
+            "tasks": 22,
+            "score": 0.6579545454545455
+          },
+          "data": {
+            "tasks": 29,
+            "score": 0.8563206896551725
+          },
+          "documents": {
+            "tasks": 22,
+            "score": 0.8196954545454546
+          },
+          "software_engineering": {
+            "tasks": 49,
+            "score": 0.6530612244897959
+          }
+        }
+      },
+      "firstAttemptFailureZero": {
+        "tasks": 122,
+        "domain25Score": 0.59633594059881,
+        "unweightedMean": 0.5972672131147541,
+        "domains": {
+          "browser": {
+            "tasks": 22,
+            "score": 0.3181818181818182
+          },
+          "data": {
+            "tasks": 29,
+            "score": 0.7873551724137932
+          },
+          "documents": {
+            "tasks": 22,
+            "score": 0.7287863636363635
+          },
+          "software_engineering": {
+            "tasks": 49,
+            "score": 0.5510204081632653
+          }
+        },
+        "view": "failure-zero observed attempts",
+        "attemptCap": 1
+      },
+      "upToFourAttemptsFailureZero": {
+        "tasks": 122,
+        "domain25Score": 0.746757978536242,
+        "unweightedMean": 0.7323081967213116,
+        "domains": {
+          "browser": {
+            "tasks": 22,
+            "score": 0.6579545454545455
+          },
+          "data": {
+            "tasks": 29,
+            "score": 0.8563206896551725
+          },
+          "documents": {
+            "tasks": 22,
+            "score": 0.8196954545454546
+          },
+          "software_engineering": {
+            "tasks": 49,
+            "score": 0.6530612244897959
+          }
+        },
+        "view": "failure-zero observed attempts",
+        "attemptCap": 4
+      }
+    },
+    {
+      "model": "astra",
+      "harness": "codex previous",
+      "failureRetries": 3,
+      "final": {
+        "tasks": 122,
+        "domain25Score": 0.7804412857462735,
+        "unweightedMean": 0.7598360655737704,
+        "done": 117,
+        "full": 85,
+        "normalZero": 20,
+        "terminalFailure": 5,
+        "scoreUnknown": 5,
+        "retriedTasks": 65,
+        "attempts": 246,
+        "states": {
+          "DONE": 117,
+          "HARNESS_FAILED": 5
+        },
+        "domains": {
+          "browser": {
+            "tasks": 22,
+            "score": 0.6818181818181818
+          },
+          "data": {
+            "tasks": 29,
+            "score": 0.9126448275862069
+          },
+          "documents": {
+            "tasks": 22,
+            "score": 0.8742409090909091
+          },
+          "software_engineering": {
+            "tasks": 49,
+            "score": 0.6530612244897959
+          }
+        }
+      },
+      "firstAttemptFailureZero": {
+        "tasks": 122,
+        "domain25Score": 0.41319031012091356,
+        "unweightedMean": 0.41557377049180333,
+        "domains": {
+          "browser": {
+            "tasks": 22,
+            "score": 0.22727272727272727
+          },
+          "data": {
+            "tasks": 29,
+            "score": 0.39540344827586205
+          },
+          "documents": {
+            "tasks": 22,
+            "score": 0.6015136363636363
+          },
+          "software_engineering": {
+            "tasks": 49,
+            "score": 0.42857142857142855
+          }
+        },
+        "view": "failure-zero observed attempts",
+        "attemptCap": 1
+      },
+      "upToFourAttemptsFailureZero": {
+        "tasks": 122,
+        "domain25Score": 0.7804412857462735,
+        "unweightedMean": 0.7598360655737704,
+        "domains": {
+          "browser": {
+            "tasks": 22,
+            "score": 0.6818181818181818
+          },
+          "data": {
+            "tasks": 29,
+            "score": 0.9126448275862069
+          },
+          "documents": {
+            "tasks": 22,
+            "score": 0.8742409090909091
+          },
+          "software_engineering": {
+            "tasks": 49,
+            "score": 0.6530612244897959
+          }
+        },
+        "view": "failure-zero observed attempts",
+        "attemptCap": 4
+      }
+    },
+    {
+      "model": "qwen",
+      "harness": "AReaL final",
+      "failureRetries": 5,
+      "final": {
+        "tasks": 122,
+        "domain25Score": 0.7278267809161282,
+        "unweightedMean": 0.7035524590163934,
+        "done": 114,
+        "full": 82,
+        "normalZero": 26,
+        "terminalFailure": 8,
+        "scoreUnknown": 8,
+        "retriedTasks": 24,
+        "attempts": 191,
+        "states": {
+          "DONE": 114,
+          "HARNESS_FAILED": 8
+        },
+        "domains": {
+          "browser": {
+            "tasks": 22,
+            "score": 0.7545454545454546
+          },
+          "data": {
+            "tasks": 29,
+            "score": 0.7505758620689655
+          },
+          "documents": {
+            "tasks": 22,
+            "score": 0.7939409090909091
+          },
+          "software_engineering": {
+            "tasks": 49,
+            "score": 0.6122448979591837
+          }
+        }
+      },
+      "firstAttemptFailureZero": {
+        "tasks": 122,
+        "domain25Score": 0.6189749592156611,
+        "unweightedMean": 0.5956286885245902,
+        "domains": {
+          "browser": {
+            "tasks": 22,
+            "score": 0.4818181818181818
+          },
+          "data": {
+            "tasks": 29,
+            "score": 0.710344827586207
+          },
+          "documents": {
+            "tasks": 22,
+            "score": 0.7939409090909091
+          },
+          "software_engineering": {
+            "tasks": 49,
+            "score": 0.4897959183673469
+          }
+        },
+        "view": "failure-zero observed attempts",
+        "attemptCap": 1
+      },
+      "upToFourAttemptsFailureZero": {
+        "tasks": 122,
+        "domain25Score": 0.7192060912609558,
+        "unweightedMean": 0.695355737704918,
+        "domains": {
+          "browser": {
+            "tasks": 22,
+            "score": 0.7545454545454546
+          },
+          "data": {
+            "tasks": 29,
+            "score": 0.7160931034482758
+          },
+          "documents": {
+            "tasks": 22,
+            "score": 0.7939409090909091
+          },
+          "software_engineering": {
+            "tasks": 49,
+            "score": 0.6122448979591837
+          }
+        },
+        "view": "failure-zero observed attempts",
+        "attemptCap": 4
+      }
+    },
+    {
+      "model": "qwen",
+      "harness": "areal previous",
+      "failureRetries": 3,
+      "final": {
+        "tasks": 122,
+        "domain25Score": 0.740492605239588,
+        "unweightedMean": 0.7084696721311475,
+        "done": 113,
+        "full": 81,
+        "normalZero": 24,
+        "terminalFailure": 9,
+        "scoreUnknown": 9,
+        "retriedTasks": 24,
+        "attempts": 175,
+        "states": {
+          "DONE": 113,
+          "HARNESS_FAILED": 8,
+          "EVAL_FAILED": 1
+        },
+        "domains": {
+          "browser": {
+            "tasks": 22,
+            "score": 0.8272727272727273
+          },
+          "data": {
+            "tasks": 29,
+            "score": 0.8344827586206897
+          },
+          "documents": {
+            "tasks": 22,
+            "score": 0.7287863636363636
+          },
+          "software_engineering": {
+            "tasks": 49,
+            "score": 0.5714285714285714
+          }
+        }
+      },
+      "firstAttemptFailureZero": {
+        "tasks": 122,
+        "domain25Score": 0.641565793135436,
+        "unweightedMean": 0.6215844262295083,
+        "domains": {
+          "browser": {
+            "tasks": 22,
+            "score": 0.5272727272727272
+          },
+          "data": {
+            "tasks": 29,
+            "score": 0.7999999999999999
+          },
+          "documents": {
+            "tasks": 22,
+            "score": 0.7287863636363636
+          },
+          "software_engineering": {
+            "tasks": 49,
+            "score": 0.5102040816326531
+          }
+        },
+        "view": "failure-zero observed attempts",
+        "attemptCap": 1
+      },
+      "upToFourAttemptsFailureZero": {
+        "tasks": 122,
+        "domain25Score": 0.740492605239588,
+        "unweightedMean": 0.7084696721311475,
+        "domains": {
+          "browser": {
+            "tasks": 22,
+            "score": 0.8272727272727273
+          },
+          "data": {
+            "tasks": 29,
+            "score": 0.8344827586206897
+          },
+          "documents": {
+            "tasks": 22,
+            "score": 0.7287863636363636
+          },
+          "software_engineering": {
+            "tasks": 49,
+            "score": 0.5714285714285714
+          }
+        },
+        "view": "failure-zero observed attempts",
+        "attemptCap": 4
+      }
+    },
+    {
+      "model": "qwen",
+      "harness": "dsh previous",
+      "failureRetries": 3,
+      "final": {
+        "tasks": 122,
+        "domain25Score": 0.7906108262427228,
+        "unweightedMean": 0.7431696721311476,
+        "done": 108,
+        "full": 87,
+        "normalZero": 16,
+        "terminalFailure": 14,
+        "scoreUnknown": 14,
+        "retriedTasks": 35,
+        "attempts": 197,
+        "states": {
+          "DONE": 108,
+          "HARNESS_FAILED": 14
+        },
+        "domains": {
+          "browser": {
+            "tasks": 22,
+            "score": 0.8
+          },
+          "data": {
+            "tasks": 29,
+            "score": 0.809196551724138
+          },
+          "documents": {
+            "tasks": 22,
+            "score": 0.9818181818181819
+          },
+          "software_engineering": {
+            "tasks": 49,
+            "score": 0.5714285714285714
+          }
+        }
+      },
+      "firstAttemptFailureZero": {
+        "tasks": 122,
+        "domain25Score": 0.6453249952018425,
+        "unweightedMean": 0.6065573770491803,
+        "domains": {
+          "browser": {
+            "tasks": 22,
+            "score": 0.4818181818181818
+          },
+          "data": {
+            "tasks": 29,
+            "score": 0.6482758620689656
+          },
+          "documents": {
+            "tasks": 22,
+            "score": 0.9818181818181819
+          },
+          "software_engineering": {
+            "tasks": 49,
+            "score": 0.46938775510204084
+          }
+        },
+        "view": "failure-zero observed attempts",
+        "attemptCap": 1
+      },
+      "upToFourAttemptsFailureZero": {
+        "tasks": 122,
+        "domain25Score": 0.7906108262427228,
+        "unweightedMean": 0.7431696721311476,
+        "domains": {
+          "browser": {
+            "tasks": 22,
+            "score": 0.8
+          },
+          "data": {
+            "tasks": 29,
+            "score": 0.809196551724138
+          },
+          "documents": {
+            "tasks": 22,
+            "score": 0.9818181818181819
+          },
+          "software_engineering": {
+            "tasks": 49,
+            "score": 0.5714285714285714
+          }
+        },
+        "view": "failure-zero observed attempts",
+        "attemptCap": 4
+      }
+    },
+    {
+      "model": "qwen",
+      "harness": "codex previous",
+      "failureRetries": 3,
+      "final": {
+        "tasks": 122,
+        "domain25Score": 0.7731208967756381,
+        "unweightedMean": 0.7368852459016394,
+        "done": 120,
+        "full": 82,
+        "normalZero": 25,
+        "terminalFailure": 2,
+        "scoreUnknown": 2,
+        "retriedTasks": 16,
+        "attempts": 149,
+        "states": {
+          "DONE": 120,
+          "HARNESS_FAILED": 2
+        },
+        "domains": {
+          "browser": {
+            "tasks": 22,
+            "score": 0.7727272727272727
+          },
+          "data": {
+            "tasks": 29,
+            "score": 0.9195413793103447
+          },
+          "documents": {
+            "tasks": 22,
+            "score": 0.8287863636363635
+          },
+          "software_engineering": {
+            "tasks": 49,
+            "score": 0.5714285714285714
+          }
+        }
+      },
+      "firstAttemptFailureZero": {
+        "tasks": 122,
+        "domain25Score": 0.6969213573987588,
+        "unweightedMean": 0.6663934426229507,
+        "domains": {
+          "browser": {
+            "tasks": 22,
+            "score": 0.5636363636363636
+          },
+          "data": {
+            "tasks": 29,
+            "score": 0.8850586206896551
+          },
+          "documents": {
+            "tasks": 22,
+            "score": 0.8287863636363635
+          },
+          "software_engineering": {
+            "tasks": 49,
+            "score": 0.5102040816326531
+          }
+        },
+        "view": "failure-zero observed attempts",
+        "attemptCap": 1
+      },
+      "upToFourAttemptsFailureZero": {
+        "tasks": 122,
+        "domain25Score": 0.7731208967756381,
+        "unweightedMean": 0.7368852459016394,
+        "domains": {
+          "browser": {
+            "tasks": 22,
+            "score": 0.7727272727272727
+          },
+          "data": {
+            "tasks": 29,
+            "score": 0.9195413793103447
+          },
+          "documents": {
+            "tasks": 22,
+            "score": 0.8287863636363635
+          },
+          "software_engineering": {
+            "tasks": 49,
+            "score": 0.5714285714285714
+          }
+        },
+        "view": "failure-zero observed attempts",
+        "attemptCap": 4
+      }
+    }
+  ],
+  "perCaseChanges": [
+    {
+      "model": "astra",
+      "id": "swebench-verified-django__django-16256",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "swebench-verified-sphinx-doc__sphinx-8265",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "swebench-verified-pydata__xarray-6938",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "swebench-verified-scikit-learn__scikit-learn-14983",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "swebench-verified-astropy__astropy-14369",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "swebench-verified-matplotlib__matplotlib-20859",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "swebench-verified-sympy__sympy-18211",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "swebench-verified-django__django-16100",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "swebench-verified-astropy__astropy-13977",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "swebench-verified-sympy__sympy-19783",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "swebench-verified-matplotlib__matplotlib-26466",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "swebench-verified-pydata__xarray-3993",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "swebench-verified-pytest-dev__pytest-6202",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "swebench-verified-sphinx-doc__sphinx-8548",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "swebench-verified-scikit-learn__scikit-learn-11310",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "swebench-verified-django__django-11141",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "swebench-verified-matplotlib__matplotlib-20826",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "swebench-verified-sympy__sympy-15875",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "swebench-verified-pylint-dev__pylint-7277",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "swebench-verified-pallets__flask-5014",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "swebench-verified-psf__requests-6028",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "swebench-verified-pytest-dev__pytest-7432",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "swebench-verified-pylint-dev__pylint-6903",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "swebench-verified-scikit-learn__scikit-learn-14894",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "tb2-constraints-scheduling",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "tb2-modernize-scientific-stack",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 2,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "tb2-sqlite-with-gcov",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 1.0,
+      "delta": 1.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 2,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "tb2-portfolio-optimization",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "tb2-adaptive-rejection-sampler",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 3,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "tb2-bn-fit-modify",
+      "domain": "data",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "tb2-configure-git-webserver",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "HARNESS_FAILED",
+      "newStatus": "DONE",
+      "oldAttempts": 4,
+      "newAttempts": 2
+    },
+    {
+      "model": "astra",
+      "id": "tb2-mailman",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 2,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "tb2-make-mips-interpreter",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 2,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "tb2-password-recovery",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "tb2-raman-fitting",
+      "domain": "data",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "tb2-schemelike-metacircular-eval",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "tbpc030001-terminate-subprocess-worker-tree",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "tbpc030001-drive-persistent-pty-session",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 1.0,
+      "delta": 1.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "tbpc030001-recover-rotated-sqlite-wal-chain",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 1.0,
+      "delta": 1.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "tbpc030001-sanitize-git-ref-history",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "tbpc030001-reconcile-supplier-parts-ledger",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "tbpc030001-summarize-equipment-event-windows",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "tbpc030001-plan-selective-relational-join",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "tbpc030001-process-payables-document-batch",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 2,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "wd-data-dashboard",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "wd-docx-brief",
+      "domain": "documents",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "wd-docx-review",
+      "domain": "documents",
+      "oldScore": 0.8333,
+      "newScore": 0.8333,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "wd-pptx-review",
+      "domain": "documents",
+      "oldScore": 0.8333,
+      "newScore": 1.0,
+      "delta": 0.16669999999999996,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "wd-xlsx-reconcile",
+      "domain": "data",
+      "oldScore": 0.6667,
+      "newScore": 0.8333,
+      "delta": 0.16660000000000008,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 2,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "bx-doc-merge",
+      "domain": "documents",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "bx-doc-decisions",
+      "domain": "documents",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "bx-doc-controls",
+      "domain": "documents",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "bx-doc-accessibility",
+      "domain": "documents",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "bx-doc-pdf-form",
+      "domain": "documents",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "bx-doc-pdf-redact",
+      "domain": "documents",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "bx-doc-pdf-packet",
+      "domain": "documents",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "bx-doc-slide-refresh",
+      "domain": "documents",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "bx-data-event-time",
+      "domain": "data",
+      "oldScore": 0.8,
+      "newScore": 1.0,
+      "delta": 0.19999999999999996,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "bx-data-asof",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "bx-data-cohort",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "bx-data-stratified",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "bx-data-capacity",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "bx-data-workbook-repair",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "bx-data-allocation",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "bx-data-entities",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "wd2-data-blocked-design",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "wd2-data-cpu-scope",
+      "domain": "data",
+      "oldScore": 0.2,
+      "newScore": 0.4,
+      "delta": 0.2,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "wd2-data-permission-closure",
+      "domain": "data",
+      "oldScore": 0.8,
+      "newScore": 1.0,
+      "delta": 0.19999999999999996,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "wd2-data-result-census",
+      "domain": "data",
+      "oldScore": 0.8,
+      "newScore": 1.0,
+      "delta": 0.19999999999999996,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "wd2-data-trace-clock",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "wd2-data-weighted-profile",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "wd2-doc-api-playbook",
+      "domain": "documents",
+      "oldScore": 0.8,
+      "newScore": 1.0,
+      "delta": 0.19999999999999996,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "wd2-doc-pdf-threads",
+      "domain": "documents",
+      "oldScore": 0.8,
+      "newScore": 1.0,
+      "delta": 0.19999999999999996,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "wd2-doc-protocol-diagram",
+      "domain": "documents",
+      "oldScore": 0.6,
+      "newScore": 1.0,
+      "delta": 0.4,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "wd2-doc-weekly-evidence",
+      "domain": "documents",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "wd2-swe-archive",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "wd2-swe-http-polling",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "wd2-swe-outbox",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "wd2-swe-publish",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "wd2-swe-root-ledger",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "wd2-swe-scheduler",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "wd2-swe-sse",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "wd2-swe-startup",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "hs102-doc-contract-migration",
+      "domain": "documents",
+      "oldScore": 0.8,
+      "newScore": 1.0,
+      "delta": 0.19999999999999996,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "hs102-doc-incident-timeline",
+      "domain": "documents",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "wd-browser-incident",
+      "domain": "browser",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 3,
+      "newAttempts": 2
+    },
+    {
+      "model": "astra",
+      "id": "wd-browser-replan",
+      "domain": "browser",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 2,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "wd-browser-triage",
+      "domain": "browser",
+      "oldScore": 0,
+      "newScore": 1.0,
+      "delta": 1.0,
+      "oldStatus": "HARNESS_FAILED",
+      "newStatus": "DONE",
+      "oldAttempts": 4,
+      "newAttempts": 5
+    },
+    {
+      "model": "astra",
+      "id": "wd-browser-todomvc-confirm",
+      "domain": "browser",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "wd-browser-tiddlywiki-confirm",
+      "domain": "browser",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 3,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "bx-browser-priority",
+      "domain": "browser",
+      "oldScore": 0.4,
+      "newScore": 1.0,
+      "delta": 0.6,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 2,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "bx-browser-dependencies",
+      "domain": "browser",
+      "oldScore": 0.6,
+      "newScore": 1.0,
+      "delta": 0.4,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 2,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "bx-browser-subtasks",
+      "domain": "browser",
+      "oldScore": 1,
+      "newScore": 0.8,
+      "delta": -0.19999999999999996,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 2,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "bx-browser-deadlines",
+      "domain": "browser",
+      "oldScore": 0.8,
+      "newScore": 1.0,
+      "delta": 0.19999999999999996,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 2,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "bx-browser-transfer",
+      "domain": "browser",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 3,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "bx-browser-import",
+      "domain": "browser",
+      "oldScore": 0.4,
+      "newScore": 0.4,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 2,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "bx-browser-board",
+      "domain": "browser",
+      "oldScore": 1,
+      "newScore": 0.8,
+      "delta": -0.19999999999999996,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 3,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "bx-browser-audit",
+      "domain": "browser",
+      "oldScore": 0.6,
+      "newScore": 0.6,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "wd2-browser-access",
+      "domain": "browser",
+      "oldScore": 0.2,
+      "newScore": 0.2,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "wd2-browser-analysis-triage",
+      "domain": "browser",
+      "oldScore": 0.2,
+      "newScore": 0.2,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "wd2-browser-api-policy",
+      "domain": "browser",
+      "oldScore": 0.2,
+      "newScore": 0.2,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "wd2-browser-release",
+      "domain": "browser",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "006-api-scope",
+      "domain": "browser",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "007-model-capabilities",
+      "domain": "browser",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "008-export-unknown",
+      "domain": "browser",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "009-issue-conflict",
+      "domain": "browser",
+      "oldScore": 1,
+      "newScore": 0.0,
+      "delta": -1.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "010-submission-batch",
+      "domain": "browser",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "001-config-migration",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 0.0,
+      "delta": -1.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "002-workflow-roundtrip",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "003-pagination-client",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "004-feedback-redaction",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "005-release-manifest",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "011-release-notes",
+      "domain": "documents",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "012-apispace-runbook",
+      "domain": "documents",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "014-architecture-adr",
+      "domain": "documents",
+      "oldScore": 0,
+      "newScore": 1.0,
+      "delta": 1.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "015-benchmark-report",
+      "domain": "documents",
+      "oldScore": 0,
+      "newScore": 1.0,
+      "delta": 1.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "016-token-reconciliation",
+      "domain": "data",
+      "oldScore": 0,
+      "newScore": 1.0,
+      "delta": 1.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "017-paired-experiment",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "018-api-catalog",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "019-release-sla",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "020-continuity-ledger",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "astra",
+      "id": "013-script-review",
+      "domain": "documents",
+      "oldScore": 0,
+      "newScore": 1.0,
+      "delta": 1.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "swebench-verified-django__django-16256",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "swebench-verified-sphinx-doc__sphinx-8265",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 1.0,
+      "delta": 1.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "swebench-verified-pydata__xarray-6938",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "swebench-verified-scikit-learn__scikit-learn-14983",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 1.0,
+      "delta": 1.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "swebench-verified-astropy__astropy-14369",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "swebench-verified-matplotlib__matplotlib-20859",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "swebench-verified-sympy__sympy-18211",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "swebench-verified-django__django-16100",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 0.0,
+      "delta": -1.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "swebench-verified-astropy__astropy-13977",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "swebench-verified-sympy__sympy-19783",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "swebench-verified-matplotlib__matplotlib-26466",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "swebench-verified-pydata__xarray-3993",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 0.0,
+      "delta": -1.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "swebench-verified-pytest-dev__pytest-6202",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "swebench-verified-sphinx-doc__sphinx-8548",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 1.0,
+      "delta": 1.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "swebench-verified-scikit-learn__scikit-learn-11310",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "swebench-verified-django__django-11141",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "swebench-verified-matplotlib__matplotlib-20826",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "swebench-verified-sympy__sympy-15875",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 1.0,
+      "delta": 1.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "swebench-verified-pylint-dev__pylint-7277",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "swebench-verified-pallets__flask-5014",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "swebench-verified-psf__requests-6028",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 0.0,
+      "delta": -1.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "swebench-verified-pytest-dev__pytest-7432",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "swebench-verified-pylint-dev__pylint-6903",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "swebench-verified-scikit-learn__scikit-learn-14894",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "tb2-constraints-scheduling",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "tb2-modernize-scientific-stack",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "tb2-sqlite-with-gcov",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "tb2-portfolio-optimization",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "tb2-adaptive-rejection-sampler",
+      "domain": "data",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "HARNESS_FAILED",
+      "newStatus": "HARNESS_FAILED",
+      "oldAttempts": 4,
+      "newAttempts": 6
+    },
+    {
+      "model": "qwen",
+      "id": "tb2-bn-fit-modify",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 0.0,
+      "delta": -1.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "tb2-configure-git-webserver",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 4,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "tb2-mailman",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "HARNESS_FAILED",
+      "newStatus": "HARNESS_FAILED",
+      "oldAttempts": 4,
+      "newAttempts": 6
+    },
+    {
+      "model": "qwen",
+      "id": "tb2-make-mips-interpreter",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "HARNESS_FAILED",
+      "newStatus": "HARNESS_FAILED",
+      "oldAttempts": 4,
+      "newAttempts": 6
+    },
+    {
+      "model": "qwen",
+      "id": "tb2-password-recovery",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 4
+    },
+    {
+      "model": "qwen",
+      "id": "tb2-raman-fitting",
+      "domain": "data",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 2,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "tb2-schemelike-metacircular-eval",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "HARNESS_FAILED",
+      "newStatus": "HARNESS_FAILED",
+      "oldAttempts": 4,
+      "newAttempts": 6
+    },
+    {
+      "model": "qwen",
+      "id": "tbpc030001-terminate-subprocess-worker-tree",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 2,
+      "newAttempts": 4
+    },
+    {
+      "model": "qwen",
+      "id": "tbpc030001-drive-persistent-pty-session",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 2,
+      "newAttempts": 3
+    },
+    {
+      "model": "qwen",
+      "id": "tbpc030001-recover-rotated-sqlite-wal-chain",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "tbpc030001-sanitize-git-ref-history",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 1.0,
+      "delta": 1.0,
+      "oldStatus": "HARNESS_FAILED",
+      "newStatus": "DONE",
+      "oldAttempts": 4,
+      "newAttempts": 2
+    },
+    {
+      "model": "qwen",
+      "id": "tbpc030001-reconcile-supplier-parts-ledger",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 2,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "tbpc030001-summarize-equipment-event-windows",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "tbpc030001-plan-selective-relational-join",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 0.0,
+      "delta": -1.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "tbpc030001-process-payables-document-batch",
+      "domain": "data",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "wd-data-dashboard",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 6
+    },
+    {
+      "model": "qwen",
+      "id": "wd-docx-brief",
+      "domain": "documents",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "wd-docx-review",
+      "domain": "documents",
+      "oldScore": 0.8333,
+      "newScore": 0.6667,
+      "delta": -0.16660000000000008,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "wd-pptx-review",
+      "domain": "documents",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "wd-xlsx-reconcile",
+      "domain": "data",
+      "oldScore": 0,
+      "newScore": 0.1667,
+      "delta": 0.1667,
+      "oldStatus": "EVAL_FAILED",
+      "newStatus": "DONE",
+      "oldAttempts": 4,
+      "newAttempts": 3
+    },
+    {
+      "model": "qwen",
+      "id": "bx-doc-merge",
+      "domain": "documents",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "bx-doc-decisions",
+      "domain": "documents",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "bx-doc-controls",
+      "domain": "documents",
+      "oldScore": 0,
+      "newScore": 1.0,
+      "delta": 1.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "bx-doc-accessibility",
+      "domain": "documents",
+      "oldScore": 0.8,
+      "newScore": 1.0,
+      "delta": 0.19999999999999996,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "bx-doc-pdf-form",
+      "domain": "documents",
+      "oldScore": 0.8,
+      "newScore": 1.0,
+      "delta": 0.19999999999999996,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "bx-doc-pdf-redact",
+      "domain": "documents",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "bx-doc-pdf-packet",
+      "domain": "documents",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "bx-doc-slide-refresh",
+      "domain": "documents",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "bx-data-event-time",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "bx-data-asof",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "bx-data-cohort",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "bx-data-stratified",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "bx-data-capacity",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "bx-data-workbook-repair",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "bx-data-allocation",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "bx-data-entities",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "wd2-data-blocked-design",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "wd2-data-cpu-scope",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 0.8,
+      "delta": -0.19999999999999996,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "wd2-data-permission-closure",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "wd2-data-result-census",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "wd2-data-trace-clock",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 0.8,
+      "delta": -0.19999999999999996,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "wd2-data-weighted-profile",
+      "domain": "data",
+      "oldScore": 0.2,
+      "newScore": 1.0,
+      "delta": 0.8,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "wd2-doc-api-playbook",
+      "domain": "documents",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "wd2-doc-pdf-threads",
+      "domain": "documents",
+      "oldScore": 0.8,
+      "newScore": 0.0,
+      "delta": -0.8,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "wd2-doc-protocol-diagram",
+      "domain": "documents",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "wd2-doc-weekly-evidence",
+      "domain": "documents",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "wd2-swe-archive",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "wd2-swe-http-polling",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 1.0,
+      "delta": 1.0,
+      "oldStatus": "HARNESS_FAILED",
+      "newStatus": "DONE",
+      "oldAttempts": 4,
+      "newAttempts": 2
+    },
+    {
+      "model": "qwen",
+      "id": "wd2-swe-outbox",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "wd2-swe-publish",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 2,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "wd2-swe-root-ledger",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "wd2-swe-scheduler",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "wd2-swe-sse",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 2,
+      "newAttempts": 2
+    },
+    {
+      "model": "qwen",
+      "id": "wd2-swe-startup",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 4,
+      "newAttempts": 2
+    },
+    {
+      "model": "qwen",
+      "id": "hs102-doc-contract-migration",
+      "domain": "documents",
+      "oldScore": 1,
+      "newScore": 0.8,
+      "delta": -0.19999999999999996,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "hs102-doc-incident-timeline",
+      "domain": "documents",
+      "oldScore": 0.8,
+      "newScore": 1.0,
+      "delta": 0.19999999999999996,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "wd-browser-incident",
+      "domain": "browser",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 2,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "wd-browser-replan",
+      "domain": "browser",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "wd-browser-triage",
+      "domain": "browser",
+      "oldScore": 0,
+      "newScore": 1.0,
+      "delta": 1.0,
+      "oldStatus": "HARNESS_FAILED",
+      "newStatus": "DONE",
+      "oldAttempts": 4,
+      "newAttempts": 2
+    },
+    {
+      "model": "qwen",
+      "id": "wd-browser-todomvc-confirm",
+      "domain": "browser",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "wd-browser-tiddlywiki-confirm",
+      "domain": "browser",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 2,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "bx-browser-priority",
+      "domain": "browser",
+      "oldScore": 1,
+      "newScore": 0.0,
+      "delta": -1.0,
+      "oldStatus": "DONE",
+      "newStatus": "HARNESS_FAILED",
+      "oldAttempts": 3,
+      "newAttempts": 6
+    },
+    {
+      "model": "qwen",
+      "id": "bx-browser-dependencies",
+      "domain": "browser",
+      "oldScore": 0.6,
+      "newScore": 0.0,
+      "delta": -0.6,
+      "oldStatus": "DONE",
+      "newStatus": "HARNESS_FAILED",
+      "oldAttempts": 4,
+      "newAttempts": 6
+    },
+    {
+      "model": "qwen",
+      "id": "bx-browser-subtasks",
+      "domain": "browser",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "HARNESS_FAILED",
+      "newStatus": "HARNESS_FAILED",
+      "oldAttempts": 4,
+      "newAttempts": 6
+    },
+    {
+      "model": "qwen",
+      "id": "bx-browser-deadlines",
+      "domain": "browser",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 4,
+      "newAttempts": 4
+    },
+    {
+      "model": "qwen",
+      "id": "bx-browser-transfer",
+      "domain": "browser",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 2,
+      "newAttempts": 2
+    },
+    {
+      "model": "qwen",
+      "id": "bx-browser-import",
+      "domain": "browser",
+      "oldScore": 1,
+      "newScore": 0.0,
+      "delta": -1.0,
+      "oldStatus": "DONE",
+      "newStatus": "HARNESS_FAILED",
+      "oldAttempts": 4,
+      "newAttempts": 6
+    },
+    {
+      "model": "qwen",
+      "id": "bx-browser-board",
+      "domain": "browser",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "bx-browser-audit",
+      "domain": "browser",
+      "oldScore": 0.6,
+      "newScore": 0.6,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "wd2-browser-access",
+      "domain": "browser",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 2
+    },
+    {
+      "model": "qwen",
+      "id": "wd2-browser-analysis-triage",
+      "domain": "browser",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 2
+    },
+    {
+      "model": "qwen",
+      "id": "wd2-browser-api-policy",
+      "domain": "browser",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "wd2-browser-release",
+      "domain": "browser",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 3
+    },
+    {
+      "model": "qwen",
+      "id": "006-api-scope",
+      "domain": "browser",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "007-model-capabilities",
+      "domain": "browser",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "008-export-unknown",
+      "domain": "browser",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "009-issue-conflict",
+      "domain": "browser",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "010-submission-batch",
+      "domain": "browser",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "001-config-migration",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 0.0,
+      "delta": -1.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "002-workflow-roundtrip",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 2
+    },
+    {
+      "model": "qwen",
+      "id": "003-pagination-client",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "004-feedback-redaction",
+      "domain": "software_engineering",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "005-release-manifest",
+      "domain": "software_engineering",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "011-release-notes",
+      "domain": "documents",
+      "oldScore": 0,
+      "newScore": 1.0,
+      "delta": 1.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "012-apispace-runbook",
+      "domain": "documents",
+      "oldScore": 0,
+      "newScore": 1.0,
+      "delta": 1.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "014-architecture-adr",
+      "domain": "documents",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "015-benchmark-report",
+      "domain": "documents",
+      "oldScore": 0,
+      "newScore": 0.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "016-token-reconciliation",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 0.0,
+      "delta": -1.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "017-paired-experiment",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "018-api-catalog",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "019-release-sla",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "020-continuity-ledger",
+      "domain": "data",
+      "oldScore": 1,
+      "newScore": 1.0,
+      "delta": 0.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    },
+    {
+      "model": "qwen",
+      "id": "013-script-review",
+      "domain": "documents",
+      "oldScore": 1,
+      "newScore": 0.0,
+      "delta": -1.0,
+      "oldStatus": "DONE",
+      "newStatus": "DONE",
+      "oldAttempts": 1,
+      "newAttempts": 1
+    }
+  ],
+  "executionMechanisms": [
+    {
+      "model": "astra",
+      "tasks": 122,
+      "stateAvailable": 122,
+      "stateMissing": 0,
+      "startedChildThreads": 0,
+      "failedStartedChildren": 0,
+      "interruptedStartedChildren": 0,
+      "unsettledStartedChildren": 0,
+      "creationErrors": 0,
+      "preflightRejectedWithoutChild": 0,
+      "bwrapErrorsInToolReceipts": 0,
+      "uidMapErrorsInFailedToolReceipts": 0,
+      "bwrapDiagnosticsInFailedToolReceipts": 0,
+      "toolCalls": 2563,
+      "toolFailures": 274,
+      "tasksWithChildren": 0,
+      "childFinalStates": {},
+      "knownCapabilityTasks": {
+        "available": 0,
+        "unavailable": 122,
+        "unknown": 0
+      }
+    },
+    {
+      "model": "qwen",
+      "tasks": 122,
+      "stateAvailable": 122,
+      "stateMissing": 0,
+      "startedChildThreads": 0,
+      "failedStartedChildren": 0,
+      "interruptedStartedChildren": 0,
+      "unsettledStartedChildren": 0,
+      "creationErrors": 0,
+      "preflightRejectedWithoutChild": 0,
+      "bwrapErrorsInToolReceipts": 0,
+      "uidMapErrorsInFailedToolReceipts": 0,
+      "bwrapDiagnosticsInFailedToolReceipts": 0,
+      "toolCalls": 4006,
+      "toolFailures": 730,
+      "tasksWithChildren": 0,
+      "childFinalStates": {},
+      "knownCapabilityTasks": {
+        "available": 0,
+        "unavailable": 122,
+        "unknown": 0
+      }
+    }
+  ],
+  "usage": {
+    "tasksExported": 244,
+    "knownTokensLowerBound": 317919463,
+    "tasksWithUnknownUsage": 32,
+    "missingDownloads": 322,
+    "identityMismatches": []
+  },
+  "artifactIdentity": {
+    "key": "standard102-native-areal",
+    "version": "1.1.0-5a8b6d192fe5",
+    "sourceRevision": "0831f3d060ad84cfa8b4e007c4be612c066e1243",
+    "packageSha256": "da6effdb801aad675e6baa50458c1edacb9e902db396373596ee7e5888833897",
+    "contentHash": "92253a6656c7679a8d4d17df7d9fe1983195d097f9ae00499ab9ae262df7f90c"
+  },
+  "sourceBinding": {
+    "candidateSource": "0831f3d060ad84cfa8b4e007c4be612c066e1243",
+    "mergedMain": "e5c07f25b07772bead92fae821d12ac79f776082",
+    "candidateIsAncestor": true,
+    "productionPathsIdentical": [
+      "core",
+      "runtime",
+      "clients",
+      "schemas",
+      "Cargo.toml",
+      "Cargo.lock",
+      "rust-toolchain.toml",
+      "scripts/package.py",
+      "scripts/prepare-runtime-shell.py",
+      "scripts/launch.py"
+    ],
+    "coreInputHash": "46659ac6a0834207e30437023ddba531b55671a7351ae08ba305824aa309ce44",
+    "laterCommitDifference": "lifecycle soak resource-layout test only; merge adds no source difference",
+    "cleanFinalWorktree": true
+  },
+  "modelRouteSnapshots": {
+    "rows": [
+      {
+        "model": "gpt-6-astra",
+        "beforeFingerprint": "e5877412505e685ad502ff42a571c227f8e8b470a92dae659c3db10136160862",
+        "afterFingerprint": "e5877412505e685ad502ff42a571c227f8e8b470a92dae659c3db10136160862",
+        "historicalFingerprint": "e5877412505e685ad502ff42a571c227f8e8b470a92dae659c3db10136160862",
+        "currentRunConfigUnchanged": true,
+        "historicalConfigEqual": true,
+        "endpointsAfter": 6,
+        "actualModelWeightBytesVerified": false,
+        "credentialsExcluded": true
+      },
+      {
+        "model": "qwen-3-8-vlm-judge",
+        "beforeFingerprint": "f7ffa959641ef51b204fc1bc758a79433a416a4f5ae476fdce1762c7c5a7ba69",
+        "afterFingerprint": "f7ffa959641ef51b204fc1bc758a79433a416a4f5ae476fdce1762c7c5a7ba69",
+        "historicalFingerprint": "f7ffa959641ef51b204fc1bc758a79433a416a4f5ae476fdce1762c7c5a7ba69",
+        "currentRunConfigUnchanged": true,
+        "historicalConfigEqual": true,
+        "endpointsAfter": 4,
+        "actualModelWeightBytesVerified": false,
+        "credentialsExcluded": true
+      }
+    ],
+    "strictHistoricalModelIdentityVerified": false,
+    "meaning": "configuration fingerprints exclude secrets and volatile health; alias/config equality does not verify actual model weight bytes"
+  },
+  "terminalFailureStops": [
+    {
+      "model": "qwen",
+      "id": "tb2-adaptive-rejection-sampler",
+      "attempts": 6,
+      "observedStop": "output_length_limit",
+      "coreCode": "LLM_OUTPUT_TOKEN_LIMIT_EXCEEDED",
+      "rootBudgetRejectionsInFinalAttempt": 0,
+      "nativeTimedOut": false,
+      "interpretation": "near-end stop only, not isolated initiating-cause attribution"
+    },
+    {
+      "model": "qwen",
+      "id": "tb2-mailman",
+      "attempts": 6,
+      "observedStop": "root_budget_rejected",
+      "coreCode": "LLM_RESPONSE_FAILED",
+      "rootBudgetRejectionsInFinalAttempt": 1,
+      "nativeTimedOut": false,
+      "interpretation": "near-end stop only, not isolated initiating-cause attribution"
+    },
+    {
+      "model": "qwen",
+      "id": "tb2-make-mips-interpreter",
+      "attempts": 6,
+      "observedStop": "native_timeout",
+      "coreCode": "HARNESS_INTERNAL_ERROR",
+      "rootBudgetRejectionsInFinalAttempt": 0,
+      "nativeTimedOut": true,
+      "interpretation": "near-end stop only, not isolated initiating-cause attribution"
+    },
+    {
+      "model": "qwen",
+      "id": "tb2-schemelike-metacircular-eval",
+      "attempts": 6,
+      "observedStop": "output_length_limit",
+      "coreCode": "LLM_OUTPUT_TOKEN_LIMIT_EXCEEDED",
+      "rootBudgetRejectionsInFinalAttempt": 0,
+      "nativeTimedOut": false,
+      "interpretation": "near-end stop only, not isolated initiating-cause attribution"
+    },
+    {
+      "model": "qwen",
+      "id": "bx-browser-priority",
+      "attempts": 6,
+      "observedStop": "native_timeout",
+      "coreCode": "HARNESS_INTERNAL_ERROR",
+      "rootBudgetRejectionsInFinalAttempt": 0,
+      "nativeTimedOut": true,
+      "interpretation": "near-end stop only, not isolated initiating-cause attribution"
+    },
+    {
+      "model": "qwen",
+      "id": "bx-browser-dependencies",
+      "attempts": 6,
+      "observedStop": "root_budget_rejected",
+      "coreCode": "LLM_RESPONSE_FAILED",
+      "rootBudgetRejectionsInFinalAttempt": 1,
+      "nativeTimedOut": false,
+      "interpretation": "near-end stop only, not isolated initiating-cause attribution"
+    },
+    {
+      "model": "qwen",
+      "id": "bx-browser-subtasks",
+      "attempts": 6,
+      "observedStop": "root_budget_rejected",
+      "coreCode": "LLM_RESPONSE_FAILED",
+      "rootBudgetRejectionsInFinalAttempt": 1,
+      "nativeTimedOut": false,
+      "interpretation": "near-end stop only, not isolated initiating-cause attribution"
+    },
+    {
+      "model": "qwen",
+      "id": "bx-browser-import",
+      "attempts": 6,
+      "observedStop": "root_budget_rejected",
+      "coreCode": "LLM_RESPONSE_FAILED",
+      "rootBudgetRejectionsInFinalAttempt": 1,
+      "nativeTimedOut": false,
+      "interpretation": "near-end stop only, not isolated initiating-cause attribution"
+    }
+  ],
+  "merge": {
+    "pullRequest": "https://github.com/areal-project/AReaL-Harness/pull/96",
+    "commit": "e5c07f25b07772bead92fae821d12ac79f776082",
+    "applicableChecksPassed": true,
+    "evidence": "../premerge-checks.json"
+  },
+  "recoveryAllowance": [
+    {
+      "model": "astra",
+      "tasksBeyondFourAttempts": 1,
+      "doneBeyondFourAttempts": 1,
+      "positiveScoreBeyondFourAttempts": 1,
+      "observedFinalMinusCapFour": 0.011363636363636354,
+      "caseIds": [
+        "wd-browser-triage"
+      ]
+    },
+    {
+      "model": "qwen",
+      "tasksBeyondFourAttempts": 9,
+      "doneBeyondFourAttempts": 1,
+      "positiveScoreBeyondFourAttempts": 1,
+      "observedFinalMinusCapFour": 0.008620689655172376,
+      "caseIds": [
+        "tb2-adaptive-rejection-sampler",
+        "tb2-mailman",
+        "tb2-make-mips-interpreter",
+        "tb2-schemelike-metacircular-eval",
+        "wd-data-dashboard",
+        "bx-browser-priority",
+        "bx-browser-dependencies",
+        "bx-browser-subtasks",
+        "bx-browser-import"
+      ]
+    }
+  ],
+  "pairedChanges": [
+    {
+      "model": "astra",
+      "improved": 21,
+      "regressed": 4,
+      "equal": 97,
+      "weightedDelta": 0.0835973026357878
+    },
+    {
+      "model": "qwen",
+      "improved": 15,
+      "regressed": 16,
+      "equal": 91,
+      "weightedDelta": -0.012665824323459862
+    }
+  ],
+  "usageByModel": [
+    {
+      "model": "astra",
+      "logicalTasks": 122,
+      "attempts": 128,
+      "verifiedAttempts": 122,
+      "unknownProvenanceAttempts": 6,
+      "knownTokensLowerBound": 70929417,
+      "knownRequestsLowerBound": 2674,
+      "knownAttemptSecondsLowerBound": 39338.802893751,
+      "unknownUsageRequestsInVerifiedAttempts": 5,
+      "tasksWithUnknownUsage": 8,
+      "usd": null
+    },
+    {
+      "model": "qwen",
+      "logicalTasks": 122,
+      "attempts": 191,
+      "verifiedAttempts": 123,
+      "unknownProvenanceAttempts": 68,
+      "knownTokensLowerBound": 246990046,
+      "knownRequestsLowerBound": 7065,
+      "knownAttemptSecondsLowerBound": 71059.106519216,
+      "unknownUsageRequestsInVerifiedAttempts": 1,
+      "tasksWithUnknownUsage": 24,
+      "usd": null
+    }
+  ],
+  "qualificationCosts": [
+    {
+      "candidate": "v1",
+      "includedInFormalScore": false,
+      "tasks": 2,
+      "knownTokensLowerBound": 550144,
+      "tasksWithUnknownUsage": 0,
+      "reason": "predeclared deployment qualification; score not a gate; all attempts retained"
+    },
+    {
+      "candidate": "v2",
+      "includedInFormalScore": false,
+      "tasks": 2,
+      "knownTokensLowerBound": 946607,
+      "tasksWithUnknownUsage": 0,
+      "reason": "predeclared deployment qualification; score not a gate; all attempts retained"
+    }
+  ],
+  "requestBudgetAudit": {
+    "sourceRevision": "0831f3d060ad84cfa8b4e007c4be612c066e1243",
+    "allFormalTasksTerminal": true,
+    "scope": "deduplicated verified ledger records split by platform event intervals; unknown byte coverage is separate",
+    "attempts": 319,
+    "passed": 245,
+    "failed": 0,
+    "unknown": 74,
+    "unassignedRequests": 0,
+    "recoveredEarlierRequests": 3677,
+    "frozenLimits": {
+      "requests": 128,
+      "knownPlusReservedTokens": 4194304,
+      "outputTokens": 32000
+    },
+    "initialAuditCorrection": "initial check treated a cumulative retry ledger as one attempt; event intervals confirm counters restart per attempt; initial failure log retained"
+  },
+  "artifactSupplement": {
+    "operation": "read-only supplement; never rerun solver or overwrite initial bytes",
+    "downloads": 322,
+    "matchesDeclaredSize": 4,
+    "stillUnverified": 318
+  },
+  "archiveLocation": "AReaL-Harness-Standard122-v1.0/04_质量审计与复验证据/finalization-arena-v1/candidate-v2",
+  "rawArchivePublic": false
+}
