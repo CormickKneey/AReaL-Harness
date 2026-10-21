@@ -307,6 +307,22 @@ Feedback commands run in the trusted desktop backend. The renderer cannot choose
 
 The GUI service's narrow `trajectory` command accepts `{operation:"status"}`, `{operation:"retry"}`, or `{operation:"setEnabled",enabled:boolean,expectedRevision:string}`. Toggling requires the current file's 64-character lowercase SHA-256 and accepts no path, destination, or credential override. The desktop adapter fixes the same configuration and credential environment as Core. Status reads neither decrypt credentials nor count as admitted work. Toggling immediately applies upload control. Capture assembly reuses safe application's `ifIdle` drain and restart only when Core is idle, no queued work remains, and unrelated settings are unchanged. Optional `capture_apply_pending` and `capture_apply_error` response fields indicate deferred application or an application problem; clients must not present them as ready enablement. The switch does not establish remote analysis or archival success.
 
+## Desktop provider connection diagnostics
+
+The desktop `providers` command returns a fixed `error.code` and actionable guidance when network initialization or a `discover` or `probe` request fails.
+
+| `error.code` | Diagnosis |
+| --- | --- |
+| `PROVIDER_NETWORK_DNS` | DNS resolution failed |
+| `PROVIDER_NETWORK_REFUSED` | The service or proxy refused the connection |
+| `PROVIDER_NETWORK_TLS` | TLS certificate validation failed |
+| `PROVIDER_NETWORK_TIMEOUT` | The request timed out or was cancelled |
+| `PROVIDER_NETWORK_PROXY` | Proxy setup is unavailable |
+| `PROVIDER_NETWORK_REDIRECT` | The service returned a prohibited redirect |
+| `PROVIDER_NETWORK_UNAVAILABLE` | Another network or initialization failure |
+
+Diagnostics omit raw exceptions, upstream text, URL queries, and credentials. HTTP 401/403 retain authentication guidance. Other HTTP errors retain their status code. Invalid streams retain model and protocol guidance. Responses probes still send `input`, `store:false`, and `stream:true` to the saved endpoint and require valid text with a successful terminal event.
+
 ## Desktop background command compatibility
 
 The authenticated `areal.desktop-service.v1` snapshot adds `service.commandContract: "areal.desktop-commands.v1"`. This declaration belongs to the resident Desktop code and is independent of Rust Core capabilities. Main projects an exact match as `desktopCapabilities.currentCommands` at the snapshot root and on each project. It does not trust the same projection supplied by an older snapshot.

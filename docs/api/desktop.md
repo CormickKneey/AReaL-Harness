@@ -305,6 +305,22 @@ MCP 清理失败保持 cleanupFailed，并持久保存 cleanupUnconfirmed。无�
 
 GUI 服务的窄命令 `trajectory` 支持 `{operation:"status"}`、`{operation:"retry"}` 和 `{operation:"setEnabled",enabled:boolean,expectedRevision:string}`。启停要求当前文件的 64 位小写 SHA-256，不接受配置路径、目的地址或认证覆盖；桌面适配器固定使用与 Core 相同的配置和凭据环境。状态读取不解密凭据，也不进入任务准入计数。启停立即应用上传控制；采集设置只在 Core 空闲、无排队任务且没有其它配置变化时，复用安全应用的 `ifIdle` 排空与重启。响应的可选 `capture_apply_pending` 和 `capture_apply_error` 分别表示等待应用及应用问题；客户端不能把它们显示为就绪开启。远端分析和归档状态不由该开关推断。
 
+## 桌面供应商连接诊断
+
+桌面 `providers` 命令的 `discover` 与 `probe` 在网络初始化或请求失败时返回固定的 `error.code` 和操作提示。
+
+| `error.code` | 诊断 |
+| --- | --- |
+| `PROVIDER_NETWORK_DNS` | 域名解析失败 |
+| `PROVIDER_NETWORK_REFUSED` | 服务或代理连接被拒绝 |
+| `PROVIDER_NETWORK_TLS` | TLS 证书验证失败 |
+| `PROVIDER_NETWORK_TIMEOUT` | 请求超时或取消 |
+| `PROVIDER_NETWORK_PROXY` | 代理设置不可用 |
+| `PROVIDER_NETWORK_REDIRECT` | 服务返回被禁止的重定向 |
+| `PROVIDER_NETWORK_UNAVAILABLE` | 其他网络或初始化失败 |
+
+诊断不包含原始异常、上游文本、地址查询参数或凭据。HTTP 401/403 继续返回认证提示，其他 HTTP 错误保留状态码；无效流式回复继续返回模型与协议提示。Responses 探测仍向已保存端点发送 `input`、`store:false` 和 `stream:true`，并要求有效文本及成功终态。
+
 ## Desktop 后台命令兼容
 
 共享 Desktop 的 `areal.desktop-service.v1` 认证快照新增 `service.commandContract: "areal.desktop-commands.v1"`。这项声明来自驻留 Desktop 代码，与 Rust Core 的能力独立。Main 将精确匹配结果投影为顶层及每个项目的 `desktopCapabilities.currentCommands`，不采用旧快照自行声明的同名投影。

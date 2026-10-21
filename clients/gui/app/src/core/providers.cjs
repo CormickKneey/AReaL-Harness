@@ -48,6 +48,23 @@ function modelCapabilities(raw) {
     ...(raw.reasoningEffortOptions !== undefined ? { reasoningEffortOptions: [...raw.reasoningEffortOptions] } : {}) };
 }
 
+const connectionFailures = [
+  { causes: ['ENOTFOUND', 'EAI_AGAIN'], category: 'DNS', message: '域名解析失败：请检查 Base URL、DNS 和网络代理设置' },
+  { causes: ['ECONNREFUSED'], category: 'REFUSED', message: '连接被拒绝：请检查 Base URL、服务端口及网络代理是否可用' },
+  { causes: ['UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY', 'SELF_SIGNED_CERT_IN_CHAIN', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'CERT_HAS_EXPIRED', 'ERR_TLS_CERT_ALTNAME_INVALID'], category: 'TLS', message: 'TLS 证书验证失败：请检查服务地址、系统信任证书和网络代理证书' },
+  { causes: ['ETIMEDOUT', 'ABORT_ERR', 'AbortError', 'TimeoutError'], category: 'TIMEOUT', message: '连接超时或已取消：请检查网络和服务状态后重试' },
+  { causes: ['proxy-unavailable'], category: 'PROXY', message: '网络代理不可用：请检查系统代理设置后重试' },
+  { causes: ['no-redirect'], category: 'REDIRECT', message: '模型服务返回重定向：请将 Base URL 改为最终服务地址' },
+];
+
+function connectionError(error) {
+  const reasons = [error?.code, error?.cause?.code, error?.type, error?.name];
+  if (error?.message === 'ChatGPT proxy unavailable') reasons.push('proxy-unavailable');
+  const failure = connectionFailures.find(({ causes }) => causes.some(code => reasons.includes(code)))
+    ?? { category: 'UNAVAILABLE', message: '连接失败：请检查 Base URL、网络及服务是否可用' };
+  return Object.assign(new Error(failure.message), { code: `PROVIDER_NETWORK_${failure.category}` });
+}
+
 /** Core-owned metadata, with desktop-only encrypted credentials and OAuth. */
 class AppProviders {
   constructor(backend, encryption) { this.backend = backend; this.encryption = encryption; this.config = new ModelConfiguration(backend, encryption); this.openaiToken = null; this.pendingApplications = new Map(); this.projectApplications = new Map(); }
@@ -587,7 +604,7 @@ class AppProviders {
     let response;
     try {
       response = await (await this.network()).fetch(url, { method: operation === 'discover' ? 'GET' : 'POST', redirect: 'error', signal: AbortSignal.timeout(30000), headers: { ...(key ? { Authorization: `Bearer ${key}` } : {}), 'Content-Type': 'application/json' }, ...(operation === 'probe' ? { body: JSON.stringify(body) } : {}) });
-    } catch { throw new Error('连接失败：请检查 Base URL、网络及服务是否可用'); }
+    } catch (error) { throw connectionError(error); }
     if (!response.ok) { await response.body?.cancel(); throw new Error(response.status === 401 || response.status === 403 ? '认证失败：请检查 API Key 及模型访问权限' : `模型服务返回 HTTP ${response.status}`); }
     if (operation === 'probe') {
       const { probeResponse } = await import('@areal/chatgpt-provider/core');
