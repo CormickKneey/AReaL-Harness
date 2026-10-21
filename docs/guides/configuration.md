@@ -73,7 +73,7 @@ inspection_permissions = "read-only" # 默认，强制只读
 
 `read-only` 保留原行为：源码只读、独立 scratch 可写，受限 Scope 不可用则在子模型启动前拒绝。`inherit` 不因普通分析自动增加只读/禁网限制，原有父权限、Profile、工具拒绝和审批规则仍有效；父任务本就受限时仍需要可用的相应沙箱。它不承诺子任务无法修改源码，不能把行为指令当成 OS 保护。旧显式 `workspaceMode="sharedReadOnly"` 与研究 Agent 不受该配置影响。
 
-继承模式下，可信原生文件读取与模型推理可以并行；命令、文件修改或外部工具可能有副作用，首次执行前取得工作区独占租约并持有至该 Turn 的进程清理和持久结算完成。有 hooks 的调用也按潜在写入处理；不会根据 shell 文本猜测只读。等待锁可取消，控制查询不占锁；这类子任务不能递归委派或启动跨 Turn 服务。需要强制只读时保留默认模式，或通过父配置/可信 Profile 和旧显式共享只读入口收窄，不会在失败后静默改为继承。
+继承模式与共享作者在首次副作用前申请工作区独占租约。在无 hooks/未受管副作用且 Runtime 确认本轮进程已结算的模型等待边界让出，再次写入时重新申请；活动进程、UNKNOWN 与查询失败不让出。文件版本约束、权限、取消和递归限制保持生效，详细边界见[多 Agent 设计](../design/multi-agent.md)。
 
 该选项是显式部署候选，不因局部回归通过而替换默认值。两种模式及反例见[委派设计](../design/multi-agent.md)。
 
@@ -311,6 +311,8 @@ turn_model_rounds = 0
 
 活动时间包括根 Turn 的模型排队、执行、工具、交互等待和清理，子任务时间不叠加，轮次间容量等待、暂停和离线时间不计入。显式研究 worker 预算和 Runtime 硬限额继续生效；普通 Turn 没有总时限。Goal 请求禁用 HTTP 层隐式重试，以保留逐次消费的归因；未知消费会停止自动推进。使用与恢复见 [Goal 模式](clients.md#goals)。
 
+连续内置只读工具的并发候选也使用该 JSON：`{"policy":{"parallelReadCalls":4}}`。范围为 1–4，默认 1；显式选择 4 允许有界并发，不扩大模型、工具或输出总预算。未知后端和有状态工具保留屏障，hooks 与有限输出等条件下保持串行，见[Core 契约](../api/core.md#工具并发与执行进度)。未经来源隔离确认，不作为全局性能默认值推广。
+
 工具结果视图通过 `[tools] extensions_file` 指向的 JSON 配置，在 `policy.resultViews` 下设置 `mode: off|observe|on`（默认 observe）及 `searchGroups`、`repeatLines` 开关。大结果快照与内置 rg 不依赖该开关；额度和回取行为见[工具指南](tools.md)。
 
 ## 持久轨迹导出
@@ -518,3 +520,5 @@ hooks = [{ type = "command", command = "python3 /absolute/path/hook.py", timeout
 ```
 
 有效来源、显式审阅、执行与剩余限制见 [插件指南](plugins.md)。
+
+求解和摘要均按每次实际 Engine 请求占用模型容量，失败后先释放再退避；网络恢复请求也消费 Agent 请求额度。`network.retry_mode="bounded"` 关闭 Core 的持续恢复，仍保留既有有限 HTTP/响应恢复；`persistent` 仍可显式保留长期恢复。未知用量和已执行工具不因恢复而清零或重放。本地部署可以显式选择 bounded；这不宣称其在所有可用性条件下优于 persistent。

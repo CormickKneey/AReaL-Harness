@@ -19,6 +19,10 @@ pub struct File {
 /// Bounded, immutable source artifact. Execution material is provisioned separately.
 pub type Tree = BTreeMap<String, File>;
 
+// 输入和制品共用表示上限；源码选择与执行依赖不通过增大上限混在一起。
+pub(super) const MAX_FILE_BYTES: usize = 16 * 1024 * 1024;
+pub(super) const MAX_TREE_BYTES: usize = 64 * 1024 * 1024;
+
 pub fn valid_path(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 4096
@@ -45,6 +49,29 @@ pub fn snapshot(root: &Path) -> Result<Tree> {
     #[cfg(not(unix))]
     anyhow::bail!(
         "descriptor-relative Workgroup snapshots are unsupported: {}",
+        root.display()
+    )
+}
+
+/// 源码投影保留 Git 已跟踪、未忽略的未跟踪文件和调用方已冻结的输入。
+/// 忽略的构建产物不成为源码，依赖必须由执行环境单独提供。
+pub fn snapshot_source(root: &Path, baseline: &Tree) -> Result<Tree> {
+    #[cfg(unix)]
+    return snapshot::read_source(root, baseline, true);
+    #[cfg(not(unix))]
+    anyhow::bail!(
+        "descriptor-relative source projection is unsupported: {}",
+        root.display()
+    )
+}
+
+/// 私有工作区不能继承存储目录祖先仓库的 index 或 ignore；冻结输入显式保留。
+pub fn snapshot_artifact(root: &Path, baseline: &Tree) -> Result<Tree> {
+    #[cfg(unix)]
+    return snapshot::read_source(root, baseline, false);
+    #[cfg(not(unix))]
+    anyhow::bail!(
+        "descriptor-relative artifact projection is unsupported: {}",
         root.display()
     )
 }
@@ -125,11 +152,11 @@ pub fn validate_tree(tree: &Tree) -> Result<()> {
     let mut total = 0usize;
     for (path, file) in tree {
         ensure!(
-            valid_path(path) && file.bytes.len() <= 2 * 1024 * 1024,
+            valid_path(path) && file.bytes.len() <= MAX_FILE_BYTES,
             "invalid artifact file"
         );
         total += file.bytes.len();
-        ensure!(total <= 16 * 1024 * 1024, "artifact size exceeded");
+        ensure!(total <= MAX_TREE_BYTES, "artifact size exceeded");
         let mut parent = Path::new(path).parent();
         while let Some(value) = parent {
             ensure!(
@@ -241,7 +268,7 @@ pub fn load(root: &Path, id: &str) -> Result<Tree> {
         let size = std::fs::metadata(&path)?.len();
         total += size;
         ensure!(
-            size <= 2 * 1024 * 1024 && total <= 16 * 1024 * 1024,
+            size <= MAX_FILE_BYTES as u64 && total <= MAX_TREE_BYTES as u64,
             "artifact size exceeded"
         );
         let bytes = std::fs::read(path)?;

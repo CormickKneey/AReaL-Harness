@@ -389,7 +389,23 @@ impl Engine {
                 })?;
                 let root = service.workspace().to_owned();
                 // 文件表示能力是硬约束；复制失败不能变成运行中静默降级。
-                tokio::task::spawn_blocking(move || workgroup::tree::snapshot(&root)).await??;
+                let inputs: workgroup::tree::Tree = request
+                    .writes
+                    .iter()
+                    .map(|path| {
+                        (
+                            path.clone(),
+                            workgroup::tree::File {
+                                bytes: Vec::new(),
+                                executable: false,
+                            },
+                        )
+                    })
+                    .collect();
+                tokio::task::spawn_blocking(move || {
+                    workgroup::tree::snapshot_source(&root, &inputs)
+                })
+                .await??;
                 service.probe_availability().await?;
                 Ok(())
             }

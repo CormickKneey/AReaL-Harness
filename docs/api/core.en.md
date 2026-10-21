@@ -429,3 +429,11 @@ Shared Browser attachment of the fixed bundle to an older Thread is implemented 
 An experimental setting, disabled by default, enables bounded whole-file references in Core request projection and checkpoint evidence; Runtime owns execution waits. See the [configuration guide](../guides/configuration.en.md#reference-retention-and-bounded-tool-recovery) for retrieval, noninteractive stdin and failure limits.
 
 Rust `Limits` and `ResolvedCoreConfig` gain these experimental control fields plus `command_stdin_closed`. Callers constructing exhaustive struct literals must supply them, or use `..Limits::default()` where applicable; defaults enable none of the four experimental policies.
+
+## Tool concurrency and execution progress
+
+Tool execution is classified by its registered backend. `ToolPolicy.parallelReadCalls` accepts 1–4 and defaults to 1 for serial dispatch; deployments must explicitly enable the parallel performance candidate. Contiguous trusted native `read_file/fs_read/fs_list/fs_stat/search_files` calls may overlap. Writes, process input and cursors, coordination state and externally registered names remain ordered barriers. Global or frozen Turn plugin hooks, a finite output budget or repeated-failure gates force serial dispatch. Each call retains its own admission, durable intent and settlement; partial failure drains admitted work. Cancellation and UNKNOWN results are never automatically replayed.
+
+Rust callers constructing exhaustive `ToolPolicy` literals must supply `parallel_read_calls` or use `..ToolPolicy::default()`. Existing deployment JSON may omit the field and retains serial dispatch.
+
+Native Runtime tool results include `turnElapsedSeconds`, the observed elapsed seconds of the current Turn, allowing the model to respect explicit user deadlines. This is not a new task, automatic completion or verification evidence. Core inserts no additional user message and does not decorate coordination receipts, preserving receipt-consumption version checks.

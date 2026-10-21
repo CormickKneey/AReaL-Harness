@@ -187,6 +187,7 @@ impl Engine {
         cancel: &CancellationToken,
         steer: &mut mpsc::Receiver<bool>,
     ) -> anyhow::Result<()> {
+        self.initialize_workspace_view(cell, cancel).await?;
         let model = cell
             .state
             .lock()
@@ -255,6 +256,7 @@ impl Engine {
         };
         let mut model_rounds = 0;
         'restart: loop {
+            self.yield_settled_workspace_lease(cell).await;
             self.drain_hook_results(cell, true).await?;
             if self.task_wait_requested(cell).await {
                 return Ok(());
@@ -286,33 +288,6 @@ impl Engine {
                 let state = cell.state.lock().await;
                 state.thread.is_side().then(|| state.thread.id.clone())
             };
-            let permit = match self.permits.try_acquire() {
-                Ok(permit) => permit,
-                Err(_) => {
-                    if let Some(thread_id) = &side_thread_id {
-                        if let Some(active) = cell.state.lock().await.active.as_mut() {
-                            active.waiting_for_model_capacity = true;
-                        }
-                        cell.emit(
-                            "areal/side/capacity",
-                            json!({"threadId":thread_id,"status":"waiting"}),
-                        );
-                    }
-                    tokio::select! {
-                        _ = cancel.cancelled() => anyhow::bail!("cancelled"),
-                        permit = self.permits.acquire() => permit?,
-                    }
-                }
-            };
-            if let Some(thread_id) = &side_thread_id {
-                if let Some(active) = cell.state.lock().await.active.as_mut() {
-                    active.waiting_for_model_capacity = false;
-                }
-                cell.emit(
-                    "areal/side/capacity",
-                    json!({"threadId":thread_id,"status":"available"}),
-                );
-            }
             while steer.try_recv().is_ok() {}
             let (configuration, desktop_enabled) = {
                 let state = cell.state.lock().await;
@@ -595,9 +570,36 @@ impl Engine {
                 },
                 max_buffer_bytes: self.limits.max_tool_buffer_bytes,
             };
-            self.reserve_agent_model_request(cell)?;
             let mut network_retries: usize = 0;
             'request: loop {
+                let permit = match self.permits.try_acquire() {
+                    Ok(permit) => permit,
+                    Err(_) => {
+                        if let Some(thread_id) = &side_thread_id {
+                            if let Some(active) = cell.state.lock().await.active.as_mut() {
+                                active.waiting_for_model_capacity = true;
+                            }
+                            cell.emit(
+                                "areal/side/capacity",
+                                json!({"threadId":thread_id,"status":"waiting"}),
+                            );
+                        }
+                        tokio::select! {
+                            _ = cancel.cancelled() => anyhow::bail!("cancelled"),
+                            permit = self.permits.acquire() => permit?,
+                        }
+                    }
+                };
+                if let Some(thread_id) = &side_thread_id {
+                    if let Some(active) = cell.state.lock().await.active.as_mut() {
+                        active.waiting_for_model_capacity = false;
+                    }
+                    cell.emit(
+                        "areal/side/capacity",
+                        json!({"threadId":thread_id,"status":"available"}),
+                    );
+                }
+                self.reserve_agent_model_request(cell)?;
                 let mut operation = trajectory::Operation::new(
                     info_span!(
                         target: trajectory::TARGET,
@@ -722,7 +724,7 @@ impl Engine {
                     Ok(stream) => stream,
                     Err(error) => Box::pin(futures_util::stream::once(async move { Err(error) })),
                 };
-                let mut calls = Vec::new();
+                let mut calls = Vec::<model::ToolCall>::new();
                 let mut tool_budget = model::ToolCallBudget::new(tool_limits);
                 let mut visible_output = false;
                 loop {
@@ -779,7 +781,7 @@ impl Engine {
                         // The shared model pool owns a permit in the stream itself.
                         // Release both permits before tools or child/group joins.
                         drop(stream);
-                        let state = cell.state.lock().await;
+                        let mut state = cell.state.lock().await;
                         if steered {
                             drop(state);
                             complete_reasoning(cell, &thread_id, &turn_id, &reasoning_items).await;
@@ -832,6 +834,21 @@ impl Engine {
                                 continue 'restart;
                             }
                             return Err(error);
+                        }
+                        // 冲突回执必须确实进入已接受的请求；恢复决策前不让出其保护租约。
+                        if state
+                            .active
+                            .as_ref()
+                            .unwrap()
+                            .workspace_conflict_call
+                            .as_ref()
+                            .is_some_and(|id| {
+                                messages.iter().any(|m| {
+                                    m.role == "tool" && m.tool_call_id.as_ref() == Some(id)
+                                })
+                            })
+                        {
+                            state.active.as_mut().unwrap().workspace_conflict_call = None;
                         }
                         // 仅已完成且被接受的响应确认输入消费；预检、断流或 steer 不提前确认。
                         child_observations.observe_request(
@@ -969,10 +986,44 @@ impl Engine {
                         overflow_recovered = false;
                         complete_reasoning(cell, &thread_id, &turn_id, &reasoning_items).await;
                         complete_item(cell, &thread_id, &turn_id, &item_id).await;
-                        for call in calls {
+                        let width = self.parallel_read_width(cell).await;
+                        let mut calls = calls.into_iter().peekable();
+                        while let Some(call) = calls.next() {
                             if !steer.is_empty() {
                                 continue 'restart;
                             }
+                            let mut batch = vec![call];
+                            if width > 1 {
+                                let registry = cell.bindings.read().await.registry.clone();
+                                if registry
+                                    .get(&batch[0].name)
+                                    .is_ok_and(|tool| tool.supports_parallel_reads())
+                                {
+                                    while batch.len() < width
+                                        && calls.peek().is_some_and(|call| {
+                                            registry
+                                                .get(&call.name)
+                                                .is_ok_and(|tool| tool.supports_parallel_reads())
+                                        })
+                                    {
+                                        batch.push(calls.next().unwrap());
+                                    }
+                                }
+                            }
+                            if batch.len() > 1 {
+                                text_output_bytes += self
+                                    .parallel_read_tools(
+                                        cell,
+                                        cancel,
+                                        batch,
+                                        &mut tool_count,
+                                        tool_limit,
+                                        steer,
+                                    )
+                                    .await?;
+                                continue;
+                            }
+                            let call = batch.pop().unwrap();
                             let remaining = self.limits.remaining_output_bytes(text_output_bytes);
                             if remaining
                                 < self.tool_output_budget(cell, &call).await
@@ -1010,6 +1061,8 @@ impl Engine {
                             drop(model_span);
                             // 先释放失败流及共享模型许可，再等待退避；绝不重放已执行的工具。
                             drop(stream);
+                            drop(permit);
+                            self.yield_settled_workspace_lease(cell).await;
                             // Goal 的未知消费阻止重试，但不能覆盖导致请求失败的原始诊断。
                             if let Err(blocker) = model.check_work() {
                                 let diagnostic = format!("{blocker}: {error}");

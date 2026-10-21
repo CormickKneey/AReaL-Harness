@@ -550,13 +550,19 @@ impl Service {
             let authority = service.policy.clone();
             let strict = service.strict;
             let (mut group, base) = tokio::task::spawn_blocking(move || -> Result<_> {
-                let base = tree::snapshot(&base_root)?;
+                let required = planned.tasks.iter().flat_map(|task| &task.writes).map(|path| (path.clone(), tree::File { bytes: Vec::new(), executable: false })).collect();
+                let base = tree::snapshot_source(&base_root, &required)?;
                 // Keep explicit client task IDs for live revision and observation.
                 let mut group = Workgroup::create(&root, planned, &base, Strategy::Contract)?;
                 group.record.trusted_checks = strict;
                 group.record.authorized_directories = authority.allowed_directories;
                 group.record.authorized_writes = authority.allowed_writes;
                 group.save()?;
+                std::fs::write(root.join("source-projection.json"), serde_json::to_vec_pretty(&json!({
+                    "version":1,"policy":"tracked, unignored and explicitly declared writable inputs; ignored products are not implicit execution dependencies",
+                    "files":base.len(),"bytes":base.values().map(|file|file.bytes.len()).sum::<usize>(),
+                    "tree":tree::digest(&base),"dirtyWorkspacePreserved":true
+                }))?)?;
                 Ok((group, base))
             })
             .await??;

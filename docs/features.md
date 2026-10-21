@@ -51,3 +51,5 @@ Remote 的 Direct 与 Relay 已接入共同 Host 授权和 PWA 协议，Direct �
 ## 回答评价
 
 开启数据飞轮且接收端支持时，可为已结束回复点赞或点踩，填写理由，使用独立 Side 润色后提交冻结上下文。详见[回答评价](guides/user-feedback.md)。
+
+可信原生只读调用支持有界并发，写入、游标和未知后端保持顺序；共享作者可在已确认资源结算的模型等待边界让出租约。隔离源码投影保留已跟踪和未忽略的脏源码，执行依赖单独提供。契约与反例见[Core](api/core.md)和[多 Agent 设计](design/multi-agent.md)。

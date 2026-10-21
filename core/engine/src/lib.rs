@@ -23,6 +23,7 @@ pub use trajectory::{configure_trajectory_capture_budget, record_json as record_
 mod turns;
 mod watchdog;
 pub mod workgroup;
+mod workspace;
 
 use areal_protocol::{Input, Item, Modality, Thread, ThreadStatus, Turn, TurnStatus, notification};
 use futures_util::{FutureExt, StreamExt};
@@ -184,6 +185,9 @@ struct Active {
     isolated_children: usize,
     workspace_exclusive: bool,
     deferred_workspace_guard: Option<tokio::sync::OwnedRwLockWriteGuard<()>>,
+    workspace_lease_pinned: bool,
+    workspace_version: Option<workspace::Version>,
+    workspace_conflict_call: Option<String>,
     // Includes queued model work, tool waits and cleanup. Never wait for this
     // permit during admission: waiting parents must not deadlock their children.
     _admission: OwnedSemaphorePermit,

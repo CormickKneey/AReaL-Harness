@@ -51,3 +51,5 @@ Old-observation folding and extra empty-completion recovery are also disabled by
 ## Answer feedback
 
 When trajectory export is enabled and the receiver supports feedback, settled replies accept optional up/down ratings, reasons, and an independent Side refinement. Submission includes frozen context. See [answer feedback](guides/user-feedback.en.md).
+
+Trusted native reads support bounded concurrency, with writes, cursors and unknown backends kept ordered. Shared writers can yield at model-wait boundaries after confirmed managed-resource settlement. Isolated source projection preserves tracked and unignored dirty source; execution dependencies remain separate. See [Core](api/core.en.md) and [multi-agent design](design/multi-agent.en.md) for contracts and counterexamples.

@@ -77,9 +77,11 @@ async fn delivery_guard(
     }
 }
 
-async fn snapshot(path: &Path) -> Result<Tree> {
-    let path = path.to_owned();
-    tokio::task::spawn_blocking(move || tree::snapshot(&path)).await?
+async fn snapshot(bundle: &Bundle) -> Result<Tree> {
+    let path = bundle.workspace.clone();
+    let mut required = bundle.base.clone();
+    required.extend(bundle.candidate.clone());
+    tokio::task::spawn_blocking(move || tree::snapshot_source(&path, &required)).await?
 }
 async fn save(path: &Path, journal: &Journal) -> Result<()> {
     let bytes = serde_json::to_vec(journal)?;
@@ -329,7 +331,7 @@ async fn inspect(
         );
         save(&bundle.journal, &journal).await?;
     }
-    let matches = snapshot(&bundle.workspace)
+    let matches = snapshot(bundle)
         .await
         .ok()
         .map(|tree| tree::digest(&tree) == journal.head);
@@ -388,7 +390,7 @@ async fn deliver(
         error: None,
     };
     let composed = async {
-        let current = snapshot(&bundle.workspace).await?;
+        let current = snapshot(bundle).await?;
         let candidate = tree::compose(&current, &bundle.base, &bundle.candidate, &changed(bundle))?;
         preflight(&bundle.workspace, &current, &candidate).await?;
         let root = bundle
@@ -469,7 +471,7 @@ async fn deliver(
         cancel: bundle.cancel.clone(),
     };
     let bundle = &prepared;
-    if !snapshot(&bundle.workspace)
+    if !snapshot(bundle)
         .await
         .as_ref()
         .is_ok_and(|current| current == &bundle.base)
@@ -531,7 +533,7 @@ async fn deliver(
         journal.applied_paths.push(path);
         save(&bundle.journal, &journal).await?;
     }
-    let matches = snapshot(&bundle.workspace)
+    let matches = snapshot(bundle)
         .await
         .ok()
         .map(|tree| tree == bundle.candidate);

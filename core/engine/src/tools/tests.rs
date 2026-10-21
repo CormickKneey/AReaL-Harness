@@ -1665,24 +1665,21 @@ async fn assert_child_creation_gate(exclusive: bool) {
     };
     let cell = engine.cell(&thread_id).await.unwrap();
     if exclusive {
-        tokio::time::timeout(Duration::from_secs(3), async {
-            loop {
-                if cell
-                    .state
-                    .lock()
-                    .await
-                    .active
-                    .as_ref()
-                    .unwrap()
-                    .workspace_exclusive
-                {
-                    break;
-                }
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .unwrap();
+        assert!(
+            cell.state
+                .lock()
+                .await
+                .thread
+                .desktop
+                .as_ref()
+                .unwrap()
+                .execution_policy
+                .exclusive_write
+        );
+        assert!(
+            engine.workspace_gate.try_read().is_ok(),
+            "model-only writer must not acquire a workspace lease"
+        );
     }
     {
         let mut bindings = cell.bindings.write().await;

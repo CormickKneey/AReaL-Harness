@@ -958,7 +958,6 @@ impl Engine {
             let storage_only = storage_trigger && !token_trigger && !byte_trigger && !force;
             let mut attempt = 0;
             let mut network_retries: usize = 0;
-            let mut request_reserved = false;
             // 只有存储压力时使用已记录证据，不为不可回放的推理再次付费摘要。
             while attempt < 2 && !storage_only {
                 let mut summary = String::new();
@@ -1007,15 +1006,17 @@ impl Engine {
                 );
                 let request_span = request.span.clone();
                 let response: anyhow::Result<()> = async {
+                    // 摘要也使用同一容量；失败后先归还名额再退避。
+                    let _permit = tokio::select! {
+                        _ = cancel.cancelled() => anyhow::bail!("cancelled before summary admission"),
+                        permit = self.permits.acquire() => permit?,
+                    };
                     if budget.window > 0 {
                         let output = model.capabilities().summary_output_tokens.unwrap_or(budget.reserve);
                         anyhow::ensure!(output < budget.window, "summary output reserve exceeds model context window");
                         fit_summary_input(&mut input, budget.window - output)?;
                     }
-                    if !request_reserved {
-                        self.reserve_agent_model_request(cell)?;
-                        request_reserved = true;
-                    }
+                    self.reserve_agent_model_request(cell)?;
                     // 预检可能缩短摘要证据；轨迹必须记录真正提交给模型的消息。
                     trajectory::record_messages(&tracing::Span::current(), "gen_ai.input.messages", &input);
                     let pending = tokio::time::timeout(self.limits.stream_idle_timeout, model::REQUEST_OWNER.scope((snapshot.id.clone(), snapshot.turns.last().map_or_else(String::new, |t| t.id.clone())), model.chat_with_limits(input.clone(), Vec::new(), model::RequestPurpose::Summary, model::ToolCallLimits { max_calls: 0, max_buffer_bytes: self.limits.max_tool_buffer_bytes }, None)));
@@ -1108,7 +1109,6 @@ impl Engine {
                 }
                 attempt += 1;
                 network_retries = 0;
-                request_reserved = false;
                 input.push(Message::text("system", "Internal compaction retry, not a user task. The summary was rejected. Return only a shorter checkpoint, without tool calls or executable markup. Use fewer than 500 words and 4000 UTF-8 bytes. Prioritize exact interfaces, remaining work and observed validation over narrative. Keep unfinished work and verification status explicit."));
             }
             let generated_summary_bytes = accepted.as_ref().map(String::len);

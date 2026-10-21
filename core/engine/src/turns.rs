@@ -277,6 +277,9 @@ impl Engine {
             isolated_children: 0,
             workspace_exclusive: false,
             deferred_workspace_guard: None,
+            workspace_lease_pinned: false,
+            workspace_version: None,
+            workspace_conflict_call: None,
             _admission: admission,
             id: turn.id.clone(),
             cancel: cancel.clone(),
@@ -648,14 +651,6 @@ impl Engine {
                 None => std::future::pending::<()>().await,
             }
         };
-        let exclusive = cell
-            .state
-            .lock()
-            .await
-            .thread
-            .desktop
-            .as_ref()
-            .is_some_and(|d| d.execution_policy.exclusive_write);
         let mut workspace_guard = None;
         let side_expired = async {
             match side_deadline {
@@ -671,15 +666,16 @@ impl Engine {
                 }
                 anyhow::ensure!(!cancel.is_cancelled(), "cancelled before turn preparation completed");
                 // 继承分析者的已冻结插件 hooks 可能在首个工具之前产生副作用，沿用整轮作者租约。
-                let inherited_hooks = {
+                let writer_hooks = {
                     let state = cell.state.lock().await;
-                    state.thread.desktop.as_ref().is_some_and(|d| d.execution_policy.deferred_write)
+                    state.thread.desktop.as_ref().is_some_and(|d| d.execution_policy.deferred_write || d.execution_policy.exclusive_write)
                         && state.active.as_ref().is_some_and(|active| !active.hooks.is_empty())
                 };
-                if exclusive || inherited_hooks {
+                if writer_hooks {
                     let guard=tokio::select! {biased; _=cancel.cancelled()=>anyhow::bail!("cancelled before writer admission"), guard=self.workspace_gate.clone().write_owned()=>guard};
                     self.ensure_workspace_processes_settled().await?;
                     cell.state.lock().await.active.as_mut().unwrap().workspace_exclusive=true;
+                    cell.state.lock().await.active.as_mut().unwrap().workspace_lease_pinned=true;
                     workspace_guard=Some(guard);
                 }
                 let (registry, direct) = {

@@ -311,6 +311,8 @@ Active time includes root-Turn model queuing, execution, tools, interactions and
 
 See [Skills](skills.en.md) for discovery, [tools](tools.en.md) for extensions and [Runtime](runtime.en.md) for deployment permissions.
 
+The bounded native read concurrency candidate uses the same JSON: `{"policy":{"parallelReadCalls":4}}`. The range is 1–4, with a default of 1. Explicitly selecting 4 permits bounded overlap without increasing total model, tool or output budgets. Unknown backends and stateful tools remain barriers; hooks and finite output limits retain serial execution. See the [Core contract](../api/core.en.md#tool-concurrency-and-execution-progress). This is not promoted as a global performance default without source-isolated confirmation.
+
 Tool result views are configured in the JSON file named by `[tools] extensions_file`, under `policy.resultViews`: `mode` is `off`, `observe` (default) or `on`, with `searchGroups` and `repeatLines` switches. Large-result snapshots and bundled rg work independently of this switch. See [tools](tools.en.md) for quotas and retrieval.
 
 ## Persistent trajectory export
@@ -518,3 +520,5 @@ hooks = [{ type = "command", command = "python3 /absolute/path/hook.py", timeout
 ```
 
 See the [plugin guide](plugins.en.md#hooks-p2-candidate) for sources, review, execution and remaining limits.
+
+Solve and summary acquire shared model capacity per actual Engine request, releasing it before failure backoff. Network recovery attempts also consume Agent request allowance. `network.retry_mode="bounded"` disables persistent Core recovery while retaining existing finite HTTP/completion recovery; `persistent` remains available. Recovery neither clears unknown usage nor replays executed tools. A local deployment can explicitly choose bounded mode; this is not a claim that it dominates persistent mode under all availability conditions.

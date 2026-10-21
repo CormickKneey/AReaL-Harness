@@ -299,6 +299,7 @@ pub mod plugins;
 pub(crate) mod registry;
 mod results;
 pub(crate) use registry::Backend;
+mod scheduling;
 mod verification;
 pub(crate) use registry::Registry;
 pub use registry::{
@@ -738,6 +739,18 @@ impl Engine {
         call: ToolCall,
         remaining: usize,
     ) -> anyhow::Result<usize> {
+        self.start_tool(cell, cancel, call, remaining, None)
+            .await?
+            .await?
+    }
+    async fn start_tool(
+        self: &Arc<Self>,
+        cell: &Arc<Cell>,
+        cancel: &CancellationToken,
+        call: ToolCall,
+        remaining: usize,
+        started: Option<tokio::sync::oneshot::Sender<()>>,
+    ) -> anyhow::Result<tokio::sync::oneshot::Receiver<anyhow::Result<usize>>> {
         anyhow::ensure!(
             remaining >= self.tool_output_budget(cell, &call).await,
             "turn tool/output budget exhausted before execution"
@@ -752,27 +765,32 @@ impl Engine {
             anyhow::ensure!(!active.sealed && !cancel.is_cancelled(), "cancelled");
             active.tools.spawn(
                 async move {
-                    let result =
-                        std::panic::AssertUnwindSafe(engine.tool_owned(&owned_cell, &token, call))
-                            .catch_unwind()
-                            .await
-                            .unwrap_or_else(|_| {
-                                Err(anyhow::anyhow!(
-                                    "tool task panicked; outcome may be UNKNOWN"
-                                ))
-                            });
+                    let result = std::panic::AssertUnwindSafe(engine.tool_owned(
+                        &owned_cell,
+                        &token,
+                        call,
+                        started,
+                    ))
+                    .catch_unwind()
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(anyhow::anyhow!(
+                            "tool task panicked; outcome may be UNKNOWN"
+                        ))
+                    });
                     let _ = sent.send(result);
                 }
                 .instrument(tracing::Span::current()),
             );
         }
-        received.await?
+        Ok(received)
     }
     async fn tool_owned(
         self: &Arc<Self>,
         cell: &Arc<Cell>,
         cancel: &CancellationToken,
         call: ToolCall,
+        ready: Option<tokio::sync::oneshot::Sender<()>>,
     ) -> anyhow::Result<usize> {
         let (session_id, turn_id, turn_number) = {
             let state = cell.state.lock().await;
@@ -824,7 +842,7 @@ impl Engine {
         let span = operation.span.clone();
         let result = async {
             tracing::event!(target: trajectory::TARGET, tracing::Level::INFO, { "event.name" = "areal.tool.call" });
-            self.tool_inner(cell, cancel, call).await
+            self.tool_inner(cell, cancel, call, ready).await
         }
         .instrument(span)
         .await;
@@ -843,10 +861,14 @@ impl Engine {
         cell: &Arc<Cell>,
         cancel: &CancellationToken,
         call: ToolCall,
+        ready: Option<tokio::sync::oneshot::Sender<()>>,
     ) -> anyhow::Result<usize> {
         let mut rejection = self.goal_tool_guard(cell, &call.name).await?;
         let bindings = cell.bindings.read().await.clone();
         let entry = bindings.registry.get(&call.name);
+        let native_metadata = entry
+            .as_ref()
+            .is_ok_and(|tool| matches!(tool.backend, Backend::Builtin));
         let repeat_limit = self.limits.max_repeated_tool_failures;
         let repeats = if repeat_limit > 0 {
             let state = cell.state.lock().await;
@@ -898,7 +920,18 @@ impl Engine {
             .is_some_and(|a| a.workspace_exclusive);
         // 隐藏模型 schema 不构成执行门禁：旧调用仍可能进入同一后端。
         // 写租约内递归创建会让父子相互等待；隔离 worker 的零子任务上限也不能绕过。
-        if (exclusive || cell.exclusive_writer || self.limits.max_children_per_turn == 0)
+        let assigned_writer = cell
+            .state
+            .lock()
+            .await
+            .thread
+            .desktop
+            .as_ref()
+            .is_some_and(|d| d.execution_policy.exclusive_write);
+        if (assigned_writer
+            || exclusive
+            || cell.exclusive_writer
+            || self.limits.max_children_per_turn == 0)
             && entry
                 .as_ref()
                 .is_ok_and(|tool| creates_child_execution(&call.name, &tool.backend))
@@ -915,7 +948,9 @@ impl Engine {
             .thread
             .desktop
             .as_ref()
-            .is_some_and(|d| d.execution_policy.deferred_write);
+            .is_some_and(|d| {
+                d.execution_policy.deferred_write || d.execution_policy.exclusive_write
+            });
         if deferred
             && call.name == "development_service_start"
             && entry
@@ -941,6 +976,39 @@ impl Engine {
                             | "search_files"
                     )
             });
+        if deferred && !coordination && rejection.is_none() {
+            // 受管命令由 Runtime 证明结算；外部宿主与 hooks 的延迟副作用不可猜测。
+            let pin = !self.extensions.hooks.is_empty()
+                || cell
+                    .state
+                    .lock()
+                    .await
+                    .active
+                    .as_ref()
+                    .is_some_and(|active| !active.hooks.is_empty())
+                || entry.as_ref().is_ok_and(|tool| {
+                    !matches!(
+                        tool.backend,
+                        Backend::Builtin | Backend::Coordination | Backend::Agent
+                    ) && !matches!(
+                        call.name.as_str(),
+                        "plan_read"
+                            | "plan_update"
+                            | "task_state"
+                            | "read_history"
+                            | "read_tool_result"
+                    )
+                });
+            if pin {
+                cell.state
+                    .lock()
+                    .await
+                    .active
+                    .as_mut()
+                    .unwrap()
+                    .workspace_lease_pinned = true;
+            }
+        }
         if deferred && !exclusive && !coordination && rejection.is_none() && !pure_read {
             // 租约由 Turn 持有，覆盖 yield 后仍运行的进程及清理；不能凭 inspect 标签判断无副作用。
             let _resources = tokio::select! {biased;
@@ -969,6 +1037,10 @@ impl Engine {
                 let active = state.active.as_mut().unwrap();
                 active.workspace_exclusive = true;
                 active.deferred_workspace_guard = Some(guard);
+                drop(state);
+                if let Some(conflict) = self.check_workspace_version(cell, &call.id).await {
+                    rejection = Some(conflict);
+                }
             }
         }
         let exclusive = exclusive
@@ -1125,6 +1197,10 @@ impl Engine {
                 .insert(item_id.clone());
             emit_item(cell, "item/started", &thread_id, &turn_id, &item);
         }
+        if let Some(ready) = ready {
+            let _ = ready.send(());
+        }
+
         let intent_ms = started.elapsed().as_secs_f64() * 1000.0;
         let invocation_started = std::time::Instant::now();
         let submitted = !cancel.is_cancelled() && rejection.is_none();
@@ -1275,6 +1351,23 @@ impl Engine {
                     &mut result,
                     runtime,
                 );
+        }
+        // 原生结果附带本轮真实已用时间；不插入额外用户消息或改变回执版本。
+        // 协调回执不装饰该字段，避免把动态计时误判为新的交接结论。
+        if runtime.is_some() && native_metadata {
+            let elapsed = cell
+                .state
+                .lock()
+                .await
+                .active
+                .as_ref()
+                .unwrap()
+                .started
+                .elapsed()
+                .as_secs();
+            if let Some(object) = result.as_object_mut() {
+                object.insert("turnElapsedSeconds".into(), json!(elapsed));
+            }
         }
         if let Some(object) = result.as_object_mut() {
             let state = cell.state.lock().await;

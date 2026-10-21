@@ -807,3 +807,215 @@ async fn http_status_eof_and_sse_service_errors_recover_with_identical_requests(
         let _ = server.await;
     }
 }
+
+#[tokio::test]
+async fn network_backoff_releases_engine_capacity_to_healthy_threads() {
+    struct Routes {
+        healthy_started: tokio::sync::Semaphore,
+    }
+    #[async_trait]
+    impl Model for Routes {
+        fn name(&self) -> &str {
+            "independent-network-routes"
+        }
+        async fn stream(&self, messages: Vec<Message>) -> anyhow::Result<ModelStream> {
+            if messages.iter().any(|message| {
+                message.role == "user" && message.text_content() == "unavailable route"
+            }) {
+                return Err(ModelFailure::Transport.into());
+            }
+            self.healthy_started.add_permits(1);
+            Ok(Box::pin(stream::iter([Ok(ModelEvent::text(
+                "healthy result",
+            ))])))
+        }
+    }
+    let data = tempfile::tempdir().unwrap();
+    let model = Arc::new(Routes {
+        healthy_started: tokio::sync::Semaphore::new(0),
+    });
+    let engine = Engine::open(
+        data.path(),
+        model.clone(),
+        Limits {
+            model_concurrency: 1,
+            ..Limits::default()
+        },
+    )
+    .unwrap();
+    let failed = engine.create("/workspace".into()).await.unwrap();
+    let mut events = engine.subscribe(&failed.id).await.unwrap();
+    let failed_turn = engine
+        .start(&failed.id, vec![Input::text("unavailable route")])
+        .await
+        .unwrap();
+    // 第四次退避为两秒，留出明确窗口检查另一个会话，不依赖请求耗时。
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let event = events.recv().await.unwrap();
+            if event["method"] == "areal/model/watchdogRetry" && event["params"]["retry"] == 4 {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    let healthy = engine.create("/workspace".into()).await.unwrap();
+    engine
+        .start(&healthy.id, vec![Input::text("healthy route")])
+        .await
+        .unwrap();
+    let started_during_backoff =
+        tokio::time::timeout(Duration::from_secs(1), model.healthy_started.acquire())
+            .await
+            .is_ok();
+    engine.interrupt(&failed.id, &failed_turn.id).await.unwrap();
+    let result = settled(&engine, &healthy.id).await;
+    engine.shutdown().await;
+    assert_eq!(result.turns[0].status, TurnStatus::Completed);
+    assert!(
+        started_during_backoff,
+        "network backoff reserved the sole Engine model permit and blocked a healthy thread"
+    );
+}
+
+#[tokio::test]
+async fn summary_requests_share_capacity_but_release_it_before_network_backoff() {
+    struct Routes {
+        summary_started: tokio::sync::Semaphore,
+        release_summary: tokio::sync::Semaphore,
+        healthy_started: tokio::sync::Semaphore,
+        summaries: AtomicUsize,
+        healthy_after_summaries: AtomicUsize,
+    }
+    #[async_trait]
+    impl Model for Routes {
+        fn name(&self) -> &str {
+            "summary-capacity-routes"
+        }
+        async fn stream(&self, messages: Vec<Message>) -> anyhow::Result<ModelStream> {
+            let healthy = messages
+                .iter()
+                .any(|message| message.role == "user" && message.text_content() == "healthy route");
+            if healthy {
+                self.healthy_after_summaries
+                    .store(self.summaries.load(Ordering::SeqCst), Ordering::SeqCst);
+                self.healthy_started.add_permits(1);
+            }
+            Ok(Box::pin(stream::iter([Ok(ModelEvent::text(if healthy {
+                "healthy result".into()
+            } else {
+                "observed result ".repeat(95)
+            }))])))
+        }
+        async fn chat_for(
+            &self,
+            messages: Vec<Message>,
+            _: Vec<Value>,
+            purpose: RequestPurpose,
+        ) -> anyhow::Result<ModelStream> {
+            if purpose != RequestPurpose::Summary {
+                return self.stream(messages).await;
+            }
+            self.summaries.fetch_add(1, Ordering::SeqCst);
+            self.summary_started.add_permits(1);
+            self.release_summary.acquire().await?.forget();
+            Err(ModelFailure::Transport.into())
+        }
+    }
+    let data = tempfile::tempdir().unwrap();
+    let model = Arc::new(Routes {
+        summary_started: tokio::sync::Semaphore::new(0),
+        release_summary: tokio::sync::Semaphore::new(0),
+        healthy_started: tokio::sync::Semaphore::new(0),
+        summaries: AtomicUsize::new(0),
+        healthy_after_summaries: AtomicUsize::new(usize::MAX),
+    });
+    let engine = Engine::open(
+        data.path(),
+        model.clone(),
+        Limits {
+            model_concurrency: 1,
+            context_window_bytes: 2200,
+            context_recent_bytes: 256,
+            ..Limits::default()
+        },
+    )
+    .unwrap();
+    let source = engine.create("/workspace".into()).await.unwrap();
+    let mut events = engine.subscribe(&source.id).await.unwrap();
+    let drive = {
+        let engine = engine.clone();
+        let source_id = source.id.clone();
+        tokio::spawn(async move {
+            for prompt in ["Original", "Continue", "Verify"] {
+                engine
+                    .start(&source_id, vec![Input::text(prompt)])
+                    .await
+                    .unwrap();
+                if settled(&engine, &source_id)
+                    .await
+                    .turns
+                    .last()
+                    .unwrap()
+                    .status
+                    != TurnStatus::Completed
+                {
+                    break;
+                }
+            }
+        })
+    };
+    tokio::time::timeout(Duration::from_secs(5), model.summary_started.acquire())
+        .await
+        .unwrap()
+        .unwrap()
+        .forget();
+    let healthy = engine.create("/workspace".into()).await.unwrap();
+    engine
+        .start(&healthy.id, vec![Input::text("healthy route")])
+        .await
+        .unwrap();
+    let admitted_during_summary =
+        tokio::time::timeout(Duration::from_millis(100), model.healthy_started.acquire())
+            .await
+            .is_ok();
+    model.release_summary.add_permits(1);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let event = events.recv().await.unwrap();
+            if event["method"] == "areal/model/watchdogRetry"
+                && event["params"]["purpose"] == "summary"
+            {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    let admitted_after_failure =
+        tokio::time::timeout(Duration::from_secs(1), model.healthy_started.acquire())
+            .await
+            .is_ok();
+    let current = engine.read(&source.id, true).await.unwrap();
+    engine
+        .interrupt(&source.id, &current.turns.last().unwrap().id)
+        .await
+        .unwrap();
+    model.release_summary.add_permits(8);
+    drive.await.unwrap();
+    assert_eq!(
+        settled(&engine, &healthy.id).await.turns[0].status,
+        TurnStatus::Completed
+    );
+    engine.shutdown().await;
+    assert!(
+        !admitted_during_summary,
+        "active summary bypassed Engine model capacity"
+    );
+    assert!(
+        admitted_after_failure,
+        "summary retry backoff blocked the healthy request"
+    );
+    assert_eq!(model.healthy_after_summaries.load(Ordering::SeqCst), 1);
+}

@@ -199,6 +199,7 @@ dependencies = [
  "fs2",
  "futures-util",
  "gif",
+ "ignore",
  "image",
  "jsonschema",
  "libc",
