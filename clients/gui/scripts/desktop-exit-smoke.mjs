@@ -199,10 +199,10 @@ try {
   await quit(scheduled); await gone(scheduled);
   checks.push('idle enabled schedules display quit impact and permit cancel; confirmation stops triggering without deleting definitions');
 
-  for (const target of ['Main', 'Desktop']) {
-    const entry = await fixture(scratch, config, `crash-${target}`); entries.push(entry); await launch(entry); await choose(entry, workspace);
+  for (const signal of ['SIGTERM', 'SIGKILL']) for (const target of ['Main', 'Desktop']) {
+    const entry = await fixture(scratch, config, `${signal}-${target}`); entries.push(entry); await launch(entry); await choose(entry, workspace);
     const old = await records(entry.env);
-    process.kill(target === 'Main' ? entry.process.pid : entry.metadata.pid, 'SIGKILL');
+    process.kill(target === 'Main' ? entry.process.pid : entry.metadata.pid, signal);
     if (target === 'Main') await gone(entry);
     else {
       const enginePids = descendants(old.flatMap(service => [service.hostPid, service.corePid]));
@@ -210,7 +210,7 @@ try {
       await cleanupEntry(entry); entry.cleaned = true;
     }
     assert.ok(old.every(service => !alive(service.hostPid) && !alive(service.corePid)));
-    checks.push(`${target} SIGKILL closes owner lifetime and reclaims the owned engines`);
+    checks.push(`${target} ${signal} closes owner lifetime and reclaims the owned engines`);
   }
 
   if (!packaged) for (const ending of ['failure', 'SIGTERM', 'SIGKILL']) {
