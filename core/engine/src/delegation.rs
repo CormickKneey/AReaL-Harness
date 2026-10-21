@@ -337,6 +337,16 @@ impl Engine {
                 turn_id: turn_id.clone(),
             });
         let required = request.delivery == Delivery::Patch || request.require_trusted_checks;
+        if request.require_trusted_checks
+            && !self
+                .workgroups
+                .get()
+                .is_some_and(|service| service.is_strict())
+        {
+            return Err(invalid(
+                "trusted checks require a configured host-owned verifier; child self-checks do not provide this guarantee. No execution was created",
+            ));
+        }
         let wants_isolated = request.intent == Intent::Modify && (required || request.independent);
         let automatic = !request.require_trusted_checks && self.workgroups.get().is_none();
         let mut reason = if request.intent == Intent::Inspect && self.inspection_inherits_permissions() {

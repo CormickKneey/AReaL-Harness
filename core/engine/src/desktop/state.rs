@@ -1093,6 +1093,30 @@ impl Engine {
                 }
             }
         }
+        let trusted_checks = self
+            .workgroups
+            .get()
+            .is_some_and(|service| service.is_strict());
+        for definition in &mut definitions {
+            if definition["function"]["name"] == "agent_spawn"
+                && bindings
+                    .registry
+                    .get("agent_spawn")
+                    .is_ok_and(|entry| matches!(entry.backend, crate::tools::Backend::Coordination))
+            {
+                let guarantee =
+                    &mut definition["function"]["parameters"]["properties"]["requireTrustedChecks"];
+                guarantee["description"] = json!(if trusted_checks {
+                    "A host-owned trusted verifier is configured. Set true only when that guarantee is required; child self-checks alone are not trusted verification."
+                } else {
+                    "No host-owned trusted verifier is configured in this deployment. Omit or use false. Child self-checks remain available and are reported without trusted-verification claims."
+                });
+                if !trusted_checks {
+                    // 配置能力是稳定事实；不能暴露一个本部署必然拒绝的创建选项。
+                    guarantee["enum"] = json!([false]);
+                }
+            }
+        }
         if let Some(service) = self.workgroups.get() {
             for definition in &mut definitions {
                 if definition["function"]["name"] == "workgroup_start" {

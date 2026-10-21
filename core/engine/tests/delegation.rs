@@ -450,6 +450,52 @@ async fn invalid_exact_writes_identify_the_entry_before_any_worker_or_probe_star
 }
 
 #[tokio::test]
+async fn trusted_check_advertisement_matches_host_verifier_and_rejects_without_creating_work() {
+    for policy in [None, Some(false), Some(true)] {
+        let fixture = Fixture::open(policy).await;
+        let definitions = fixture.model.advertised_tools.lock().unwrap()[0].clone();
+        let spawn = definitions
+            .iter()
+            .find(|tool| tool["function"]["name"] == "agent_spawn")
+            .unwrap();
+        let field = &spawn["function"]["parameters"]["properties"]["requireTrustedChecks"];
+        let strict = policy == Some(true);
+        assert_eq!(
+            field["enum"],
+            if strict { Value::Null } else { json!([false]) }
+        );
+        assert!(
+            field["description"]
+                .as_str()
+                .unwrap()
+                .contains("host-owned")
+        );
+        if !strict {
+            let mut required = fixture.request("unsupported-trusted", "modify", "changes");
+            required.writes = vec!["result.txt".into()];
+            required.require_trusted_checks = true;
+            let error = fixture
+                .engine
+                .delegate(required)
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("configured host-owned verifier"), "{error}");
+            assert!(error.contains("No execution was created"), "{error}");
+            let records = fixture
+                .engine
+                .execution_list(&fixture.parent, 0, 50)
+                .await
+                .unwrap();
+            assert!(records["data"].as_array().unwrap().is_empty());
+            assert_eq!(fixture.worker.probes.load(Ordering::SeqCst), 0);
+            assert_eq!(fixture.worker.attempts.load(Ordering::SeqCst), 0);
+        }
+        fixture.close().await;
+    }
+}
+
+#[tokio::test]
 async fn advertised_delegation_matches_known_scope_capability_without_widening() {
     use areal_config::InspectionPermissions::{Inherit, ReadOnly};
     for research in [false, true] {
