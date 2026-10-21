@@ -357,6 +357,7 @@ try {
     await reading.getByLabel("活动形状", { exact: true }).selectOption(shape);
     const status = liveTurn.getByTestId("turn-activity");
     assert.equal(await status.count(), 1, `${shape} has exactly one live turn status`);
+    assert.equal(await liveTurn.getByTestId("turn-usage").count(), 0, `${shape} has no duplicate usage status`);
     assert.equal(await status.getAttribute("role"), "status");
     assert.equal(await status.evaluate(el => !!el.closest("button, summary, .turn-progress, .turn-execution")), false, `${shape} status is outside every disclosure`);
     assert.ok((await status.innerText()).startsWith(expected), `${shape} status describes the whole turn`);
@@ -376,6 +377,7 @@ try {
     await reading.getByLabel("活动状态", { exact: true }).selectOption(state);
     const status = liveTurn.getByTestId("turn-activity");
     assert.equal(await status.innerText(), expected);
+    assert.equal(await liveTurn.getByTestId("turn-usage").count(), 0, `${state} has no conflicting usage status`);
     assert.equal(await status.evaluate(el => el.getAnimations().length), 0, `${state} status does not animate`);
   }
   await reading.getByLabel("活动状态", { exact: true }).selectOption("running");

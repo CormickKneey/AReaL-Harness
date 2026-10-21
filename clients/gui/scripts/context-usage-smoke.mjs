@@ -42,15 +42,32 @@ const server = createServer(async (request, response) => {
     const body = JSON.parse(raw);
     if (respondToSessionName(body, response)) return;
     const summary = body.messages.some(m => m.role === 'system' && typeof m.content === 'string' && m.content.startsWith('Summarize this session prefix'));
-    const user = [...body.messages].reverse().find(m => m.role === 'user');
+    const userIndex = body.messages.findLastIndex(m => m.role === 'user' && JSON.stringify(m.content).includes('USAGE_'));
+    const user = body.messages[userIndex];
     const prompt = JSON.stringify(user?.content ?? '');
-    const mode = summary ? 'summary' : ['TOOLS', 'SINGLE', 'UNKNOWN', 'ZERO', 'ERROR', 'CANCEL', 'LONG', 'LIVE'].find(mode => prompt.includes(`USAGE_${mode}`)) ?? 'normal';
+    const mode = summary ? 'summary' : ['ACTIVITY', 'TOOLS', 'SINGLE', 'UNKNOWN', 'ZERO', 'ERROR', 'CANCEL', 'LONG', 'LIVE'].find(mode => prompt.includes(`USAGE_${mode}`)) ?? 'normal';
     const record = { model: body.model, mode, request: body, startedAt: Date.now() }; requests.push(record);
     if (mode === 'ERROR') { response.writeHead(400, { 'Content-Type': 'application/json' }); response.end(JSON.stringify({ error: { message: 'Deterministic pre-stream error' } })); return; }
     response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    if (mode === 'ACTIVITY') {
+      const tools = body.messages.slice(userIndex + 1).filter(m => m.role === 'tool');
+      if (!tools.length) {
+        held = () => {
+          held = null;
+          write(response, { choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: randomUUID(), type: 'function', function: { name: 'fs_read', arguments: JSON.stringify({ path: 'workspace://repo/evidence.txt', offset: 0, maxBytes: 4096 }) } }] }, finish_reason: null }] });
+          end(response, usage(), 'tool_calls');
+        };
+      } else {
+        assert.ok(JSON.stringify(tools).includes('RUNTIME_FILE_EVIDENCE'));
+        held = () => {
+          write(response, chunk('USAGE_ACTIVITY_OK'));
+          held = () => { held = null; end(response, usage()); };
+        };
+      }
+      return;
+    }
     if (mode === 'TOOLS') {
-      const index = body.messages.findLastIndex(m => m.role === 'user');
-      const tools = body.messages.slice(index + 1).filter(m => m.role === 'tool');
+      const tools = body.messages.slice(userIndex + 1).filter(m => m.role === 'tool');
       if (tools.length < 2) {
         const name = tools.length === 0 ? 'skill_read' : 'fs_read';
         const args = tools.length === 0 ? { skill: { id: 'usage-skill', revision: 'v1' }, resource: 'SKILL.md', offset: 0, maxBytes: 8192 } : { path: 'workspace://repo/evidence.txt', offset: 0, maxBytes: 4096 };
@@ -239,6 +256,29 @@ try {
   await page.getByRole('button', { name: '不在项目中工作', exact: true }).click();
   await page.getByRole('menuitem', { name: '新建项目', exact: true }).click();
   await until(s => project(s)?.state?.connected, 'project connected'); projectId = project(await state()).id;
+  const activityThread = await call('create', { projectId, profile: { id: 'standard', revision: 'v1' }, model: { providerId: 'fixture', modelId: 'alpha' } });
+  await selectConversation(page, activityThread.threadId);
+  await page.getByTestId('chat-input').fill('USAGE_ACTIVITY');
+  await page.getByRole('button', { name: '发送', exact: true }).click();
+  const activityObservations = [];
+  for (const [stage, label] of [['waiting', '等待模型响应…'], ['after-tool', '等待模型继续…'], ['streaming', '正在生成回复…']]) {
+    await until(() => !!held, `activity ${stage} barrier`);
+    const active = page.locator('[data-turn-status="inProgress"]');
+    await active.getByTestId('turn-activity').getByText(label, { exact: true }).waitFor();
+    activityObservations.push({ stage, activityCount: await active.getByTestId('turn-activity').count(), usageCount: await active.getByTestId('turn-usage').count(), statuses: await active.getByRole('status').allTextContents() });
+    await page.screenshot({ path: join(scratch, `activity-${stage}.png`) });
+    held();
+  }
+  await until(s => thread(s, activityThread.threadId)?.turns?.at(-1)?.status === 'completed', 'activity completed');
+  await writeFile(join(scratch, 'activity-observations.json'), JSON.stringify(activityObservations, null, 2));
+  console.log(JSON.stringify(activityObservations));
+  for (const observation of activityObservations) {
+    assert.equal(observation.activityCount, 1, `${observation.stage} has one detailed activity`);
+    assert.equal(observation.usageCount, 0, `${observation.stage} has no duplicate usage status`);
+  }
+  assert.equal(await page.getByTestId('turn-activity').count(), 0, 'completed activity disappears');
+  assert.match(await page.getByTestId('turn-usage').innerText(), /^300 Token/);
+  checks.push('one activity during initial wait, after real Runtime tool result and streaming; completed usage replaces activity');
   const created = await call('create', { projectId, profile: { id: 'standard', revision: 'v1' }, model: { providerId: 'fixture', modelId: 'alpha' } });
   const source = created.threadId; await selectConversation(page, source);
   identities.at(-1).coreServices = JSON.parse(execFileSync(binary, ['service', 'list', '--json'], { env, encoding: 'utf8', timeout: 20000 }));
@@ -338,9 +378,9 @@ try {
   await page.getByTestId('chat-input').fill('USAGE_LIVE');
   await page.getByRole('button', { name: '发送', exact: true }).click();
   await until(() => !!held, 'live content is held before provider usage');
-  const live = page.getByTestId('turn-usage').last();
-  await page.getByText('生成中', { exact: true }).waitFor();
-  assert.ok(!(await live.innerText()).includes('tok/s'), 'no invented streaming rate without provider token increments');
+  const live = page.locator('[data-turn-status="inProgress"]');
+  await live.getByTestId('turn-activity').getByText('正在生成回复…', { exact: true }).waitFor();
+  assert.equal(await live.getByTestId('turn-usage').count(), 0, 'no duplicate activity or invented streaming rate');
   await page.screenshot({ path: join(scratch, '06-generating.png') });
   held();
   await until(s => thread(s, source)?.turns?.at(-1)?.status === 'completed', 'live stream finishes');
