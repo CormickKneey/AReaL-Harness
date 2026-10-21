@@ -21,6 +21,7 @@ export function ProviderBaseUrlSection({ baseUrlValue, onBaseUrlChange, onBaseUr
 export function ProviderApiKeySection({
   apiKeyValue,
   apiKeyConfigured,
+  apiKeyLoading,
   apiKeyVisible,
   readOnly,
   presetApiKeyUrl,
@@ -34,6 +35,7 @@ export function ProviderApiKeySection({
 }: {
   apiKeyValue: string;
   apiKeyConfigured?: boolean;
+  apiKeyLoading?: boolean;
   apiKeyVisible: boolean;
   readOnly?: boolean;
   presetApiKeyUrl?: string;
@@ -60,6 +62,7 @@ export function ProviderApiKeySection({
       <ApiKeyInput
         value={apiKeyValue}
         configured={apiKeyConfigured}
+        loading={apiKeyLoading}
         visible={apiKeyVisible}
         readOnly={readOnly}
         onChange={onApiKeyChange}

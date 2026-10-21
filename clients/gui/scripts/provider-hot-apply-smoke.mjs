@@ -321,6 +321,16 @@ providerHotApplyChecks: try {
   const first = await saveProvider("first credential save");
   const firstReference = first.data.find(item => item.id === "fixture").apiKeyEnv;
   await persistedCredentials({ first: firstReference });
+  const revealsBefore = await command("providers", { operation: "list" });
+  await button("显示 API Key").click();
+  await button("隐藏 API Key").waitFor();
+  assert.equal(await page.getByTestId("provider-api-key").inputValue() === secrets.first, true, "Explicit eye action decrypts the actual saved synthetic key");
+  assert.equal(await button("保存").isDisabled(), true, "Viewing a stored credential is not a configuration edit");
+  await button("隐藏 API Key").click();
+  assert.equal(await page.getByTestId("provider-api-key").inputValue(), "");
+  assert.equal(await page.getByTestId("provider-api-key").getAttribute("placeholder"), "••••••••");
+  assert.equal((await command("providers", { operation: "list" })).revision, revealsBefore.revision);
+  checks.push("The trusted Electron eye action reveals the encrypted saved fixture key; hiding clears the input without a save or configuration revision change");
   await page.screenshot({ path: join(scratch, "first-save-applied.png"), animations: "disabled" });
   checks.push("UI save persists the encrypted credential and applies an available Core catalog without restarting desktop, Core Host, Core or Runtime");
   await button("返回应用").click();

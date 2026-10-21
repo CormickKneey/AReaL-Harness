@@ -61,6 +61,28 @@ function fixture({ busy = false, writeFails = false, syncFails = false, lostAppl
   return { service, backend, project, calls, original, request, operations, holdWrite() { let resolve; release = { promise: new Promise(r => { resolve = r; }), resolve: () => resolve() }; return release; } };
 }
 
+test("explicit key reveal is revision-bound and never writes or publishes a secret", async () => {
+  const f = fixture({ busy: true });
+  f.service.config.value.data[0].apiKeyEnv = "AREAL_CREDENTIAL_fixture";
+  f.service.config.key = item => { assert.equal(item.id, "demo"); return "synthetic-reveal-key"; };
+  assert.deepEqual(await f.service.command({ operation: "revealKey", id: "demo", expectedRevision: "old" }), { apiKey: "synthetic-reveal-key" });
+  assert.equal(JSON.stringify(f.service.public()).includes("synthetic-reveal-key"), false);
+  assert.deepEqual(f.calls, []);
+  await assert.rejects(f.service.command({ operation: "revealKey", id: "demo", expectedRevision: "stale" }));
+  await assert.rejects(f.service.command({ operation: "revealKey", id: "missing", expectedRevision: "old" }));
+  await assert.rejects(f.service.command({ operation: "revealKey", id: "demo", expectedRevision: "old", reference: "OTHER_SECRET" }));
+});
+
+test("key reveal returns a safe failure for missing or locked credentials", async () => {
+  const f = fixture();
+  const request = { operation: "revealKey", id: "demo", expectedRevision: "old" };
+  await assert.rejects(f.service.command(request));
+  f.service.config.value.data[0].apiKeyEnv = "AREAL_CREDENTIAL_fixture";
+  f.service.config.key = () => { throw new Error("untrusted-synthetic-secret"); };
+  await assert.rejects(f.service.command(request), error => !String(error.stack).includes("untrusted-synthetic-secret"));
+  assert.deepEqual(f.calls, []);
+});
+
 test("one save returns only after the same Core proves the revision and its catalog is refreshed", async () => {
   const f = fixture();
   const response = await f.service.command(f.request);

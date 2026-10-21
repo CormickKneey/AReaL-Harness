@@ -462,7 +462,7 @@ class SharedCoreBackend {
     const { guiOwned, ...params } = request;
     // 队列业务键跨 GUI/共享服务连接保留，外层丢失响应后也能只读核对。
     if (['queueEdit', 'send', 'editMessage', 'continue'].includes(name)) params.requestId ??= randomUUID();
-    const pending = this.connection.request('command', { name, request: name === 'media' ? encodeMedia(params) : params }, true).then(value => {
+    const pending = this.connection.request('command', { name, request: name === 'media' ? encodeMedia(params) : params }, !(name === 'providers' && params.operation === 'revealKey')).then(value => {
       if (ownedRecovery && value.confirmed) {
         this.guiTerminals.set(value.result.id, { projectId: request.projectId, threadId: request.threadId, id: value.result.id });
       }

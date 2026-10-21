@@ -67,6 +67,8 @@ providerUiChecks: try {
       library: { projects: {}, threads: {}, projectOrder: [], settings: {} },
     };
     window.calls = [];
+    window.fixtureKey = "fixture-saved-key";
+    window.fixtureReveals = [];
     window.fixtureWork = false;
     window.fixtureDiscoveryManual = false;
     window.fixtureDiscoveries = [];
@@ -144,11 +146,17 @@ providerUiChecks: try {
         window.calls.push({ name, params });
         if (name === "providers") {
           const store = window.fixtureProviders;
+          if (params.operation === "revealKey") {
+            if (window.fixtureRevealManual) return new Promise(resolve => window.fixtureReveals.push(resolve));
+            if (window.fixtureRevealFailed) return { ok: false, error: { message: "无法显示 API Key，请解锁系统安全存储后重试。" } };
+            return { ok: true, value: { apiKey: store.credentialSources[params.id] === "environment" ? "fixture-env-key" : window.fixtureKey } };
+          }
           if (["save", "saveAndApply"].includes(params.operation)) {
             if (params.expectedRevision !== store.revision)
               return { ok: false, error: { message: "供应商配置已变化，请刷新后重新保存" } };
             if (window.fixtureWork && params.operation === "saveAndApply")
               return { ok: false, error: { message: "任务正在进行，完成后再保存；修改仍保留。" } };
+            if (params.apiKey) window.fixtureKey = params.apiKey;
             const raw = params.provider;
             const id = raw.id || `fixture-new-${++revision}`;
             const item = {
@@ -317,8 +325,28 @@ providerUiChecks: try {
   assert.equal(await apiKey.isEditable(), true);
   assert.equal(
     await page.getByRole("button", { name: "显示 API Key", exact: true }).isDisabled(),
-    true,
+    false,
   );
+  await page.getByRole("button", { name: "显示 API Key", exact: true }).click();
+  await page.getByRole("button", { name: "隐藏 API Key", exact: true }).waitFor();
+  assert.equal(await apiKey.inputValue(), "fixture-saved-key");
+  assert.equal(await apiKey.getAttribute("type"), "text");
+  assert.equal(await page.getByRole("button", { name: "保存", exact: true }).isDisabled(), true, "Viewing a saved key is not an edit");
+  await page.getByRole("button", { name: "隐藏 API Key", exact: true }).click();
+  assert.equal(await apiKey.inputValue(), "", "Hiding discards the revealed plaintext");
+  await page.evaluate(() => { window.fixtureRevealManual = true; });
+  await page.getByRole("button", { name: "显示 API Key", exact: true }).click();
+  await page.waitForFunction(() => window.fixtureReveals.length === 1);
+  await page.locator(".provider-catalog-row").filter({ hasText: "ChatGPT" }).click();
+  await page.locator(".provider-catalog-row").filter({ hasText: "API Fixture" }).click();
+  await page.evaluate(() => { window.fixtureReveals[0]({ ok: true, value: { apiKey: "stale-fixture-key" } }); window.fixtureRevealManual = false; });
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(await apiKey.inputValue(), "", "A late reveal cannot follow a provider switch");
+  await page.evaluate(() => { window.fixtureRevealFailed = true; });
+  await page.getByRole("button", { name: "显示 API Key", exact: true }).click();
+  await page.getByText("无法显示 API Key，请解锁系统安全存储后重试。", { exact: true }).waitFor();
+  assert.equal(await apiKey.inputValue(), "");
+  await page.evaluate(() => { window.fixtureRevealFailed = false; });
   await apiKey.fill("fixture-replacement-key");
   assert.equal(
     await page.getByRole("button", { name: "显示 API Key", exact: true }).isEnabled(),
@@ -335,7 +363,7 @@ providerUiChecks: try {
   assert.equal(await apiKey.getAttribute("type"), "password");
   assert.equal(
     await page.getByRole("button", { name: "显示 API Key", exact: true }).isDisabled(),
-    true,
+    false,
   );
   assert.equal(await page.getByText(savedKeyStatus, { exact: true }).count(), 0);
   assert.deepEqual(
@@ -400,16 +428,19 @@ providerUiChecks: try {
     assert.equal(await apiKey.inputValue(), "");
     assert.equal(
       await page.getByRole("button", { name: "显示 API Key", exact: true }).isDisabled(),
-      true,
+      state !== "available",
     );
   }
+  await page.getByRole("button", { name: "显示 API Key", exact: true }).click();
+  await page.getByRole("button", { name: "隐藏 API Key", exact: true }).waitFor();
+  assert.equal(await apiKey.inputValue(), "fixture-replacement-key");
   await page.getByRole("textbox", { name: "供应商名称", exact: true }).fill("API Fixture Renamed");
   await page.getByRole("button", { name: "保存", exact: true }).click();
   await page.getByText("已保存并应用。", { exact: true }).waitFor();
   assert.equal(await apiKey.getAttribute("placeholder"), "••••••••");
   assert.equal(await page.evaluate(() => Object.hasOwn(window.calls.findLast(call => call.params?.operation === "save").params, "apiKey")), false, "A mask must never be submitted as a replacement credential");
   checks.push(
-    "Available stored/environment keys show only an input mask; missing keys show the input prompt; replacement drafts clear after save; masks are never submitted; save feedback never implies a connection probe",
+    "Available stored/environment keys show only an input mask; missing keys show the input prompt; replacement drafts clear after save; saved keys reveal only on click and clear on hide/switch; stale replies and locked storage remain masked; viewing is not an edit and plaintext is never resubmitted; save feedback never implies a connection probe",
   );
   if (apiKeyFeedbackOnly) {
     assert.equal(await page.locator("vite-error-overlay").count(), 0);

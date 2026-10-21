@@ -29,7 +29,7 @@ function decodeMedia(value) {
 }
 
 // One writer for provider secrets, recovery journals and projections. Core remains
-// authoritative for execution. No generic RPC passthrough or renderer credentials.
+// authoritative for execution. No generic RPC passthrough; credential reveal is an explicit local request.
 class DesktopService {
   constructor(backend, identity, onStop = () => {}, backgroundNotifications, power) {
     this.backend = backend; this.identity = identity; this.onStop = onStop;
@@ -355,7 +355,8 @@ class DesktopService {
       const message = error.code === 'SIDEBAR_SAVE_FAILED'
         ? '侧栏整理未能保存，原有布局已保留。请检查存储位置和写入权限后重试。'
         : error.message;
-      this.send(socket, { id, error: { ...desktopError(error), ...(error.lifecycle ? { lifecycle: error.lifecycle } : {}), message: this.backend.providers.redact(message) } });
+      this.send(socket, { id, error: { ...desktopError(error), ...(error.lifecycle ? { lifecycle: error.lifecycle } : {}), message: method === 'command' && params?.name === 'providers' && params?.request?.operation === 'revealKey'
+        ? '无法显示 API Key，请刷新配置或解锁系统安全存储后重试。' : this.backend.providers.redact(message) } });
     }
   }
   close() {
@@ -373,6 +374,7 @@ class DesktopService {
     this.server?.close();
   }
   async executeRemote(name, request) {
+    if (name === 'providers' && request?.operation === 'revealKey') throw new Error('API Key 仅可在本机模型设置中查看');
     if (this.closed || this.recovering) throw new Error('后台正在停止或恢复，请稍后重试');
     this.inflight++; this.schedule();
     try { return await this.backend.command(name, request); }

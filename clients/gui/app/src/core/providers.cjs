@@ -377,6 +377,19 @@ class AppProviders {
       return this.public();
     }
     if (this.saving || this.backend.providerUpdating) throw new Error('模型配置正在保存，请稍后重试');
+    if (request.operation === 'revealKey') {
+      if (Object.keys(request).some(key => !['operation', 'id', 'expectedRevision'].includes(key))
+        || ![request.id, request.expectedRevision].every(value => typeof value === 'string' && value.trim() && value.length <= 256)) throw new Error('无效的凭据查看请求');
+      await this.config.current();
+      if (request.expectedRevision !== this.value.revision) throw new Error('供应商配置已变化，请刷新后重新查看 API Key');
+      const provider = this.value.data.find(item => item.id === request.id);
+      if (!provider?.apiKeyEnv) throw new Error('尚未配置可用的 API Key');
+      try {
+        const apiKey = credentialValue(this.key(provider));
+        if (!apiKey) throw new Error();
+        return { apiKey };
+      } catch { throw new Error('无法显示 API Key，请解锁系统安全存储后重试。'); }
+    }
     if (request.operation === 'probe' || request.operation === 'discover') { await this.config.current(); return this.test(request); }
     if (['saveAndApply', 'removeAndApply', 'defaultAndApply'].includes(request.operation)) return this.saveAndApply(request);
     if (request.operation === 'apply') return this.apply(request);

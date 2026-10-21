@@ -8,6 +8,7 @@ import { TECHNICAL_INPUT_ATTRIBUTES } from "../../lib/technicalInputAttributes.j
 export function ApiKeyInput({
   value,
   configured,
+  loading,
   visible,
   readOnly,
   onChange,
@@ -19,6 +20,7 @@ export function ApiKeyInput({
 }: {
   value: string;
   configured?: boolean;
+  loading?: boolean;
   visible: boolean;
   readOnly?: boolean;
   onChange: (value: string) => void;
@@ -58,8 +60,9 @@ export function ApiKeyInput({
         type="button"
         variant="ghost"
         size="icon"
-        disabled={readOnly || !value}
+        disabled={readOnly || loading || (!value && !configured)}
         className="absolute top-1/2 right-1.5 -translate-y-1/2"
+        aria-busy={loading}
         aria-label={visible ? t("settings.apiKeyInput.hideAPIKey") : t("settings.apiKeyInput.showAPIKey")} onClick={onToggleVisibility}
       >
         {visible ? <EyeOffIcon className="size-3.5" /> : <EyeIcon className="size-3.5" />}

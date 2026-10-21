@@ -17,6 +17,7 @@ import { newConnectionDraft } from "./provider-ui-state.js";
 import { ProviderTemplatePicker } from "./ProviderTemplatePicker.js";
 import { ProviderApiKeySection, ProviderBaseUrlSection } from "./model-provider-section/ProviderCardSections.js";
 import { ProviderApiFormatSelect } from "./model-provider-section/ProviderApiFormatSelect.js";
+import { useApiKeyReveal } from "./useApiKeyReveal.js";
 import { useProviderDiscovery, type DiscoveryConnection } from "./useProviderDiscovery.js";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "../components/ui/dropdown-menu.js";
 import "./ModelSettings.css";
@@ -47,6 +48,7 @@ export function ModelSettings({ action, onOpenSessionSettings }: { action: Actio
   const items: Data[] = state.value?.data ?? [];
   const provider = draft ?? items.find(p => p.id === selected);
   const authentication = provider?.authentication ?? (provider?.apiKeyEnv ? "apiKey" : "none");
+  const reveal = useApiKeyReveal(action, !picker && authentication === "apiKey" ? provider?.id : undefined, state.value?.revision);
   let discoveryConnection: DiscoveryConnection | null = null;
   if (provider && ["chatCompletions", "responses"].includes(provider.protocol)) {
     try {
@@ -62,7 +64,7 @@ export function ModelSettings({ action, onOpenSessionSettings }: { action: Actio
   const visibleModels = (provider?.models ?? []).map((model: Data, index: number) => ({ model, index })).filter(({ model }: { model: Data }) => `${model.displayName ?? ""} ${model.id}`.toLowerCase().includes(modelQuery.toLowerCase()));
   const edit = (patch: Data) => { setDraft({ ...provider, ...patch, basedOnRevision: draft?.basedOnRevision ?? state.value?.revision }); setMessage(""); };
   const editConnection = (patch: Data) => { discovery.invalidate(true); setChecked([]); edit(patch); };
-  const select = (item: Data) => { discovery.invalidate(); setChecked([]); setSelected(item.id); setPicker(false); setDraft(null); setKey(undefined); setKeyVisible(false); setModelQuery(""); setError(""); setMessage(""); };
+  const select = (item: Data) => { reveal.reset(); discovery.invalidate(); setChecked([]); setSelected(item.id); setPicker(false); setDraft(null); setKey(undefined); setKeyVisible(false); setModelQuery(""); setError(""); setMessage(""); };
   const choose = (id: string) => navigate(() => select({ id }));
   const save = async (candidate = provider, apiKey = key) => {
     if (!candidate) throw new UiMessageError({ id: "settings.modelSettings.noProviderToSave" });
@@ -83,7 +85,7 @@ export function ModelSettings({ action, onOpenSessionSettings }: { action: Actio
   const savedStatus = (item?: Data) => !item ? t("settings.modelSettings.unsaved") : !item.enabled ? t("settings.modelSettings.disabled")
     : state.value?.credentialStates?.[item.id] === "unavailable" ? t("settings.modelSettings.missingCredentials") : t("settings.modelSettings.available");
   const dirty = key !== undefined || (draft !== null && (!baseline || Object.keys(draft).some(field => field !== "basedOnRevision" && JSON.stringify(draft[field]) !== JSON.stringify(field === "authentication" ? baseline.apiKeyEnv ? "apiKey" : "none" : baseline[field]))));
-  const discard = () => { discovery.invalidate(); setChecked([]); setDraft(null); setKey(undefined); setKeyVisible(false); setError(""); };
+  const discard = () => { reveal.reset(); discovery.invalidate(); setChecked([]); setDraft(null); setKey(undefined); setKeyVisible(false); setError(""); };
   useDraftBlocker({
     label: { id: "settings.modelSettings.provider" },
     dirty,
@@ -135,7 +137,7 @@ export function ModelSettings({ action, onOpenSessionSettings }: { action: Actio
   const subscriptionModels = accountModels.filter(model => `${model.displayName ?? model.name ?? ""} ${model.id}`.toLowerCase().includes(modelQuery.toLowerCase()));
   const modelSearch = <SettingsSearchInput placeholder={t("settings.modelSettings.searchModelNameOrID")} aria-label={t("settings.modelSettings.searchModelNameOrID")} value={modelQuery} onChange={e => setModelQuery(e.target.value)} onClear={() => setModelQuery("")} clearLabel={t("settings.modelSettings.clearModelSearch")} containerClassName="provider-model-search" />;
   return <div className="model-settings">
-    <Feedback error={state.error || error || (application?.kind === "failed" ? application.message : "")} message={message} />
+    <Feedback error={state.error || error || reveal.error || (application?.kind === "failed" ? application.message : "")} message={message} />
     <div className="provider-settings" data-provider={current === CHATGPT && !picker ? CHATGPT : "custom"}>
       <aside className="provider-navigation" aria-label={t("settings.modelSettings.providerCatalog")}>
         <div className="provider-navigation-top"><h2>{t("settings.modelSettings.provider")}</h2><Button variant="ghost" size="icon" aria-label={t("settings.modelSettings.refreshProviders")} disabled={busy || state.loading} onClick={refreshCatalog}><RefreshCw size={16} /></Button></div>
@@ -198,11 +200,11 @@ export function ModelSettings({ action, onOpenSessionSettings }: { action: Actio
             <div>
               <span className="mb-1 block text-ui-base text-foreground-subtle">{t("settings.modelSettings.authentication")}</span>
               <SettingsSelect aria-label={t("settings.modelSettings.authentication")} value={authentication} onValueChange={value => {
-                editConnection({ authentication: value as "apiKey" | "none" }); setError(""); if (value === "none") setKey(undefined);
+                reveal.reset(); setKeyVisible(false); editConnection({ authentication: value as "apiKey" | "none" }); setError(""); if (value === "none") setKey(undefined);
               }}><option value="apiKey">API Key</option><option value="none">{t("settings.modelSettings.noAuthentication")}</option></SettingsSelect>
             </div>
             {authentication === "apiKey" && <div>
-              <ProviderApiKeySection apiKeyConfigured={apiKeyConfigured} apiKeyValue={key ?? ""} apiKeyVisible={keyVisible} onApiKeyChange={value => { setKey(value); editConnection({}); }} onToggleApiKeyVisibility={() => setKeyVisible(!keyVisible)} onApiKeyBlur={() => {}} />
+              <ProviderApiKeySection apiKeyConfigured={apiKeyConfigured} apiKeyLoading={reveal.loading} apiKeyValue={key || reveal.value} apiKeyVisible={key ? keyVisible : !!reveal.value} onApiKeyChange={value => { reveal.reset(); setKey(value); editConnection({}); }} onToggleApiKeyVisibility={() => { if (key) setKeyVisible(!keyVisible); else { setKeyVisible(false); void reveal.toggle(); } }} onApiKeyBlur={() => {}} />
             </div>}
           <div className="provider-model-section">
             <div className="provider-connection-summary"><span>{dirty ? t("settings.modelSettings.unsavedChanges") : t("settings.modelSettings.connectionConfigured")}</span><Button variant="outline" disabled={busy || !provider.enabled || !provider.models.some((m: Data) => m.enabled)} onClick={() => void saveThen(async saved => { const model = saved.models.find((m: Data) => m.enabled); await api("probe", { id: saved.id, model: model.id }); setProbe(p => ({ ...p, [model.id]: true })); setMessage({ id: "settings.modelSettings.connectedToModelValue", values: { value0: model.id } }); })}>{t("settings.modelSettings.testConnection")}</Button></div>

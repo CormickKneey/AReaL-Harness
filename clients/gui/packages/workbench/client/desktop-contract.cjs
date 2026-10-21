@@ -108,6 +108,9 @@ function validateCommand(name, params, { serviceOnly = false } = {}) {
   }
   if (['manage', 'workspace', 'media', 'queueEdit', 'library', 'providers', 'chatgpt', 'analytics', 'resources', 'projectless', 'tasks', 'remoteControl'].includes(name)
     && !identifier(params.operation)) invalid();
+  if (name === 'providers' && params.operation === 'revealKey'
+    && (!identifier(params.id) || !identifier(params.expectedRevision)
+      || Object.keys(params).some(key => !['operation', 'id', 'expectedRevision'].includes(key)))) invalid();
   if (name === 'tasks' && (!['list', 'inbox'].includes(String(params.operation))
     || Object.keys(params).some(key => !['operation', 'projectId', 'limit', 'requestId', 'viewEpoch'].includes(key))
     || params.projectId !== undefined && !identifier(params.projectId)
@@ -256,6 +259,11 @@ function desktopError(error) {
 /** @param {string} name @param {unknown} params @param {unknown} value */
 function validateCommandResponse(name, params, value) {
   if (!record(params)) invalid();
+  if (name === 'providers' && params.operation === 'revealKey') {
+    if (!record(value) || typeof value.apiKey !== 'string' || !value.apiKey.trim() || value.apiKey.length > 16384
+      || Object.keys(value).some(key => key !== 'apiKey')) invalid();
+    return;
+  }
   if (name === 'prepareCreator') {
     if (!record(value) || !identifier(value.projectId) || value.projectId !== params.projectId
       || Object.keys(value).some(key => !['projectId', 'profile', 'skill', 'provenance'].includes(key))
