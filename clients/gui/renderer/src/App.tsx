@@ -141,6 +141,12 @@ const panelList = [
   ["用量", <SettingsUsageIcon />],
   ["设置", <Settings size={16} />],
 ] as const;
+function projectExecutionBlocked(lifecycle: Snapshot["lifecycle"], projectId: string): boolean {
+  return lifecycle?.operations.some(operation =>
+    operation.phase !== "completed" && operation.phase !== "blocked"
+    && operation.targets.some(target => target.projectId === projectId && target.phase !== "completed" && target.phase !== "blocked"),
+  ) ?? false;
+}
 function Usage({ thread }: { thread: Data }) {
   const turns = thread.turns ?? [];
   const known = turns.filter((t: Data) => t.usage);
@@ -1151,7 +1157,7 @@ function AppContent({ services }: { services: PlatformServices }) {
     const props = { project, thread, action };
     if (panel.startsWith("mcp-app:")) return mcpWorkspace.render(panel);
     if (panel === "旁路讨论" && thread && project.core?.features?.sidePreview === true && !thread.parentThreadId && thread.conversation?.kind !== "side") {
-      return <SideChatPane onPanel={showPanel} onReturn={hidePanel} key={`${project.core?.instanceId}:${project.id}:${thread.id}:side`} project={project} source={thread} action={resourceAction} dark={dark} />;
+      return <SideChatPane onPanel={showPanel} onReturn={hidePanel} key={`${project.core?.instanceId}:${project.id}:${thread.id}:side`} project={project} source={thread} executionBlocked={projectExecutionBlocked(snapshot.lifecycle, project.id)} action={resourceAction} dark={dark} />;
     }
     if (panel.startsWith("agent:") && thread) {
       const childId = panel.slice(6);
@@ -1644,7 +1650,7 @@ function AppContent({ services }: { services: PlatformServices }) {
               onFile={path => {void open(owner.id,managementThread.id).then(() => openFile(path));}}
               onReview={turnId => {void open(owner.id,managementThread.id).then(() => {setReviewRequest({owner:`${owner.id}:${managementThread.id}`,turnId});setPanel("改动");});}}
               readTurnReview={(turnId,itemId) => resourceAction("workspace",{projectId:owner.id,threadId:managementThread.id,turnId,itemId,operation:"turnReview"})}/>
-              {!options?.embedded && <Composer key={managementThread.id} project={owner} thread={managementThread} action={resourceAction} readAction={resourceAction} onPanel={name => {if(name === "设置") {showPanel("设置");} else {void open(owner.id,managementThread.id).then(() => showPanel(name));}}} onNew={() => void newTask()}/>}</>}
+              {!options?.embedded && <Composer key={managementThread.id} project={owner} thread={managementThread} executionBlocked={projectExecutionBlocked(snapshot.lifecycle, owner.id)} action={resourceAction} readAction={resourceAction} onPanel={name => {if(name === "设置") {showPanel("设置");} else {void open(owner.id,managementThread.id).then(() => showPanel(name));}}} onNew={() => void newTask()}/>}</>}
             renderResources={(owner,managementThread,scheduledTask,runHistory) => <TaskResourcesPopover project={owner} thread={managementThread} scheduledTask={scheduledTask} runHistory={runHistory} action={resourceAction} onPanel={name => {void open(owner.id,managementThread.id).then(() => showPanel(name));}} onAgent={id => void open(owner.id,id)} onFile={path => {void open(owner.id,managementThread.id).then(() => openFile(path));}} />}
 
             navigation={<>
@@ -1702,6 +1708,7 @@ function AppContent({ services }: { services: PlatformServices }) {
                           onMcpMention={()=>setMcpMentionsOpen(true)}
                           project={project}
                           thread={thread}
+                          executionBlocked={projectExecutionBlocked(snapshot.lifecycle, project.id)}
                           action={action}
                           readAction={resourceAction}
                           onPanel={showPanel}

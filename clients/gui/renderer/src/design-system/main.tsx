@@ -188,7 +188,7 @@ function Preview() {
       <h2>审批卡片</h2><ApprovalRequest key={state} item={approval} projectId="design-preview" action={action} />
     </section>
     <section className="design-preview-panel design-preview-side" aria-label="Side 预览">
-      <h2>Side Chat</h2><SideChatPane project={project} source={source} action={action} dark={dark}
+      <h2>Side Chat</h2><SideChatPane project={project} source={source} action={action} dark={dark} executionBlocked={false}
         onReturn={() => setMessage("关闭入口仅作预览。")} onPanel={() => setMessage("面板入口仅作预览。")} />
     </section>
     <section className="design-preview-tokens" aria-label="Token 目录">

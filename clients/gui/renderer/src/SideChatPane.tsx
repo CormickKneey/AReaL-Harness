@@ -18,8 +18,8 @@ import { createSideRestore, type SideRestoreState } from "./side-restore.js";
 import type { Action, Data } from "./services.js";
 
 // 编辑器按服务、来源和具体草稿或 Side 隔离；切换目标会卸载旧编辑器。
-export function SideChatPane({ project, source, action, dark, onReturn, onPanel }: {
-  project: Data; source: Data; action: Action; dark: boolean; onReturn: () => void; onPanel: (name: string) => void;
+export function SideChatPane({ project, source, executionBlocked, action, dark, onReturn, onPanel }: {
+  project: Data; source: Data; executionBlocked: boolean; action: Action; dark: boolean; onReturn: () => void; onPanel: (name: string) => void;
 }) {
   const workspace = useMemo(() => new SideDraftWorkspace(localStorage, {
     instanceId: project.core?.instanceId ?? "unknown", projectId: project.id, sourceThreadId: source.id, randomId: () => crypto.randomUUID(),
@@ -55,12 +55,12 @@ export function SideChatPane({ project, source, action, dark, onReturn, onPanel 
       <Button type="button" variant="ghost" size="icon" aria-label="返回主会话" title="关闭侧边聊天" onClick={onReturn}><CloseIcon /></Button>
     </div>
     <SideChatEditor key={`${workspace.owner(selected)}:${project.core?.connectionGeneration ?? 0}`} project={project} source={source}
-      action={action} dark={dark} workspace={workspace} selected={selected} onSelected={choose} onPanel={onPanel} contextOpen={contextOpen} />
+      executionBlocked={executionBlocked} action={action} dark={dark} workspace={workspace} selected={selected} onSelected={choose} onPanel={onPanel} contextOpen={contextOpen} />
   </section>;
 }
 
-function SideChatEditor({ project, source, action, dark, workspace, selected, onSelected, onPanel, contextOpen }: {
-  project: Data; source: Data; action: Action; dark: boolean; workspace: SideDraftWorkspace;
+function SideChatEditor({ project, source, executionBlocked, action, dark, workspace, selected, onSelected, onPanel, contextOpen }: {
+  project: Data; source: Data; executionBlocked: boolean; action: Action; dark: boolean; workspace: SideDraftWorkspace;
   selected: { kind: string; id: string }; onSelected: (next: { kind: string; id: string }) => void; onPanel: (name: string) => void; contextOpen: boolean;
 }) {
   const prefs = useApplicationPreferences();
@@ -201,7 +201,7 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
   useEffect(() => { if (pendingId && project.state?.connected) void recover(); }, [project.state?.connected]);
   const submit = async (value = api.current?.getMarkdown() ?? text) => {
     const question = value.trim();
-    if (!question || busy || pendingId || unsettled || active || !project.state?.connected || sideId && (!validSide || side.desktop?.archived)) return;
+    if (executionBlocked || !question || busy || pendingId || unsettled || active || !project.state?.connected || sideId && (!validSide || side.desktop?.archived)) return;
     const token = workspace.capture(generation);
     setBusy(true); setError("");
     try {
@@ -232,6 +232,7 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
       const next = { ...draftConfig, parameters: Object.hasOwn(values, "model") ? values.model === undefined ? undefined : {} : draftConfig?.parameters, ...values };
       localStorage.setItem(configKey, JSON.stringify(next)); setDraftConfig(next); return;
     }
+    if (executionBlocked) return;
     const token = workspace.capture(generation);
     setBusy(true); setError("");
     try { await action("configure", { projectId: project.id, threadId: sideId, expectedRevision: config?.revision, ...values }); }
@@ -240,10 +241,12 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
   };
   useEffect(() => { api.current?.focus(); }, []);
   const stop = () => {
+    if (executionBlocked) return;
     const turn = side?.turns?.find((item: Data) => item.status === "inProgress");
     if (validSide && turn) void action("stop", { projectId: project.id, threadId: sideId, turnId: turn.id, requestId: crypto.randomUUID() }).catch((cause: Error) => setError(cause.message));
   };
-  const disabled = !project.state?.connected || busy || !!pendingId || unsettled || !!sideId && (!validSide || side.desktop?.archived);
+  const editorDisabled = !project.state?.connected || busy || !!pendingId || unsettled || !!sideId && (!validSide || side.desktop?.archived);
+  const disabled = editorDisabled || executionBlocked;
   return <>
     <div className="side-chat-information" hidden={!contextOpen}>
       {validSide && <p role="status">{sourceStatus}{active && <> · {side.desktop?.sideCapacityStatus === "waiting" ? "等待模型容量" : "正在生成"}</>}</p>}
@@ -304,17 +307,17 @@ function SideChatEditor({ project, source, action, dark, workspace, selected, on
     </div>
     <div className="composer-dock side-chat-composer" data-side-owner={owner}>
       <div ref={setMenuAnchor} className="composer-menu-anchor" />
-      <ConversationComposer project={project} contextControl={<ContextMeter key={`${project.id}:${sideId ?? "draft"}`} project={project} thread={validSide ? side : undefined} action={action} />} modelConfig={config} allowModelInheritance={!sideId} modelDisabled={disabled || !!active || !!sideId && !config}
+      <ConversationComposer project={project} contextControl={<ContextMeter key={`${project.id}:${sideId ?? "draft"}`} project={project} thread={validSide ? side : undefined} action={action} />} modelConfig={config} allowModelInheritance={!sideId} modelDisabled={editorDisabled || !!active || !!sideId && (executionBlocked || !config)}
         onConfigureModel={values => { void configure(values); }} onModelSettings={() => onPanel("设置")}
         workspacePath={project.root} taskId={sideId || null} triggerPanelContainer={menuAnchor}
         inputApiRef={api} inputTestId="side-chat-input" submitTestId="side-chat-send" initialValue={text}
         composerCatalog={{ entries: [], refresh: () => {} }}
-        placeholder="随心输入" disabled={disabled} submitDisabled={disabled || !!active || !text.trim()}
+        placeholder="随心输入" disabled={editorDisabled} submitDisabled={disabled || !!active || !text.trim()}
         submitting={busy} submitLabel="发送" enterSubmits={prefs.sendShortcut === "enter"} enableMentionPanel={false}
         onChange={value => { setText(value); localStorage.setItem(draftKey, value); }}
         onSubmit={value => { void submit(value); return false; }} onCancel={active ? stop : undefined}
         promptHistory={(side?.turns ?? []).flatMap((turn: Data) => (turn.items ?? []).filter((item: Data) => item.type === "userMessage").map((item: Data) => (item.content ?? []).filter((part: Data) => part.type === "text").map((part: Data) => part.text).join("\n")))}
-        submitControl={active && !text.trim() ? <Button type="button" variant="secondary" size="icon-md" className="composer-primary-action composer-stop-action" aria-label="停止旁路" onClick={stop}><StopIcon className="size-4" /></Button> : undefined}
+        submitControl={active && !text.trim() ? <Button type="button" variant="secondary" size="icon-md" className="composer-primary-action composer-stop-action" aria-label="停止旁路" disabled={executionBlocked} onClick={stop}><StopIcon className="size-4" /></Button> : undefined}
       />
     </div>
   </>;

@@ -55,6 +55,7 @@ export const markSending = (key: string, active: boolean) => {
 export function Composer({
   project,
   thread,
+  executionBlocked,
   action,
   readAction = action,
   onPanel,
@@ -68,6 +69,7 @@ export function Composer({
   surfaceLayout?: "default" | "compact";
   project: Data;
   thread: Data;
+  executionBlocked: boolean;
   action: Action;
   readAction?: Action;
   onPanel: (name: string) => void;
@@ -133,16 +135,22 @@ export function Composer({
   const baseDisabled = !project.state?.connected || archived || busy || pending || !!unknown || !!reviewDraft.error;
   const queueEditor = useComposerQueueEdit({ project, threadId: thread.id, draftKey: key, action, readAction, api, draftFiles: attachmentDrafts,
     setText, setFiles, setGoalMode, annotationBlocked: annotationEditing || invalidAnnotation, inFlight: busy, setInFlight: active => markSending(key, active), uploadFiles: selected => uploadComposerFiles(action, project.id, thread.id, selected) });
-  const disabled = baseDisabled || queueEditor.busy || queueEditor.locked;
+  const editorDisabled = baseDisabled || queueEditor.busy || queueEditor.locked;
+  const disabled = editorDisabled || executionBlocked;
   const desktopUnsupported = project.desktopCapabilities?.currentCommands === false;
   const stop = () => {
+    if (executionBlocked) return;
     if (running) void action("stop", { projectId: project.id, threadId: thread.id, turnId: running.id, requestId: crypto.randomUUID() })
       .catch((cause: Error) => setDeliveryError(cause.message));
+  };
+  const saveQueueEdit = async () => {
+    if (disabled || sending.has(key)) return;
+    await queueEditor.save();
   };
   const config = project.configurations?.[thread.id];
   const [mcpOpen, setMcpOpen] = useState(false);
 
-  const skills = useComposerSkills({ project, threadId: thread.id, draftKey: key, action: readAction, disabled });
+  const skills = useComposerSkills({ project, threadId: thread.id, draftKey: key, action: readAction, disabled: editorDisabled });
   const taskManagement = config?.options?.appendInstructions?.startsWith("AREAL_TASK_DRAFT_V1\n") === true;
   const ordinary = isOrdinaryConversation(thread, config);
   const interrupted = ordinary && project.core?.features?.ordinaryTurnSubmit === true ? interruptedConversationTurn(thread) : undefined;
@@ -224,9 +232,9 @@ export function Composer({
       clearText();
       return;
     }
-    if (annotationEditing || invalidAnnotation) return;
-    if (queueEditor.edit) { await queueEditor.save(); return; }
-    if (disabled || annotationEditing || invalidAnnotation || sending.has(key) || (!submittedInput.text.trim() && !submittedInput.files.length && !comments.length && !skills.selected.length && !mcpDraft.length)) return;
+    if (disabled || annotationEditing || invalidAnnotation || sending.has(key)) return;
+    if (queueEditor.edit) { await saveQueueEdit(); return; }
+    if (!submittedInput.text.trim() && !submittedInput.files.length && !comments.length && !skills.selected.length && !mcpDraft.length) return;
     if (approvePlan && (!planReady || input.text.trim() || input.files.length || comments.length)) return;
     if (creatingGoal && (running || thread.parentThreadId || !submittedInput.text.trim())) return;
     setAdmissionError("");
@@ -354,9 +362,9 @@ export function Composer({
         project={project}
         thread={thread}
         action={action}
-        disabled={baseDisabled || queueEditor.busy}
+        disabled={baseDisabled || queueEditor.busy || executionBlocked}
         editingId={queueEditor.edit?.id}
-        onEdit={item => void queueEditor.begin(item)}
+        onEdit={item => { if (!disabled) void queueEditor.begin(item); }}
       />
       {/* Pending decisions stay reachable outside the scrolling transcript. */}
       {approvals.map((item: Data) => <ApprovalRequest key={item.requestId} item={item} projectId={project.id} action={action} />)}
@@ -390,7 +398,7 @@ export function Composer({
         inputTestId="chat-input"
         submitTestId="chat-send-button"
         placeholder={archived ? "已归档任务只读" : creatingGoal ? "描述目标，明确可衡量的结果" : planActive ? "描述任务，生成计划…" : "随心输入"}
-        disabled={disabled}
+        disabled={editorDisabled}
         submitDisabled={disabled || (desktopUnsupported && !queueEditor.edit && !creatingGoal) || (taskManagement && !!running) || annotationEditing || invalidAnnotation || (queueEditor.edit ? queueEditor.saveDisabled || (!input.text.trim() && !input.files.length && !queueEditor.edit.attachments.length) : creatingGoal ? !input.text.trim() || !!running : !canContinue && emptyDraft)}
         submitting={busy}
         submitLabel={queueEditor.edit ? "保存排队消息" : creatingGoal ? "开始目标" : canContinue ? "继续执行" : "发送"}
@@ -418,28 +426,28 @@ export function Composer({
         topContent={
           <>{queueEditor.edit && <div className="composer-queue-edit-banner" aria-label="编辑排队消息">
             <span>{queueEditor.edit.phase === "opening" ? "等待确认暂停队列" : "编辑排队消息"}</span>
-            <Button type="button" size="sm" variant="ghost" disabled={queueEditor.busy || !!queueEditor.edit.unknown || pending} onClick={() => void queueEditor.cancel()}>取消</Button>
-            <Button type="button" size="sm" disabled={queueEditor.saveDisabled || (!input.text.trim() && !input.files.length && !queueEditor.edit.attachments.length)} onClick={() => void queueEditor.save()}>保存</Button>
+            <Button type="button" size="sm" variant="ghost" disabled={queueEditor.busy || !!queueEditor.edit.unknown || pending || executionBlocked} onClick={() => { if (!executionBlocked) void queueEditor.cancel(); }}>取消</Button>
+            <Button type="button" size="sm" disabled={disabled || queueEditor.saveDisabled || (!input.text.trim() && !input.files.length && !queueEditor.edit.attachments.length)} onClick={() => void saveQueueEdit()}>保存</Button>
           </div>}
           {queueEditor.feedback && <p role="alert" className="composer-queue-feedback">{queueEditor.feedback}</p>}
           {queueEditor.edit?.unknown && <Button type="button" size="sm" disabled={queueEditor.busy || !project.state?.connected} onClick={() => void queueEditor.reconcile()}>核对编辑操作</Button>}
           {!queueEditor.edit && skills.tags}
-          <BrowserAnnotationAttachments files={files} disabled={disabled} onChange={setFiles} />
+          <BrowserAnnotationAttachments files={files} disabled={editorDisabled} onChange={setFiles} />
           <div className="composer-attachment-row">
           {!!queueEditor.edit?.attachments.length && <div className="composer-attachments">
-            {queueEditor.edit.attachments.map((part, index) => <ComposerQueueAttachment key={`${index}:${part.url}`} part={part} projectId={project.id} threadId={thread.id} action={readAction} disabled={disabled}
+            {queueEditor.edit.attachments.map((part, index) => <ComposerQueueAttachment key={`${index}:${part.url}`} part={part} projectId={project.id} threadId={thread.id} action={readAction} disabled={editorDisabled}
               onRemove={() => queueEditor.removeAttachment(index)} />)}
           </div>}
           {files.some(file => !isComposerFile(file) || !browserAnnotation(file)) ? (
             <div className="composer-attachments" data-testid="composer-attachments">
-              {files.filter(file => !isComposerFile(file) || !browserAnnotation(file)).map((file, i) => <ComposerAttachment disabled={disabled} key={isComposerFile(file) ? `${file.name}-${file.lastModified}-${i}` : `pasted-text-${i}`} file={file}
+              {files.filter(file => !isComposerFile(file) || !browserAnnotation(file)).map((file, i) => <ComposerAttachment disabled={editorDisabled} key={isComposerFile(file) ? `${file.name}-${file.lastModified}-${i}` : `pasted-text-${i}`} file={file}
                 onAnnotate={onAnnotate ? file => onAnnotate({ draftKey: key, file, returnFocus: () => api.current?.focus() }) : undefined}
                 onRemove={() => setFiles((current) => current.filter(item => item !== file))}
                 onExpand={content => { api.current?.appendText(`${text.length ? "\n\n" : ""}${content}`); setFiles(current => current.filter(item => item !== file)); }} />)}
             </div>
           ) : null}
-          {!queueEditor.edit && <ReviewCommentAttachment comments={comments} disabled={disabled} onRemove={() => detachReviewComments(reviewKey)} />}
-          {!queueEditor.edit && <McpComposerAttachments draftKey={key} entries={mcpDraft} disabled={disabled} />}
+          {!queueEditor.edit && <ReviewCommentAttachment comments={comments} disabled={editorDisabled} onRemove={() => detachReviewComments(reviewKey)} />}
+          {!queueEditor.edit && <McpComposerAttachments draftKey={key} entries={mcpDraft} disabled={editorDisabled} />}
           </div></>
         }
         promptHistory={(thread.turns ?? []).flatMap((t: Data) =>
@@ -469,11 +477,11 @@ export function Composer({
             </ControlHintTooltip>
           </div>}</>
         }
-        onCancel={queueEditor.edit ? () => void queueEditor.cancel() : running ? stop : undefined}
+        onCancel={queueEditor.edit ? () => { if (!executionBlocked) void queueEditor.cancel(); } : running ? stop : undefined}
         submitControl={queueEditor.edit ? <Button type="button" size="icon-md" aria-label="保存排队消息" data-testid="chat-send-button" disabled={disabled || queueEditor.saveDisabled || (!input.text.trim() && !input.files.length && !queueEditor.edit.attachments.length)}
-          className="composer-primary-action" onClick={() => void queueEditor.save()}><SendMessageIcon className="size-5" /></Button> : running && !input.text.trim() && !input.files.length && !comments.length && !skills.selected.length && !mcpDraft.length ? (
+          className="composer-primary-action" onClick={() => void saveQueueEdit()}><SendMessageIcon className="size-5" /></Button> : running && !input.text.trim() && !input.files.length && !comments.length && !skills.selected.length && !mcpDraft.length ? (
           <ControlHintTooltip title={ordinary ? "暂停执行" : "停止"} shortcut="Esc">
-            <Button type="button" variant="secondary" size="icon-md" className="composer-primary-action composer-stop-action" aria-label={ordinary ? "暂停执行" : "停止"}
+            <Button type="button" variant="secondary" size="icon-md" className="composer-primary-action composer-stop-action" aria-label={ordinary ? "暂停执行" : "停止"} disabled={executionBlocked}
               onClick={() => { stop(); api.current?.focus(); }}>
               <StopIcon className="size-4" />
             </Button>

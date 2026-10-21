@@ -193,6 +193,8 @@ pnpm --dir clients/gui run sign:mac --app "/absolute/new-package/package/mac-arm
 
 更新恢复与菜单停止共用生命周期观察和停止流程。普通停止仍保护包含 pending 输入的暂停 Queue；明确取消会保留输入与安排，并将 cancel 意图传到最终公共服务宿主。确认后项目范围或 Core generation 变化会要求重新确认；多项目部分退出或未知结果不会显示成恢复正常。`pnpm --dir clients/gui run test:lifecycle` 验证真实 Core 的 Queue 保留、安全退出，以及隔离 Electron 的菜单取消、不同配置路径下接回原后台和更新恢复；普通重开不弹恢复对话框，明确停止的原生确认由 fixture 应答，不进行更新下载或安装。
 
+单轮暂停后，Composer 等待 Main 确认原操作结算才恢复发送和继续执行，不能仅凭 Core 已显示 `interrupted` 开放提交。期间可编辑草稿，结算不会自动发送。未知回执仍通过原请求核查，不重复暂停或重发输入。`test:stop-turn` 使用真实 Core 与回执屏障验证这个顺序、草稿保留和结算后的一次显式发送。
+
 缺少 `cancelStop` 的旧后台只在明确 busy 拒绝后使用兼容取消。取消前，可信 Main 将原启用安排的工作区、任务、时间与运行身份写入私有 `legacy-schedule-recovery.json`；旧 Core 自行暂停或安全停止前临时暂停安排后，新后台先确认旧进程退出，再核对任务修订号，仅恢复安排，不恢复已暂停 Run。未知提交不自动重发，任务变化或恢复失败保留记录并提示人工核对。专项 `test:lifecycle:legacy` 需要 `AREAL_CORE_BIN` 和 `AREAL_LEGACY_CORE_BIN` 分别指向已核对的新旧 Core；使用归档旧 adapter 源码、当前 renderer/依赖与隔离数据，不安装或发布版本。可用 `AREAL_LEGACY_PAUSE_UNKNOWN=1` 注入暂停回执丢失。
 
 Core 构建完成后再启动使用该二进制的桌面 smoke，验收期间不重新链接它。模型专项等待保存完成及 Core 的模型选择状态，再进行下一步操作；GUI CI 运行该专项并上传其日志、截图和 manifest。Core 模型配置子进程失败时，后台服务日志保留操作、退出码、signal 和超时分类，不记录密钥或完整环境。

@@ -44,7 +44,7 @@ export function SharedWorkspacePreview({ dark }: { dark: boolean }) {
       </div></div></div></div>
       <SidePane workspaceKey="shared-design" ownerTaskId="shared" active={active} names={tabs} onSelect={id => { setActive(id); if (mode === "conversation") setMode("panel"); }} onChange={setTabs} onHide={close}
         dirtyFiles={{}} canClose={() => true} workspaceView={{ mode, title: "共享交互验证", onChange: setMode }}
-        render={name => name === "旁路讨论" ? <SideChatPane project={project} source={thread} action={action} dark={dark} onReturn={close} onPanel={() => setSettings(true)} />
+        render={name => name === "旁路讨论" ? <SideChatPane project={project} source={thread} action={action} dark={dark} executionBlocked={false} onReturn={close} onPanel={() => setSettings(true)} />
           : <div className="p-4" role="region" aria-label="共享文件阅读"><p>文件面板保持独立阅读。</p><pre>export const shared = true;</pre></div>} />
     </div>
     </WorkbenchShell>
