@@ -1,3 +1,4 @@
+import { useI18n, UiMessageError, formatUiMessage, type UiMessage } from "../i18n/IntlProvider.js";
 import { ActionButton } from "../components/ui/action-button.js";
 import { SettingsSelect } from "./SettingsPageParts.js";
 import { SettingsDisclosure } from "./SettingsDisclosure.js";
@@ -92,6 +93,7 @@ function ThemeDiffPreview() {
 
 /** Derived decoration only; late theme loads cannot replace a newer selection. */
 function CodeThemeSample({ theme }: { theme: CodePreviewTheme }) {
+  const { t } = useI18n();
   const [sample, setSample] = useState<{ theme: CodePreviewTheme; style?: CSSProperties }>();
   useEffect(() => {
     let active = true;
@@ -109,79 +111,85 @@ function CodeThemeSample({ theme }: { theme: CodePreviewTheme }) {
   const current = sample?.theme === theme ? sample : undefined;
   return <span className="appearance-aa" aria-hidden="true"
     data-code-theme={current?.style ? theme : undefined}
-    style={current?.style} title={current && !current.style ? "预览暂不可用" : undefined}>Aa</span>;
+    style={current?.style} title={current && !current.style ? t("settings.displaySettings.previewTemporarilyUnavailable") : undefined}>Aa</span>;
 }
 
 export function GeneralSettings({ settings = {}, power, menuBar, projectlessDirectory, chooseProjectlessDirectory, fileOpen, action, connected = false }: { settings?: Data; power?: Snapshot["power"]; menuBar?: Snapshot["menuBar"]; projectlessDirectory?: string; chooseProjectlessDirectory?: PlatformServices["chooseProjectlessDirectory"]; fileOpen?: PlatformServices["fileOpen"]; action?: Action; connected?: boolean }) {
+  const { t } = useI18n();
   const prefs = useApplicationPreferences();
-  const [powerSaving, setPowerSaving] = useState(false), [powerError, setPowerError] = useState("");
+  const [powerSaving, setPowerSaving] = useState(false), [powerError, setPowerError] = useState<string | UiMessage>("");
   const powerSavePending = useRef(false);
   const savePower = async (value: boolean) => {
     if (!connected || !action || powerSavePending.current) return;
     powerSavePending.current = true; setPowerSaving(true); setPowerError("");
     try { await action("library", { operation: "settings", key: "preventSleep", value }); }
-    catch (error) { setPowerError(error instanceof Error ? error.message : "休眠设置保存失败"); }
+    catch (error) { setPowerError(error instanceof UiMessageError ? error.descriptor : error instanceof Error ? error.message : { id: "settings.displaySettings.failedToSaveSleepSettings" }); }
     finally { powerSavePending.current = false; setPowerSaving(false); }
   };
   return (
     <div className="settings-sections">
-      <SettingsSection title="文件与打开">
+      <SettingsSection title={t("settings.language")}>
+        <SettingsGroupCard>
+          <SettingsRow label={t("settings.language")} description={t("settings.language.description")} control={<SettingsSelect aria-label={t("settings.language")} value={prefs.locale} onValueChange={locale => setApplicationPreferences({ locale: locale as "zh-CN" | "en" })}><option value="zh-CN">简体中文</option><option value="en">English</option></SettingsSelect>} />
+        </SettingsGroupCard>
+      </SettingsSection>
+      <SettingsSection title={t("settings.displaySettings.filesAndOpening")}>
         <SettingsGroupCard>
           <ProjectlessDirectorySetting directory={projectlessDirectory} choose={chooseProjectlessDirectory} connected={connected} />
           <FileOpenSetting service={fileOpen} preferred={settings.fileOpenTarget} connected={connected} />
         </SettingsGroupCard>
       </SettingsSection>
-      <SettingsSection title="窗口与终端">
+      <SettingsSection title={t("settings.displaySettings.windowsAndTerminal")}>
         <SettingsGroupCard>
           <MenuBarSetting enabled={settings.showInMenuBar !== false} state={menuBar} action={action} connected={connected} />
           <SettingsRow
-            label="底部面板"
-            description="在应用标题栏中显示底部面板控件"
-            control={<SettingsSwitch aria-label="底部面板" checked={prefs.showBottomPanelControl} onCheckedChange={(showBottomPanelControl) => setApplicationPreferences({ showBottomPanelControl })} />}
+            label={t("settings.displaySettings.bottomPanel")}
+            description={t("settings.displaySettings.showTheBottomPanelControlInThe")}
+            control={<SettingsSwitch aria-label={t("settings.displaySettings.bottomPanel")} checked={prefs.showBottomPanelControl} onCheckedChange={(showBottomPanelControl) => setApplicationPreferences({ showBottomPanelControl })} />}
           />
           <SettingsRow
-            label="默认终端位置"
-            description="新终端标签页的默认位置"
-            control={<SettingsSegmentedTabs ariaLabel="默认终端位置" value={prefs.terminalLocation}
-              items={[{ label: "底部", value: "bottom" }, { label: "右侧", value: "right" }]}
+            label={t("settings.displaySettings.defaultTerminalLocation")}
+            description={t("settings.displaySettings.defaultLocationForNewTerminalTabs")}
+            control={<SettingsSegmentedTabs ariaLabel={t("settings.displaySettings.defaultTerminalLocation")} value={prefs.terminalLocation}
+              items={[{ label: t("settings.displaySettings.bottom"), value: "bottom" }, { label: t("settings.displaySettings.right"), value: "right" }]}
               onValueChange={(terminalLocation) => setApplicationPreferences({ terminalLocation })} />}
           />
         </SettingsGroupCard>
       </SettingsSection>
-      <SettingsSection title="电源">
+      <SettingsSection title={t("settings.displaySettings.power")}>
         <SettingsGroupCard>
           <SettingsRow
-            label="运行时防止系统休眠"
-            description="任务运行时保持唤醒；仍可手动睡眠或合盖。"
-            control={<SettingsSwitch aria-label="运行时防止系统休眠" checked={settings.preventSleep !== false}
+            label={t("settings.displaySettings.preventSystemSleepWhileRunning")}
+            description={t("settings.displaySettings.keepTheSystemAwakeWhileTasksRun")}
+            control={<SettingsSwitch aria-label={t("settings.displaySettings.preventSystemSleepWhileRunning")} checked={settings.preventSleep !== false}
               disabled={!connected || !action || powerSaving} onCheckedChange={value => void savePower(value)} />}
           />
-          {(powerError || power?.error) && <p role="alert" className="px-4 py-2 text-destructive">{powerError || power?.error}</p>}
+          {(powerError || power?.error) && <p role="alert" className="px-4 py-2 text-destructive">{formatUiMessage(t, powerError) || power?.error}</p>}
         </SettingsGroupCard>
       </SettingsSection>
-      <SettingsSection title="编辑器">
+      <SettingsSection title={t("settings.displaySettings.editor")}>
         <SettingsGroupCard>
           <SettingsRow
-            label="发送快捷键"
-            description="Shift+Enter 始终换行。"
+            label={t("settings.displaySettings.sendShortcut")}
+            description={t("settings.displaySettings.shiftEnterAlwaysInsertsANewLine")}
             control={
-              <SettingsSelect aria-label="发送快捷键" value={prefs.sendShortcut} onValueChange={selectedValue => setApplicationPreferences({
+              <SettingsSelect aria-label={t("settings.displaySettings.sendShortcut")} value={prefs.sendShortcut} onValueChange={selectedValue => setApplicationPreferences({
                     sendShortcut: selectedValue as "enter" | "modifier",
                   })}>
-                <option value="enter">Enter 发送</option>
-                <option value="modifier">⌘/Ctrl+Enter 发送</option>
+                <option value="enter">{t("settings.displaySettings.enterToSend")}</option>
+                <option value="modifier">{t("settings.displaySettings.ctrlEnterToSend")}</option>
               </SettingsSelect>
             }
           />
           <SettingsRow
-            label="跟进处理方式"
-            description="运行中发送新消息的方式；⌘/Ctrl+点击可临时反转。"
+            label={t("settings.displaySettings.followUpBehavior")}
+            description={t("settings.displaySettings.howNewMessagesAreSentWhileRunning")}
             control={
               <SettingsSegmentedTabs
-                ariaLabel="跟进处理方式"
+                ariaLabel={t("settings.displaySettings.followUpBehavior")}
                 items={[
-                  { label: "加入队列", value: "queue" },
-                  { label: "调整方向", value: "steer" },
+                  { label: t("settings.displaySettings.queue"), value: "queue" },
+                  { label: t("settings.displaySettings.steer"), value: "steer" },
                 ]}
                 value={prefs.followUp}
                 onValueChange={(val) =>
@@ -208,13 +216,14 @@ function ColorField({
   value: string;
   onChange: (value: string) => void;
 }) {
+  const { t } = useI18n();
   const [draft, setDraft] = useState(value);
   useEffect(() => setDraft(value), [value]);
   return (
     <div className="theme-color-field">
       <input
         type="color"
-        aria-label={`${label}色板`}
+        aria-label={t("settings.displaySettings.valueColorPicker", { value0: label })}
         value={value}
         onChange={(e) => onChange(e.target.value)}
       />
@@ -230,7 +239,7 @@ function ColorField({
       />
       <span className="sr-only" role="status">
         {!validColor(draft)
-          ? "请输入六位十六进制颜色；当前仍使用上一次有效颜色。"
+          ? t("settings.displaySettings.enterASixDigitHexadecimalColorThe")
           : ""}
       </span>
     </div>
@@ -248,6 +257,7 @@ export function AppearanceSettings({
   fontSize: number;
   setFontSize: (value: number) => void;
 }) {
+  const { t } = useI18n();
   const prefs = useApplicationPreferences(),
     code = useCodePreferences();
   const fontSelect = (
@@ -256,13 +266,13 @@ export function AppearanceSettings({
     label: string,
   ) => (
     <SettingsSelect aria-label={label} value={prefs[mode].fonts[name]} onValueChange={selectedValue => setApplicationPreferences({ [mode]: { ...prefs[mode], fonts: { ...prefs[mode].fonts, [name]: selectedValue } } })}>
-      {name === "contentFont" && <option value="inherit">与界面字体相同</option>}
+      {name === "contentFont" && <option value="inherit">{t("settings.displaySettings.sameAsInterfaceFont")}</option>}
       {Object.keys(name === "codeFont" ? CODE_FONTS : UI_FONTS).map((font) => (
         <option key={font} value={font}>
           {(
             {
-              system: "系统默认",
-              PingFang: "苹方",
+              system: t("settings.displaySettings.systemDefault"),
+              PingFang: t("settings.displaySettings.pingfang"),
               Courier: "Courier New",
             } as Record<string, string>
           )[font] ?? font}
@@ -294,7 +304,7 @@ export function AppearanceSettings({
     </div>
   );
   const codeTheme = (mode: "light" | "dark") => (
-    <SettingsSelect aria-label={`${mode === "light" ? "浅色" : "深色"}代码主题`} value={code[`${mode}Theme`]} onValueChange={selectedValue => setCodePreferences({
+    <SettingsSelect aria-label={t("settings.displaySettings.valueCodeTheme", { value0: mode === "light" ? t("settings.displaySettings.light") : t("settings.displaySettings.dark") })} value={code[`${mode}Theme`]} onValueChange={selectedValue => setCodePreferences({
           [`${mode}Theme`]: selectedValue as CodePreviewTheme,
         })}>
       {CODE_PREVIEW_THEME_OPTIONS.map((option) => (
@@ -308,47 +318,47 @@ export function AppearanceSettings({
   const activeMode = theme === "data-dense" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "dark" : "light";
   const [mode, setMode] = useState<"light" | "dark">(activeMode);
   const palette = prefs[mode];
-  const label = mode === "light" ? "浅色" : "深色";
+  const label = mode === "light" ? t("settings.displaySettings.light") : t("settings.displaySettings.dark");
   const update = (patch: Partial<Palette>) => setApplicationPreferences({ [mode]: { ...palette, ...patch } });
   return (
     <div className="settings-sections">
-      <SettingsSection title="界面">
+      <SettingsSection title={t("settings.displaySettings.interface")}>
         <SettingsGroupCard>
-          <SettingsRow label="界面主题" control={
-            <SettingsSelect aria-label="界面主题" value={theme} onValueChange={value => {
+          <SettingsRow label={t("settings.displaySettings.interfaceTheme")} control={
+            <SettingsSelect aria-label={t("settings.displaySettings.interfaceTheme")} value={theme} onValueChange={value => {
               setTheme(value); if (value !== "system") setMode(value === "data-dense" ? "dark" : "light");
             }}>
-              <option value="system">跟随系统</option><option value="soft-glass">浅色</option><option value="data-dense">深色</option>
+              <option value="system">{t("settings.displaySettings.system")}</option><option value="soft-glass">{t("settings.displaySettings.light")}</option><option value="data-dense">{t("settings.displaySettings.dark")}</option>
             </SettingsSelect>
           } />
-          <SettingsRow label="界面字体" control={fontSelect(activeMode, "uiFont", "界面字体")} />
-          <SettingsRow label="界面字号" description="调整导航、设置和控件的基础字号" control={sizeInput("界面字号", fontSize, 12, 18, setFontSize)} />
+          <SettingsRow label={t("settings.displaySettings.interfaceFont")} control={fontSelect(activeMode, "uiFont", t("settings.displaySettings.interfaceFont"))} />
+          <SettingsRow label={t("settings.displaySettings.interfaceFontSize")} description={t("settings.displaySettings.setTheBaseFontSizeForNavigation")} control={sizeInput(t("settings.displaySettings.interfaceFontSize"), fontSize, 12, 18, setFontSize)} />
         </SettingsGroupCard>
       </SettingsSection>
-      <SettingsSection title="交互与动效">
+      <SettingsSection title={t("settings.displaySettings.interactionAndMotion")}>
         <SettingsGroupCard>
-          <SettingsRow label="减少动态效果" description="减少动画效果，或跟随系统偏好" control={
-            <SettingsSelect aria-label="减少动态效果" value={prefs.reducedMotion}
+          <SettingsRow label={t("settings.displaySettings.reduceMotion")} description={t("settings.displaySettings.reduceAnimationOrFollowSystemPreferences")} control={
+            <SettingsSelect aria-label={t("settings.displaySettings.reduceMotion")} value={prefs.reducedMotion}
               onValueChange={reducedMotion => setApplicationPreferences({ reducedMotion: reducedMotion as "system" | "on" | "off" })}>
-              <option value="system">跟随系统</option><option value="on">开启</option><option value="off">关闭</option>
+              <option value="system">{t("settings.displaySettings.system")}</option><option value="on">{t("settings.displaySettings.on")}</option><option value="off">{t("settings.displaySettings.off")}</option>
             </SettingsSelect>
           } />
-          <SettingsRow label="使用指针光标" description="悬停交互元素时切换为指针光标" control={<SettingsSwitch aria-label="使用指针光标" checked={prefs.pointerCursor} onCheckedChange={pointerCursor => setApplicationPreferences({ pointerCursor })} />} />
-          <SettingsRow label="字体平滑" description="使用 macOS 原生字体抗锯齿" control={<SettingsSwitch aria-label="字体平滑" checked={prefs.fontSmoothing} onCheckedChange={fontSmoothing => setApplicationPreferences({ fontSmoothing })} />} />
+          <SettingsRow label={t("settings.displaySettings.usePointerCursor")} description={t("settings.displaySettings.showAPointerCursorWhenHoveringOver")} control={<SettingsSwitch aria-label={t("settings.displaySettings.usePointerCursor")} checked={prefs.pointerCursor} onCheckedChange={pointerCursor => setApplicationPreferences({ pointerCursor })} />} />
+          <SettingsRow label={t("settings.displaySettings.fontSmoothing")} description={t("settings.displaySettings.useNativeMacOSFontAntialiasing")} control={<SettingsSwitch aria-label={t("settings.displaySettings.fontSmoothing")} checked={prefs.fontSmoothing} onCheckedChange={fontSmoothing => setApplicationPreferences({ fontSmoothing })} />} />
         </SettingsGroupCard>
       </SettingsSection>
       <SettingsSection>
-        <SettingsDisclosure title="阅读与代码">
+        <SettingsDisclosure title={t("settings.displaySettings.readingAndCode")}>
           <div className="appearance-theme-content">
             <SettingsGroupCard>
-              <SettingsRow label="内容字体" control={fontSelect(activeMode, "contentFont", "内容字体")} />
-              <SettingsRow label="内容字体大小" description="调整正文使用的基础字号" control={sizeInput("内容字号", prefs.contentSize, 12, 24, n => setApplicationPreferences({ contentSize: n }))} />
-              <SettingsRow label="代码字体" control={fontSelect(activeMode, "codeFont", "代码字体")} />
-              <SettingsRow label="代码字体大小" description="聊天和差异视图中的代码字号" control={sizeInput("代码字号", code.fontSizePx, 10, 24, n => setCodePreferences({ fontSizePx: n }))} />
-              <SettingsRow label="显示行号" control={<SettingsSwitch aria-label="显示行号" checked={code.showLineNumbers} onCheckedChange={showLineNumbers => setCodePreferences({ showLineNumbers })} />} />
-              <SettingsRow label="长行自动换行" description="超出宽度的代码行软换行显示" control={<SettingsSwitch aria-label="长行自动换行" checked={code.wrapLongLines} onCheckedChange={wrapLongLines => setCodePreferences({ wrapLongLines })} />} />
-              <SettingsRow label="差异标记" description="使用颜色或 +/− 标记显示更改" control={
-                <SettingsSegmentedTabs ariaLabel="差异标记" value={prefs.diffMarkers} items={[{ label: "颜色", value: "color" }, { label: "+/-", value: "signs" }]}
+              <SettingsRow label={t("settings.displaySettings.contentFont")} control={fontSelect(activeMode, "contentFont", t("settings.displaySettings.contentFont"))} />
+              <SettingsRow label={t("settings.displaySettings.contentFontSize")} description={t("settings.displaySettings.setTheBaseFontSizeForBody")} control={sizeInput(t("settings.displaySettings.contentFontSize2"), prefs.contentSize, 12, 24, n => setApplicationPreferences({ contentSize: n }))} />
+              <SettingsRow label={t("settings.displaySettings.codeFont")} control={fontSelect(activeMode, "codeFont", t("settings.displaySettings.codeFont"))} />
+              <SettingsRow label={t("settings.displaySettings.codeFontSize")} description={t("settings.displaySettings.codeFontSizeInChatAndDiff")} control={sizeInput(t("settings.displaySettings.codeFontSize2"), code.fontSizePx, 10, 24, n => setCodePreferences({ fontSizePx: n }))} />
+              <SettingsRow label={t("settings.displaySettings.showLineNumbers")} control={<SettingsSwitch aria-label={t("settings.displaySettings.showLineNumbers")} checked={code.showLineNumbers} onCheckedChange={showLineNumbers => setCodePreferences({ showLineNumbers })} />} />
+              <SettingsRow label={t("settings.displaySettings.wrapLongLines")} description={t("settings.displaySettings.softWrapCodeLinesThatExceedThe")} control={<SettingsSwitch aria-label={t("settings.displaySettings.wrapLongLines")} checked={code.wrapLongLines} onCheckedChange={wrapLongLines => setCodePreferences({ wrapLongLines })} />} />
+              <SettingsRow label={t("settings.displaySettings.diffMarkers")} description={t("settings.displaySettings.showChangesWithColorsOrMarkers")} control={
+                <SettingsSegmentedTabs ariaLabel={t("settings.displaySettings.diffMarkers")} value={prefs.diffMarkers} items={[{ label: t("settings.displaySettings.color"), value: "color" }, { label: "+/-", value: "signs" }]}
                   onValueChange={diffMarkers => setApplicationPreferences({ diffMarkers })} />
               } />
             </SettingsGroupCard>
@@ -357,30 +367,30 @@ export function AppearanceSettings({
         </SettingsDisclosure>
       </SettingsSection>
       <SettingsSection>
-        <SettingsDisclosure title="配色微调">
+        <SettingsDisclosure title={t("settings.displaySettings.customizeColors")}>
           <div className="appearance-theme-content">
             <div className="settings-section-action">
-              <SettingsSegmentedTabs ariaLabel="编辑配色" value={mode} onValueChange={setMode}
-                items={[{ label: "浅色配色", value: "light" }, { label: "深色配色", value: "dark" }]} />
+              <SettingsSegmentedTabs ariaLabel={t("settings.displaySettings.editColors")} value={mode} onValueChange={setMode}
+                items={[{ label: t("settings.displaySettings.lightColors"), value: "light" }, { label: t("settings.displaySettings.darkColors"), value: "dark" }]} />
               <ThemeSharing mode={mode} />
-              <ActionButton aria-label={`恢复${label}默认`} onClick={() => setApplicationPreferences({ [mode]: DEFAULT_PALETTES[mode] })}>{`重置${label}配色`}</ActionButton>
+              <ActionButton aria-label={t("settings.displaySettings.restoreValueDefaults", { value0: label })} onClick={() => setApplicationPreferences({ [mode]: DEFAULT_PALETTES[mode] })}>{t("settings.displaySettings.resetValueColors", { value0: label })}</ActionButton>
             </div>
             <SettingsGroupCard density="compact">
-              <SettingsRow label="代码主题" control={<div className="appearance-theme-tools"><CodeThemeSample theme={code[`${mode}Theme`]} />{codeTheme(mode)}</div>} />
-              <SettingsRow label="界面字体" control={fontSelect(mode, "uiFont", `${label}界面字体`)} />
-              <SettingsRow label="内容字体" control={fontSelect(mode, "contentFont", `${label}内容字体`)} />
-              <SettingsRow label="代码字体" control={fontSelect(mode, "codeFont", `${label}代码字体`)} />
-              <SettingsRow label="强调色" control={
+              <SettingsRow label={t("settings.displaySettings.codeTheme")} control={<div className="appearance-theme-tools"><CodeThemeSample theme={code[`${mode}Theme`]} />{codeTheme(mode)}</div>} />
+              <SettingsRow label={t("settings.displaySettings.interfaceFont")} control={fontSelect(mode, "uiFont", t("settings.displaySettings.valueInterfaceFont", { value0: label }))} />
+              <SettingsRow label={t("settings.displaySettings.contentFont")} control={fontSelect(mode, "contentFont", t("settings.displaySettings.valueContentFont", { value0: label }))} />
+              <SettingsRow label={t("settings.displaySettings.codeFont")} control={fontSelect(mode, "codeFont", t("settings.displaySettings.valueCodeFont", { value0: label }))} />
+              <SettingsRow label={t("settings.displaySettings.accent")} control={
                 <div className="flex flex-wrap items-center justify-end gap-2">
-                  <ColorField label={`${label}强调色`} value={palette.accent} onChange={accent => update({ accent })} />
-                  <ActionButton disabled={palette.accent.toLowerCase() === DEFAULT_PALETTES[mode].accent} onClick={() => update({ accent: DEFAULT_PALETTES[mode].accent })}>重置</ActionButton>
+                  <ColorField label={t("settings.displaySettings.valueAccentColor", { value0: label })} value={palette.accent} onChange={accent => update({ accent })} />
+                  <ActionButton disabled={palette.accent.toLowerCase() === DEFAULT_PALETTES[mode].accent} onClick={() => update({ accent: DEFAULT_PALETTES[mode].accent })}>{t("settings.displaySettings.reset")}</ActionButton>
                 </div>
               } />
-              <SettingsRow label="背景" control={<ColorField label={`${label}背景颜色`} value={palette.background} onChange={background => update({ background })} />} />
-              <SettingsRow label="前景" control={<ColorField label={`${label}墨迹颜色`} value={palette.foreground} onChange={foreground => update({ foreground })} />} />
-              <SettingsRow label="半透明侧边栏" control={<SettingsSwitch aria-label={`${label}半透明侧边栏`} checked={palette.translucentSidebar} onCheckedChange={translucentSidebar => update({ translucentSidebar })} />} />
-              <SettingsRow label="对比度" control={
-                <div className="flex items-center gap-3"><input aria-label={`${label}对比度`} type="range" min="0" max="100" value={palette.contrast} onChange={e => update({ contrast: Number(e.target.value) })} /><output>{palette.contrast}</output></div>
+              <SettingsRow label={t("settings.displaySettings.background")} control={<ColorField label={t("settings.displaySettings.valueBackgroundColor", { value0: label })} value={palette.background} onChange={background => update({ background })} />} />
+              <SettingsRow label={t("settings.displaySettings.foreground")} control={<ColorField label={t("settings.displaySettings.valueForegroundColor", { value0: label })} value={palette.foreground} onChange={foreground => update({ foreground })} />} />
+              <SettingsRow label={t("settings.displaySettings.translucentSidebar")} control={<SettingsSwitch aria-label={t("settings.displaySettings.valueTranslucentSidebar", { value0: label })} checked={palette.translucentSidebar} onCheckedChange={translucentSidebar => update({ translucentSidebar })} />} />
+              <SettingsRow label={t("settings.displaySettings.contrast")} control={
+                <div className="flex items-center gap-3"><input aria-label={t("settings.displaySettings.valueContrast", { value0: label })} type="range" min="0" max="100" value={palette.contrast} onChange={e => update({ contrast: Number(e.target.value) })} /><output>{palette.contrast}</output></div>
               } />
             </SettingsGroupCard>
           </div>

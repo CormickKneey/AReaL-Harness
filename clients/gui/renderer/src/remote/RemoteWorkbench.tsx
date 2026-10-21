@@ -1,3 +1,4 @@
+import {ApplicationIntlProvider} from "../i18n/IntlProvider.js";
 import {createRoot} from 'react-dom/client';
 import {useEffect,useLayoutEffect,useRef,useState} from 'react';
 import {Messages} from '../Messages.js';
@@ -114,5 +115,5 @@ function Session({view,api}:{view:View;api:API}){
 export function createRemoteWorkbench(api:API){
   const home=createRoot(document.getElementById('remote-projects')!);
   const session=createRoot(document.getElementById('remote-session-ui')!);
-  return {render(view:View){home.render(<Home view={view} api={api}/>);session.render(view.detail?<Session key={`${view.detail.projectId}/${view.detail.snapshot.threadId}`} view={view} api={api}/>:view.sessionOpen?<><header className="remote-chat-heading"><Button variant="ghost" size="sm" onClick={api.close}>返回项目列表</Button></header><p role={view.error?'alert':'status'}>{view.error||'正在读取会话…'}</p></>:null);}};
+  return {render(view:View){home.render(<ApplicationIntlProvider><Home view={view} api={api}/></ApplicationIntlProvider>);session.render(<ApplicationIntlProvider>{view.detail?<Session key={`${view.detail.projectId}/${view.detail.snapshot.threadId}`} view={view} api={api}/>:view.sessionOpen?<><header className="remote-chat-heading"><Button variant="ghost" size="sm" onClick={api.close}>返回项目列表</Button></header><p role={view.error?'alert':'status'}>{view.error||'正在读取会话…'}</p></>:null}</ApplicationIntlProvider>);}};
 }

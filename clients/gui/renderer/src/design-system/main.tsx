@@ -1,3 +1,4 @@
+import { ApplicationIntlProvider } from "../i18n/IntlProvider.js";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "../styles.css";
@@ -194,4 +195,4 @@ function Preview() {
     </>}
   </main>;
 }
-createRoot(document.getElementById("root")!).render(<TooltipProvider><Preview /></TooltipProvider>);
+createRoot(document.getElementById("root")!).render(<ApplicationIntlProvider><TooltipProvider><Preview /></TooltipProvider></ApplicationIntlProvider>);

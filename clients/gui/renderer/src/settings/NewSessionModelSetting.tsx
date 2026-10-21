@@ -1,3 +1,4 @@
+import { useI18n } from "../i18n/IntlProvider.js";
 import { useEffect } from "react";
 import { SettingsSelect, SettingsGroupCard, SettingsRow, SettingsSection } from "./SettingsPageParts.js";
 import { Feedback, useResource } from "./common.js";
@@ -8,6 +9,7 @@ import type { Action, Data } from "../services.js";
 export function NewSessionModelSetting({ action, disabled, onBusyChange }: {
   action: Action; disabled: boolean; onBusyChange: (busy: boolean) => void;
 }) {
+  const { t } = useI18n();
   const api = (operation: string, values: Data = {}) => action("providers", { operation, ...values });
   const catalog = useResource(() => api("list"), "application");
   const subscription = useResource(() => action("chatgpt", { operation: "status", provider: "openai" }), "chatgpt-subscription-openai");
@@ -25,11 +27,11 @@ export function NewSessionModelSetting({ action, disabled, onBusyChange }: {
   const overrides = Object.entries(catalog.value?.effective?.sources ?? {}).filter(([field, source]) => field.startsWith("model.") && ["env", "cli"].includes((source as Data).kind));
   const current = catalog.value?.defaultModel;
   const value = current ? `${current.providerId}/${current.modelId}` : "";
-  return <SettingsSection title="新会话" description="新会话沿用主会话最后一次受理的模型与思考强度；已有会话保持不变。没有使用记录或模型不可用时使用备用默认模型。">
+  return <SettingsSection title={t("settings.newSessionModelSetting.newSessions")} description={t("settings.newSessionModelSetting.newSessionsUseTheModelAndReasoning")}>
     <Feedback error={catalog.error || subscription.error || error} />
-    {overrides.length > 0 && <p role="status" className="settings-muted">命令行或环境配置覆盖了文件值；保存不会修改这些覆盖。</p>}
-    <SettingsGroupCard><SettingsRow label="备用默认模型" control={
-      <SettingsSelect aria-label="备用默认模型" value={value} disabled={disabled || busy || catalog.loading || subscription.loading || !options.length} onValueChange={next => {
+    {overrides.length > 0 && <p role="status" className="settings-muted">{t("settings.newSessionModelSetting.commandLineOrEnvironmentSettingsOverrideFile")}</p>}
+    <SettingsGroupCard><SettingsRow label={t("settings.newSessionModelSetting.fallbackDefaultModel")} control={
+      <SettingsSelect aria-label={t("settings.newSessionModelSetting.fallbackDefaultModel")} value={value} disabled={disabled || busy || catalog.loading || subscription.loading || !options.length} onValueChange={next => {
         const choice = options.find(option => `${option.providerId}/${option.modelId}` === next);
         if (!choice || next === value) return;
         void run(async () => {
@@ -37,7 +39,7 @@ export function NewSessionModelSetting({ action, disabled, onBusyChange }: {
           catch (cause) { await catalog.refresh(); throw cause; }
         });
       }}>
-        {!options.some(option => `${option.providerId}/${option.modelId}` === value) && <option value={value}>{current?.modelId || "尚未设置"}</option>}
+        {!options.some(option => `${option.providerId}/${option.modelId}` === value) && <option value={value}>{current?.modelId || t("settings.newSessionModelSetting.notSet")}</option>}
         {options.map(option => <option key={`${option.providerId}/${option.modelId}`} value={`${option.providerId}/${option.modelId}`}>{option.label}</option>)}
       </SettingsSelect>
     } /></SettingsGroupCard>

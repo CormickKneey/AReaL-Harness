@@ -1,3 +1,4 @@
+import { useI18n, type MessageId, type Translate, type UiMessage } from "../i18n/IntlProvider.js";
 import { SettingsSelect } from "./SettingsPageParts.js";
 import { SettingsDisclosure } from "./SettingsDisclosure.js";
 import { useEffect, useRef, useState } from "react";
@@ -9,16 +10,31 @@ import { SettingsGroupCard, SettingsRow, SettingsSection } from "./SettingsPageP
 import { subscriptionProjection } from "./provider-ui-state.js";
 import type { Action, Data } from "../services.js";
 
-const recovery: Record<string, string> = {
+const recovery: Record<string, MessageId | ""> = {
     ready: "",
-    refreshing: "正在刷新",
-    temporarily_unavailable: "稍后重试",
-    storage_locked: "请解锁本机安全存储",
-    reauth_required: "授权失效，请重新登录",
-    permission_denied: "请检查账号权限",
-    quota_exceeded: "请检查账号用量",
-    signed_out: "浏览器授权",
+    refreshing: "settings.chatGPTSubscription.refreshing",
+    temporarily_unavailable: "settings.chatGPTSubscription.retryLater",
+    storage_locked: "settings.chatGPTSubscription.unlockSecureStorage",
+    reauth_required: "settings.chatGPTSubscription.authorizationExpired",
+    permission_denied: "settings.chatGPTSubscription.checkPermissions",
+    quota_exceeded: "settings.chatGPTSubscription.checkUsage",
+    signed_out: "settings.chatGPTSubscription.browserAuthorization",
 };
+
+const subscriptionStatusMessages: Record<string, MessageId> = {
+  "ready": "settings.chatGPTSubscription.available",
+  "refreshing": "settings.chatGPTSubscription.refreshingCredentials",
+  "temporarily_unavailable": "settings.chatGPTSubscription.temporarilyUnavailable",
+  "reauth_required": "settings.chatGPTSubscription.reauthorizationRequired",
+  "permission_denied": "settings.chatGPTSubscription.permissionOrServiceRestriction",
+  "quota_exceeded": "settings.chatGPTSubscription.appUsageLimited",
+  "storage_locked": "settings.chatGPTSubscription.secureStorageNeedsUnlocking",
+  "signed_out": "settings.chatGPTSubscription.signedOut"
+};
+export type SubscriptionAccountStatus = { email: string; state: string };
+export function subscriptionStatusLabel(t: Translate, state: string) {
+  return t(subscriptionStatusMessages[state] ?? "settings.chatGPTSubscription.statusNeedsChecking");
+}
 
 export function ChatGPTSubscription({
     action,
@@ -28,15 +44,16 @@ export function ChatGPTSubscription({
 }: {
     action: Action;
     onModelsChange?: (models: Data[]) => void;
-    onAccountChange?: (label: string) => void;
+    onAccountChange?: (status: SubscriptionAccountStatus) => void;
     onReadyChange?: (ready: boolean) => void;
 }) {
+  const { t } = useI18n();
     const api = (operation: string, values: Data = {}) =>
         action("chatgpt", { operation, provider: "openai", ...values });
     const resource = useResource(() => api("status"), "chatgpt-subscription-openai");
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState("");
-    const [message, setMessage] = useState("");
+    const [message, setMessage] = useState<UiMessage>();
     const value = resource.value;
     const projection = subscriptionProjection(value);
     const retained = useRef<{ accountId?: string; models: Data[] }>({ models: [] });
@@ -51,7 +68,7 @@ export function ChatGPTSubscription({
         if (!projection.temporary)
             retained.current.models = value.authenticated ? (value.models ?? []) : [];
         onModelsChange?.(retained.current.models);
-        onAccountChange?.(`${value.email || "ChatGPT"} · 订阅 · ${projection.label}`);
+        onAccountChange?.({ email: value.email || "ChatGPT", state: projection.state });
         onReadyChange?.(projection.canTest && !resource.error);
     }, [value, resource.error, onModelsChange, onAccountChange, onReadyChange]);
 
@@ -73,10 +90,10 @@ export function ChatGPTSubscription({
     const run = async (operation: string, values: Data = {}) => {
         setBusy(true);
         setError("");
-        setMessage("");
+        setMessage(undefined);
         try {
             await api(operation, { model: chosenModel, ...values });
-            if (operation === "probe") setMessage("连接成功，已收到模型的完整回复。");
+            if (operation === "probe") setMessage({ id: "settings.chatGPTSubscription.connectedReceivedTheModelSCompleteResponse" });
             await resource.refresh();
         } catch (cause) {
             setError((cause as Error).message);
@@ -89,13 +106,13 @@ export function ChatGPTSubscription({
         <div data-subscription-kind="openai">
             <SettingsSection
                 className="subscription-settings"
-                title="ChatGPT 订阅"
+                title={t("settings.chatGPTSubscription.chatgptSubscription")}
 
                 action={
                     <Button
                         variant="ghost"
                         size="icon"
-                        aria-label="刷新 ChatGPT 登录状态"
+                        aria-label={t("settings.chatGPTSubscription.refreshChatGPTSignInStatus")}
                         disabled={disabled}
                         onClick={() => void resource.refresh()}
                     >
@@ -109,11 +126,11 @@ export function ChatGPTSubscription({
                 />
                 <SettingsGroupCard>
                     <SettingsRow
-                        label={value?.email || "ChatGPT 账号"}
+                        label={value?.email || t("settings.chatGPTSubscription.chatgptAccount")}
                         description={
                             value?.login
-                                ? "等待浏览器授权"
-                                : (recovery[projection.state] ?? "请刷新核对连接状态。")
+                                ? t("settings.chatGPTSubscription.waitingForBrowserAuthorization")
+                                : (recovery[projection.state] ? t(recovery[projection.state] as MessageId) : projection.state === "ready" ? "" : t("settings.chatGPTSubscription.refreshToCheckConnectionStatus"))
                         }
                         control={
                             <>
@@ -124,8 +141,7 @@ export function ChatGPTSubscription({
                                         disabled={busy}
                                         onClick={() => void run("cancel")}
                                     >
-                                        取消登录
-                                    </Button>
+                                        {t("settings.chatGPTSubscription.cancelSignIn")}</Button>
                                 ) : projection.canSignIn ? (
                                     <Button
                                         size="sm"
@@ -134,8 +150,8 @@ export function ChatGPTSubscription({
                                     >
 
                                         {projection.state === "reauth_required"
-                                            ? "重新登录"
-                                            : "使用 ChatGPT 登录"}
+                                            ? t("settings.chatGPTSubscription.signInAgain")
+                                            : t("settings.chatGPTSubscription.signInWithChatGPT")}
                                     </Button>
                                 ) : value?.authenticated ? (
                                     <Button
@@ -145,15 +161,14 @@ export function ChatGPTSubscription({
                                         onClick={() => void run("logout")}
                                     >
 
-                                        退出登录
-                                    </Button>
+                                        {t("settings.chatGPTSubscription.signOut")}</Button>
                                 ) : null}
                             </>
                         }
                     />
                 </SettingsGroupCard>
-                <p role="status" aria-label="ChatGPT 连接状态" className="settings-muted">
-                    订阅 · {resource.loading && !value ? "正在读取状态" : projection.label}
+                <p role="status" aria-label={t("settings.chatGPTSubscription.chatgptConnectionStatus")} className="settings-muted">
+                    {t("settings.chatGPTSubscription.subscriptionStatus", { status: resource.loading && !value ? t("settings.chatGPTSubscription.loadingStatus") : subscriptionStatusLabel(t, projection.state) })}
                 </p>
                 {projection.retryable && (
                     <Button
@@ -165,8 +180,7 @@ export function ChatGPTSubscription({
                             void resource.refresh();
                         }}
                     >
-                        重试状态
-                    </Button>
+                        {t("settings.chatGPTSubscription.retryStatusCheck")}</Button>
                 )}
                 {accounts.length > 1 && (
                     <div>
@@ -174,16 +188,15 @@ export function ChatGPTSubscription({
 
                             className="mb-1 block text-ui-base text-foreground-subtle"
                         >
-                            已保存账号
-                        </label>
-                        <SettingsSelect aria-label="已保存 ChatGPT 账号" value={value?.activeAccountId ?? ""}
+                            {t("settings.chatGPTSubscription.savedAccounts")}</label>
+                        <SettingsSelect aria-label={t("settings.chatGPTSubscription.savedChatGPTAccounts")} value={value?.activeAccountId ?? ""}
                             disabled={disabled || !!value?.login || projection.state === "storage_locked"}
                             onValueChange={id => {
                                 if (!id || id === value?.activeAccountId) return;
                                 const account = accounts.find(account => account.id === id);
                                 void run(account?.state === "saved" ? "selectAccount" : "login", {accountId: id});
                             }}>
-                            {accounts.map(account => <option key={account.id} value={account.id}>{`${account.label}${account.email ? ` · ${account.email}` : ""}${account.active ? " · 当前" : ""}`}</option>)}
+                            {accounts.map(account => <option key={account.id} value={account.id}>{`${account.label}${account.email ? ` · ${account.email}` : ""}${account.active ? " · " + t("settings.chatGPTSubscription.activeAccount") : ""}`}</option>)}
                         </SettingsSelect>
                     </div>
                 )}
@@ -194,18 +207,17 @@ export function ChatGPTSubscription({
                         disabled={disabled}
                         onClick={() => void run("login", { newAccount: true })}
                     >
-                        添加 ChatGPT 账号
-                    </Button>
+                        {t("settings.chatGPTSubscription.addChatGPTAccount")}</Button>
                 )}
                 {value?.diagnostic && (
-                    <SettingsDisclosure title={<> 诊断信息 </>}>
+                    <SettingsDisclosure title={<> {t("settings.chatGPTSubscription.diagnostics")}</>}>
                         <p className="settings-muted break-all">
                             {value.diagnostic.code} · {value.diagnostic.phase}
                             {value.diagnostic.httpStatus
-                                ? ` · HTTP ${value.diagnostic.httpStatus}`
+                                ? t("settings.subscription.httpStatus", { status: value.diagnostic.httpStatus })
                                 : ""}
                             {value.diagnostic.requestId
-                                ? ` · Request ID ${value.diagnostic.requestId}`
+                                ? t("settings.subscription.requestId", { id: value.diagnostic.requestId })
                                 : ""}
                         </p>
                     </SettingsDisclosure>
@@ -213,8 +225,7 @@ export function ChatGPTSubscription({
                 {value?.authenticated && (
                     <div className="subscription-models-footer flex flex-wrap items-center justify-between gap-3 pt-1">
                         <span className="settings-muted">
-                            使用账号额度
-                        </span>
+                            {t("settings.chatGPTSubscription.usesAccountAllowance")}</span>
                         <Button
                             variant="outline"
                             size="sm"
@@ -223,7 +234,7 @@ export function ChatGPTSubscription({
                             }
                             onClick={() => void run("probe")}
                         >
-                            {busy ? "正在检查…" : "测试连接"}
+                            {busy ? t("settings.chatGPTSubscription.checking") : t("settings.chatGPTSubscription.testConnection")}
                         </Button>
                     </div>
                 )}

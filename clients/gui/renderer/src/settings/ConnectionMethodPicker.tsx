@@ -1,19 +1,20 @@
+import { useI18n, type MessageId } from "../i18n/IntlProvider.js";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "../components/ui/button.js";
 import type { Data } from "../services.js";
 
-const methods: Record<string, { label: string; description: string }> = {
+const methods: Record<string, { label: MessageId; description: MessageId }> = {
     apiKey: {
-        label: "使用 API Key",
-        description: "API 计费 · 本机保存",
+        label: "settings.connectionMethodPicker.useApiKey",
+        description: "settings.connectionMethodPicker.apiBillingSavedOnDevice",
     },
     none: {
-        label: "无需认证",
-        description: "本地或兼容服务",
+        label: "settings.connectionMethodPicker.noAuthentication",
+        description: "settings.connectionMethodPicker.localOrCompatibleService",
     },
     siwc: {
-        label: "使用 ChatGPT 订阅",
-        description: "订阅计费 · 浏览器授权",
+        label: "settings.connectionMethodPicker.useChatgptSubscription",
+        description: "settings.connectionMethodPicker.subscriptionBillingBrowserAuthorization",
     },
 };
 export function ConnectionMethodPicker({
@@ -27,19 +28,20 @@ export function ConnectionMethodPicker({
     onSelect: (method: string) => void;
     disabled: boolean;
 }) {
+  const { t } = useI18n();
     return (
-        <section className="provider-picker" aria-label="选择连接方式">
+        <section className="provider-picker" aria-label={t("settings.connectionMethodPicker.chooseConnectionMethod")}>
             <div className="provider-picker-heading">
                 <Button
                     variant="ghost"
                     size="icon"
-                    aria-label="返回服务商选择"
+                    aria-label={t("settings.connectionMethodPicker.backToProviderSelection")}
                     disabled={disabled}
                     onClick={onBack}
                 >
                     <ArrowLeft />
                 </Button>
-                <h2>{definition.name} · 连接方式</h2>
+                <h2>{t("settings.connectionMethodPicker.providerConnectionMethod", { provider: definition.name })}</h2>
             </div>
             <div className="provider-method-list">
                 {(definition.authMethods ?? ["apiKey", "none"]).map((method: string) => (
@@ -51,9 +53,9 @@ export function ConnectionMethodPicker({
                         onClick={() => onSelect(method)}
                     >
                         <span className="provider-method-copy">
-                            <strong>{methods[method]?.label ?? method}</strong>
+                            <strong>{methods[method] ? t(methods[method].label) : method}</strong>
                             <small>
-                                {methods[method]?.description}
+                                {methods[method] ? t(methods[method].description) : ""}
                             </small>
                         </span>
                     </Button>

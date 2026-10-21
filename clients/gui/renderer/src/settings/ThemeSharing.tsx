@@ -1,3 +1,4 @@
+import { useI18n, UiMessageError, formatUiMessage, type UiMessage } from "../i18n/IntlProvider.js";
 import { Copy, Download } from "lucide-react";
 import { useState } from "react";
 import { Button } from "../components/ui/button.js";
@@ -15,36 +16,37 @@ type SharedTheme = { variant: "light" | "dark"; palette: Omit<Palette, "fonts">;
 const object = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
 function parseTheme(text: string, variant: SharedTheme["variant"]): SharedTheme {
   const value = text.trim();
-  if (!value.startsWith(prefix)) throw Error("请粘贴 AReaL 的主题分享字符串。");
+  if (!value.startsWith(prefix)) throw new UiMessageError({ id: "settings.themeSharing.pasteThemeString" });
   const data: unknown = JSON.parse(value.slice(prefix.length));
-  if (!object(data) || data.variant !== variant) throw Error("主题的浅色／深色模式不匹配。");
+  if (!object(data) || data.variant !== variant) throw new UiMessageError({ id: "settings.themeSharing.modeMismatch" });
   const palette = data.palette, fonts = data.fonts;
   if (!object(palette) || !validColor(palette.background) || !validColor(palette.foreground) || !validColor(palette.accent)
     || typeof palette.contrast !== "number" || !Number.isFinite(palette.contrast) || palette.contrast < 0 || palette.contrast > 100
-    || typeof palette.translucentSidebar !== "boolean") throw Error("主题配色或对比度无效。");
+    || typeof palette.translucentSidebar !== "boolean") throw new UiMessageError({ id: "settings.themeSharing.invalidColors" });
   if (!object(fonts) || typeof fonts.uiFont !== "string" || !Object.hasOwn(UI_FONTS, fonts.uiFont)
     || typeof fonts.contentFont !== "string" || (fonts.contentFont !== "inherit" && !Object.hasOwn(UI_FONTS, fonts.contentFont))
-    || typeof fonts.codeFont !== "string" || !Object.hasOwn(CODE_FONTS, fonts.codeFont)) throw Error("主题包含不支持的字体设置。");
+    || typeof fonts.codeFont !== "string" || !Object.hasOwn(CODE_FONTS, fonts.codeFont)) throw new UiMessageError({ id: "settings.themeSharing.unsupportedFonts" });
   const codeTheme = CODE_PREVIEW_THEME_OPTIONS.find(option => option.value === data.codeTheme)?.value;
-  if (!codeTheme) throw Error("主题包含不支持的代码主题。");
+  if (!codeTheme) throw new UiMessageError({ id: "settings.themeSharing.unsupportedCodeTheme" });
   return { variant, palette: { background: palette.background, foreground: palette.foreground, accent: palette.accent,
     contrast: palette.contrast, translucentSidebar: palette.translucentSidebar },
     fonts: { uiFont: fonts.uiFont as Fonts["uiFont"], contentFont: fonts.contentFont as Fonts["contentFont"], codeFont: fonts.codeFont as Fonts["codeFont"] }, codeTheme };
 }
 
 export function ThemeSharing({ mode }: { mode: SharedTheme["variant"] }) {
+  const { t } = useI18n();
   const prefs = useApplicationPreferences(), code = useCodePreferences();
-  const [open, setOpen] = useState(false), [text, setText] = useState(""), [error, setError] = useState("");
-  const [notice, setNotice] = useState(""), [copying, setCopying] = useState(false);
-  const label = mode === "light" ? "浅色" : "深色", codeKey = `${mode}Theme` as const;
+  const [open, setOpen] = useState(false), [text, setText] = useState(""), [error, setError] = useState<string | UiMessage>("");
+  const [notice, setNotice] = useState<UiMessage | undefined>(), [copying, setCopying] = useState(false);
+  const label = mode === "light" ? t("settings.themeSharing.light") : t("settings.themeSharing.dark"), codeKey = `${mode}Theme` as const;
   let parsed: SharedTheme | undefined, invalid = "";
-  if (text.trim()) { try { parsed = parseTheme(text, mode); } catch (cause) { invalid = cause instanceof SyntaxError ? "主题字符串不完整或格式无效。" : (cause as Error).message; } }
+  if (text.trim()) { try { parsed = parseTheme(text, mode); } catch (cause) { invalid = cause instanceof SyntaxError ? t("settings.themeSharing.theThemeStringIsIncompleteOrInvalid") : cause instanceof UiMessageError ? formatUiMessage(t, cause.descriptor) : (cause as Error).message; } }
   const copy = async () => {
-    setCopying(true); setError(""); setNotice("");
+    setCopying(true); setError(""); setNotice(undefined);
     const { fonts, ...palette } = prefs[mode];
     const payload: SharedTheme = { variant: mode, palette, codeTheme: code[codeKey], fonts };
-    try { await navigator.clipboard.writeText(prefix + JSON.stringify(payload)); setNotice("主题已复制"); }
-    catch { setError("复制失败，请检查剪贴板权限后重试。"); }
+    try { await navigator.clipboard.writeText(prefix + JSON.stringify(payload)); setNotice({ id: "settings.themeSharing.themeCopied" }); }
+    catch { setError({ id: "settings.themeSharing.copyFailedCheckClipboardPermissionsAndTry" }); }
     finally { setCopying(false); }
   };
   const apply = () => {
@@ -56,22 +58,22 @@ export function ThemeSharing({ mode }: { mode: SharedTheme["variant"] }) {
     try {
       setCodePreferences({ [codeKey]: parsed.codeTheme }); codeSaved = true;
       setApplicationPreferences({ [mode]: { ...parsed.palette, fonts: parsed.fonts } });
-      setOpen(false); setText(""); setNotice("主题已导入");
+      setOpen(false); setText(""); setNotice({ id: "settings.themeSharing.themeImported" });
     } catch {
       try { if (codeSaved) setCodePreferences({ [codeKey]: code[codeKey] }); }
-      catch { setError("保存失败，代码主题未能还原，请检查外观设置后重试。"); return; }
-      setError("保存失败，原主题已保留，请重试。");
+      catch { setError({ id: "settings.themeSharing.saveFailedAndTheCodeThemeCould" }); return; }
+      setError({ id: "settings.themeSharing.saveFailedTheOriginalThemeIsRetained" });
     }
   };
   return <>
-    <button type="button" className="appearance-text-action" aria-label={`导入${label}主题`} onClick={() => { setText(""); setError(""); setNotice(""); setOpen(true); }} title={`导入${label}主题`}><Download size={16} aria-hidden="true" /></button>
-    <button type="button" className="appearance-text-action" aria-label={`复制${label}主题`} disabled={copying} onClick={() => void copy()} title={`复制${label}主题`}><Copy size={16} aria-hidden="true" /></button>
-    {!open && error && <span role="alert" className="text-ui-xs text-destructive">{error}</span>}
-    {notice && <span role="status" className="text-ui-xs text-foreground-subtle">{notice}</span>}
-    <Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-w-lg"><DialogHeader><DialogTitle>导入主题</DialogTitle><DialogDescription>粘贴 AReaL {label}主题字符串。应用该模式的配色、代码主题和字体设置，其他偏好保持不变。</DialogDescription></DialogHeader>
-      <Textarea aria-label={`${label}主题字符串`} value={text} onChange={e => { setText(e.target.value); setError(""); }} placeholder={prefix + "…"} spellCheck={false} className="min-h-28 font-mono" />
-      {(error || invalid) && <p role="alert" className="text-ui-sm text-destructive">{error || invalid}</p>}
-      <DialogFooter><Button variant="ghost" onClick={() => setOpen(false)}>取消</Button><Button disabled={!parsed} onClick={apply}>导入</Button></DialogFooter>
+    <button type="button" className="appearance-text-action" aria-label={t("settings.themeSharing.importValueTheme", { value0: label })} onClick={() => { setText(""); setError(""); setNotice(undefined); setOpen(true); }} title={t("settings.themeSharing.importValueTheme", { value0: label })}><Download size={16} aria-hidden="true" /></button>
+    <button type="button" className="appearance-text-action" aria-label={t("settings.themeSharing.copyValueTheme", { value0: label })} disabled={copying} onClick={() => void copy()} title={t("settings.themeSharing.copyValueTheme", { value0: label })}><Copy size={16} aria-hidden="true" /></button>
+    {!open && error && <span role="alert" className="text-ui-xs text-destructive">{formatUiMessage(t, error)}</span>}
+    {notice && <span role="status" className="text-ui-xs text-foreground-subtle">{formatUiMessage(t, notice)}</span>}
+    <Dialog open={open} onOpenChange={setOpen}><DialogContent className="max-w-lg"><DialogHeader><DialogTitle>{t("settings.themeSharing.importTheme")}</DialogTitle><DialogDescription>{t("settings.themeSharing.importDescription", { mode: label })}</DialogDescription></DialogHeader>
+      <Textarea aria-label={t("settings.themeSharing.valueThemeString", { value0: label })} value={text} onChange={e => { setText(e.target.value); setError(""); }} placeholder={prefix + "…"} spellCheck={false} className="min-h-28 font-mono" />
+      {(error || invalid) && <p role="alert" className="text-ui-sm text-destructive">{formatUiMessage(t, error) || invalid}</p>}
+      <DialogFooter><Button variant="ghost" onClick={() => setOpen(false)}>{t("settings.themeSharing.cancel")}</Button><Button disabled={!parsed} onClick={apply}>{t("settings.themeSharing.import")}</Button></DialogFooter>
     </DialogContent></Dialog>
   </>;
 }

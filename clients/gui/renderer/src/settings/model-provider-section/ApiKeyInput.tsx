@@ -26,7 +26,7 @@ export function ApiKeyInput({
   onCompositionEnd?: () => void;
   onToggleVisibility: () => void;
 }) {
-  const { intl } = useZCodeIntl();
+  const { t, intl } = useZCodeIntl();
 
   return (
     <div className="relative">
@@ -58,7 +58,7 @@ export function ApiKeyInput({
         size="icon"
         disabled={readOnly}
         className="absolute top-1/2 right-1.5 -translate-y-1/2"
-        aria-label={visible ? "隐藏 API Key" : "显示 API Key"} onClick={onToggleVisibility}
+        aria-label={visible ? t("settings.apiKeyInput.hideAPIKey") : t("settings.apiKeyInput.showAPIKey")} onClick={onToggleVisibility}
       >
         {visible ? <EyeOffIcon className="size-3.5" /> : <EyeIcon className="size-3.5" />}
       </Button>

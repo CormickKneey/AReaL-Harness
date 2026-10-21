@@ -8,6 +8,8 @@ AReaL-Harness 采用 **Clients → Core → Runtime** 分层。Core 是会话、
 
 [draw.io 源文件](diagrams/architecture.drawio) · [PNG](diagrams/architecture.png) · [图表规范](STYLE_GUIDE.md)
 
+Renderer 界面语言由已有 application preferences 保存，仅允许 zh-CN 与 en。React Intl 从随包词条派生显示文案、数字与日期，不改变 Core 状态、配置或会话身份。持续显示的本地提示保存消息描述与原始参数，在渲染时翻译；原始诊断与第三方正文保持原文。开发合同见[GUI 语言说明](../../clients/gui/README.md#界面语言与文案开发)。
+
 ## 模块职责
 
 | 模块 | 职责 |

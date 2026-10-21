@@ -1,3 +1,4 @@
+import { useI18n, UiMessageError, type UiMessage, type MessageId, formatUiMessage } from "../i18n/IntlProvider.js";
 import { SettingsDisclosure } from "./SettingsDisclosure.js";
 import { useSettingsOperation } from "./useSettingsOperation.js";
 import { useDraftBlocker, useGuardedNavigation } from "./UnsavedChanges.js";
@@ -32,6 +33,14 @@ import { MessageResponse } from "../components/ai-elements/message.js";
 import { ResourceScope, CatalogEmpty, type ScopedProps } from "./ScopedSkillsSettings.js";
 import type { Data } from "../services.js";
 import { pluginSourceLabel, pluginMcpStateLabel, type PluginMcpResource } from "./pluginResources.js";
+const resourceMcpStateMessages: Record<string, MessageId> = {
+  notApplied: "settings.resourceSettings.notApplied",
+  connected: "settings.resourceSettings.connected",
+  disconnected: "settings.resourceSettings.disconnected",
+  failed: "settings.resourceSettings.connectionFailed",
+  stale: "settings.resourceSettings.toolCatalogExpired",
+  connecting: "settings.resourceSettings.connecting",
+};
 export function McpSettings({
   project, action, scope: controlledScope, onScopeChange,
   pluginServers = [], onManagePlugin, onRefreshPlugins, addRequest = 0,
@@ -41,6 +50,7 @@ export function McpSettings({
   onManagePlugin?: (pluginId: string) => void;
   onRefreshPlugins?: () => Promise<void>;
 }) {
+  const { t, intl } = useI18n();
   const [localScope, setLocalScope] = useState("user");
   const scope = controlledScope ?? localScope;
   const setScope = (value: string) => { setLocalScope(value); onScopeChange?.(value); };
@@ -59,28 +69,28 @@ export function McpSettings({
   const run = (task: () => Promise<void>) => operation.run(async () => { await task(); await state.refresh(); });
   const discard = () => { setDraft(null); setError(""); };
   const save = async () => {
-    if (!draft || disabled) throw new Error("当前无法保存，请稍候重试。");
-    if (!draft.id.trim()) throw new Error("服务 ID 不能为空。");
+    if (!draft || disabled) throw new UiMessageError({ id: "settings.resourceSettings.cannotSaveRightNowTryAgainLater" });
+    if (!draft.id.trim()) throw new UiMessageError({ id: "settings.resourceSettings.serverIDCannotBeEmpty" });
     let parsed: Data;
     try { parsed = JSON.parse(config); }
-    catch { throw new Error("MCP 配置不是有效的 JSON。"); }
+    catch { throw new UiMessageError({ id: "settings.resourceSettings.theMCPConfigurationIsNotValidJSON" }); }
     if (!parsed || Array.isArray(parsed) || typeof parsed !== "object" || !parsed.transport)
-      throw new Error("请提供包含 transport 的 MCP 配置。");
+      throw new UiMessageError({ id: "settings.resourceSettings.provideAnMCPConfigurationContainingTransport" });
     const transport = parsed.transport;
-    if (transport.type === "stdio" && !transport.command?.trim()) throw new Error("命令不能为空。");
+    if (transport.type === "stdio" && !transport.command?.trim()) throw new UiMessageError({ id: "settings.resourceSettings.commandCannotBeEmpty" });
     if (transport.type === "streamableHttp") {
       try { if (!["http:", "https:"].includes(new URL(transport.url).protocol)) throw new Error(); }
-      catch { throw new Error("服务器 URL 必须是有效的 HTTP(S) 地址。"); }
+      catch { throw new UiMessageError({ id: "settings.resourceSettings.theServerURLMustBeAValid" }); }
     }
     const result = await api("mcpSave", {
       id: draft.id.trim(), expectedRevision: scope === "user" ? state.value?.revision : draft.revision, config: parsed,
     });
     setDraft(null);
     await state.refresh();
-    setMessage(result.warning || "配置已保存");
+    setMessage(result.warning || { id: "settings.resourceSettings.configurationSaved" });
   };
   useDraftBlocker({
-    label: "MCP 配置",
+    label: { id: "settings.resourceSettings.mcpConfiguration" },
     dirty: !!draft && (draft.id !== baseline.current.id || config !== baseline.current.config),
     busy,
     discard,
@@ -99,9 +109,9 @@ export function McpSettings({
     setError("");
   };
   useEffect(() => { if (addRequest) edit(); }, [addRequest]);
-  const source = `独立资源 · ${scope === "user" ? "用户" : "当前项目"}`;
+  const source = t("settings.resourceSettings.standaloneResourcesValue", { value0: scope === "user" ? t("settings.resourceSettings.user") : t("settings.resourceSettings.currentProject") });
   const packageItems = pluginServers.filter((item) =>
-    `${item.serverId} ${pluginSourceLabel(item.owner)}`.toLowerCase().includes(query.toLowerCase()),
+    `${item.serverId} ${pluginSourceLabel(item.owner, t)}`.toLowerCase().includes(query.toLowerCase()),
   );
   const items = (state.loading ? [] : state.value?.data ?? []).filter((item: Data) =>
     [
@@ -122,24 +132,24 @@ export function McpSettings({
           <div className="resource-catalog-bar">
             <ResourceScope value={scope} onChange={v=>{setScope(v);setQuery("");setError("");setMessage("");}} project={project} disabled={busy}/>
             <strong>
-              MCP <small>{(state.value?.data?.length ?? 0) + pluginServers.length}</small>
+              MCP <small>{intl.formatNumber((state.value?.data?.length ?? 0) + pluginServers.length)}</small>
             </strong>
             <SettingsSearchInput
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onClear={() => setQuery("")}
-              clearLabel="清除搜索"
-              placeholder="搜索 MCP 服务器…"
-              aria-label="搜索 MCP 服务器"
+              clearLabel={t("settings.resourceSettings.clearSearch")}
+              placeholder={t("settings.resourceSettings.searchMCPServers")}
+              aria-label={t("settings.resourceSettings.searchMCPServers2")}
             />
           </div>
           <SettingsToolbar
-            description={scope === "user" ? "供所有项目复用；连接开关仅影响当前项目。" : "仅用于当前项目。"}
+            description={scope === "user" ? t("settings.resourceSettings.reusableAcrossAllProjectsTheConnectionToggle") : t("settings.resourceSettings.onlyForTheCurrentProject")}
             loading={state.loading}
             disabled={disabled}
             onRefresh={() => { void state.refresh(); void onRefreshPlugins?.(); }}
             onAdd={() => edit()}
-            addLabel="新增 MCP"
+            addLabel={t("settings.resourceSettings.addMCP")}
           />
           <Feedback
             error={state.error || (!draft ? error : "")}
@@ -166,20 +176,11 @@ export function McpSettings({
                     </p>
                   </div>
                   <SettingsBadge>
-                    {(
-                      {
-                        notApplied: "未应用",
-                        connected: "已连接",
-                        disconnected: "未连接",
-                        failed: "连接失败",
-                        stale: "工具目录已过期",
-                        connecting: "连接中",
-                      } as Data
-                    )[item.state] ?? item.state}
+                    {resourceMcpStateMessages[item.state] ? t(resourceMcpStateMessages[item.state]) : item.state}
                   </SettingsBadge>
                   <Button
                     variant="ghost"
-                    aria-label={`编辑 MCP ${item.id}`}
+                    aria-label={t("settings.resourceSettings.editMCPValue", { value0: item.id })}
                     disabled={
                       disabled ||
                       !["disconnected", "failed", "notApplied"].includes(item.state)
@@ -195,8 +196,8 @@ export function McpSettings({
                     disabled={disabled || !project || item.state === "connecting"}
                     aria-label={
                       ["disconnected", "failed", "notApplied"].includes(item.state)
-                        ? `连接 ${item.id}`
-                        : `断开 ${item.id}`
+                        ? t("settings.resourceSettings.connectValue", { value0: item.id })
+                        : t("settings.resourceSettings.disconnectValue", { value0: item.id })
                     }
                     onCheckedChange={() =>
                       void run(async () => {
@@ -207,13 +208,13 @@ export function McpSettings({
                           id: item.id,
                           expectedRevision: item.revision,
                         });
-                        setMessage(`${item.id} 连接状态已刷新`);
+                        setMessage({ id: "settings.resourceSettings.connectionStatusRefreshedForValue", values: { value0: item.id } });
                       })
                     }
                   />
                 </div>
                 {item.error && <Feedback error={item.error} />}
-                <SettingsDisclosure className="mt-3" title={<> 工具 · {item.tools?.length ?? 0} </>}>
+                <SettingsDisclosure className="mt-3" title={<> {t("settings.resourceSettings.toolCount", { count: item.tools?.length ?? 0 })} </>}>
                   {item.tools?.length ? (
                     item.tools.map((tool: Data) => (
                       <div className="settings-tool" key={tool.name}>
@@ -223,29 +224,28 @@ export function McpSettings({
                     ))
                   ) : (
                     <p className="settings-muted">
-                      尚无可用工具，连接成功后刷新查看。
-                    </p>
+                      {t("settings.resourceSettings.noToolsAvailableYetConnectAndRefresh")}</p>
                   )}
                 </SettingsDisclosure>
               </article>
             ))}
             {packageItems.map((item) => (
-              <article key={item.key} aria-label={`${item.serverId} · ${pluginSourceLabel(item.owner)}`}>
+              <article key={item.key} aria-label={`${item.serverId} · ${pluginSourceLabel(item.owner, t)}`}>
                 <div className="resource-title">
                   <Plug size={20} />
                   <div>
                     <strong>{item.serverId}</strong>
-                    <p>{pluginSourceLabel(item.owner)}</p>
-                    <p>{item.owner.enabled ? "当前项目已启用" : "当前项目已停用"}</p>
+                    <p>{pluginSourceLabel(item.owner, t)}</p>
+                    <p>{item.owner.enabled ? t("settings.resourceSettings.enabledInCurrentProject") : t("settings.resourceSettings.disabledInCurrentProject")}</p>
                   </div>
-                  <SettingsBadge>{pluginMcpStateLabel(item.state)}</SettingsBadge>
-                  <Button variant="outline" onClick={() => onManagePlugin?.(item.owner.pluginId)}>管理插件</Button>
+                  <SettingsBadge>{pluginMcpStateLabel(item.state, t)}</SettingsBadge>
+                  <Button variant="outline" onClick={() => onManagePlugin?.(item.owner.pluginId)}>{t("settings.resourceSettings.managePlugin")}</Button>
                 </div>
               </article>
             ))}
           </div>
           {!state.loading && !items.length && !packageItems.length && (
-            <CatalogEmpty kind="MCP 服务器" query={query} scope={scope} onAdd={()=>edit()}/>
+            <CatalogEmpty kind="mcp" query={query} scope={scope} onAdd={()=>edit()}/>
           )}
 
         </>
@@ -258,13 +258,10 @@ export function McpSettings({
             disabled={busy}
             onClick={() => navigate(discard)}
           >
-            ← 返回 MCP 服务器
-          </Button>
-          <h2>{draft.revision || draft.runtimeId ? "编辑 MCP 服务器" : "新增 MCP 服务器"}</h2>
+            {t("settings.resourceSettings.backToMCPServers")}</Button>
+          <h2>{draft.revision || draft.runtimeId ? t("settings.resourceSettings.editMCPServer") : t("settings.resourceSettings.addMCPServer")}</h2>
           <p className="settings-muted">
-            配置本地命令或 HTTP
-            服务。保存后点击列表开关连接，查看服务器提供的工具。
-          </p>
+            {t("settings.resourceSettings.configureALocalCommandOrHTTPService")}</p>
           <form
             className="settings-form"
             onSubmit={(e) => {
@@ -274,8 +271,7 @@ export function McpSettings({
           >
             <fieldset disabled={disabled}>
               <label>
-                服务 ID
-                <Input
+                {t("settings.resourceSettings.serverID")}<Input
                   required
                   value={draft.id}
                   disabled={!!draft.revision || !!draft.runtimeId}
@@ -292,10 +288,9 @@ export function McpSettings({
                 disabled={busy}
                 onClick={() => navigate(discard)}
               >
-                取消
-              </Button>
+                {t("settings.resourceSettings.cancel")}</Button>
               <Button type="submit" disabled={disabled}>
-                {busy ? "保存中…" : "保存 MCP 配置"}
+                {busy ? t("settings.resourceSettings.saving") : t("settings.resourceSettings.saveMCPConfiguration")}
               </Button>
             </div>
           </form>
@@ -316,6 +311,7 @@ function SkillContent({
   resource: string;
   onResource: (path: string) => void;
 }) {
+  const { t, intl } = useI18n();
   const read = (offset: number) =>
     action("manage", {
       projectId: project.id,
@@ -332,7 +328,7 @@ function SkillContent({
   );
   const [extra, setExtra] = useState<Data[]>([]);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<UiMessage | string>("");
   const [mode, setMode] = useState<"preview" | "source">("preview");
   const chunks = state.value ? [state.value, ...extra] : [];
   const last = chunks.at(-1);
@@ -342,18 +338,17 @@ function SkillContent({
   return (
     <>
       <Feedback
-        error={(state.error || error) ? `读取 ${resource} 失败：${state.error || error}` : undefined}
-        message={state.loading ? "正在读取资源…" : undefined}
+        error={(state.error || error) ? t("settings.resourceSettings.couldNotReadValueValue", { value0: resource, value1: formatUiMessage(t, state.error || error) }) : undefined}
+        message={state.loading ? t("settings.resourceSettings.loadingResource") : undefined}
       />
       {state.value && (
         <>
           <p className="settings-muted">
-            {resource} · {last?.sizeBytes} 字节
-          </p>
+            {resource} · {last?.sizeBytes == null ? "" : intl.formatNumber(last.sizeBytes)} {t("settings.resourceSettings.bytes")}</p>
           <SettingsSegmentedTabs
             items={[
-              { value: "preview", label: "预览" },
-              { value: "source", label: "源码" },
+              { value: "preview", label: t("settings.resourceSettings.preview") },
+              { value: "source", label: t("settings.resourceSettings.source") },
             ]}
             value={mode}
             onValueChange={setMode}
@@ -397,8 +392,7 @@ function SkillContent({
                 }
               }}
             >
-              继续读取
-            </Button>
+              {t("settings.resourceSettings.readMore")}</Button>
           )}
         </>
       )}
@@ -406,6 +400,7 @@ function SkillContent({
   );
 }
 export function TaskSkillsSettings(props: SettingsProps) {
+  const { t, intl } = useI18n();
   const { project, thread, action } = props;
   const state = useResource(
     () =>
@@ -432,22 +427,21 @@ export function TaskSkillsSettings(props: SettingsProps) {
     <div className="resource-settings">
       <div className="resource-catalog-bar">
         <span className="resource-scope">
-          <Monitor size={16} /> 当前任务
-        </span>
+          <Monitor size={16} /> {t("settings.resourceSettings.currentTask")}</span>
         <strong>
-          技能 <small>{state.value?.data?.length ?? 0}</small>
+          {t("settings.resourceSettings.skills")}<small>{intl.formatNumber(state.value?.data?.length ?? 0)}</small>
         </strong>
         <SettingsSearchInput
-          placeholder="搜索技能…"
-          aria-label="搜索技能"
+          placeholder={t("settings.resourceSettings.searchSkills")}
+          aria-label={t("settings.resourceSettings.searchSkills2")}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onClear={() => setQuery("")}
-          clearLabel="清除搜索"
+          clearLabel={t("settings.resourceSettings.clearSearch")}
         />
       </div>
       <SettingsToolbar
-        description={`当前任务绑定 ${state.value?.data?.length ?? 0} 个技能；在会话配置中选择下一轮使用的预设允许技能。`}
+        description={t("settings.resourceSettings.thisTaskHasValueBoundSkillsSelect", { value0: state.value?.data?.length ?? 0 })}
         loading={state.loading}
         onRefresh={() => void state.refresh()}
       />
@@ -472,15 +466,15 @@ export function TaskSkillsSettings(props: SettingsProps) {
               <span>
                 <strong>{item.name || item.id}</strong>
                 <small title={item.description}>
-                  {item.description || `版本 ${item.revision} · 查看技能内容`}
+                  {item.description || t("settings.resourceSettings.versionValueViewSkillContent", { value0: item.revision })}
                 </small>
               </span>
               <SettingsBadge>
                 {!item.available
-                  ? "不可用"
+                  ? t("settings.resourceSettings.unavailable")
                   : state.value?.loaded?.[item.id]
-                    ? "已读取"
-                    : "可用"}
+                    ? t("settings.resourceSettings.read")
+                    : t("settings.resourceSettings.available")}
               </SettingsBadge>
             </button>
           </article>
@@ -489,10 +483,10 @@ export function TaskSkillsSettings(props: SettingsProps) {
       {!state.loading && !items.length && (
         <EmptySettings>
           {!thread
-            ? "请先选择任务，以查看该任务权限范围内的技能。"
+            ? t("settings.resourceSettings.selectATaskToViewSkillsWithin")
             : query
-              ? "没有匹配的技能"
-              : "当前任务没有可用技能。"}
+              ? t("settings.resourceSettings.noMatchingSkills")
+              : t("settings.resourceSettings.noSkillsAreAvailableForTheCurrent")}
         </EmptySettings>
       )}
 
@@ -501,7 +495,7 @@ export function TaskSkillsSettings(props: SettingsProps) {
           title={selected.name || selected.id}
           description={
             selected.description ||
-            `版本 ${selected.revision} · 当前任务的技能资源`
+            t("settings.resourceSettings.versionValueSkillResourcesForTheCurrent", { value0: selected.revision })
           }
           onClose={() => {
             setSelected(null);
@@ -516,17 +510,15 @@ export function TaskSkillsSettings(props: SettingsProps) {
             }}
           >
             <label>
-              技能资源
-              <Input
-                aria-label="技能资源"
+              {t("settings.resourceSettings.skillResources")}<Input
+                aria-label={t("settings.resourceSettings.skillResources")}
                 value={resourcePath}
                 onChange={(e) => setResourcePath(e.target.value)}
-                placeholder="SKILL.md 或 references/guide.md"
+                placeholder={t("settings.resourceSettings.skillMdOrReferencesGuideMd")}
               />
             </label>
             <Button type="submit" variant="outline">
-              读取资源
-            </Button>
+              {t("settings.resourceSettings.readResource")}</Button>
             <Button
               type="button"
               variant="ghost"
@@ -535,8 +527,7 @@ export function TaskSkillsSettings(props: SettingsProps) {
                 setResourcePath("SKILL.md");
               }}
             >
-              返回 SKILL.md
-            </Button>
+              {t("settings.resourceSettings.backToSKILLMd")}</Button>
           </form>
           <SkillContent
             key={`${selected.id}:${selected.revision}:${resource}`}

@@ -206,6 +206,30 @@ Start UI design from [interaction families](design-system/interactions.en.md), t
 
 See [conversation stage two](design-system/exercises/conversation-stage2.en.md) for production send, command, child-agent and panel-return migration with equivalent-state evidence.
 
+## Interface language and copy development
+
+Settings → General → Language supports 简体中文 and English. Changes apply immediately and survive restart. Existing installations default to Simplified Chinese. The existing Renderer application preferences own language; it does not enter Core model configuration or conversation identity.
+
+This change adopts pinned React Intl 12.1.5. Its BSD-3-Clause license is retained in licenses/react-intl-LICENSE. It keeps existing formatMessage calls and supplies ICU, plurals, numbers and dates. The 2026-10-21 investigation also considered MIT-licensed react-i18next 17.1.0 and Lingui 6.10.0. The former requires migrating existing Intl callers; the latter adds macro and catalog compilation work. Product code owns preferences and messages, while the package owns formatting. Sources are the official [React Intl](https://formatjs.github.io/docs/react-intl/), [react-i18next](https://react.i18next.com/latest/usetranslation-hook) and [Lingui](https://lingui.dev/tutorials/react/) documentation.
+
+Include these requirements in every subsequent UI copy change.
+
+- Add both zh-CN and en under the same semantic ID in renderer/src/i18n/messages/, then call t(id, values) from useI18n(). Buttons, hints, placeholders, empty states, validation, accessible names and disclosure states all count as copy.
+- Use complete ICU messages for dynamic sentences and plurals. Format numbers, times and dates with the current intl. Retain local notices as UiMessage descriptors and raw arguments until render.
+- Keep user input, third-party names/content and raw diagnostics verbatim. Preserve internal routes, configuration values, React keys, test IDs and calendar storage keys; never derive identity from translated text.
+- Check affected paths in both languages, narrow windows and relevant draft preservation. Run typecheck, verify:i18n and related acceptance.
+
+```sh
+pnpm --dir clients/gui typecheck
+pnpm --dir clients/gui verify:i18n
+make gui-build
+AREAL_CORE_BIN=/absolute/path/to/areal pnpm --dir clients/gui test:i18n
+```
+
+The standard verify includes verify:i18n. It checks both languages, ICU syntax and argument parity; rejects raw copy in settings/direct shared controls; and compares other production Renderer changes against a Git baseline to reject new visible raw copy. CI reuses AREAL_DESIGN_BASE or sets AREAL_I18N_BASE. Technical examples, brands and stable identities have exact exceptions. provider-ui-state.js keeps its pure projection contract; React consumers translate its states. Static checks do not trace arbitrary dynamic string flow, so rendered UI review remains necessary.
+
+test:i18n reuses the isolated Electron/Core migration smoke and retains screenshots, ARIA snapshots and a manifest. It covers language switching, English navigation, bilingual search, narrow windows with large text, draft return and cold restart persistence. Native menus/dialogs, external app iframes, raw diagnostics and unmigrated UI outside settings are outside this change's complete translation scope.
+
 ## Installation and updates
 
 Formal macOS arm64 releases use a DMG for first installation and a ZIP for automatic updates, with Developer ID signing and Apple notarization. Verify the matching release's `SHA256SUMS`, drag the app from the DMG to your chosen installation directory, and open it while following macOS security and privacy prompts.

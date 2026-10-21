@@ -207,6 +207,30 @@ Core 构建完成后再启动使用该二进制的桌面 smoke，验收期间不
 
 真实对话的发送、命令、子代理及面板返回迁移和同状态验证见[对话阶段二](design-system/exercises/conversation-stage2.md)。
 
+## 界面语言与文案开发
+
+设置 → 常规 → 语言支持简体中文和 English，切换立即生效并在重启后保留。已有安装默认简体中文。语言归 Renderer 现有 application preferences 所有，不进入 Core 模型配置或会话身份。
+
+本次复用固定版本 React Intl 12.1.5，其 BSD-3-Clause 许可保留在 licenses/react-intl-LICENSE。它兼容现有 formatMessage 调用，并提供 ICU、复数、数字与日期格式化。2026-10-21 调研过 react-i18next 17.1.0 与 Lingui 6.10.0；它们均为 MIT 许可，但前者需要迁移既有 Intl 调用，后者增加宏与词库编译工作流。本次只维护语言偏好与产品词条，不自研消息引擎。依据见 [React Intl](https://formatjs.github.io/docs/react-intl/)、[react-i18next](https://react.i18next.com/latest/usetranslation-hook) 和 [Lingui](https://lingui.dev/tutorials/react/) 官方文档。
+
+后续界面文案修改须在同一改动中完成以下工作。
+
+- 在 renderer/src/i18n/messages/ 的同一语义 ID 下提供 zh-CN 和 en，调用 useI18n() 的 t(id, values)。按钮、提示、占位、空态、校验、无障碍名称和展开状态都属于文案。
+- 用完整 ICU 消息表达动态句子和复数，以当前 intl 格式化数字、时间和日期。持续显示的本地提示保存 UiMessage 与原始参数，在渲染时翻译。
+- 保留用户输入、第三方名称与正文、原始诊断。内部路由、配置值、React key、测试 ID 与日历存储键保持稳定，不使用翻译后的文案。
+- 在两种语言下检查受影响路径、窄窗口及必要的草稿保留行为，并运行 typecheck、verify:i18n 和相关验收。
+
+```sh
+pnpm --dir clients/gui typecheck
+pnpm --dir clients/gui verify:i18n
+make gui-build
+AREAL_CORE_BIN=/absolute/path/to/areal pnpm --dir clients/gui test:i18n
+```
+
+普通 verify 已包含 verify:i18n。它验证双语词条完整、ICU 语法和参数一致，检查设置源码和直接共用控件的裸文案，并相对于 Git 基线阻止其他生产 Renderer 新增可见裸文案。CI 沿用 AREAL_DESIGN_BASE，也可设置 AREAL_I18N_BASE。技术示例、品牌和稳定身份有精确例外。provider-ui-state.js 保留纯数据投影合同，由 React 消费者翻译状态。静态检查不追踪任意动态字符串流，仍需实际界面复核。
+
+test:i18n 复用现有隔离 Electron/Core 迁移 smoke，保留截图、ARIA 和 manifest。覆盖双语切换、英文导航、双语搜索、窄窗大字号、草稿返回和重启持久化。原生系统菜单与对话框、外部应用 iframe、原始诊断，以及设置外尚未迁移的界面不属于本次完整翻译范围。
+
 ## 安装与更新
 
 正式 macOS arm64 包使用 DMG 首次安装、ZIP 自动更新，并保留 Developer ID 签名和 Apple 公证。下载后先校验同一 Release 的 `SHA256SUMS`；从 DMG 将应用拖入所选安装目录，再打开应用，按 macOS 提示处理安全与隐私权限。

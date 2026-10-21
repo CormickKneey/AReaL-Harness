@@ -1,3 +1,4 @@
+import { useI18n } from "./i18n/IntlProvider.js";
 import { WorkspaceFileTree } from "./workspace-file-tree/WorkspaceFileTree.js";
 import { WorkspaceFilePane, confirmCloseFiles } from "./WorkspaceFilePane.js";
 import { GitPane } from "./GitPane.js";
@@ -101,32 +102,25 @@ import { useTrajectoryPolling } from "./settings/useTrajectoryPolling.js";
 import type { TrajectoryStatus } from "@areal/workbench/desktop-contract";
 import { CoreCapabilitiesSettings } from "./settings/CoreCapabilitiesSettings.js";
 import { MobileSettings } from "./settings/MobileSettings.js";
-const settingsLabel = (name: string) =>
-  ({
-    模型服务: "模型设置",
-    MCP: "MCP 服务器",
-    Skills: "技能",
-    用量: "使用情况",
-  })[name] ?? name;
-const settingsNavigationGroups: SettingsNavigationGroup[] = [
-  { id: "personal", label: "个人", items: [
-    { id: "常规", label: "常规", icon: <SettingsGeneralIcon /> },
-    { id: "外观", label: "外观", icon: <SettingsAppearanceIcon /> },
-    { id: "用量", label: "使用情况", icon: <SettingsUsageIcon /> },
+const settingsNavigationGroups = [
+  { id: "personal", label: "settings.navigation.personal", items: [
+    { id: "常规", label: "settings.general.title", icon: <SettingsGeneralIcon /> },
+    { id: "外观", label: "settings.appearance.title", icon: <SettingsAppearanceIcon /> },
+    { id: "用量", label: "settings.usage.title", icon: <SettingsUsageIcon /> },
   ] },
-  { id: "integrations", label: "集成", items: [
-    { id: "插件", label: "插件", icon: <SettingsPluginIcon /> },
-    { id: "浏览器", label: "浏览器", icon: <SettingsBrowserIcon /> },
+  { id: "integrations", label: "settings.navigation.integrations", items: [
+    { id: "插件", label: "settings.plugins.title", icon: <SettingsPluginIcon /> },
+    { id: "浏览器", label: "settings.browser.title", icon: <SettingsBrowserIcon /> },
   ] },
-  { id: "coding", label: "编码", items: [
-    { id: "钩子", label: "钩子", icon: <SettingsHooksIcon /> },
-    { id: "模型服务", label: "模型设置", icon: <Cpu strokeWidth={1.5} /> },
-    { id: "会话配置", label: "会话配置", icon: <SettingsConfigurationIcon /> },
-    { id: "后台服务", label: "后台服务", icon: <Server strokeWidth={1.5} /> },
-    { id: "数据飞轮", label: "数据飞轮", icon: <Database strokeWidth={1.5} /> },
-    { id: "手机连接", label: "手机连接", icon: <Smartphone strokeWidth={1.5} /> },
+  { id: "coding", label: "settings.navigation.coding", items: [
+    { id: "钩子", label: "settings.hooks.title", icon: <SettingsHooksIcon /> },
+    { id: "模型服务", label: "settings.models.title", icon: <Cpu strokeWidth={1.5} /> },
+    { id: "会话配置", label: "settings.session.title", icon: <SettingsConfigurationIcon /> },
+    { id: "后台服务", label: "settings.service.title", icon: <Server strokeWidth={1.5} /> },
+    { id: "数据飞轮", label: "settings.trajectory.title", icon: <Database strokeWidth={1.5} /> },
+    { id: "手机连接", label: "settings.mobile.title", icon: <Smartphone strokeWidth={1.5} /> },
   ] },
-];
+] as const satisfies readonly SettingsNavigationGroup[];
 const panels = createCorePanels(React);
 // Launcher, tabs and this menu share sampled native panel artwork. Host-only
 // entries keep their labels until their reference role is actually observed.
@@ -207,6 +201,12 @@ export function App({ services }: { services: PlatformServices }) {
   return <UnsavedChangesProvider><AppContent services={services} /></UnsavedChangesProvider>;
 }
 function AppContent({ services }: { services: PlatformServices }) {
+  const { t } = useI18n();
+  const settingsLabel = (name: string) => {
+    const id = ["Skills", "MCP"].includes(name) ? "插件" : name;
+    const item = settingsNavigationGroups.flatMap(group => group.items.map(item => ({ id: item.id, label: item.label }))).find(item => item.id === id);
+    return item ? t(item.label) : name;
+  };
   const requestNavigation = useGuardedNavigation();
   useEffect(() => services.onQuitRequested?.(() => requestNavigation(() => {})), [services, requestNavigation]);
   const { terminalLocation } = useApplicationPreferences();
@@ -1397,7 +1397,7 @@ function AppContent({ services }: { services: PlatformServices }) {
               // { id: "inbox", label: "Inbox", icon: <InboxIcon />, onSelect: () => requestNavigation(() => { updateSettingsOpen(false); setTaskSurface("inbox"); if (matchMedia("(max-width: 640px)").matches) setSidebar(false); }) },
               { id: "tasks", label: "定时任务", icon: <CalendarClock />, onSelect: () => requestNavigation(() => { setPluginsOpen(false); updateSettingsOpen(false); setTaskScope(undefined); setTaskNotification(undefined); setTaskCenterOpen(true); if (matchMedia("(max-width: 640px)").matches) setSidebar(false); }) },
               { id: "plugins", label: "插件", icon: <SettingsPluginIcon />, onSelect: () => requestNavigation(() => { updateSettingsOpen(false); setTaskCenterOpen(false); setPluginMarketRequest(value => value + 1); setPluginsOpen(true); }) },
-            ]} footer={<><UpdateIndicator services={services} /><Button variant="ghost" size="icon" className="application-rail-button relative" aria-label="设置" title={trajectoryAttention ? "设置 · 数据飞轮需要检查" : "设置"} aria-current={settingsOpen ? "page" : undefined} onClick={() => showPanel("设置")}><Settings />{trajectoryAttention && <span aria-label="数据飞轮需要检查" className="absolute top-1 right-1 size-2 rounded-full bg-amber-500" />}</Button></>} />;
+            ]} footer={<><UpdateIndicator services={services} /><Button variant="ghost" size="icon" className="application-rail-button relative" aria-label={t("settings.title")} title={t(trajectoryAttention ? "settings.attention" : "settings.title")} aria-current={settingsOpen ? "page" : undefined} onClick={() => showPanel("设置")}><Settings />{trajectoryAttention && <span aria-label={t("settings.trajectory.attention")} className="absolute top-1 right-1 size-2 rounded-full bg-amber-500" />}</Button></>} />;
   const workspaceNavigation = <div className="workspace-navigation">
     <button className="icon-button" aria-label="后退" title="后退 (⌘[)" disabled={taskCenterOpen || workspaceHistory.index <= 0} onClick={() => traverseWorkspaceHistory(-1)}><ArrowLeft size={16} /></button>
     <button className="icon-button" aria-label="前进" title="前进 (⌘])" disabled={taskCenterOpen || workspaceHistory.index >= workspaceHistory.entries.length - 1} onClick={() => traverseWorkspaceHistory(1)}><ArrowRight size={16} /></button>
@@ -1416,7 +1416,11 @@ function AppContent({ services }: { services: PlatformServices }) {
         <SettingsNavigation width={sidebarWidth} rail={applicationRail}
           activeId={["Skills", "MCP"].includes(settingsTab) ? "插件" : settingsTab}
           onSelect={setSettingsTab} onBack={() => setSettingsOpen(false)}
-          groups={trajectoryAttention ? settingsNavigationGroups.map(group => ({ ...group, items: group.items.map(item => item.id === "数据飞轮" ? { ...item, label: "数据飞轮 · 需要检查" } : item) })) : settingsNavigationGroups}
+          groups={settingsNavigationGroups.map(group => ({ ...group,
+            label: t(group.label), items: group.items.map(item => ({ ...item,
+              label: t(item.id === "数据飞轮" && trajectoryAttention ? "settings.trajectory.attentionTitle" : item.label),
+            })),
+          }))}
         />
       ) : (
         <NavigationSidebar id="areal-sidebar" data-testid="areal-sidebar" data-collapsed={pluginsOpen || !sidebar} railOnly={taskCenterOpen || pluginsOpen || !sidebar} width={sidebarWidth} onWidthChange={setSidebarWidth}
@@ -1593,8 +1597,8 @@ function AppContent({ services }: { services: PlatformServices }) {
             <SettingsPage
               key={settingsTab}
               className={["插件", "Skills", "MCP"].includes(settingsTab) ? "plugins-settings-page" : settingsTab === "模型服务" ? "model-settings-page" : undefined}
-              title={["插件", "Skills", "MCP"].includes(settingsTab) ? "插件" : settingsLabel(settingsTab)}
-              subtitle={settingsTab === "浏览器" ? "管理链接打开方式和地址栏显示。" : undefined}>
+              title={settingsLabel(settingsTab)}
+              subtitle={settingsTab === "浏览器" ? t("settings.browser.subtitle") : undefined}>
               {settingsTab === "外观" ? (
                 <AppearanceSettings
                   theme={theme}
@@ -1626,8 +1630,8 @@ function AppContent({ services }: { services: PlatformServices }) {
                 <UsageDashboard action={resourceAction} />
               ) : !project ? (
                 <div className="settings-empty">
-                  <p>请先打开项目，以读取当前项目的设置。</p>
-                  <button onClick={() => void choose()}>打开项目</button>
+                  <p>{t("settings.chooseProject")}</p>
+                  <button onClick={() => void choose()}>{t("settings.openProject")}</button>
                 </div>
               ) : (
                 panelBody(settingsTab)

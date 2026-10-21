@@ -1,3 +1,4 @@
+import type { AppLocale } from "../i18n/messages.js";
 export const UI_FONTS = {
   system:
     '-apple-system, system-ui, "Segoe UI", sans-serif',
@@ -44,6 +45,7 @@ export const DEFAULT_PALETTES: Record<"light" | "dark", Palette> = {
   },
 };
 export type ApplicationSettings = {
+  locale: AppLocale;
   contentSize: number;
   pointerCursor: boolean;
   fontSmoothing: boolean;
@@ -57,6 +59,7 @@ export type ApplicationSettings = {
   dark: Palette;
 };
 export const DEFAULT_APPLICATION_SETTINGS: ApplicationSettings = {
+  locale: "zh-CN",
   contentSize: 14,
   pointerCursor: false,
   fontSmoothing: true,
@@ -73,6 +76,7 @@ export const validColor = (value: unknown): value is string =>
 export function normalizeApplicationSettings(raw: any): ApplicationSettings {
   const saved = raw && typeof raw === "object" ? raw : {};
   const result = { ...DEFAULT_APPLICATION_SETTINGS };
+  result.locale = saved.locale === "en" ? "en" : "zh-CN";
   result.contentSize =
     Number.isFinite(saved.contentSize) &&
     saved.contentSize >= 12 &&

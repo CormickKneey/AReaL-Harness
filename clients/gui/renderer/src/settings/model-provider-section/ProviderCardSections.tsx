@@ -129,7 +129,7 @@ export function ProviderApiKeySection({
   onApiKeyCompositionEnd?: () => void;
   onToggleApiKeyVisibility: () => void;
 }) {
-  const { intl } = useZCodeIntl();
+  const { t, intl } = useZCodeIntl();
 
   return (
     <div>
@@ -138,7 +138,7 @@ export function ProviderApiKeySection({
           {intl.formatMessage({ id: "settings.modelProvider.apiKey" })}
         </label>
         {presetApiKeyUrl && onOpenPresetApiKey ? (
-          <Button type="button" variant="ghost" onClick={onOpenPresetApiKey}>获取 API Key</Button>
+          <Button type="button" variant="ghost" onClick={onOpenPresetApiKey}>{t("settings.providerCardSections.getAPIKey")}</Button>
         ) : null}
       </div>
       <ApiKeyInput

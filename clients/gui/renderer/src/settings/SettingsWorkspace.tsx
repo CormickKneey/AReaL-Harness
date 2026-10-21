@@ -1,3 +1,4 @@
+import { useI18n } from "../i18n/IntlProvider.js";
 import { useId, useState, type ReactNode } from "react";
 import { NavigationBackIcon as ArrowLeft, NavigationForwardIcon as ArrowRight } from "../interfaceIcons.js";
 import { useNavigationBusy } from "./UnsavedChanges.js";
@@ -22,13 +23,14 @@ export function SettingsNavigation({ groups, activeId, onSelect, onBack, width, 
   footer?: ReactNode;
   rail?: ReactNode;
 }) {
+  const { t, locale } = useI18n();
   const [query, setQuery] = useState("");
   const navigationBusy = useNavigationBusy();
   const visibleGroups = groups
     .map(group => ({
       ...group,
       items: group.items.filter(item =>
-        item.label.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
+        item.label.toLocaleLowerCase(locale).includes(query.trim().toLocaleLowerCase(locale))
       ),
     }))
     .filter(group => group.items.length);
@@ -36,22 +38,22 @@ export function SettingsNavigation({ groups, activeId, onSelect, onBack, width, 
   return (
     <NavigationSidebar className="settings-sidebar" width={width} rail={rail} footer={footer}
       chrome={<div className="workspace-navigation">
-        <button type="button" className="icon-button settings-back" aria-label="返回应用" title="返回应用" disabled={navigationBusy} onClick={onBack}><ArrowLeft size={16} /></button>
-        <button type="button" className="icon-button" aria-label="前进" disabled><ArrowRight size={16} /></button>
+        <button type="button" className="icon-button settings-back" aria-label={t("settings.settingsWorkspace.backToApp")} title={t("settings.settingsWorkspace.backToApp")} disabled={navigationBusy} onClick={onBack}><ArrowLeft size={16} /></button>
+        <button type="button" className="icon-button" aria-label={t("settings.settingsWorkspace.forward")} disabled><ArrowRight size={16} /></button>
       </div>}>
       <div className="settings-sidebar-header">
-        <h1 className="settings-sidebar-title">设置</h1>
+        <h1 className="settings-sidebar-title">{t("settings.settingsWorkspace.settings")}</h1>
         <SettingsSearchInput
           containerClassName="settings-navigation-search"
-          aria-label="搜索设置"
-          placeholder="搜索"
+          aria-label={t("settings.settingsWorkspace.searchSettings")}
+          placeholder={t("settings.settingsWorkspace.search")}
           value={query}
           onChange={event => setQuery(event.target.value)}
           onClear={() => setQuery("")}
-          clearLabel="清除设置搜索"
+          clearLabel={t("settings.settingsWorkspace.clearSettingsSearch")}
         />
       </div>
-      <nav className="settings-category-navigation" aria-label="设置导航">
+      <nav className="settings-category-navigation" aria-label={t("settings.settingsWorkspace.settingsNavigation")}>
         {visibleGroups.map(group => (
           <section key={group.id} aria-label={group.label}>
             <div className="settings-group-label">{group.label}</div>
@@ -74,8 +76,7 @@ export function SettingsNavigation({ groups, activeId, onSelect, onBack, width, 
         ))}
         {!visibleGroups.length && (
           <p className="settings-navigation-empty" role="status">
-            没有匹配的设置
-          </p>
+            {t("settings.settingsWorkspace.noMatchingSettings")}</p>
         )}
       </nav>
     </NavigationSidebar>

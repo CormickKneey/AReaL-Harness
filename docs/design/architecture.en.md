@@ -8,6 +8,8 @@ AReaL-Harness follows **Clients → Core → Runtime**. Core exclusively owns se
 
 [draw.io source](diagrams/architecture.drawio) · [PNG](diagrams/architecture.png) · [Diagram style](STYLE_GUIDE.en.md)
 
+Renderer language belongs to existing application preferences and accepts zh-CN and en. React Intl derives copy, numbers and dates from bundled messages without changing Core state, configuration or conversation identity. Retained local notices keep message descriptors and raw arguments until render; raw diagnostics and third-party content stay verbatim. See the [GUI language contract](../../clients/gui/README.en.md#interface-language-and-copy-development).
+
 ## Responsibilities
 
 | Module | Responsibility |

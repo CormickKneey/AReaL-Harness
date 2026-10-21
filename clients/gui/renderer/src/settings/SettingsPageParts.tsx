@@ -1,3 +1,4 @@
+import { useI18n } from "../i18n/IntlProvider.js";
 import { Children, isValidElement, Fragment, type ReactNode, type ReactElement } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select.js";
 import { SettingsSegmentedTabs } from "./SettingsSegmentedTabs.js";
@@ -134,7 +135,7 @@ export function SettingsSwitch({
 
 export function SettingsValueAction({
   value,
-  actionLabel = "更改",
+  actionLabel,
   onAction,
   disabled = false,
 }: {
@@ -143,12 +144,13 @@ export function SettingsValueAction({
   onAction?: () => void;
   disabled?: boolean;
 }) {
+  const { t } = useI18n();
   return (
     <div className="flex min-w-0 max-w-full items-center gap-3">
       <span className="min-w-0 text-ui-sm text-foreground-subtle max-w-[280px] truncate">{value}</span>
       {onAction && (
         <Button type="button" variant="secondary" onClick={onAction} disabled={disabled}>
-          {actionLabel}
+          {actionLabel ?? t("settings.settingsPageParts.change")}
         </Button>
       )}
     </div>
@@ -160,6 +162,7 @@ export function SettingsSelect({ children, value, onValueChange, disabled, class
   children: ReactNode; value: string | number; onValueChange: (value: string) => void;
   disabled?: boolean; className?: string; "aria-label": string;
 }) {
+  const { t } = useI18n();
   const text = (nodes: ReactNode): string => Children.toArray(nodes).map(node =>
     isValidElement(node) ? text((node.props as {children?: ReactNode}).children) : String(node),
   ).join("");
@@ -174,7 +177,7 @@ export function SettingsSelect({ children, value, onValueChange, disabled, class
   if (options.length === 2) return <SettingsSegmentedTabs ariaLabel={label} activateOnFocus={false}
     disabled={disabled} value={String(value)} onValueChange={onValueChange} items={options} />;
   return <Select value={String(value)} items={options} onValueChange={next => { if (next !== null) onValueChange(next); }} disabled={disabled}>
-    <SelectTrigger aria-label={label} variant="secondary" size="sm" className={className}><SelectValue placeholder={options.length ? "请选择" : "暂无可选项"} /></SelectTrigger>
+    <SelectTrigger aria-label={label} variant="secondary" size="sm" className={className}><SelectValue placeholder={options.length ? t("settings.settingsPageParts.selectAnOption") : t("settings.settingsPageParts.noOptionsAvailable")} /></SelectTrigger>
     <SelectContent align="end">{options.map(option => <SelectItem key={option.value} value={option.value} disabled={option.disabled}>{option.label}</SelectItem>)}</SelectContent>
   </Select>;
 }

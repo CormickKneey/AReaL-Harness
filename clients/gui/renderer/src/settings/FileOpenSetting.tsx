@@ -1,3 +1,4 @@
+import { useI18n } from "../i18n/IntlProvider.js";
 import { useEffect, useRef, useState } from "react";
 import { SettingsRow, SettingsSelect } from "./SettingsPageParts.js";
 import type { PlatformServices, FileOpenTargets } from "../services.js";
@@ -5,6 +6,7 @@ import type { PlatformServices, FileOpenTargets } from "../services.js";
 export function FileOpenSetting({ service, preferred, connected }: {
   service?: PlatformServices["fileOpen"]; preferred?: string; connected: boolean;
 }) {
+  const { t } = useI18n();
   const [catalog, setCatalog] = useState<FileOpenTargets>();
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false), saving = useRef(false);
@@ -20,9 +22,9 @@ export function FileOpenSetting({ service, preferred, connected }: {
     catch (cause) { setError((cause as Error).message); }
     finally { saving.current = false; setBusy(false); }
   };
-  return <SettingsRow label="默认文件打开位置"
+  return <SettingsRow label={t("settings.fileOpenSetting.openFilesIn")}
     detail={error && <span role="alert" className="text-destructive">{error}</span>}
-    control={catalog ? <SettingsSelect aria-label="默认文件打开位置" value={catalog.preferred} disabled={!service || !connected || busy}
-      onValueChange={target => void save(target)}>{catalog.targets.map(target => <option key={target.id} value={target.id}>{target.label}</option>)}</SettingsSelect>
-      : <span className="text-foreground-subtle">读取中…</span>} />;
+    control={catalog ? <SettingsSelect aria-label={t("settings.fileOpenSetting.openFilesIn")} value={catalog.preferred} disabled={!service || !connected || busy}
+      onValueChange={target => void save(target)}>{catalog.targets.map(target => <option key={target.id} value={target.id}>{target.id === "system" ? t("settings.fileOpenSetting.systemDefaultApp") : target.label}</option>)}</SettingsSelect>
+      : <span className="text-foreground-subtle">{t("settings.fileOpenSetting.loading")}</span>} />;
 }

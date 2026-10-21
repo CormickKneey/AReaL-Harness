@@ -1,13 +1,14 @@
+import { UiMessageError, type UiMessage } from "../i18n/IntlProvider.js";
 import { useRef, useState } from "react";
 
 /** UI admission only. The caller owns drafts and the backend owns save success. */
 export function useSettingsOperation() {
   const active = useRef(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
+  const [error, setError] = useState<string | UiMessage>("");
+  const [message, setMessage] = useState<string | UiMessage>("");
   const execute = async <T,>(task: () => Promise<T>): Promise<T> => {
-    if (active.current) throw new Error("操作正在进行，请稍候。");
+    if (active.current) throw new UiMessageError({ id: "settings.useSettingsOperation.anOperationIsInProgressPleaseWait" });
     active.current = true;
     setBusy(true); setError(""); setMessage("");
     try { return await task(); }
@@ -17,7 +18,7 @@ export function useSettingsOperation() {
   const run = async (task: () => Promise<unknown>) => {
     if (active.current) return;
     try { await execute(task); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : "操作失败，请重试。"); }
+    catch (cause) { setError(cause instanceof UiMessageError ? cause.descriptor : cause instanceof Error ? cause.message : { id: "settings.useSettingsOperation.operationFailedTryAgain" }); }
   };
   return { busy, error, message, setError, setMessage, execute, run };
 }

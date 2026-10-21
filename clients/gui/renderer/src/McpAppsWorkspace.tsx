@@ -1,3 +1,4 @@
+import { useI18n, formatUiMessage, UiMessageError, type UiMessage, type Translate } from "./i18n/IntlProvider.js";
 import { Button } from "./components/ui/button.js";
 import { SettingsSelect } from "./settings/SettingsPageParts.js";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -35,15 +36,15 @@ type FormRequest = {
     requestedSchema: unknown;
 };
 type FormResourceRequest = { projectId: string; threadId: string; requestId: string; fieldName: string; uri?: string };
-function formResource(operation: "pick" | "release", request: FormResourceRequest): Promise<{ resources?: McpFormResource[] }> {
+function formResource(operation: "pick" | "release", request: FormResourceRequest, t: Translate): Promise<{ resources?: McpFormResource[] }> {
     const desktop = (window as unknown as { arealDesktop?: {
         mcpFormResource?: (operation: string, request: FormResourceRequest) => Promise<{ resources?: McpFormResource[] }>;
     } }).arealDesktop;
-    if (!desktop?.mcpFormResource) return Promise.reject(new Error("本机资源选择不可用"));
+    if (!desktop?.mcpFormResource) return Promise.reject(new Error(t("settings.apps.localResourceUnavailable")));
     return desktop.mcpFormResource(operation, request);
 }
 const appTab = (app: McpAppDescriptor) => `mcp-app:${app.instanceId}`;
-const compatibilityHint = "当前后台版本不支持 MCP 应用和表单，升级后台后可使用。";
+const compatibilityHint: UiMessage = { id: "settings.apps.upgradeBackend" };
 const visible = (block: ContentBlock) =>
     !(block.annotations?.audience?.length === 1 && block.annotations.audience[0] === "assistant");
 function entrypoint(tool: McpAppTool, kind: string) {
@@ -67,13 +68,14 @@ export function useMcpAppsWorkspace({
     onRemoveTab: (tab: string) => void;
     onError: (message: string) => void;
 }) {
+  const { t } = useI18n();
     const desktopSupported = project?.desktopCapabilities?.currentCommands !== false;
     const [servers, setServers] = useState<McpWorkspaceServer[]>([]),
         [loading, setLoading] = useState(false),
-        [error, setError] = useState("");
+        [error, setError] = useState<string | UiMessage>("");
     const [apps, setApps] = useState<McpAppDescriptor[]>([]),
         [forms, setForms] = useState<FormRequest[]>([]),
-        [formError, setFormError] = useState("");
+        [formError, setFormError] = useState<string | UiMessage>("");
     const [formPreview, setFormPreview] = useState<{
         requestId: string;
         contents: { uri?: string; text?: string; mimeType?: string }[];
@@ -110,7 +112,7 @@ export function useMcpAppsWorkspace({
                 ...(threadId ? { threadId } : {}),
             });
             if (epoch !== readEpoch.current) return;
-            if (!Array.isArray(result.data)) throw Error("应用目录格式无效");
+            if (!Array.isArray(result.data)) throw new UiMessageError({ id: "settings.mcpAppsWorkspace.invalidAppDirectoryFormat" });
             setServers(result.data);
             const stale = appsRef.current.filter(
                 (app) =>
@@ -134,7 +136,7 @@ export function useMcpAppsWorkspace({
         } catch (cause) {
             if (epoch === readEpoch.current) {
                 setServers([]);
-                setError(cause instanceof Error ? cause.message : "应用目录不可用");
+                setError(cause instanceof UiMessageError ? cause.descriptor : cause instanceof Error ? cause.message : { id: "settings.mcpAppsWorkspace.appDirectoryUnavailable" });
             }
         } finally {
             if (epoch === readEpoch.current) setLoading(false);
@@ -189,8 +191,8 @@ export function useMcpAppsWorkspace({
     }, []);
     async function ensureThread(forceNew = false) {
         const { project, threadId, action, onOpenThread } = current.current;
-        if (!project?.state?.connected) throw Error("请先连接项目");
-        if (project.desktopCapabilities?.currentCommands === false) throw Error(compatibilityHint);
+        if (!project?.state?.connected) throw Error(t("settings.mcpAppsWorkspace.connectTheProjectFirst"));
+        if (project.desktopCapabilities?.currentCommands === false) throw Error(t(compatibilityHint.id));
         if (
             !forceNew &&
             threadId &&
@@ -199,7 +201,7 @@ export function useMcpAppsWorkspace({
         )
             return { projectId: project.id, threadId };
         const result = await action("create", { projectId: project.id });
-        if (typeof result.threadId !== "string") throw Error("无法创建应用会话");
+        if (typeof result.threadId !== "string") throw Error(t("settings.mcpAppsWorkspace.couldNotCreateAnAppConversation"));
         await onOpenThread(project.id, result.threadId);
         return { projectId: project.id, threadId: result.threadId };
     }
@@ -214,8 +216,8 @@ export function useMcpAppsWorkspace({
         } = {},
     ) {
         const { project } = current.current;
-        if (!project) throw Error("请先选择项目");
-        if (project.desktopCapabilities?.currentCommands === false) throw Error(compatibilityHint);
+        if (!project) throw Error(t("settings.mcpAppsWorkspace.chooseAProjectFirst"));
+        if (project.desktopCapabilities?.currentCommands === false) throw Error(t(compatibilityHint.id));
         const global = options.kind === "global";
         const existing = appsRef.current.find(
             (app) =>
@@ -252,8 +254,8 @@ export function useMcpAppsWorkspace({
             threadId: owner.threadId,
         });
         if (current.current.project?.id !== project.id || owner.projectId !== project.id)
-            throw Error("应用所属项目已变化，请重新打开。");
-        if (!Array.isArray(directory.data)) throw Error("应用目录格式无效");
+            throw Error(t("settings.mcpAppsWorkspace.theAppSProjectHasChangedOpen"));
+        if (!Array.isArray(directory.data)) throw new UiMessageError({ id: "settings.mcpAppsWorkspace.invalidAppDirectoryFormat" });
         const servers: McpWorkspaceServer[] = directory.data;
         const connectedServer = servers.find((candidate) =>
             candidate.serverId === server.serverId && candidate.pluginId === server.pluginId &&
@@ -261,7 +263,7 @@ export function useMcpAppsWorkspace({
         );
         const connectedTool = connectedServer?.tools.find((candidate) => candidate.name === tool.name);
         if (!connectedServer || !connectedTool)
-            throw Error("应用连接或插件版本已变化，请刷新后重新打开。");
+            throw Error(t("settings.mcpAppsWorkspace.theAppConnectionOrPluginVersionHas"));
         const app = await openMcpApp({
             ...owner,
             serverId: connectedServer.serverId,
@@ -276,14 +278,14 @@ export function useMcpAppsWorkspace({
     }
     async function message(value: McpAppMessage) {
         const { project, action } = current.current;
-        if (project?.desktopCapabilities?.currentCommands === false) throw Error(compatibilityHint);
+        if (project?.desktopCapabilities?.currentCommands === false) throw Error(t(compatibilityHint.id));
         if (
             !project ||
             project.id !== value.projectId ||
             !project.state?.threads[value.threadId] ||
             project.state.threads[value.threadId].desktop?.archived
         )
-            throw Error("应用所属会话已不可用");
+            throw Error(t("settings.mcpAppsWorkspace.theAppConversationIsNoLongerAvailable"));
         const owner =
             value.target === "new"
                 ? await ensureThread(true)
@@ -293,7 +295,7 @@ export function useMcpAppsWorkspace({
             sending.has(key) ||
             project.pending?.some((entry: Data) => entry.params?.threadId === owner.threadId)
         )
-            throw Error("会话有待确认的提交，请稍后重试");
+            throw Error(t("settings.mcpAppsWorkspace.aSubmissionInThisConversationNeedsConfirmation"));
         if (!value.send) {
             appendMcpDraft(key, value.content);
             await current.current.onOpenThread(owner.projectId, owner.threadId);
@@ -343,7 +345,7 @@ export function useMcpAppsWorkspace({
         );
     }
     async function clearContext(app: McpAppDescriptor) {
-        if (current.current.project?.desktopCapabilities?.currentCommands === false) throw Error(compatibilityHint);
+        if (current.current.project?.desktopCapabilities?.currentCommands === false) throw Error(t(compatibilityHint.id));
         const reply = (await mcpAppDesktop().mcpApp({
             operation: "request",
             token: app.token,
@@ -354,7 +356,7 @@ export function useMcpAppsWorkspace({
                 params: { content: [] },
             },
         })) as { error?: unknown };
-        if (reply.error) throw Error("无法移除应用上下文");
+        if (reply.error) throw Error(t("settings.mcpAppsWorkspace.couldNotRemoveAppContext"));
         setApps((items) =>
             items.map((item) =>
                 item.token === app.token
@@ -377,7 +379,7 @@ export function useMcpAppsWorkspace({
                     .filter((tool) => tool.name === link.toolName && entrypoint(tool, "global"))
                     .map((tool) => ({ server, tool })),
             );
-            if (matches.length !== 1) throw Error("链接未匹配唯一的已连接插件应用");
+            if (matches.length !== 1) throw Error(t("settings.mcpAppsWorkspace.theLinkDoesNotMatchASingle"));
             await openApp(matches[0].server, matches[0].tool, {
                 kind: "global",
                 deepLink: link.path,
@@ -406,13 +408,13 @@ export function useMcpAppsWorkspace({
                     threadId: tid,
                 });
                 if (active) {
-                    if (!Array.isArray(result.data)) throw Error("表单列表格式无效");
+                    if (!Array.isArray(result.data)) throw new UiMessageError({ id: "settings.mcpAppsWorkspace.invalidFormListFormat" });
                     setForms(result.data.filter((form: FormRequest) => form.threadId === tid));
                     setFormError("");
                 }
             } catch (cause) {
                 if (active)
-                    setFormError(cause instanceof Error ? cause.message : "无法读取待回复表单");
+                    setFormError(cause instanceof UiMessageError ? cause.descriptor : cause instanceof Error ? cause.message : { id: "settings.mcpAppsWorkspace.couldNotReadPendingForms" });
             } finally {
                 if (active) timer = setTimeout(() => void read(), 3000);
             }
@@ -425,9 +427,9 @@ export function useMcpAppsWorkspace({
     }, [project?.id, project?.state?.connected, desktopSupported, threadId]);
     async function respond(form: FormRequest, response: McpFormResponse | { unsupported: true }) {
         const key = `${form.threadId}:${form.requestId}`;
-        if (formPending.current.has(key)) throw Error("原表单回复正在核对，请勿重新提交");
+        if (formPending.current.has(key)) throw Error(t("settings.mcpAppsWorkspace.theOriginalFormResponseIsBeingChecked"));
         const owner = current.current.project;
-        if (owner?.desktopCapabilities?.currentCommands === false) throw Error(compatibilityHint);
+        if (owner?.desktopCapabilities?.currentCommands === false) throw Error(t(compatibilityHint.id));
         if (
             !owner ||
             current.current.threadId !== form.threadId ||
@@ -435,7 +437,7 @@ export function useMcpAppsWorkspace({
                 (item) => item.requestId === form.requestId && item.generation === form.generation,
             )
         )
-            throw Error("表单已过期");
+            throw Error(t("settings.mcpAppsWorkspace.thisFormHasExpired"));
         formPending.current.add(key);
         try {
             await current.current.action("manage", {
@@ -455,8 +457,8 @@ export function useMcpAppsWorkspace({
     }
     async function previewForm(form: FormRequest, target: unknown) {
         const owner = current.current.project;
-        if (owner?.desktopCapabilities?.currentCommands === false) throw Error(compatibilityHint);
-        if (!owner || current.current.threadId !== form.threadId) throw Error("表单已过期");
+        if (owner?.desktopCapabilities?.currentCommands === false) throw Error(t(compatibilityHint.id));
+        if (!owner || current.current.threadId !== form.threadId) throw Error(t("settings.mcpAppsWorkspace.thisFormHasExpired"));
         const result = await current.current.action("manage", {
             operation: "mcpFormPreview",
             projectId: owner.id,
@@ -472,16 +474,16 @@ export function useMcpAppsWorkspace({
             "type" in target &&
             target.type === "mcp_app_tool"
         ) {
-            if (!("name" in target) || typeof target.name!=="string") throw Error("预览应用名称无效");
+            if (!("name" in target) || typeof target.name!=="string") throw Error(t("settings.mcpAppsWorkspace.invalidPreviewAppName"));
             const advertised = target as { name: string; arguments?: Record<string, unknown> };
             const server = servers.find(
                 (item) => item.serverId === form.serverId && item.generation === form.generation,
             );
             const tool = server?.tools.find((item) => item.name === advertised.name);
-            if (!server || !tool) throw Error("预览应用已不可用");
+            if (!server || !tool) throw Error(t("settings.mcpAppsWorkspace.thePreviewAppIsNoLongerAvailable"));
             await openApp(server, tool, { arguments: advertised.arguments ?? {} });
         } else {
-            if (!Array.isArray(result.contents)) throw Error("资源预览格式无效");
+            if (!Array.isArray(result.contents)) throw Error(t("settings.mcpAppsWorkspace.invalidResourcePreviewFormat"));
             setFormPreview({ requestId: form.requestId, contents: result.contents });
         }
     }
@@ -494,7 +496,7 @@ export function useMcpAppsWorkspace({
         supported: desktopSupported,
         servers: desktopSupported ? servers : [],
         loading,
-        error,
+        error: formatUiMessage(t, error),
         refresh,
         openApp,
         ensureThread,
@@ -502,10 +504,10 @@ export function useMcpAppsWorkspace({
         apps,
         titleFor: (tab: string) => {
             const app = apps.find((item) => appTab(item) === tab);
-            return app ? (app.toolMetadata?.title ?? app.toolMetadata?.name ?? "应用") : undefined;
+            return app ? (app.toolMetadata?.title ?? app.toolMetadata?.name ?? t("settings.mcpAppsWorkspace.app")) : undefined;
         },
         render: (tab: string) => {
-            if (!desktopSupported) return <p role="status">{compatibilityHint}</p>;
+            if (!desktopSupported) return <p role="status">{formatUiMessage(t, compatibilityHint)}</p>;
             const app = apps.find((item) => appTab(item) === tab);
             return app ? (
                 <McpAppHost
@@ -521,11 +523,11 @@ export function useMcpAppsWorkspace({
                     onError={onError}
                 />
             ) : (
-                <p role="status">应用已关闭，请从应用入口重新打开。</p>
+                <p role="status">{t("settings.mcpAppsWorkspace.thisAppIsClosedOpenItAgain")}</p>
             );
         },
         contexts: (
-            <div aria-label="应用上下文">
+            <div aria-label={t("settings.mcpAppsWorkspace.appContext")}>
                 {(desktopSupported ? apps : [])
                     .filter(
                         (app) =>
@@ -539,8 +541,8 @@ export function useMcpAppsWorkspace({
                                 <summary>
                                     {app.toolMetadata?.title ??
                                         app.toolMetadata?.name ??
-                                        "应用上下文"}{" "}
-                                    · {contentFor(app).length} 项
+                                        t("settings.mcpAppsWorkspace.appContext")}{" "}
+                                    {t("settings.apps.contextItems", { count: contentFor(app).length })}
                                 </summary>
                                 {contentFor(app).map((block, index) => (
                                     <McpContentLabel key={index} block={block} />
@@ -551,8 +553,7 @@ export function useMcpAppsWorkspace({
                                     void clearContext(app).catch((cause) => onError(cause.message))
                                 }
                             >
-                                移除应用上下文
-                            </button>
+                                {t("settings.mcpAppsWorkspace.removeAppContext")}</button>
                         </div>
                     ))}
             </div>
@@ -570,29 +571,29 @@ export function useMcpAppsWorkspace({
                         onPreview={(target) => previewForm(form, target)}
                         onPickResources={async (fieldName) => {
                             if (current.current.project?.desktopCapabilities?.currentCommands === false)
-                                throw new Error(compatibilityHint);
+                                throw Error(t(compatibilityHint.id));
                             if (!project?.id || current.current.project?.id !== project.id || current.current.threadId !== form.threadId)
                                 throw new Error("Form owner expired");
                             const owner = { projectId: project.id, threadId: form.threadId, requestId: form.requestId, fieldName };
-                            const result = await formResource("pick", owner);
+                            const result = await formResource("pick", owner, t);
                             if (current.current.project?.id !== owner.projectId || current.current.threadId !== owner.threadId) {
-                                await Promise.all((result.resources ?? []).map(item => formResource("release", { ...owner, uri: item.uri })));
+                                await Promise.all((result.resources ?? []).map(item => formResource("release", { ...owner, uri: item.uri }, t)));
                                 throw new Error("Form owner expired");
                             }
                             return result.resources ?? [];
                         }}
                         onReleaseResource={async (fieldName, uri) => {
                             if (!project?.id) throw new Error("Form owner expired");
-                            await formResource("release", { projectId: project.id, threadId: form.threadId, requestId: form.requestId, fieldName, uri });
+                            await formResource("release", { projectId: project.id, threadId: form.threadId, requestId: form.requestId, fieldName, uri }, t);
                         }}
                     />
                 ))}
                 {formPreview && forms.some((form) => form.requestId === formPreview.requestId) && (
-                    <section aria-label="资源预览">
-                        <button onClick={() => setFormPreview(null)}>关闭资源预览</button>
+                    <section aria-label={t("settings.mcpAppsWorkspace.resourcePreview")}>
+                        <button onClick={() => setFormPreview(null)}>{t("settings.mcpAppsWorkspace.closeResourcePreview")}</button>
                         {formPreview.contents.map((resource, index) => (
                             <article key={index}>
-                                <strong>{resource.mimeType ?? "资源"}</strong>
+                                <strong>{resource.mimeType ?? t("settings.mcpAppsWorkspace.resource")}</strong>
                                 {typeof resource.text === "string" ? (
                                     <pre
                                         style={{
@@ -604,13 +605,13 @@ export function useMcpAppsWorkspace({
                                         {resource.text}
                                     </pre>
                                 ) : (
-                                    <p>此二进制资源无法显示文本预览。</p>
+                                    <p>{t("settings.mcpAppsWorkspace.textPreviewIsUnavailableForThisBinary")}</p>
                                 )}
                             </article>
                         ))}
                     </section>
                 )}
-                {formError && forms.length > 0 && <p role="alert">{formError}</p>}
+                {formError && forms.length > 0 && <p role="alert">{formatUiMessage(t, formError)}</p>}
             </>
         ),
     };
@@ -628,8 +629,9 @@ export function McpAppsHub({
     action: Action;
     pluginId?: string;
 }) {
+  const { t } = useI18n();
     const [selected, setSelected] = useState<string | null>(null),
-        [feedback, setFeedback] = useState("");
+        [feedback, setFeedback] = useState<string | UiMessage>("");
     const servers = pluginId === undefined
         ? workspace.servers
         : workspace.servers.filter((server) => server.pluginId === pluginId);
@@ -643,7 +645,7 @@ export function McpAppsHub({
             await workspace.openApp(server, tool);
             return;
         }
-        if (!project || !threadId) throw Error("请先选择应用会话");
+        if (!project || !threadId) throw new UiMessageError({ id: "settings.mcpAppsWorkspace.chooseAnAppConversationFirst" });
         const result = (await command({
             operation: "mcpExtensionCall",
             projectId: project.id,
@@ -654,24 +656,24 @@ export function McpAppsHub({
             arguments: { toolName: tool.name },
             requestId: crypto.randomUUID(),
         })) as Data;
-        if (result.isError) throw Error("应用操作未完成");
+        if (result.isError) throw new UiMessageError({ id: "settings.mcpAppsWorkspace.theAppActionDidNotComplete" });
         setFeedback(
             (result.content ?? [])
                 .filter((block: Data) => block.type === "text")
                 .map((block: Data) => block.text)
-                .join("\n") || "操作已完成",
+                .join("\n") || { id: "settings.mcpAppsWorkspace.actionCompleted" },
         );
     };
     if (pluginId !== undefined && !workspace.error && !hasEntrypoint && !settingsServers.length) return null;
     return (
-        <section aria-label="插件应用" className="plugin-apps-hub">
+        <section aria-label={t("settings.mcpAppsWorkspace.pluginApps")} className="plugin-apps-hub">
             <div>
-                <h3>已连接应用</h3>
-                <Button variant="outline" disabled={workspace.loading || !workspace.supported} onClick={() => void workspace.refresh()}>刷新应用</Button>
+                <h3>{t("settings.mcpAppsWorkspace.connectedApps")}</h3>
+                <Button variant="outline" disabled={workspace.loading || !workspace.supported} onClick={() => void workspace.refresh()}>{t("settings.mcpAppsWorkspace.refreshApps")}</Button>
             </div>
             {workspace.error && <p role="alert">{workspace.error}</p>}
             {workspace.supported && !workspace.loading && !servers.length && (
-                <p>没有可用应用。请先在插件详情中明确连接 MCP 服务器。</p>
+                <p>{t("settings.mcpAppsWorkspace.noAppsAvailableConnectAnMCPServer")}</p>
             )}
             <McpAppEntrypoints
                 servers={servers}
@@ -679,13 +681,12 @@ export function McpAppsHub({
                 onOpen={(server, tool) =>
                     void workspace
                         .openApp(server, tool, { kind: "global" })
-                        .catch((cause) => setFeedback(cause.message))
+                        .catch((cause) => setFeedback(cause instanceof UiMessageError ? cause.descriptor : cause.message))
                 }
             />
-            {settingsServers.length === 1 && !server && <Button variant="outline" onClick={() => setSelected(settingsServers[0].serverId)}>打开应用设置</Button>}
-            {settingsServers.length > 1 && <label>应用设置
-                <SettingsSelect aria-label="应用设置" value={selected ?? ""} onValueChange={value => setSelected(value || null)}>
-                    <option value="">选择应用</option>
+            {settingsServers.length === 1 && !server && <Button variant="outline" onClick={() => setSelected(settingsServers[0].serverId)}>{t("settings.mcpAppsWorkspace.openAppSettings")}</Button>}
+            {settingsServers.length > 1 && <label>{t("settings.mcpAppsWorkspace.appSettings")}<SettingsSelect aria-label={t("settings.mcpAppsWorkspace.appSettings")} value={selected ?? ""} onValueChange={value => setSelected(value || null)}>
+                    <option value="">{t("settings.mcpAppsWorkspace.chooseAnApp")}</option>
                     {settingsServers.map((server) => (
                         <option key={server.serverId} value={server.serverId}>
                             {server.title ?? server.serverId}
@@ -699,11 +700,10 @@ export function McpAppsHub({
                         onClick={() =>
                             void workspace
                                 .ensureThread()
-                                .catch((cause) => setFeedback(cause.message))
+                                .catch((cause) => setFeedback(cause instanceof UiMessageError ? cause.descriptor : cause.message))
                         }
                     >
-                        创建应用会话
-                    </button>
+                        {t("settings.mcpAppsWorkspace.createAppConversation")}</button>
                 ) : server.capabilities?.["openai/settings"] ? (
                     <McpAppsSettings
                         key={`${server.serverId}:${server.generation}:${threadId}`}
@@ -714,9 +714,9 @@ export function McpAppsHub({
                         onTool={run}
                     />
                 ) : (
-                    <p>此应用未声明结构化设置。</p>
+                    <p>{t("settings.mcpAppsWorkspace.thisAppDoesNotProvideStructuredSettings")}</p>
                 ))}
-            {feedback && <p role="status">{feedback}</p>}
+            {feedback && <p role="status">{formatUiMessage(t, feedback)}</p>}
         </section>
     );
 }
@@ -733,12 +733,13 @@ export function McpMentionsPicker({
     action: Action;
     onClose: () => void;
 }) {
+  const { t } = useI18n();
     const candidates = servers.filter((server) => server.capabilities?.["openai/mentions"]);
     const [selected, setSelected] = useState(candidates[0]?.serverId ?? "");
     const server = candidates.find((item) => item.serverId === selected);
     return (
-        <section aria-label="选择应用引用">
-            <button onClick={onClose}>关闭引用选择</button>
+        <section aria-label={t("settings.mcpAppsWorkspace.chooseAppReference")}>
+            <button onClick={onClose}>{t("settings.mcpAppsWorkspace.closeReferencePicker")}</button>
             <select value={selected} onChange={(event) => setSelected(event.target.value)}>
                 {candidates.map((server) => (
                     <option key={server.serverId} value={server.serverId}>
@@ -761,7 +762,7 @@ export function McpMentionsPicker({
                     }}
                 />
             ) : (
-                <p>当前连接没有可搜索的应用引用。</p>
+                <p>{t("settings.mcpAppsWorkspace.thisConnectionHasNoSearchableAppReferences")}</p>
             )}
         </section>
     );
