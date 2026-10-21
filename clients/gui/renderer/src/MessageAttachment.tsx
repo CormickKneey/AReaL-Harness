@@ -1,3 +1,4 @@
+import { useI18n } from "./i18n/IntlProvider.js";
 import { useEffect, useRef, useState } from "react";
 import { ImageAnnotationList } from "./ImageAnnotationViews.js";
 import type { SentImageAnnotation } from "./imageAnnotations.js";
@@ -17,6 +18,7 @@ function downloadMedia(url: string, name: string) {
 
 /** Viewing state belongs to this dialog, never to the task or media reader. */
 function ImageInspection({ url, name }: { url: string; name: string }) {
+  const { t } = useI18n();
   const viewport = useRef<HTMLDivElement>(null);
   const drag = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
   const [natural, setNatural] = useState({ width: 0, height: 0 });
@@ -36,7 +38,7 @@ function ImageInspection({ url, name }: { url: string; name: string }) {
   const changeZoom = (factor: number) => setZoom(Math.min(4, Math.max(0.01, scale * factor)));
   const pannable = natural.width * scale > space.width || natural.height * scale > space.height;
   return <>
-    <div ref={viewport} className="image-inspection-viewport" role="region" aria-label="图片查看区域" tabIndex={0}
+    <div ref={viewport} className="image-inspection-viewport" role="region" aria-label={t("chat.image.viewport")} tabIndex={0}
       data-pannable={pannable}
       onPointerDown={event => {
         if (!pannable || event.button !== 0 || event.pointerType !== "mouse") return;
@@ -55,12 +57,12 @@ function ImageInspection({ url, name }: { url: string; name: string }) {
           style={natural.width ? { width: natural.width * scale, height: natural.height * scale } : undefined} />
       </div>
     </div>
-    <div className="image-inspection-controls" role="group" aria-label="图片缩放">
-      <Button type="button" variant="ghost" size="icon-sm" aria-label="缩小图片" disabled={scale <= 0.01} onClick={() => changeZoom(1 / 1.25)}>−</Button>
-      <output aria-label="图片缩放比例">{Math.round(scale * 100)}%</output>
-      <Button type="button" variant="ghost" size="icon-sm" aria-label="放大图片" disabled={scale >= 4} onClick={() => changeZoom(1.25)}>+</Button>
-      <Button type="button" variant="ghost" size="sm" aria-label="实际大小 100%" onClick={() => setZoom(1)}>100%</Button>
-      <Button type="button" variant="ghost" size="sm" aria-pressed={zoom === null} onClick={() => setZoom(null)}>适应窗口</Button>
+    <div className="image-inspection-controls" role="group" aria-label={t("chat.image.zoom")}>
+      <Button type="button" variant="ghost" size="icon-sm" aria-label={t("chat.image.zoomOut")} disabled={scale <= 0.01} onClick={() => changeZoom(1 / 1.25)}>−</Button>
+      <output aria-label={t("chat.image.zoomLevel")}>{Math.round(scale * 100)}%</output>
+      <Button type="button" variant="ghost" size="icon-sm" aria-label={t("chat.image.zoomIn")} disabled={scale >= 4} onClick={() => changeZoom(1.25)}>+</Button>
+      <Button type="button" variant="ghost" size="sm" aria-label={t("chat.image.actualSize")} onClick={() => setZoom(1)}>100%</Button>
+      <Button type="button" variant="ghost" size="sm" aria-pressed={zoom === null} onClick={() => setZoom(null)}>{t("chat.image.fit")}</Button>
     </div>
   </>;
 }

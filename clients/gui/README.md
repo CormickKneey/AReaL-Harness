@@ -233,6 +233,8 @@ AREAL_CORE_BIN=/absolute/path/to/areal pnpm --dir clients/gui test:i18n
 
 test:i18n 复用现有隔离 Electron/Core 迁移 smoke，保留截图、ARIA 和 manifest。覆盖双语切换、英文导航、双语搜索、窄窗大字号、草稿返回和重启持久化。原生系统菜单与对话框、外部应用 iframe、原始诊断，以及设置外尚未迁移的界面不属于本次完整翻译范围。
 
+对话增量文案沿用相同门禁。`test:context-usage` 另验上下文、用量详情和执行过程控件的双语切换、窄窗显示及草稿和 Core 历史保留。旧状态、耗时、上下文分类名和原始输出仍属于未迁移范围。
+
 ## 安装与更新
 
 正式 macOS arm64 包使用 DMG 首次安装、ZIP 自动更新，并保留 Developer ID 签名和 Apple 公证。下载后先校验同一 Release 的 `SHA256SUMS`；从 DMG 将应用拖入所选安装目录，再打开应用，按 macOS 提示处理安全与隐私权限。

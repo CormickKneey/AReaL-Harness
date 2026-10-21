@@ -1,3 +1,4 @@
+import { useI18n } from "./i18n/IntlProvider.js";
 // Adapted from ZCode ToolSummaryRow / ToolLayout; Codex reference guides presentation.
 // Core owns all outcomes.
 import { useEffect, useId, useState } from "react";
@@ -20,6 +21,7 @@ export function ToolEvent({ item, onFile, onAgent, agents, turnId, readTurnRevie
   readTurnReview?: (turnId: string, itemId?: string) => Promise<Data>;
   action?: Action; projectId?: string; threadId?: string;
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const toggle = () => { setOpen(!open); onDisclosureChange?.(!open); };
   const [diffOpen, setDiffOpen] = useState(false);
@@ -56,7 +58,7 @@ export function ToolEvent({ item, onFile, onAgent, agents, turnId, readTurnRevie
   return (
     <Collapsible.Root open={open} className="tool-event" data-tool-id={item.id} data-tool-status={view.status}>
       {childId ? <div className="agent-spawn-row">
-        <button type="button" className="agent-spawn-link" aria-label={`打开 ${childId} 子对话`} title={childTitle} onClick={() => onAgent?.(childId)}><AgentAvatar id={childId} size={14} /><span className="agent-spawn-kind">子代理</span><span className="agent-spawn-title">{childTitle}</span><span className="agent-spawn-status">{childStatus}</span><span className="conversation-disclosure-action" aria-hidden="true">查看</span></button>
+        <button type="button" className="agent-spawn-link" aria-label={t("chat.agent.openConversation", { id: childId })} title={childTitle} onClick={() => onAgent?.(childId)}><AgentAvatar id={childId} size={14} /><span className="agent-spawn-kind">{t("chat.agent.kind")}</span><span className="agent-spawn-title">{childTitle}</span><span className="agent-spawn-status">{childStatus}</span><span className="conversation-disclosure-action" aria-hidden="true">{t("chat.agent.view")}</span></button>
         <button type="button" className="agent-spawn-record" aria-label="查看工具原始记录" aria-expanded={open} aria-controls={recordId} onClick={toggle}><ActivityIcon kind="chevron" size={14} className={open ? "tool-chevron open" : "tool-chevron"} /></button>
       </div> : images.length && action && projectId && threadId ? <div className="tool-summary-row tool-image-row">
         <span className="tool-summary-row"><ImageIcon size={16} aria-hidden="true" /><span>已查看 {images.length} 张图片</span></span>

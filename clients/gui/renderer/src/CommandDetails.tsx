@@ -1,3 +1,4 @@
+import { useI18n } from "./i18n/IntlProvider.js";
 import { useState } from "react";
 import { CopyTextAction } from "./MessageActions.js";
 import { commandResult, toolPresentation } from "./conversationPresentation.js";
@@ -18,6 +19,7 @@ function CommandText({ text, kind, placeholder }: { text: string; kind: "命令"
  * disclosure deeper. This view never requests more output or executes commands.
  */
 export function CommandDetails({ item }: { item: Data }) {
+  const { t } = useI18n();
   const view = toolPresentation(item);
   const output = commandResult(item);
   const process = item.processResult ?? output;
@@ -28,7 +30,7 @@ export function CommandDetails({ item }: { item: Data }) {
     || (output.error ? JSON.stringify(output.error, null, 2) : typeof output.prefix === "string" ? output.prefix : !Object.keys(output).length ? rawText : "");
   const reads = (item.processRecords ?? []).filter((record: Data) => record.tool === "read_process").length;
   return <div className="tool-event-body command-card">
-    <div className="tool-event-heading command-heading"><span>命令与输出</span><span role="status" className={view.failed ? "command-outcome tool-failed" : "command-outcome"}>{view.status}{process.exitCode != null ? ` · 退出码 ${process.exitCode}` : ""}</span>{reads > 0 && <span>{reads} 次输出读取</span>}<ToolCallDuration item={item} /></div>
+    <div className="tool-event-heading command-heading"><span>{t("chat.command.details")}</span><span role="status" className={view.failed ? "command-outcome tool-failed" : "command-outcome"}>{view.status}{process.exitCode != null ? ` · 退出码 ${process.exitCode}` : ""}</span>{reads > 0 && <span>{reads} 次输出读取</span>}<ToolCallDuration item={item} /></div>
     {item.arguments?.cwd && <div className="command-directory" title={item.arguments.cwd}>工作目录：{item.arguments.cwd}</div>}
     {command && <CommandText kind="命令" text={command} />}
     <CommandText kind="输出" text={text} placeholder={view.running ? "等待输出…" : "无文本输出"} />

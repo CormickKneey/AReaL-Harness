@@ -1,3 +1,4 @@
+import { useI18n } from "./i18n/IntlProvider.js";
 import { TurnUsage } from "./TurnUsage.js";
 import { McpContentLabel } from "./McpComposerAttachments.js";
 import { useForkHistory } from "./ForkHistory.js";
@@ -79,6 +80,7 @@ export function Messages({
   onReview: (turnId: string) => void;
   readTurnReview: (turnId: string, itemId?: string) => Promise<Data>;
 }) {
+  const { t } = useI18n();
   const inherited = useForkHistory(project.id, localThread, action);
   const thread: Data = { ...localThread, turns: [...inherited.turns, ...(localThread.turns ?? [])] };
   const inheritedIds = new Set(inherited.turns.map(turn => turn.id));
@@ -344,11 +346,11 @@ export function Messages({
               disabled={forking || !!forkReason} title={forkReason || undefined}
               aria-label="从此轮创建聊天分支" aria-describedby={forkReason ? `fork-reason-${turn.id}` : undefined}
               onClick={event => forkAt(event.currentTarget)}><ForkIcon /><span>分支</span></button>}
-            {canAskSelection && <button type="button" className="side-bring-action" aria-label="在旁路中询问所选内容"
-              onClick={() => void askAboutSelection()}>询问所选内容</button>}
+            {canAskSelection && <button type="button" className="side-bring-action" aria-label={t("chat.selection.askInSideChat")}
+              onClick={() => void askAboutSelection()}>{t("chat.selection.ask")}</button>}
             {canFork && inspectTurn && turn.status !== "inProgress" && <Button type="button" variant="ghost" size="xs" className="side-bring-action"
-              aria-label="查看来源轮次的核查入口"
-              onClick={() => document.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(inspectTurn)}"]`)?.scrollIntoView({ block: "center" })}>核查来源</Button>}
+              aria-label={t("chat.selection.inspectSourceTurn")}
+              onClick={() => document.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(inspectTurn)}"]`)?.scrollIntoView({ block: "center" })}>{t("chat.selection.inspectSource")}</Button>}
           </>;
           const segments = executionSegments(turn.items ?? [], turn.status);
           const hasFinal = segments.some((item: Data) => item.type === "agentMessage" && item.phase === "final_answer" && item.text?.trim());

@@ -232,6 +232,8 @@ The standard verify includes verify:i18n. It checks both languages, ICU syntax a
 
 test:i18n reuses the isolated Electron/Core migration smoke and retains screenshots, ARIA snapshots and a manifest. It covers language switching, English navigation, bilingual search, narrow windows with large text, draft return and cold restart persistence. Native menus/dialogs, external app iframes, raw diagnostics and unmigrated UI outside settings are outside this change's complete translation scope.
 
+Incremental conversation copy uses the same gate. `test:context-usage` also checks language switching for context, usage details and activity controls, narrow-window layout, and preservation of drafts and Core history. Older status and duration labels, context category names and raw output remain outside the migrated scope.
+
 ## Installation and updates
 
 Formal macOS arm64 releases use a DMG for first installation and a ZIP for automatic updates, with Developer ID signing and Apple notarization. Verify the matching release's `SHA256SUMS`, drag the app from the DMG to your chosen installation directory, and open it while following macOS security and privacy prompts.
