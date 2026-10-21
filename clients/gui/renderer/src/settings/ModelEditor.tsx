@@ -101,7 +101,7 @@ export function ModelEditor({ model, editing, ids, onSave, onClose }: {
         {reasoning && <div className="model-editor-efforts" role="group" aria-label="允许的推理强度">
           <span>允许的推理强度</span>
           <div className="model-effort-options">{reasoningEfforts.map(([value, label]) => <label className="model-effort-option" key={value}>
-            <input type="checkbox" checked={efforts.includes(value)} onChange={event => {
+            <Input type="checkbox" checked={efforts.includes(value)} onChange={event => {
               const checked = event.target.checked;
               setEfforts(previous => reasoningEfforts.map(([option]) => option).filter(option => option === value ? checked : previous.includes(option)));
             }} />

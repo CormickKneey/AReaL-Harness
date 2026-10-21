@@ -17,6 +17,7 @@ import { ToolEvent } from "./ToolEvent.js";
 import { TurnActivity, TurnExecution } from "./TurnExecution.js";
 import { Fragment, useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { TimelineBottomButton } from "./TimelineBottomButton.js";
+import { Button } from "./components/ui/button.js";
 import { MessageResponse } from "./components/ai-elements/message.js";
 import { SentAttachment } from "./MessageAttachment.js";
 import { sentReviewFeedback } from "./reviewComments.js";
@@ -345,9 +346,9 @@ export function Messages({
               onClick={event => forkAt(event.currentTarget)}><ForkIcon /><span>分支</span></button>}
             {canAskSelection && <button type="button" className="side-bring-action" aria-label="在旁路中询问所选内容"
               onClick={() => void askAboutSelection()}>询问所选内容</button>}
-            {canFork && inspectTurn && turn.status !== "inProgress" && <button type="button" className="side-bring-action"
+            {canFork && inspectTurn && turn.status !== "inProgress" && <Button type="button" variant="ghost" size="xs" className="side-bring-action"
               aria-label="查看来源轮次的核查入口"
-              onClick={() => document.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(inspectTurn)}"]`)?.scrollIntoView({ block: "center" })}>核查来源</button>}
+              onClick={() => document.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(inspectTurn)}"]`)?.scrollIntoView({ block: "center" })}>核查来源</Button>}
           </>;
           const segments = executionSegments(turn.items ?? [], turn.status);
           const hasFinal = segments.some((item: Data) => item.type === "agentMessage" && item.phase === "final_answer" && item.text?.trim());

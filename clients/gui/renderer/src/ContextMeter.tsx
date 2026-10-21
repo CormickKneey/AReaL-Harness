@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Button } from "./components/ui/button.js";
 import type { ContextPart } from "../../packages/runtime-client/core.js";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "./components/ui/popover.js";
 import { contextLabels, tokenCount, useContextUsage } from "./contextUsage.js";
@@ -29,7 +30,7 @@ export function ContextMeter({ project, thread, action, anchor }: { project: Dat
       <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle className="context-ring-track" cx="12" cy="12" r="8" /><circle className="context-ring-value" cx="12" cy="12" r="8" pathLength="100" strokeDasharray={`${percent ?? 0} 100`} /></svg>
     </PopoverTrigger>
     <PopoverContent anchor={anchor} side="top" sideOffset={10} align="end" className="context-usage-popover context-meter-popover" data-testid="context-popover">
-      <div className="context-usage-header"><PopoverTitle>上下文</PopoverTitle><button type="button" className="context-usage-close" aria-label="关闭上下文详情" onClick={() => setOpen(false)}><CloseIcon size={16} /></button></div>
+      <div className="context-usage-header"><PopoverTitle>上下文</PopoverTitle><Button type="button" variant="ghost" size="icon" className="context-usage-close" aria-label="关闭上下文详情" onClick={() => setOpen(false)}><CloseIcon size={16} /></Button></div>
       <div className="context-usage-total"><strong>{percent !== null ? `${Math.round(percent)}%` : estimate ? `≈${tokenCount(estimate.tokens)}` : "—"}<small>{estimate ? percent !== null ? "已占用 · 估算" : "输入 · 估算" : "尚无估算"}</small></strong><span>{estimate ? `≈${tokenCount(estimate.tokens)} / ` : ""}{budget?.windowTokens ? tokenCount(budget.windowTokens) : budget ? "未设上限" : "—"} Token</span></div>
       {percent !== null && <div className="context-capacity" aria-label="上下文容量分配"><span className="context-capacity-input" style={{ width: `${percent}%` }} /><span className="context-capacity-reserve" style={{ width: `${reservePercent}%` }} /></div>}
       {budget && <>
