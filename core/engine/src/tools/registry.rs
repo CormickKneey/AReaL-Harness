@@ -497,7 +497,7 @@ mod tests {
     fn legacy_coordination_arguments_are_bounded_and_never_relax_external_schemas() {
         let registry = Registry::new(true, &ToolExtensions::default())
             .unwrap()
-            .with_agents(true)
+            .with_agents(true, true)
             .unwrap();
         for (name, args) in [
             (

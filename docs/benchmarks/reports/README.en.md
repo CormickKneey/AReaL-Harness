@@ -6,6 +6,7 @@ Historical records do not define current capabilities. Use the [run guide](../RE
 
 | Report | Evidence scope |
 |---|---|
+| [Complex workflow environment, handoff and completion repairs](complex-workflow-repair.en.md) | Eight seen tasks, five repetitions per arm, 80 runs; retained failures, UNKNOWN usage, ambiguous reproduction contract and shared-writer serialization limits |
 | [Standard122 after permission repairs](standard122-permission-rerun.en.md) | Two-model 244-task rerun, five failure retries, historical DSH/Codex comparison; failures and incomplete usage retained |
 | [Inspection permissions and local tools](inspection-permissions-v2.en.md) | Default read-only, explicit inheritance, writer leases and macOS Git/Bash repairs; failures and UNKNOWN retained |
 | [Delegation admission and concurrency](delegation-admission-repair.en.md) | Effective Scope admission, creation locks and quota-race mechanism regressions |

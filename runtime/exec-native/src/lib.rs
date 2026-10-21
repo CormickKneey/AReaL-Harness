@@ -29,7 +29,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 // macOS 的系统 python3 是开发工具 shim；在进入沙箱前解析到已有解释器。
-// 仅使用策略已允许的系统 Python，不继承宿主 PATH 或开放 Homebrew。
+// 这里只解析系统 shim；部署工具链的搜索顺序与只读范围由独立环境契约提供。
 fn prepare_system_python(execution: &mut Execution) {
     #[cfg(target_os = "macos")]
     if let Ok(python) = areal_runtime_host_tools::system_python() {

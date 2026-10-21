@@ -37,7 +37,7 @@ use std::{
     path::Path,
     sync::{
         Arc,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -216,6 +216,8 @@ struct Cell {
     exclusive_writer: bool,
     // 工具投影可能已持有会话锁，原子角色避免为读取 Goal 可见性再次加锁。
     goal_role: AtomicUsize,
+    // 工具投影可能持有会话锁；隔离 worker 的交接角色与递归委派额度分开。
+    handoff_worker: AtomicBool,
     depth: usize,
     research: bool,
     id: String,
@@ -243,6 +245,7 @@ impl Cell {
                 d.execution_policy.exclusive_write || d.execution_policy.deferred_write
             }),
             goal_role: AtomicUsize::new(if thread.goal_owner.is_some() { 2 } else { 0 }),
+            handoff_worker: AtomicBool::new(thread.source == "workgroupWorker"),
             depth,
             research: thread.source == "nativeResearchAgent",
             id: thread.id.clone(),
@@ -540,6 +543,7 @@ impl Engine {
                 extensions.agents.is_none()
                     && limits.max_children_per_turn > 0
                     && limits.max_agent_depth > 0,
+                false,
             )?
             .with_workgroups(limits.max_children_per_turn > 0)?;
         if let Some(runtime) = &runtime {

@@ -6,6 +6,7 @@ mod admission;
 mod context;
 mod control;
 mod delivery;
+mod handoff;
 pub mod service;
 pub(crate) mod tools;
 pub use admission::AdmissionDecision;

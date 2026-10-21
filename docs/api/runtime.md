@@ -32,6 +32,10 @@ macOS 的内置搜索助手与 fs.execute 复用系统 Python 启动桥接，再
 
 Runtime 在可信宿主解析 Apple Git shim，受限任务只读取/执行选定系统 Git 及其固定资源。它不为此开放开发工具链选择状态、宿主配置或整个工具链目录；默认不导入宿主 Git system/global 配置和系统 attributes，仓库配置仍按原路径权限读取。任务显式覆盖 Git 环境后仍受相同 OS 沙箱约束。Git 的索引、配置和源码写入在只读 Scope 中继续被拒绝。
 
+可信启动 PATH 可接入系统目录，以及 `/opt/homebrew`、`/usr/local` 下已有的软件目录。Runtime 仅为这些部署工具链增加只读执行与动态库读取，其 etc 下仅接入 OpenSSL 公共启动配置和 CA 资源（openssl.cnf、cert.pem、certs），不开放 private 私钥目录、其他服务配置、var 或任意用户 home。模型进程自行设置 PATH 不增加授权根；读写、网络、只读输入和资源清理仍受原 Scope 约束。握手的 `commandEnvironment` 给出路径和只读工具链范围。非标准用户环境不自动导入，需要当前环境时委派应声明 requiresCurrentEnvironment。
+
+Rust Client 的 `launch_with_limits` 只投影可信 PATH，不继承其他环境；`launch_with_command_path` 供可信部署显式接入已物化工具链，要求有界的绝对目录列表。NativeExecutor 为显式工具链把私有 .toolchain/bin 加在系统路径前。它不扩大源文件写集合。`launch_with_environment` 另接受可信调用方已授权的网络上限；已有 launch 入口仍默认禁网，子 Scope 可继续收窄为 deny。
+
 私有 Bash 是单独执行的 GPL-3.0-or-later 组件，完整包同时携带许可证、锁定对应源码和构建信息；不静态链接进 Rust。构建和升级须使用完整 bundle，见[开发指南](../development/README.md)和[发行流程](../development/releasing.md)。
 
 ## 方法

@@ -61,6 +61,61 @@ impl Client {
         writable: bool,
         limits: &Limits,
     ) -> Result<Arc<Self>> {
+        let environment = areal_runtime_host_tools::command_environment(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        );
+        Self::launch_with_command_path(
+            binary,
+            helper,
+            workspace,
+            writable,
+            limits,
+            &environment.path,
+        )
+        .await
+    }
+
+    /// 仅供可信部署或已物化工具链使用；只传 PATH，不继承其余宿主环境。
+    pub async fn launch_with_command_path(
+        binary: &Path,
+        helper: &Path,
+        workspace: &Path,
+        writable: bool,
+        limits: &Limits,
+        command_path: &str,
+    ) -> Result<Arc<Self>> {
+        Self::launch_with_environment(
+            binary,
+            helper,
+            workspace,
+            writable,
+            limits,
+            command_path,
+            areal_runtime_protocol::NetworkRequest::Deny,
+        )
+        .await
+    }
+
+    /// 可信调用方传递已授权网络上限；不从模型参数或进程环境推断授权。
+    pub async fn launch_with_environment(
+        binary: &Path,
+        helper: &Path,
+        workspace: &Path,
+        writable: bool,
+        limits: &Limits,
+        command_path: &str,
+        network: areal_runtime_protocol::NetworkRequest,
+    ) -> Result<Arc<Self>> {
+        if command_path.len() > 32 * 1024
+            || command_path.is_empty()
+            || command_path.contains('\0')
+            || std::env::split_paths(command_path).any(|path| !path.is_absolute())
+        {
+            return Err(Error::new(
+                ErrorCode::InvalidArgument,
+                "trusted command PATH requires bounded absolute directories",
+            ));
+        }
         if limits.wall_time_ms == 0 || limits.output_bytes == 0 || limits.max_processes == 0 {
             return Err(Error::new(
                 ErrorCode::InvalidArgument,
@@ -92,13 +147,16 @@ impl Client {
             .arg(limits.max_processes.to_string())
             .current_dir(workspace)
             .env_clear()
-            .env("PATH", "/usr/bin:/bin")
+            .env("PATH", command_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .kill_on_drop(true);
         if writable {
             command.arg("--allow-write");
+        }
+        if network == areal_runtime_protocol::NetworkRequest::Inherit {
+            command.arg("--allow-network");
         }
         let mut child = command.spawn().map_err(|_| {
             let mut error = unavailable("cannot launch Runtime");

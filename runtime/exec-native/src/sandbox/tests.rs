@@ -48,6 +48,7 @@ impl Fixture {
             scope_access: ScopeAccess::Restricted,
             trusted_executable: None,
             builtin_executables: Vec::new(),
+            toolchain_roots: Vec::new(),
             tty: false,
             pipe_stdin: false,
             network: areal_runtime_protocol::NetworkRequest::Deny,
@@ -299,4 +300,51 @@ fn full_access_executes_host_commands_but_narrowed_scopes_stay_sandboxed() {
         command(&execution, Profile::FullAccess).unwrap()[0],
         "/usr/bin/sandbox-exec"
     );
+}
+
+#[test]
+fn declared_toolchain_is_readable_and_executable_without_granting_writes_or_neighbor_reads() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = Fixture::new();
+    let tools = fixture.root.join("software-tools");
+    fs::create_dir(&tools).unwrap();
+    let tool = tools.join("tool");
+    fs::write(&tool, "#!/bin/sh\nprintf declared-toolchain").unwrap();
+    fs::set_permissions(&tool, fs::Permissions::from_mode(0o755)).unwrap();
+    let mut invocation = fixture.execution(vec![tool.to_string_lossy().into_owned()]);
+    denied(&run(&prepared(&invocation), &invocation));
+    invocation.toolchain_roots = vec![tools.clone()];
+    let output = run(&prepared(&invocation), &invocation);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(output.stdout, b"declared-toolchain");
+    for (code, path) in [
+        ("printf forbidden > \"$1/new\"", &tools),
+        ("cat \"$1/fixture\"", &fixture.outside),
+    ] {
+        let mut attempt = fixture.shell(code, &[path]);
+        attempt.toolchain_roots = vec![tools.clone()];
+        denied(&run(&prepared(&attempt), &attempt));
+    }
+    assert!(!tools.join("new").exists());
+}
+
+#[test]
+fn public_toolchain_config_file_does_not_expose_adjacent_private_files() {
+    let fixture = Fixture::new();
+    let config = fixture.outside.join("openssl.cnf");
+    fs::write(&config, "public-config").unwrap();
+    let mut read = fixture.shell("cat \"$1\"", &[&config]);
+    read.toolchain_roots = vec![config.clone()];
+    let output = run(&prepared(&read), &read);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(output.stdout, b"public-config");
+    for (code, path) in [
+        ("printf forbidden > \"$1\"", &config),
+        ("cat \"$1/fixture\"", &fixture.outside),
+    ] {
+        let mut attempt = fixture.shell(code, &[path]);
+        attempt.toolchain_roots = vec![config.clone()];
+        denied(&run(&prepared(&attempt), &attempt));
+    }
+    assert_eq!(fs::read_to_string(&config).unwrap(), "public-config");
 }

@@ -78,6 +78,17 @@ async fn main() -> Result<()> {
         .context("workspace must exist")?;
     anyhow::ensure!(workspace.is_dir(), "workspace must be a directory");
     let mut config = Config::read_only(workspace);
+    // 只有私有启动环境能接入软件工具链；process.start 的 PATH 不能增加只读根。
+    let startup_path = std::env::var_os("PATH").unwrap_or_default();
+    let environment = areal_runtime_host_tools::command_environment(&startup_path);
+    config.command_search_path = Some(
+        startup_path
+            .to_str()
+            .filter(|path| !path.is_empty())
+            .unwrap_or(&environment.path)
+            .to_owned(),
+    );
+    config.toolchain_roots = environment.read_only_toolchains;
     config.scratch = args.scratch;
     config.read_only_paths = args.read_only_path;
     config.full_access = matches!(args.sandbox_profile, SandboxProfileArg::FullAccess);

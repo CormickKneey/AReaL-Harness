@@ -1690,7 +1690,19 @@ async fn assert_child_creation_gate(exclusive: bool) {
             bindings.registry = bindings.registry.clone().with_workgroups(true).unwrap();
         }
         if bindings.registry.get("agent_spawn").is_err() {
-            bindings.registry = bindings.registry.clone().with_agents(true).unwrap();
+            let extra = Registry::default().with_agents(true, true).unwrap();
+            for definition in extra.definitions() {
+                let name = definition["function"]["name"].as_str().unwrap();
+                if bindings.registry.get(name).is_err() {
+                    bindings
+                        .registry
+                        .insert(
+                            extra.get(name).unwrap().definition.clone(),
+                            Backend::Coordination,
+                        )
+                        .unwrap();
+                }
+            }
         }
         for definition in agents::definitions() {
             bindings

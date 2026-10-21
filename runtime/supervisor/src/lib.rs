@@ -46,6 +46,8 @@ pub struct Config {
     /// 仅注入显式授权的任务客户端，不加入请求、诊断或操作摘要。
     pub task_credential_commands: Vec<PathBuf>,
     pub task_environment: BTreeMap<String, String>,
+    pub command_search_path: Option<String>,
+    pub toolchain_roots: Vec<PathBuf>,
 }
 impl Config {
     pub fn read_only(workspace: PathBuf) -> Self {
@@ -66,6 +68,8 @@ impl Config {
             file_helper: None,
             task_credential_commands: Vec::new(),
             task_environment: BTreeMap::new(),
+            command_search_path: None,
+            toolchain_roots: Vec::new(),
         }
     }
 }
@@ -243,6 +247,8 @@ impl Supervisor {
             Ok(()) => json!({"available":true}),
             Err(error) => json!({"available":false,"error":error}),
         };
+        info.capabilities["commandEnvironment"] = json!({"path":self.config.command_search_path,
+            "readOnlyToolchains":self.config.toolchain_roots,"inheritsCredentials":false});
         if self.config.file_helper.is_some() {
             info.capabilities["methods"]
                 .as_array_mut()
@@ -641,6 +647,7 @@ impl Supervisor {
                     scope_access,
                     trusted_executable,
                     builtin_executables: self.config.file_helper.iter().cloned().collect(),
+                    toolchain_roots: self.config.toolchain_roots.clone(),
                     tty: request.tty,
                     pipe_stdin: request.pipe_stdin,
                     network: scope.info.network,
@@ -673,10 +680,12 @@ impl Supervisor {
                         }
                     }
                 }
-                execution
-                    .env
-                    .entry("PATH".into())
-                    .or_insert_with(|| "/usr/local/bin:/usr/bin:/bin".into());
+                execution.env.entry("PATH".into()).or_insert_with(|| {
+                    self.config
+                        .command_search_path
+                        .clone()
+                        .unwrap_or_else(|| "/usr/local/bin:/usr/bin:/bin".into())
+                });
                 let write_paths = if execution.write_roots.is_empty()
                     || (self.config.concurrent_writes
                         && helper.is_none()

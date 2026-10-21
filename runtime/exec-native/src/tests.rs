@@ -22,6 +22,7 @@ fn execution(root: &Path, code: &str) -> Execution {
         scope_access: ScopeAccess::Restricted,
         trusted_executable: None,
         builtin_executables: Vec::new(),
+        toolchain_roots: Vec::new(),
         tty: false,
         pipe_stdin: false,
         network: areal_runtime_protocol::NetworkRequest::Deny,

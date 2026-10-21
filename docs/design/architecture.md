@@ -81,6 +81,8 @@ GUI 的 Desktop 服务和 Main 使用 `workbench/client/state-projection` 编码
 
 Engine 的 `context` 与 `history` 模块统一规划完整模型请求，校验压缩候选后交由 Store 原子保存；Clients 只显示预算与压缩结果。分配与失败规则见[上下文管理](context-management.md)。
 
+Workgroup 的 `handoff` 模块投影隔离 worker 已提交的阶段与最终报告；报告的来源与分页沿用共享子任务契约，执行、清理、验证和交付状态仍由各自所有者确认。可信启动工具链发现归 `runtime/host-tools`，只读程序资源范围由 Runtime 执行，不依赖任务内容；接口见 [Runtime](../api/runtime.md#macos-受限命令的系统工具)。
+
 普通[Agent 委派](multi-agent.md)共享工作区、独立上下文；[Workgroup](workgroups.md)使用隔离写工作区并验证制品。Core 管调度，Runtime 不选择并行宽度。插件、stdio MCP 与 Core 仍是可信宿主；broker 权限不等于 Host OS 隔离，见[插件边界](plugins.md)。
 
 可选[研究 Agent](../guides/tools.md#research-agents)由 Core 管理只读源码、私有 scratch 与共享预算，默认异步派发，是否委派由模型决定。短句柄缓存属于活动 Turn，压缩保留、结束失效；Store 继续保留原始执行历史。模型 HTTP 层记录脱敏参数与用量，未完成响应恢复不重放已执行工具，见 [Core API](../api/core.md#recovery)。

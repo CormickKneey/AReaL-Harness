@@ -38,8 +38,8 @@ pub(crate) fn read_only_tool(name: &str, backend: &Backend) -> bool {
 }
 
 impl tools::Registry {
-    pub(crate) fn with_agents(mut self, enabled: bool) -> anyhow::Result<Self> {
-        if !enabled {
+    pub(crate) fn with_agents(mut self, enabled: bool, reports: bool) -> anyhow::Result<Self> {
+        if !enabled && !reports {
             return Ok(self);
         }
         let target = json!({"type":"string","minLength":1,"maxLength":128});
@@ -47,8 +47,8 @@ impl tools::Registry {
         for (name, description, properties, required) in [
             (
                 "agent_spawn",
-                "Delegate work with explicit intent and expected delivery. Core chooses a compatible workspace and owns permission, budget and lifecycle. Return executionId immediately; never repeat an unknown creation. Provide exact writes for isolated candidates and mark independent only for separable work.",
-                json!({"prompt":prompt,"intent":{"enum":["inspect","modify"]},"delivery":{"enum":["report","changes","patch"]},"writes":{"type":"array","maxItems":256,"items":{"type":"string"}},"independent":{"type":"boolean"},"requiresCurrentEnvironment":{"type":"boolean"},"requireTrustedChecks":{"type":"boolean"},"maxModelRounds":{"type":"integer","minimum":1,"maximum":1024}}),
+                "Delegate work with explicit intent and expected delivery. Core chooses a compatible workspace and owns permission, budget and lifecycle. Return executionId immediately; never repeat an unknown creation. writes lists exact workspace-relative files (e.g. src/api.ts), not directories or paths ending in '/'. Mark independent only for separable work. Inspect returned capabilities: sendInput=false means a frozen isolated contract; include required context at creation or wait for settlement before a revised task.",
+                json!({"prompt":prompt,"intent":{"enum":["inspect","modify"]},"delivery":{"enum":["report","changes","patch"]},"writes":{"type":"array","maxItems":256,"uniqueItems":true,"items":{"type":"string","minLength":1,"description":"Exact workspace-relative file path; no directory trailing slash, absolute path, '.' or '..' component."}},"independent":{"type":"boolean"},"requiresCurrentEnvironment":{"type":"boolean"},"requireTrustedChecks":{"type":"boolean"},"maxModelRounds":{"type":"integer","minimum":1,"maximum":1024}}),
                 vec!["prompt", "intent", "delivery"],
             ),
             (
@@ -83,7 +83,7 @@ impl tools::Registry {
             ),
             (
                 "agent_send_input",
-                "Send additional context or a correction to a running direct child. Core settles the current model request before applying the correction, without executing its stale tool calls; the child may take time to respond. Completed children cannot be resumed: spawn a new task with the needed context.",
+                "Send context or a correction only when the execution receipt has capabilities.sendInput=true and the child is running. Isolated frozen contracts return false: include context at creation, or cancel and wait for settlement before creating a revised task. For supported children Core settles the current model request before applying the correction without executing stale tool calls. Completed children cannot be resumed.",
                 json!({"executionId":target,"prompt":prompt}),
                 vec!["executionId", "prompt"],
             ),
@@ -94,6 +94,9 @@ impl tools::Registry {
                 vec!["executionId"],
             ),
         ] {
+            if !enabled && name != "agent_report" {
+                continue;
+            }
             self.insert(ToolDefinition {
                 name: name.into(), description: description.into(),
                 input_schema: json!({"type":"object","additionalProperties":false,"properties":properties,"required":required}),
@@ -595,8 +598,8 @@ impl Engine {
             );
             let state = parent.state.lock().await;
             anyhow::ensure!(
-                state.thread.parent_thread_id.is_some(),
-                "only child Agents can report"
+                state.thread.parent_thread_id.is_some() || state.thread.source == "workgroupWorker",
+                "only child Agents or trusted isolated workers can report"
             );
             anyhow::ensure!(
                 state

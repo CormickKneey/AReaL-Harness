@@ -411,9 +411,18 @@ impl Engine {
         if !thread.is_side() && !research && config.allow_plugin_skills && !config.read_only {
             tools.extend(self.desktop.plugin_mcp.tools());
         }
-        let registry = self
-            .registry
-            .clone()
+        let mut registry = self.registry.clone();
+        // 报告能力只接入可信隔离 worker；禁用委派的普通 Engine 保留外部同名工具兼容。
+        if (self
+            .desktop
+            .worker_model
+            .load(std::sync::atomic::Ordering::Acquire)
+            || thread.source == "workgroupWorker")
+            && registry.get("agent_report").is_err()
+        {
+            registry = registry.with_agents(false, true)?;
+        }
+        let registry = registry
             .with_mcp(tools)?
             .with_dynamic(&thread.dynamic_tools)?;
         Ok(if thread.is_side() {

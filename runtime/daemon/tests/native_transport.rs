@@ -2,6 +2,75 @@ use areal_runtime_protocol::*;
 use std::{process::Stdio, time::Duration};
 use tokio::process::Command;
 
+#[tokio::test]
+async fn trusted_launch_inherits_only_granted_network_and_child_scopes_can_deny_it() {
+    for network in [NetworkRequest::Deny, NetworkRequest::Inherit] {
+        let dir = tempfile::tempdir().unwrap();
+        let binary = std::path::Path::new(env!("CARGO_BIN_EXE_areal-runtime"));
+        let helper = binary.with_file_name("areal-runtime-fs");
+        let client = areal_runtime_client::Client::launch_with_environment(
+            binary,
+            &helper,
+            dir.path(),
+            true,
+            &Limits::default(),
+            "/usr/bin:/bin",
+            network,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            client.info().capabilities["rootNetwork"],
+            serde_json::to_value(network).unwrap()
+        );
+        for narrowed in [false, true] {
+            let scope = client
+                .create_scope(CreateScope {
+                    operation_id: client.operation_id(),
+                    parent_scope_id: client.info().root_scope_id.clone(),
+                    owner: Owner {
+                        task_id: "network-boundary".into(),
+                        plugin_instance_id: None,
+                    },
+                    permissions: PermissionRequest {
+                        network: if narrowed {
+                            NetworkRequest::Deny
+                        } else {
+                            NetworkRequest::Inherit
+                        },
+                        ..Default::default()
+                    },
+                    limits: LimitRequest::default(),
+                })
+                .await
+                .unwrap();
+            let process = client
+                .start(StartProcess {
+                    operation_id: client.operation_id(),
+                    scope_id: scope.scope_id,
+                    argv: vec![
+                        "/usr/bin/python3".into(),
+                        "-I".into(),
+                        "-B".into(),
+                        "-c".into(),
+                        "import socket,sys\ns=socket.socket()\ntry: s.bind(('127.0.0.1',0))\nexcept PermissionError: sys.exit(42)\ns.close()".into(),
+                    ],
+                    cwd: "workspace://repo".into(),
+                    env: Default::default(),
+                    tty: false,
+                    pipe_stdin: false,
+                    limits: LimitRequest::default(),
+                })
+                .await
+                .unwrap();
+            let result = client.wait(&process.process_id).await.unwrap();
+            let allowed = network == NetworkRequest::Inherit && !narrowed;
+            assert_eq!(result.exit_code, Some(if allowed { 0 } else { 42 }));
+        }
+        client.shutdown().await.unwrap();
+    }
+}
+
 // End-to-end contract: the public client/daemon admission reaches the native
 // sandbox, and a same-task ordinary command can release two concurrent hooks.
 #[tokio::test]

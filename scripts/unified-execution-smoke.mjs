@@ -23,13 +23,16 @@ const workspace = join(root, "workspace");
 const data = join(root, "data");
 await mkdir(workspace);
 await writeFile(join(workspace, "preserved.txt"), "existing user content\n");
-await writeFile(join(root, "config.toml"), "schema_version = 1\n");
+await writeFile(join(root, "config.toml"), "schema_version = 1\n[model]\nmax_retries=0\n");
 const delay = (ms) => new Promise((done) => setTimeout(done, ms));
 let server,
+  activeParent,
   modelFailure,
   modelRequests = 0;
 const barrier = [];
 const workers = new Set();
+const recoveredFailures = new Set();
+const finalRequests = new Map();
 let observeCancellationWorker;
 const cancellationWorker = new Promise((resolve) => (observeCancellationWorker = resolve));
 
@@ -82,9 +85,45 @@ const model = createServer(async (request, response) => {
     if (worker) {
       assert(!input.tools.some((tool) => tool.function.name === "workgroup_start"));
       if (results.length) {
-        assert.equal(results.length, 1);
         assert(results[0].sha256, JSON.stringify(results));
-        return reply(response, null, null, "candidate ready; no trusted checks configured");
+        if (results.length === 1) {
+          assert(input.tools.some((tool) => tool.function.name === "agent_report"));
+          assert(!input.tools.some((tool) => tool.function.name === "agent_spawn"));
+          return reply(response, "agent_report", {
+            summary: `candidate ${worker[1]} written`,
+            evidence: [`${worker[1]}.txt`],
+            remaining: ["independent integration verification"],
+          });
+        }
+        assert.equal(results[1].recorded, true);
+        if (results.length === 2) {
+          return reply(response, "run_command", {
+            argv: [
+              "/usr/bin/python3",
+              "-I",
+              "-B",
+              "-c",
+              "import socket; s=socket.socket(); s.bind(('127.0.0.1',0)); print('inherited-network-ok'); s.close()",
+            ],
+            timeoutMs: 5000,
+          });
+        }
+        assert.equal(results.length, 3);
+        assert.equal(results[2].exitCode, 0, JSON.stringify(results[2]));
+        assert(results[2].stdout.includes("inherited-network-ok"));
+        // 请求层重试已关闭，必须由同一 Engine 恢复；历史失败不得重启整个 worker。
+        if (worker[1] === "a" && !recoveredFailures.has("a")) {
+          recoveredFailures.add("a");
+          response.writeHead(503, { "content-type": "application/json" });
+          response.end(JSON.stringify({ error: { message: "fixture temporary unavailable" } }));
+          return;
+        }
+        return reply(
+          response,
+          null,
+          null,
+          "candidate ready; no trusted checks configured\n" + "交接证据。".repeat(1200),
+        );
       }
       assert(!workers.has(worker[1]), "worker request was replayed");
       workers.add(worker[1]);
@@ -96,7 +135,14 @@ const model = createServer(async (request, response) => {
       return;
     }
     if (userText.includes("UNIFIED_CANCEL_WORKER")) {
-      assert.equal(results.length, 0, "cancelled response executed a tool");
+      if (!results.length)
+        return reply(response, "agent_report", {
+          summary: "checkpoint before cancellation",
+          evidence: ["no source writes"],
+          remaining: ["integration not performed"],
+        });
+      assert.equal(results.length, 1, "cancelled response executed a stale tool");
+      assert.equal(results[0].recorded, true);
       response.writeHead(200, { "content-type": "text/event-stream" });
       response.write(
         `data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: "awaiting cancellation" }, finish_reason: null }] })}\n\n`,
@@ -127,12 +173,36 @@ const model = createServer(async (request, response) => {
           timeoutMs: 10000,
         });
       }
-      for (const result of results.slice(2)) {
+      for (const result of results.slice(2, 4)) {
         assert.equal(result.status, "completed", JSON.stringify(result));
         assert.equal(result.delivery.status, "applied", JSON.stringify(result));
         assert.equal(result.verification.status, "notRun");
         assert.equal(result.delivery.verified, false);
+        assert.equal(result.capabilities.sendInput, false);
+        assert.equal(result.source, "message");
+        assert(result.sourceItemId && result.text.includes("candidate ready"));
       }
+      // 两个最终报告均跨页；父模型实际读取全部页后才允许完成。
+      const cursor = results.length % 2;
+      const initial = results[2 + cursor];
+      const latest = [...results.slice(2)]
+        .reverse()
+        .find((result) => result.executionId === initial.executionId);
+      if (latest.nextOffset != null)
+        return reply(response, "agent_read", {
+          executionId: latest.executionId,
+          offset: latest.nextOffset,
+        });
+      const other = results[2 + (1 - cursor)];
+      const otherLatest = [...results.slice(2)]
+        .reverse()
+        .find((result) => result.executionId === other.executionId);
+      if (otherLatest.nextOffset != null)
+        return reply(response, "agent_read", {
+          executionId: otherLatest.executionId,
+          offset: otherLatest.nextOffset,
+        });
+      finalRequests.set("normal", (finalRequests.get("normal") ?? 0) + 1);
       return reply(
         response,
         null,
@@ -158,17 +228,38 @@ const model = createServer(async (request, response) => {
           throw Error("cancellation worker never started");
         }),
       ]);
-      return reply(response, "agent_send_input", { executionId, prompt: "changed contract" });
+      // 等待已提交交接进入只读投影，避免用固定延迟掩盖竞态。
+      const end = Date.now() + 10000;
+      while (true) {
+        const snapshot = await server.rpc.call("areal/execution/read", {
+          parentThreadId: activeParent,
+          executionId,
+        });
+        if (snapshot.text.includes("checkpoint before cancellation")) break;
+        assert(Date.now() < end, "running isolated checkpoint was not exposed");
+        await delay(10);
+      }
+      return reply(response, "agent_read", { executionId });
     }
     if (results.length === 2) {
-      assert(results[1].error, "frozen isolated contracts must reject live steering");
+      assert.equal(results[1].status, "running");
+      assert.equal(results[1].source, "checkpoint");
+      assert.equal(results[1].partial, true);
+      assert.equal(results[1].capabilities.sendInput, false);
+      return reply(response, "agent_send_input", { executionId, prompt: "changed contract" });
+    }
+    if (results.length === 3) {
+      assert(results[2].error, "frozen isolated contracts must reject live steering");
       return reply(response, "agent_cancel", { executionId, mode: "force" });
     }
-    if (results.length === 3)
+    if (results.length === 4)
       return reply(response, "agent_wait", { executionId, timeoutMs: 10000 });
-    assert.equal(results[3].status, "cancelled", JSON.stringify(results[3]));
-    assert.equal(results[3].resourcesReleased, true);
-    assert.notEqual(results[3].delivery.status, "applied");
+    assert.equal(results[4].status, "cancelled", JSON.stringify(results[4]));
+    assert.equal(results[4].resourcesReleased, true);
+    assert.equal(results[4].delivery.status, "cancelled");
+    assert.equal(results[4].source, "checkpoint");
+    assert(results[4].text.includes("checkpoint before cancellation"));
+    finalRequests.set("cancelled", (finalRequests.get("cancelled") ?? 0) + 1);
     reply(response, null, null, "cancelled and released without source writes");
   } catch (error) {
     modelFailure ??= error;
@@ -194,6 +285,7 @@ async function start() {
       "--workspace",
       workspace,
       "--allow-write",
+      "--allow-network",
       "--permissions",
       "yolo",
       "--model-endpoint",
@@ -246,6 +338,7 @@ async function stop() {
 }
 async function turn(prompt) {
   const { thread } = await server.rpc.call("thread/start");
+  activeParent = thread.id;
   const { turn } = await server.rpc.call("turn/start", {
     threadId: thread.id,
     input: [{ type: "text", text: prompt }],
@@ -261,9 +354,15 @@ async function turn(prompt) {
 try {
   await start();
   const parentThreadId = await turn("UNIFIED_PARENT");
+  assert.equal(
+    finalRequests.get("normal"),
+    1,
+    "already observed reports triggered another final answer",
+  );
   const { data: executions } = await server.rpc.call("areal/execution/list", { parentThreadId });
   assert.equal(executions.length, 2);
   assert.equal(workers.size, 2);
+  assert.equal(recoveredFailures.size, 1, "transient failure injection did not execute");
   assert.equal(await readFile(join(workspace, "preserved.txt"), "utf8"), "existing user content\n");
   assert(
     executions.some((execution) => execution.delivery.head !== execution.delivery.sourceHead),
@@ -314,6 +413,11 @@ try {
   );
 
   const cancelledParent = await turn("UNIFIED_CANCEL_PARENT");
+  assert.equal(
+    finalRequests.get("cancelled"),
+    1,
+    "already observed cancellation triggered another final answer",
+  );
   const cancelled = (
     await server.rpc.call("areal/execution/list", { parentThreadId: cancelledParent })
   ).data[0];
@@ -334,6 +438,11 @@ try {
       (execution) => execution.status === "completed" && execution.delivery.status === "applied",
     ),
   );
+  for (const execution of restored) {
+    const original = executions.find((before) => before.executionId === execution.executionId);
+    assert.equal(execution.sourceItemId, original.sourceItemId);
+    assert.equal(execution.text, original.text);
+  }
   await server.rpc.call("areal/execution/apply", {
     parentThreadId,
     executionId: executions[1].executionId,

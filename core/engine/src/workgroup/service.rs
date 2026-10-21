@@ -93,6 +93,16 @@ pub enum AvailabilityError {
 /// Instantiated by the trusted server, never by an agent-provided command.
 #[async_trait]
 pub trait Factory: Send + Sync + 'static {
+    /// 只返回已提交的报告；默认执行器没有交接正文，不把状态标题伪装成报告。
+    async fn handoff(
+        &self,
+        _root: &Path,
+        _task: &str,
+        _generation: u32,
+        _offset: usize,
+    ) -> Result<Option<Value>> {
+        Ok(None)
+    }
     /// 自定义执行器保留原准入；原生工厂必须覆盖并核验实际隔离环境。
     async fn probe_availability(&self, _root: &Path) -> std::result::Result<(), AvailabilityError> {
         Ok(())
@@ -125,6 +135,18 @@ pub struct NativeFactory {
 }
 #[async_trait]
 impl Factory for NativeFactory {
+    async fn handoff(
+        &self,
+        root: &Path,
+        task: &str,
+        generation: u32,
+        offset: usize,
+    ) -> Result<Option<Value>> {
+        let root = root.join("bindings");
+        let task = task.to_owned();
+        tokio::task::spawn_blocking(move || super::handoff::read(&root, &task, generation, offset))
+            .await?
+    }
     async fn probe_availability(&self, root: &Path) -> std::result::Result<(), AvailabilityError> {
         native::probe_availability(&self.runtime, &self.file_helper, root).await
     }
@@ -162,6 +184,17 @@ impl Factory for NativeFactory {
         )?;
         executor.worker_limits = self.worker_limits.clone();
         executor.catalog = self.catalog.clone();
+        // 仅继承可信父 Runtime 的实际网络上限；未绑定宿主的独立执行器继续默认禁网。
+        executor.network = if self
+            .catalog
+            .as_ref()
+            .and_then(std::sync::Weak::upgrade)
+            .is_some_and(|engine| engine.sandbox()["networkAccess"] == true)
+        {
+            areal_runtime_protocol::NetworkRequest::Inherit
+        } else {
+            areal_runtime_protocol::NetworkRequest::Deny
+        };
         executor.watchdog_disable = self.watchdog_disable;
         executor.tool_call_limits = self.tool_call_limits;
         executor.runtime_limits.wall_time_ms = policy.command_timeout_ms;
@@ -632,6 +665,22 @@ impl Service {
     }
     pub async fn read(&self, id: &str, owner: Option<&str>) -> Result<Value> {
         Ok(self.view(id, &self.get(id, owner).await?.0.read()))
+    }
+    pub(crate) async fn handoff(
+        &self,
+        id: &str,
+        owner: &str,
+        offset: usize,
+    ) -> Result<Option<Value>> {
+        let record = self.get(id, Some(owner)).await?.0.read();
+        let task = record.tasks.first().context("execution has no task")?;
+        ensure!(
+            record.tasks.len() == 1,
+            "execution handoff requires one delegated task"
+        );
+        self.factory
+            .handoff(&self.root.join(id), &task.spec.id, task.generation, offset)
+            .await
     }
     pub(super) async fn delivery_journal(&self, id: &str) -> Result<PathBuf> {
         ensure!(

@@ -26,6 +26,8 @@ pub struct Execution {
     pub trusted_executable: Option<PathBuf>,
     /// 允许命令的子进程执行这些精确文件，不授予其目录内容读取权。
     pub builtin_executables: Vec<PathBuf>,
+    /// 可信部署已接入的软件与动态库，只读执行，不由公开进程请求指定。
+    pub toolchain_roots: Vec<PathBuf>,
     pub tty: bool,
     pub pipe_stdin: bool,
     pub network: areal_runtime_protocol::NetworkRequest,

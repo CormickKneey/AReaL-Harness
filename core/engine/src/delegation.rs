@@ -217,13 +217,23 @@ impl Engine {
             || request.request_id.len() > 128
             || request.input.is_empty()
             || request.writes.len() > 256
-            || request
-                .writes
-                .iter()
-                .any(|p| !workgroup::tree::valid_path(p))
-            || request.writes.iter().collect::<HashSet<_>>().len() != request.writes.len()
         {
-            return Err(invalid("invalid delegation request or write scope"));
+            return Err(invalid(
+                "delegation requires a nonempty requestId (at most 128 bytes), input and at most 256 exact write paths",
+            ));
+        }
+        let mut seen = HashSet::new();
+        for (index, path) in request.writes.iter().enumerate() {
+            if !workgroup::tree::valid_path(path) {
+                return Err(invalid(format!(
+                    "writes[{index}]={path:?} must be an exact workspace-relative file path: no directory trailing slash, absolute path, '.' or '..' component"
+                )));
+            }
+            if !seen.insert(path) {
+                return Err(invalid(format!(
+                    "writes[{index}]={path:?} duplicates an earlier exact file path"
+                )));
+            }
         }
         let hash = format!(
             "{:x}",
@@ -659,14 +669,15 @@ impl Engine {
         record: &ExecutionRecord,
         offset: usize,
     ) -> Result<Value> {
-        if offset != 0 && !matches!(record.execution, Some(ExecutionRef::Thread { .. })) {
-            return Err(invalid(
-                "reply offset is only supported for shared executions; use execution/artifact for isolated files",
-            ));
-        }
         let mut value = json!({"executionId":record.execution_id,"parentThreadId":parent_id(&record.owner),"owner":record.owner,
             "title":record.title,"strategy":record.strategy,"reason":record.reason,"status":"unknown","settled":false,"resourcesReleased":false,
             "text":"","error":record.error,"stopRequested":record.cancel_requested,"verification":{"status":"notRun","kind":"none"},"delivery":{"status":"notRequired"}});
+        value["capabilities"] = json!({
+            "sendInput":matches!(record.execution, Some(ExecutionRef::Thread { .. })),
+            "readHandoff":true,
+            "readArtifact":matches!(record.execution, Some(ExecutionRef::Workgroup { .. })),
+            "contract":if matches!(record.execution, Some(ExecutionRef::Workgroup { .. })) { "frozen" } else { "live" },
+        });
         if let Some(error) = &record.error
             && record.execution.is_none()
         {
@@ -751,15 +762,44 @@ impl Engine {
                 value["verification"] = json!({"status":if state["finalCheck"].is_null(){"notRun"}else if state["finalCheck"]["passed"]==true{"passed"}else{"failed"},"kind":if service.is_strict(){"trusted"}else{"none"}});
                 value["delivery"]["status"] = json!(if state["status"] == "completed" {
                     "candidate"
+                } else if state["status"] == "cancelled" && state["cleanupConfirmed"] == true {
+                    "cancelled"
+                } else if state["status"] == "failed" && state["cleanupConfirmed"] == true {
+                    "notRequired"
                 } else {
                     "pending"
                 });
                 value["artifact"] = json!({"head":state["head"],"workgroupId":workgroup_id});
-                value["text"] = json!(format!(
-                    "{}: {}",
-                    record.title,
-                    state["status"].as_str().unwrap_or("unknown")
-                ));
+                if let Some(report) = service
+                    .handoff(workgroup_id, &owner_key(&record.owner), offset)
+                    .await
+                    .map_err(invalid)?
+                {
+                    for key in [
+                        "text",
+                        "source",
+                        "sourceItemId",
+                        "offset",
+                        "nextOffset",
+                        "textBytes",
+                        "activity",
+                    ] {
+                        value[key] = report[key].clone();
+                    }
+                    value["partial"] =
+                        json!(state["status"] != "completed" || report["partial"] == true);
+                } else {
+                    if offset != 0 {
+                        return Err(invalid("execution has no handoff page at this offset"));
+                    }
+                    value["text"] = json!("");
+                    value["source"] = json!("none");
+                    value["sourceItemId"] = json!("");
+                    value["offset"] = json!(0);
+                    value["nextOffset"] = Value::Null;
+                    value["textBytes"] = json!(0);
+                    value["partial"] = json!(true);
+                }
                 // 交付日志属于Core；执行完成与结果应用分别投影。
                 let delivery = match self
                     .workgroup_delivery_status(workgroup_id, *automatic)
@@ -817,6 +857,9 @@ impl Engine {
                     "execution creation has no settled backend receipt; inspect before retrying"
                 )
             }
+        }
+        if value["status"] != "running" || value["stopRequested"] == true {
+            value["capabilities"]["sendInput"] = json!(false);
         }
         Ok(value)
     }

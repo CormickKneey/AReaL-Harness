@@ -309,10 +309,7 @@ impl Engine {
             .set_permissions(self.permission_config(), None)
             .map_err(invalid)?;
         *worker.desktop.catalog.write().unwrap() = self.desktop.catalog.read().unwrap().clone();
-        worker
-            .desktop
-            .worker_model
-            .store(true, std::sync::atomic::Ordering::Release);
+        worker.prepare_worker_instance().await?;
         let data = DesktopState {
             configuration,
             ..Default::default()
@@ -321,6 +318,20 @@ impl Engine {
             .create_inner(cwd, None, None, vec![], None, Some(data), false)
             .await
             .map(|(t, _)| t)
+    }
+
+    /// 仅用于新建的隔离实例，避免给禁用委派的用户 Engine 保留同名工具。
+    pub(crate) async fn prepare_worker_instance(&self) -> Result<()> {
+        let threads = self.threads.read().await;
+        if !threads.is_empty() {
+            return Err(invalid(
+                "worker preparation requires a fresh dedicated Engine",
+            ));
+        }
+        self.desktop
+            .worker_model
+            .store(true, std::sync::atomic::Ordering::Release);
+        Ok(())
     }
 }
 

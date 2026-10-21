@@ -81,6 +81,8 @@ Tools persist intent before dispatch to Runtime or an external host, then record
 
 Engine `context` and `history` modules plan complete model requests and validate compaction candidates before Store commits them atomically. Clients display budgets and compaction outcomes. See [context management](context-management.en.md) for allocation and failure rules.
 
+The Workgroup `handoff` module projects committed checkpoint and final reports from isolated workers using the shared provenance and pagination contract. Execution, cleanup, verification and delivery retain their existing owners. Trusted deployment toolchain discovery belongs to runtime/host-tools; Runtime enforces read-only software-resource access independently of task content. See the [Runtime contract](../api/runtime.en.md#system-tools-in-restricted-macos-commands).
+
 Ordinary [agent delegation](multi-agent.en.md) shares a workspace with independent context; [Workgroups](workgroups.en.md) use isolated writable workspaces and verified artifacts. Core schedules; Runtime does not select width. Plugins, stdio MCP and Core remain trusted hosts. Broker restrictions do not sandbox the Host itself; see [plugin boundaries](plugins.en.md).
 
 Optional [research agents](../guides/tools.en.md#research-agents) use Core-managed read-only source access, private scratch and shared budgets. Dispatch is asynchronous by default and model-selected. Short-handle caches belong to the active Turn, survive compaction and expire on completion; Store retains original execution history. The model HTTP layer audits redacted parameters and usage; incomplete-response recovery does not replay executed tools. See [Core API](../api/core.en.md#recovery).

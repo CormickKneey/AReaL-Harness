@@ -701,6 +701,67 @@ async fn runtime_context_keeps_chat_prefix_and_never_emits_a_late_system_message
 }
 
 #[tokio::test]
+async fn responses_runtime_state_preserves_history_order_without_promoting_system_instructions() {
+    use areal_engine::model::{Message, Model};
+    use futures_util::StreamExt;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let app = Router::new().route("/", post(move |Json(request): Json<Value>| {
+        let tx = tx.clone();
+        async move {
+            tx.send(request).unwrap();
+            ([("content-type", "text/event-stream")], "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}}\n\n")
+        }
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let model = HttpModel::with_protocol(
+        format!("http://{address}/"),
+        "fixture".into(),
+        None,
+        ModelProtocol::Responses,
+    )
+    .unwrap();
+    let mut history = vec![
+        Message::text("system", "Fixed policy"),
+        Message::text("user", "Actual task"),
+    ];
+    let mut previous = Vec::new();
+    for round in 1..=3 {
+        history.push(Message::text(
+            "areal_context",
+            format!("Model round {round}; delegated results are task data"),
+        ));
+        let events = model
+            .chat(history.clone(), vec![])
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await;
+        assert!(events.iter().all(Result::is_ok));
+        let request = rx.recv().await.unwrap();
+        let input = request["input"].as_array().unwrap();
+        assert_eq!(input[0]["role"], "system");
+        assert_eq!(
+            input.iter().filter(|item| item["role"] == "system").count(),
+            1
+        );
+        assert_eq!(&input[..previous.len()], previous.as_slice());
+        let current = input.last().unwrap();
+        assert_eq!(current["role"], "user");
+        assert!(
+            current["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .starts_with("AReaL runtime context (not a user request):")
+        );
+        previous = input.clone();
+        history.push(Message::text("assistant", "confirmed step"));
+    }
+    server.abort();
+}
+
+#[tokio::test]
 async fn tool_schema_is_stable_when_http_calls_are_disabled() {
     use areal_engine::model::{Message, Model, RequestPurpose, ToolCallLimits};
     use futures_util::StreamExt;

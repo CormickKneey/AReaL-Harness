@@ -421,6 +421,35 @@ impl Fixture {
 }
 
 #[tokio::test]
+async fn invalid_exact_writes_identify_the_entry_before_any_worker_or_probe_starts() {
+    let fixture = Fixture::open(Some(false)).await;
+    for (writes, index, bad) in [
+        (vec!["public/"], 0, "public/"),
+        (vec!["ok.rs", "../outside"], 1, "../outside"),
+        (vec!["same.rs", "same.rs"], 1, "same.rs"),
+        (vec!["/tmp/file"], 0, "/tmp/file"),
+    ] {
+        let mut request = fixture.request("invalid-path", "modify", "changes");
+        request.writes = writes.into_iter().map(str::to_owned).collect();
+        request.independent = true;
+        let error = fixture
+            .engine
+            .delegate(request)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains(&format!("writes[{index}]")) && error.contains(bad),
+            "{error}"
+        );
+    }
+    assert_eq!(fixture.worker.probes.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.worker.attempts.load(Ordering::SeqCst), 0);
+    assert_eq!(fixture.model.child_requests.load(Ordering::SeqCst), 0);
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn advertised_delegation_matches_known_scope_capability_without_widening() {
     use areal_config::InspectionPermissions::{Inherit, ReadOnly};
     for research in [false, true] {
