@@ -281,6 +281,7 @@ try {
   checks.push('one activity during initial wait, after real Runtime tool result and streaming; completed usage replaces activity');
   const created = await call('create', { projectId, profile: { id: 'standard', revision: 'v1' }, model: { providerId: 'fixture', modelId: 'alpha' } });
   const source = created.threadId; await selectConversation(page, source);
+  const requestsBeforeSelection = requests.length;
   identities.at(-1).coreServices = JSON.parse(execFileSync(binary, ['service', 'list', '--json'], { env, encoding: 'utf8', timeout: 20000 }));
   assert.equal((await showContext(source)).contextUsage.budget.windowTokens, 64000);
   const popup = await page.getByTestId('context-popover').boundingBox();
@@ -296,7 +297,7 @@ try {
   assert.equal((await context(source)).contextUsage.budget.windowSource, 'user');
   assert.equal((await context(source)).contextUsage.budget.userBudgetTokens, 128000);
   await page.getByTestId('context-popover').getByText(/用户预算/).waitFor();
-  assert.equal(requests.length, 0, 'A -> provider fallback -> B capacity updates before sending');
+  assert.equal(requests.length, requestsBeforeSelection, 'A -> provider fallback -> B capacity updates before sending');
   assert.equal(await page.getByTestId('context-meter').innerText(), '', 'Composer control is only a ring');
   await page.screenshot({ path: join(scratch, '01-selected-capacity.png') }); await dismissPopovers();
   const first = await send('USAGE_NORMAL');

@@ -1,17 +1,13 @@
 import { useState } from "react";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "./components/ui/popover.js";
 import { generationRate, generationStats, modelUsage, tokenCount, useContextUsage } from "./contextUsage.js";
-import { activityLabel } from "./conversationPresentation.js";
 import type { Action, Data } from "./services.js";
 
 export function TurnUsage({ project, thread, turn, action, inherited = false }: { project: Data; thread: Data; turn: Data; action: Action; inherited?: boolean }) {
   const [open, setOpen] = useState(false), [scope, setScope] = useState<"session" | "turn">("session");
   const { result, busy, error } = useContextUsage(project, thread, action, open && !inherited);
   const usage = modelUsage(turn.usage), generation = generationStats(turn.generation), rate = generationRate(generation);
-  if (turn.status === "inProgress") {
-    const activity = activityLabel(project, thread.id, turn);
-    return <span className="turn-usage-trigger" role="status" data-testid="turn-usage">{activity === "正在生成回复…" || activity === "正在思考…" ? "生成中" : "进行中"}</span>;
-  }
+  if (turn.status === "inProgress") return null;
   const session = !inherited && scope === "session";
   const shownUsage = session ? result?.sessionUsage.usage : usage, shownGeneration = session ? result?.sessionUsage.generation : generation;
   const shownRate = generationRate(shownGeneration);
