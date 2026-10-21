@@ -3767,6 +3767,44 @@
     "strictHistoricalModelIdentityVerified": false,
     "meaning": "configuration fingerprints exclude secrets and volatile health; alias/config equality does not verify actual model weight bytes"
   },
+  "postRunGuiDependencyRepair": {
+    "scope": "GUI-only dependency pins and lockfile; frozen Arena payload unchanged",
+    "packages": {
+      "vite": {
+        "from": "7.3.6",
+        "to": "7.3.7"
+      },
+      "@modelcontextprotocol/client": {
+        "from": "2.2.0",
+        "to": "2.3.0"
+      },
+      "@modelcontextprotocol/core": {
+        "from": "2.2.0",
+        "to": "2.3.0",
+        "reason": "client2.3.0 requires core2.3.0"
+      }
+    },
+    "advisories": [
+      "https://github.com/advisories/GHSA-698v-4r3x-3vcv",
+      "https://github.com/advisories/GHSA-r825-w8mm-5pxw",
+      "https://github.com/advisories/GHSA-587h-7wmj-h5pm",
+      "https://github.com/advisories/GHSA-6prh-2h8m-c8cw"
+    ],
+    "coreInputHash": "46659ac6a0834207e30437023ddba531b55671a7351ae08ba305824aa309ce44",
+    "coreRuntimeInputsUnchanged": true,
+    "arenaPackageSha256": "da6effdb801aad675e6baa50458c1edacb9e902db396373596ee7e5888833897",
+    "localValidation": {
+      "pnpmAudit": "clean",
+      "typecheck": "pass",
+      "productionBuild": "pass",
+      "publicVerification": {
+        "passed": 109,
+        "skipped": 3,
+        "failed": 0
+      }
+    },
+    "guiLockSha256": "b1c9434116d3a427b28d84ee13583d0c342fea7fcd481728cb9cd8bf5f1af4fa"
+  },
   "terminalFailureStops": [
     {
       "model": "qwen",

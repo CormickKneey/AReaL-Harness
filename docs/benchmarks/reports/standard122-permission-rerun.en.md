@@ -93,6 +93,8 @@ The [portable JSON](standard122-permission-rerun.json) includes exact scores, pe
 
 Harness: `standard102-native-areal@1.1.0-5a8b6d192fe5`; SHA-256: `da6effdb801aad675e6baa50458c1edacb9e902db396373596ee7e5888833897`.
 
+The live GUI dependency audit also required Vite 7.3.7 and MCP client/core 2.3.0. See the [MCP advisory](https://github.com/advisories/GHSA-6prh-2h8m-c8cw) and [Vite advisory](https://github.com/advisories/GHSA-587h-7wmj-h5pm). Core/Runtime source-input hash remains `46659ac6a0834207e30437023ddba531b55671a7351ae08ba305824aa309ce44`; the immutable Arena payload was not changed. GUI audit, type checking, production build and 109 public checks passed, with three original skips. This follow-up changes GUI dependencies only and does not substitute a new solver or reselect benchmark samples.
+
 ### Arena Jobs
 
 - [astra / swe24](https://arenaonline-prod.alipay.com/jobs/s122-af5v2-formal-astra-swe24-2610210432)

@@ -93,6 +93,8 @@ V1 因 TLS 依赖和持久身份边界修正而退役，两个资格结果保留
 
 Harness: `standard102-native-areal@1.1.0-5a8b6d192fe5`; SHA-256: `da6effdb801aad675e6baa50458c1edacb9e902db396373596ee7e5888833897`.
 
+收尾的实时GUI依赖审计还要求将Vite固定为7.3.7、MCP client/core固定为2.3.0，依据为[MCP公告](https://github.com/advisories/GHSA-6prh-2h8m-c8cw)及[Vite公告](https://github.com/advisories/GHSA-587h-7wmj-h5pm)。Core/Runtime源码输入哈希保持`46659ac6a0834207e30437023ddba531b55671a7351ae08ba305824aa309ce44`，Arena不可变运行包未改动。GUI审计、类型、正式构建及109项公共验证通过，3项原配置跳过。这项后续修复仅变更GUI依赖，没有替换Solver或重选Benchmark样本。
+
 ### Arena Jobs
 
 - [astra / swe24](https://arenaonline-prod.alipay.com/jobs/s122-af5v2-formal-astra-swe24-2610210432)
