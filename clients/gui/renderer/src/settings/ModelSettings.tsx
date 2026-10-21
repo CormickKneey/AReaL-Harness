@@ -11,13 +11,13 @@ import { Button } from "../components/ui/button.js";
 import { Input } from "../components/ui/input.js";
 import { Switch } from "../components/ui/switch.js";
 import { SettingsSearchInput } from "./SettingsSearchInput.js";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "../components/ui/tabs.js";
 import { DialogFooter } from "../components/ui/dialog.js";
 import { EmptySettings, Feedback, SettingsDialog, useResource } from "./common.js";
-import { ConnectionMethodPicker } from "./ConnectionMethodPicker.js";
 import { newConnectionDraft } from "./provider-ui-state.js";
 import { ProviderTemplatePicker } from "./ProviderTemplatePicker.js";
-import { ProviderApiKeySection, ProviderConnectionSection } from "./model-provider-section/ProviderCardSections.js";
+import { ProviderApiKeySection, ProviderBaseUrlSection } from "./model-provider-section/ProviderCardSections.js";
+import { ProviderApiFormatSelect } from "./model-provider-section/ProviderApiFormatSelect.js";
+import { useProviderDiscovery, type DiscoveryConnection } from "./useProviderDiscovery.js";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "../components/ui/dropdown-menu.js";
 import "./ModelSettings.css";
 import type { Action, Data } from "../services.js";
@@ -29,13 +29,11 @@ export function ModelSettings({ action, onOpenSessionSettings }: { action: Actio
   const api = (operation: string, values: Data = {}) => action("providers", { operation, ...values });
   const state = useResource(() => api("list"), "application");
   const [accountModels, setAccountModels] = useState<Data[]>([]);
-  const [connectionChoice, setConnectionChoice] = useState<Data | null>(null);
   const [accountStatus, setAccountStatus] = useState<SubscriptionAccountStatus>();
   const accountLabel = accountStatus ? t("settings.chatGPTSubscription.valueSubscriptionValue", { value0: accountStatus.email || "ChatGPT", value1: subscriptionStatusLabel(t, accountStatus.state) }) : "";
   const [selected, setSelected] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [modelQuery, setModelQuery] = useState("");
-  const [detailTab, setDetailTab] = useState("models");
   const [accountReady, setAccountReady] = useState(false);
   const [picker, setPicker] = useState(false);
   const [draft, setDraft] = useState<Data | null>(null);
@@ -44,32 +42,39 @@ export function ModelSettings({ action, onOpenSessionSettings }: { action: Actio
   const { busy, error, message, setError, setMessage, run, execute } = useSettingsOperation();
   const [remove, setRemove] = useState<Data | null>(null);
   const [modelDraft, setModelDraft] = useState<{ model: Data; index: number } | null>(null);
-  const [discovered, setDiscovered] = useState<{ models: string[]; modelParameters?: Record<string, { contextWindowTokens: number }> } | null>(null);
   const [checked, setChecked] = useState<string[]>([]);
   const [probe, setProbe] = useState<Data>({});
   const items: Data[] = state.value?.data ?? [];
   const provider = draft ?? items.find(p => p.id === selected);
   const authentication = provider?.authentication ?? (provider?.apiKeyEnv ? "apiKey" : "none");
+  let discoveryConnection: DiscoveryConnection | null = null;
+  if (provider && ["chatCompletions", "responses"].includes(provider.protocol)) {
+    try {
+      const url = new URL(provider.baseUrl);
+      const credential: DiscoveryConnection["credential"] | null = authentication === "none" ? { kind: "none" }
+        : key?.trim() ? { kind: "draft", value: key }
+          : provider.id && state.value?.credentialStates?.[provider.id] === "available" ? { kind: "saved", providerId: provider.id, expectedRevision: draft?.basedOnRevision ?? state.value.revision } : null;
+      if (credential && ["http:", "https:"].includes(url.protocol) && !url.username && !url.password && !url.search && !url.hash)
+        discoveryConnection = { protocol: provider.protocol, baseUrl: provider.baseUrl, credential };
+    } catch {}
+  }
+  const discovery = useProviderDiscovery(action, discoveryConnection);
   const visibleModels = (provider?.models ?? []).map((model: Data, index: number) => ({ model, index })).filter(({ model }: { model: Data }) => `${model.displayName ?? ""} ${model.id}`.toLowerCase().includes(modelQuery.toLowerCase()));
   const edit = (patch: Data) => { setDraft({ ...provider, ...patch, basedOnRevision: draft?.basedOnRevision ?? state.value?.revision }); setMessage(""); };
-  const select = (item: Data) => { setSelected(item.id); setPicker(false); setConnectionChoice(null); setDraft(null); setKey(undefined); setKeyVisible(false); setModelQuery(""); setError(""); setMessage(""); };
-  const choose = (id: string) => navigate(() => { setSelected(id); setDetailTab("models"); setPicker(false); setConnectionChoice(null); setDraft(null); setKey(undefined); setKeyVisible(false); setModelQuery(""); setError(""); setMessage(""); });
+  const editConnection = (patch: Data) => { discovery.invalidate(true); setChecked([]); edit(patch); };
+  const select = (item: Data) => { discovery.invalidate(); setChecked([]); setSelected(item.id); setPicker(false); setDraft(null); setKey(undefined); setKeyVisible(false); setModelQuery(""); setError(""); setMessage(""); };
+  const choose = (id: string) => navigate(() => select({ id }));
   const save = async (candidate = provider, apiKey = key) => {
     if (!candidate) throw new UiMessageError({ id: "settings.modelSettings.noProviderToSave" });
     let result: Data;
     try {
-      result = await api("saveAndApply", { expectedRevision: candidate.basedOnRevision ?? state.value?.revision, provider: candidate, authentication: candidate.authentication ?? (candidate.apiKeyEnv ? "apiKey" : "none"), ...(apiKey !== undefined ? { apiKey } : {}) });
+      result = await api("save", { expectedRevision: candidate.basedOnRevision ?? state.value?.revision, provider: candidate, authentication: candidate.authentication ?? (candidate.apiKeyEnv ? "apiKey" : "none"), ...(apiKey !== undefined ? { apiKey } : {}) });
     } catch (cause) {
-      const previous = state.value;
-      const current = await state.refresh();
-      // 仅在原目录完整恢复时更新 CAS 基线；外部编辑冲突不能被重试覆盖。
-      if (current && JSON.stringify([current.data, current.defaultModel]) === JSON.stringify([previous?.data, previous?.defaultModel]))
-        setDraft(value => value ? { ...value, basedOnRevision: current.revision } : value);
+      await state.refresh();
       throw cause;
     }
     const saved = candidate.id ? result.data.find((p: Data) => p.id === candidate.id) : result.data.at(-1);
     state.accept(result); select(saved); setProbe({});
-    setMessage({ id: "settings.modelSettings.savedAndApplied" });
     return saved;
   };
   const baseline = items.find(item => item.id === selected);
@@ -80,7 +85,7 @@ export function ModelSettings({ action, onOpenSessionSettings }: { action: Actio
   const savedStatus = (item?: Data) => !item ? t("settings.modelSettings.unsaved") : !item.enabled ? t("settings.modelSettings.disabled")
     : state.value?.credentialStates?.[item.id] === "unavailable" ? t("settings.modelSettings.missingCredentials") : t("settings.modelSettings.available");
   const dirty = key !== undefined || (draft !== null && (!baseline || Object.keys(draft).some(field => field !== "basedOnRevision" && JSON.stringify(draft[field]) !== JSON.stringify(field === "authentication" ? baseline.apiKeyEnv ? "apiKey" : "none" : baseline[field]))));
-  const discard = () => { setDraft(null); setKey(undefined); setKeyVisible(false); setError(""); };
+  const discard = () => { discovery.invalidate(); setChecked([]); setDraft(null); setKey(undefined); setKeyVisible(false); setError(""); };
   useDraftBlocker({
     label: { id: "settings.modelSettings.provider" },
     dirty,
@@ -94,6 +99,22 @@ export function ModelSettings({ action, onOpenSessionSettings }: { action: Actio
     // 初始选择只决定一次；账号临时状态变化不能把用户移到另一份连接配置。
     if (selected === null && !picker && state.value && accountStatus) setSelected(accountModels.length ? CHATGPT : items.find(item => item.enabled)?.id ?? items[0]?.id ?? CHATGPT);
   }, [selected, picker, state.value, accountStatus, accountModels.length]);
+  const application = state.value?.application;
+  const waitingForApplication = application?.kind === "deferred" || application?.kind === "unknown";
+  useEffect(() => {
+    if (!waitingForApplication || busy) return;
+    let stopped = false;
+    let timer = setTimeout(async function refresh() {
+      await state.refresh();
+      if (!stopped) timer = setTimeout(refresh, 2000);
+    }, 2000);
+    return () => { stopped = true; clearTimeout(timer); };
+  }, [waitingForApplication, busy, state.refresh]);
+  const applicationMessage = !state.value ? "" : application?.kind === "unknown" ? t("settings.modelSettings.savedUnconfirmed")
+    : application?.kind === "failed" ? t("settings.modelSettings.savedFailed")
+      : application?.kind === "deferred" ? t(application.reason === "disconnected" ? "settings.modelSettings.savedDisconnected" : "settings.modelSettings.savedDeferred")
+        : application?.kind === "applied" && !dirty ? t("settings.modelSettings.savedAndApplied")
+          : application?.kind === "saved" && !dirty ? t("settings.modelSettings.saved") : "";
   const refreshCatalog = () => navigate(() => { discard(); void state.refresh(); });
   const matches = (name: string) => name.toLowerCase().includes(query.trim().toLowerCase());
   const catalog = [
@@ -116,7 +137,7 @@ export function ModelSettings({ action, onOpenSessionSettings }: { action: Actio
   const subscriptionModels = accountModels.filter(model => `${model.displayName ?? model.name ?? ""} ${model.id}`.toLowerCase().includes(modelQuery.toLowerCase()));
   const modelSearch = <SettingsSearchInput placeholder={t("settings.modelSettings.searchModelNameOrID")} aria-label={t("settings.modelSettings.searchModelNameOrID")} value={modelQuery} onChange={e => setModelQuery(e.target.value)} onClear={() => setModelQuery("")} clearLabel={t("settings.modelSettings.clearModelSearch")} containerClassName="provider-model-search" />;
   return <div className="model-settings">
-    <Feedback error={state.error || error} message={message} />
+    <Feedback error={state.error || error || (application?.kind === "failed" ? application.message : "")} message={message} />
     <div className="provider-settings" data-provider={current === CHATGPT && !picker ? CHATGPT : "custom"}>
       <aside className="provider-navigation" aria-label={t("settings.modelSettings.providerCatalog")}>
         <div className="provider-navigation-top"><h2>{t("settings.modelSettings.provider")}</h2><Button variant="ghost" size="icon" aria-label={t("settings.modelSettings.refreshProviders")} disabled={busy || state.loading} onClick={refreshCatalog}><RefreshCw size={16} /></Button></div>
@@ -133,31 +154,31 @@ export function ModelSettings({ action, onOpenSessionSettings }: { action: Actio
           </section> : null)}
           {!catalog.length && <p className="settings-muted provider-list-empty">{state.loading ? t("settings.modelSettings.loadingProviders") : query ? t("settings.modelSettings.noMatchingProviders") : t("settings.modelSettings.noProvidersAdded")}</p>}
         </div>
-        <Button className="provider-catalog-add" variant="outline" disabled={busy} onClick={() => navigate(() => { discard(); setPicker(true); setConnectionChoice(null); setSelected(null); setMessage(""); })}>{t("settings.modelSettings.addProvider")}</Button>
+        <Button className="provider-catalog-add" variant="outline" disabled={busy} onClick={() => navigate(() => { discard(); setPicker(true); setSelected(null); setMessage(""); })}>{t("settings.modelSettings.addProvider")}</Button>
       </aside>
       <div className="provider-detail">
         <div className="provider-file-status" role="status" aria-label={t("settings.modelSettings.configurationStatus")}>
-          {busy ? t("settings.modelSettings.saving") : state.value?.pendingApply ? t("settings.modelSettings.configurationChangedElsewhere") : !state.value ? t("settings.modelSettings.loading") : ""}
+          {busy ? t("settings.modelSettings.saving") : !state.value ? t("settings.modelSettings.loading") : applicationMessage}
+          {application?.kind === "failed" && <Button variant="link" disabled={busy} onClick={() => void run(async () => {
+            try { state.accept(await api("apply", { expectedRevision: state.value?.revision })); }
+            finally { await state.refresh(); }
+          })}>{t("settings.modelSettings.retryApply")}</Button>}
         </div>
         {overrides.length > 0 && <p className="settings-muted" role="status">{t("settings.modelSettings.commandLineOrEnvironmentSettingsOverrideFile")}{overrides.map(([field, source]) => `${field}：${(source as Data).name ?? (source as Data).flag}`).join(" ")}</p>}
-        {picker && (connectionChoice ? <ConnectionMethodPicker definition={connectionChoice} disabled={busy} onBack={() => setConnectionChoice(null)} onSelect={authentication => {
-          if (authentication === "siwc") { choose(CHATGPT); setDetailTab("connection"); return; }
-          setSelected(""); setDraft(newConnectionDraft(connectionChoice, authentication, state.value?.revision));
-          setKey(authentication === "apiKey" ? "" : undefined); setKeyVisible(false); setPicker(false); setConnectionChoice(null); setDetailTab("connection"); setError("");
-        }} /> : <ProviderTemplatePicker disabled={busy} onBack={() => choose(current ?? CHATGPT)} onCreate={setConnectionChoice} />)}
+        {picker && <ProviderTemplatePicker disabled={busy} onBack={() => choose(current ?? CHATGPT)} onCreate={definition => {
+          if (definition.subscription) { choose(CHATGPT); return; }
+          const authentication = definition.authMethods?.includes("apiKey") ? "apiKey" : "none";
+          discovery.invalidate(true); setChecked([]); setSelected(""); setDraft(newConnectionDraft(definition, authentication, state.value?.revision));
+          setKey(authentication === "apiKey" ? "" : undefined); setKeyVisible(false); setPicker(false); setError(""); setMessage("");
+        }} />}
         <div hidden={picker || (current !== CHATGPT && !provider)}>
           <header className="provider-detail-heading">
             <div><h2>{current === CHATGPT ? "ChatGPT" : provider?.name || t("settings.modelSettings.newProvider")}</h2><p className="settings-muted" role="status" aria-label={t("settings.modelSettings.providerStatus")}>{current === CHATGPT ? accountLabel || t("settings.modelSettings.loadingSubscriptionStatus") : savedStatus(baseline)}</p></div>
             {current !== CHATGPT && provider && <label className="provider-enable-control">{t("settings.modelSettings.enable")}<Switch disabled={busy} aria-label={t("settings.modelSettings.enableProvider")} checked={provider.enabled} onCheckedChange={enabled => edit({ enabled })} /></label>}
           </header>
-          <Tabs value={detailTab} onValueChange={value => setDetailTab(value as string)}>
-            <TabsList variant="line" aria-label={t("settings.modelSettings.providerSettings")} className="provider-detail-tabs">
-              <TabsTrigger value="models" disabled={busy}>{t("settings.modelSettings.model")}</TabsTrigger>
-              <TabsTrigger value="connection" disabled={busy}>{t("settings.modelSettings.connectionSettings")}</TabsTrigger>
-            </TabsList>
-            <TabsContent value="models" keepMounted>
-              {current === CHATGPT ? <div className="provider-model-section">
-                <div className="provider-connection-summary"><span>{accountLabel || t("settings.modelSettings.chatgptSubscription")}</span><Button variant="outline" onClick={() => setDetailTab("connection")}>{t("settings.modelSettings.manageAccounts")}</Button></div>
+          <div hidden={current !== CHATGPT} className="chatgpt-subscription-panel"><ChatGPTSubscription action={action} onModelsChange={setAccountModels} onAccountChange={setAccountStatus} onReadyChange={setAccountReady} /></div>
+          {current === CHATGPT ? <div className="provider-model-section">
+                <div className="provider-connection-summary"><span>{accountLabel || t("settings.modelSettings.chatgptSubscription")}</span></div>
                 <h3>{t("settings.modelSettings.modelCount", { count: accountModels.length })}</h3>
                 {modelSearch}
                 <div className="subscription-model-list provider-model-scroll" aria-label={t("settings.modelSettings.chatgptModels")}>
@@ -168,16 +189,45 @@ export function ModelSettings({ action, onOpenSessionSettings }: { action: Actio
                   </div>)}
                   {!subscriptionModels.length && <p className="settings-muted provider-list-empty">{modelQuery ? t("settings.modelSettings.noMatchingModels") : accountReady ? t("settings.modelSettings.noModelsAvailableForThisAccount") : t("settings.modelSettings.signInOrRefreshYourAccountIn")}</p>}
                 </div>
-              </div> : provider ? <fieldset disabled={busy} className="provider-inline">
+              </div> : provider ? <fieldset disabled={busy} className="provider-inline provider-connection-form">
+            <div><label className="mb-1 block text-ui-base text-foreground-subtle">{t("settings.modelProvider.apiFormat")}</label><ProviderApiFormatSelect value={provider.protocol} onChange={protocol => editConnection({ protocol })} /></div>
+            <div className="provider-name-field"><label className="settings-muted" htmlFor="provider-name">{t("settings.modelSettings.providerName")}</label>
+              <div className="provider-name-control"><Input id="provider-name" aria-label={t("settings.modelSettings.providerName")} size="lg" value={provider.name} onChange={event => edit({ name: event.target.value })} className="flex-1 font-semibold" />
+                {provider.id && <Button variant="ghost" size="icon" aria-label={t("settings.modelSettings.removeValue", { value0: provider.name })} onClick={() => navigate(() => setRemove(provider))}><Trash2 size={16} /></Button>}
+              </div>
+            </div>
+            <ProviderBaseUrlSection baseUrlValue={provider.baseUrl} onBaseUrlChange={baseUrl => editConnection({ baseUrl })} onBaseUrlBlur={() => {}} />
+            <div>
+              <span className="mb-1 block text-ui-base text-foreground-subtle">{t("settings.modelSettings.authentication")}</span>
+              <SettingsSelect aria-label={t("settings.modelSettings.authentication")} value={authentication} onValueChange={value => {
+                editConnection({ authentication: value as "apiKey" | "none" }); setError(""); if (value === "none") setKey(undefined);
+              }}><option value="apiKey">API Key</option><option value="none">{t("settings.modelSettings.noAuthentication")}</option></SettingsSelect>
+            </div>
+            {authentication === "apiKey" && <div>
+              <ProviderApiKeySection apiKeyValue={key ?? ""} apiKeyVisible={keyVisible} onApiKeyChange={value => { setKey(value); editConnection({}); }} onToggleApiKeyVisibility={() => setKeyVisible(!keyVisible)} onApiKeyBlur={() => {}} />
+              <p role="status" className="settings-muted">{apiKeyStatus}</p>
+            </div>}
           <div className="provider-model-section">
             <div className="provider-connection-summary"><span>{dirty ? t("settings.modelSettings.unsavedChanges") : t("settings.modelSettings.connectionConfigured")}</span><Button variant="outline" disabled={busy || !provider.enabled || !provider.models.some((m: Data) => m.enabled)} onClick={() => void saveThen(async saved => { const model = saved.models.find((m: Data) => m.enabled); await api("probe", { id: saved.id, model: model.id }); setProbe(p => ({ ...p, [model.id]: true })); setMessage({ id: "settings.modelSettings.connectedToModelValue", values: { value0: model.id } }); })}>{t("settings.modelSettings.testConnection")}</Button></div>
             <div className="mb-1 flex flex-wrap items-center justify-between gap-3">
               <span className="text-ui-base text-foreground-subtle">{t("settings.modelSettings.modelCount", { count: provider.models.length })}</span>
               <div className="flex gap-2">
-                <Button variant="secondary" onClick={() => void saveThen(async saved => { const result = await api("discover", { id: saved.id }); setDiscovered({ models: result.models, modelParameters: result.modelParameters }); setChecked([]); })}>{t("settings.modelSettings.fetchModels")}</Button>
+                <Button variant="secondary" disabled={!discoveryConnection || discovery.state.kind === "loading"} onClick={() => { setChecked([]); discovery.refresh(); }}>{t("settings.modelSettings.fetchModels")}</Button>
                 <Button variant="secondary" onClick={() => setModelDraft({ model: { id: "", enabled: true, parameters: {} }, index: -1 })}>{t("settings.modelSettings.addModel")}</Button>
               </div>
             </div>
+            {discovery.state.kind === "loading" && <p className="settings-muted" role="status">{t("settings.modelSettings.fetchingModels")}</p>}
+            {discovery.state.kind === "failed" && <p className="settings-error" role="alert">{discovery.state.message}</p>}
+            {discovery.state.kind === "ready" && <div className="provider-discovered-models" aria-label={t("settings.modelSettings.selectModels")}>
+              <p className="settings-muted">{t(discovery.state.models.length ? "settings.modelSettings.chooseModelsToAddFromTheService" : "settings.modelSettings.emptyDiscovery")}</p>
+              {discovery.state.models.map(id => <label key={id}><input type="checkbox" disabled={provider.models.some((model: Data) => model.id === id)} checked={checked.includes(id) || provider.models.some((model: Data) => model.id === id)} onChange={event => setChecked(event.target.checked ? [...checked, id] : checked.filter(value => value !== id))} />{id}</label>)}
+              {discovery.state.models.length > 0 && <Button variant="secondary" disabled={!checked.length} onClick={() => {
+                const result = discovery.state;
+                if (result.kind !== "ready") return;
+                edit({ models: [...provider.models, ...checked.filter(id => !provider.models.some((model: Data) => model.id === id)).map(id => ({ id, enabled: true, capabilities: { tools: true, vision: false, reasoning: false }, parameters: !provider.parameters?.contextWindowTokens ? result.modelParameters?.[id] ?? {} : {} }))] });
+                setChecked([]);
+              }}>{t("settings.modelSettings.addSelectedModels")}</Button>}
+            </div>}
             {modelSearch}
             {provider.models.length ? <div className="provider-model-scroll overflow-hidden rounded-lg border border-input-border bg-input">
               {visibleModels.map(({ model, index }: { model: Data; index: number }) => <div key={`${model.id}:${index}`} className="provider-model-row flex items-center gap-2 px-3 py-2 border-b border-input-border last:border-b-0">
@@ -197,38 +247,11 @@ export function ModelSettings({ action, onOpenSessionSettings }: { action: Actio
               {!visibleModels.length && <p className="settings-muted p-3">{t("settings.modelSettings.noMatchingModels")}</p>}
             </div> : <div className="mt-1 flex h-12 items-center rounded-lg border border-dashed border-border px-4 text-ui-base text-foreground-subtle">{t("settings.modelSettings.noModelsYetAddAModelOr")}</div>}
           </div>
-
-              </fieldset> : null}
-            </TabsContent>
-            <TabsContent value="connection" keepMounted>
-              <div className="chatgpt-subscription-panel"><ChatGPTSubscription action={action} onModelsChange={setAccountModels} onAccountChange={setAccountStatus} onReadyChange={setAccountReady} /></div>
-              {current !== CHATGPT && provider && <fieldset disabled={busy} className="provider-inline provider-connection-form">
-          <div className="provider-name-field"><label className="settings-muted" htmlFor="provider-name">{t("settings.modelSettings.providerName")}</label>
-            <div className="provider-name-control"><Input id="provider-name" aria-label={t("settings.modelSettings.providerName")} size="lg" value={provider.name} onChange={e => edit({ name: e.target.value })} className="flex-1 font-semibold" />
-            {provider.id && <Button variant="ghost" size="icon" aria-label={t("settings.modelSettings.removeValue", { value0: provider.name })} onClick={() => navigate(() => setRemove(provider))}><Trash2 size={16} /></Button>}
-            </div>
-          </div>
-          <div className="provider-connection-fields">
-          <ProviderConnectionSection provider={{ config: { api: { baseUrl: provider.baseUrl, type: provider.protocol } } }} apiFormat={provider.protocol} baseUrlValue={provider.baseUrl} onApiFormatChange={protocol => edit({ protocol })} onBaseUrlChange={baseUrl => edit({ baseUrl })} onBaseUrlBlur={() => {}} />
-          <div>
-            <span className="mb-1 block text-ui-base text-foreground-subtle">{t("settings.modelSettings.authentication")}</span>
-            <SettingsSelect aria-label={t("settings.modelSettings.authentication")} value={authentication} onValueChange={value => {
-              edit({ authentication: value as "apiKey" | "none" }); setError(""); if (value === "none") setKey(undefined);
-            }}><option value="apiKey">API Key</option><option value="none">{t("settings.modelSettings.noAuthentication")}</option></SettingsSelect>
-          </div>
-          </div>
-          {authentication === "apiKey" ? <>
-            <ProviderApiKeySection apiKeyValue={key ?? ""} apiKeyVisible={keyVisible} onApiKeyChange={value => { setKey(value); edit({}); }} onToggleApiKeyVisibility={() => setKeyVisible(!keyVisible)} onApiKeyBlur={() => {}} />
-            <p role="status" className="settings-muted">{apiKeyStatus}</p>
-          </> : null}
-          <SettingsDisclosure title={<> {t("settings.modelSettings.advancedParameters")}</>}><div className="settings-field-pair mt-3">
-            <label>{t("settings.modelSettings.maximumOutputTokens")}<Input type="number" min={1} step={1} value={provider.parameters.maxOutputTokens ?? ""} onChange={e => edit({ parameters: { ...provider.parameters, maxOutputTokens: e.target.value === "" ? null : Number(e.target.value) } })} /></label>
-          </div></SettingsDisclosure>
-
-              </fieldset>}
-            </TabsContent>
-          </Tabs>
-          {current !== CHATGPT && provider && <div className="provider-save-actions"><span role="status" className="settings-muted">{dirty ? t("settings.modelSettings.unsavedChanges") : ""}</span><Button variant="outline" disabled={busy || !dirty} onClick={() => provider.id ? navigate(discard) : choose(items[0]?.id ?? CHATGPT)}>{t("settings.modelSettings.cancelChanges")}</Button><Button disabled={busy || (!dirty && !state.value?.pendingApply)} onClick={() => void run(async () => { await save(); })}>{busy ? t("settings.modelSettings.saving2") : t("settings.modelSettings.save")}</Button></div>}
+            <SettingsDisclosure title={<> {t("settings.modelSettings.advancedParameters")}</>}><div className="settings-field-pair mt-3">
+              <label>{t("settings.modelSettings.maximumOutputTokens")}<Input type="number" min={1} step={1} value={provider.parameters.maxOutputTokens ?? ""} onChange={event => edit({ parameters: { ...provider.parameters, maxOutputTokens: event.target.value === "" ? null : Number(event.target.value) } })} /></label>
+            </div></SettingsDisclosure>
+          </fieldset> : null}
+          {current !== CHATGPT && provider && <div className="provider-save-actions"><span role="status" className="settings-muted">{dirty ? t("settings.modelSettings.unsavedChanges") : ""}</span><Button variant="outline" disabled={busy || !dirty} onClick={() => provider.id ? navigate(discard) : choose(items[0]?.id ?? CHATGPT)}>{t("settings.modelSettings.cancelChanges")}</Button><Button disabled={busy || !dirty} onClick={() => void run(async () => { await save(); })}>{busy ? t("settings.modelSettings.saving2") : t("settings.modelSettings.save")}</Button></div>}
         </div>
         {!picker && current !== CHATGPT && !provider && <EmptySettings>{state.loading ? t("settings.modelSettings.loadingProviders") : t("settings.modelSettings.selectAProviderOnTheLeftOr")}</EmptySettings>}
         <footer className="provider-default-link"><span>{t("settings.modelSettings.fallbackDefaultModel")}</span><Button variant="link" disabled={busy} onClick={onOpenSessionSettings}>{t("settings.modelSettings.openSessionSettings")}</Button></footer>
@@ -236,7 +259,6 @@ export function ModelSettings({ action, onOpenSessionSettings }: { action: Actio
     </div>
     {modelDraft && provider && <ModelEditor model={modelDraft.model} editing={modelDraft.index >= 0} ids={provider.models.filter((_: Data, i: number) => i !== modelDraft.index).map((m: Data) => m.id)} onClose={() => setModelDraft(null)} onSave={model => { const models = [...provider.models]; if (modelDraft.index < 0) models.push(model); else models[modelDraft.index] = model; edit({ models }); setModelDraft(null); }} />}
 
-    {discovered && provider && <SettingsDialog title={t("settings.modelSettings.selectModels")} description={t("settings.modelSettings.chooseModelsToAddFromTheService")} onClose={() => setDiscovered(null)}><div className="max-h-80 overflow-auto">{discovered.models.map(id => <label key={id} className="flex gap-3 p-2"><input type="checkbox" checked={checked.includes(id)} onChange={e => setChecked(e.target.checked ? [...checked, id] : checked.filter(v => v !== id))} />{id}</label>)}</div><Button onClick={() => { edit({ models: [...provider.models, ...checked.filter(id => !provider.models.some((m: Data) => m.id === id)).map(id => ({ id, enabled: true, capabilities: { tools: true, vision: false, reasoning: false }, parameters: !provider.parameters?.contextWindowTokens && discovered.modelParameters && Object.hasOwn(discovered.modelParameters, id) ? discovered.modelParameters[id] : {} }))] }); setDiscovered(null); }}>{t("settings.modelSettings.addSelectedModels")}</Button></SettingsDialog>}
-    {remove && <SettingsDialog className="settings-confirm-dialog" title={t("settings.modelSettings.removeProvider")} description={t("settings.modelSettings.afterRemovingValueTasksUsingThisProvider", { value0: remove.name })} onClose={() => setRemove(null)} busy={busy}><Feedback error={error} /><DialogFooter><Button variant="outline" disabled={busy} onClick={() => setRemove(null)}>{t("settings.modelSettings.cancel")}</Button><Button variant="destructive" disabled={busy} onClick={() => void run(async () => { await api("removeAndApply", { id: remove.id, expectedRevision: state.value?.revision }); setRemove(null); setDraft(null); setKey(undefined); setSelected(items.find(item => item.id !== remove.id)?.id ?? (accountModels.length ? CHATGPT : null)); await state.refresh(); })}>{busy ? t("settings.modelSettings.removing") : t("settings.modelSettings.remove")}</Button></DialogFooter></SettingsDialog>}
+    {remove && <SettingsDialog className="settings-confirm-dialog" title={t("settings.modelSettings.removeProvider")} description={t("settings.modelSettings.afterRemovingValueTasksUsingThisProvider", { value0: remove.name })} onClose={() => setRemove(null)} busy={busy}><Feedback error={error} /><DialogFooter><Button variant="outline" disabled={busy} onClick={() => setRemove(null)}>{t("settings.modelSettings.cancel")}</Button><Button variant="destructive" disabled={busy} onClick={() => void run(async () => { await api("removeAndApply", { id: remove.id, expectedRevision: state.value?.revision }); setRemove(null); select({ id: items.find(item => item.id !== remove.id)?.id ?? (accountModels.length ? CHATGPT : null) }); await state.refresh(); })}>{busy ? t("settings.modelSettings.removing") : t("settings.modelSettings.remove")}</Button></DialogFooter></SettingsDialog>}
   </div>;
 }

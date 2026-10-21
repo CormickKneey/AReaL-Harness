@@ -118,7 +118,7 @@ options.readOnly 收窄 Scope 写根和网络；toolAllowlist 收窄 Profile；p
 
 `operation` 使用原 `requestId`，状态为 `running`、`applied`、`rejected` 或 `unknown`，终态可带脱敏的 `result` 或 `error`。受理后的操作由 Core 持有，断线不取消提交。重复请求返回原结果，不重复发布配置；响应丢失先读取原请求。进程内回执有容量边界，代际改变或记录不可用不证明原请求失败，不能自动重发。客户端可核对新实例的当前就绪状态，但不能将其当成旧请求的回执。
 
-多个 Core 各自应用并确认。已知部分失败可按文件 CAS 补偿，再应用恢复产生的实际版本；未知请求未查清前不得回滚。外部写入或新任务可能阻止补偿，此时必须保留实际应用版本与待应用状态。只有所有项目确认、且权威文件仍为目标版本时，GUI 才报告保存完成。文件监听与显式应用共享已应用基线，非模型配置继续遵循安全重启边界。
+多个 Core 各自应用并确认。GUI 的供应商“保存”使用已有持久化命令，按文件 CAS 保存后即可完成；运行中的任务不阻止保存，应用失败也不撤销已经保存的修改。桌面服务在任务结束或重连后尝试应用，忙碌时每两秒核对一次；明确的非忙碌失败停止自动重试，结果未知时只查询原请求。页面区分保存和生效状态，并保留新草稿的原始 CAS 版本。备用默认模型和删除供应商继续使用严格协调操作；已知部分失败可按文件 CAS 补偿，再应用恢复产生的实际版本，未知请求未查清前不得回滚。外部写入或新任务可能阻止补偿，此时保留实际应用版本与待应用状态。文件监听与显式应用共享已应用基线，非模型配置继续遵循安全重启边界。
 
 ## Skill 元信息与资源
 
@@ -321,7 +321,11 @@ GUI 服务的窄命令 `trajectory` 支持 `{operation:"status"}`、`{operation:
 
 诊断不包含原始异常、上游文本、地址查询参数或凭据。HTTP 401/403 继续返回认证提示，其他 HTTP 错误保留状态码；无效流式回复继续返回模型与协议提示。Responses 探测仍向已保存端点发送 `input`、`store:false` 和 `stream:true`，并要求有效文本及成功终态。
 
-模型设置的 API Key 输入框只保留待保存草稿，成功保存后清空。界面依据 `credentialStates` 和 `credentialSources` 显示安全保存、环境变量来源或缺少凭据；不读取已保存的密钥。留空保留现有凭据，输入新值替换。保存成功显示“已保存并应用”，连接成功仍由单独的探测确认。
+模型设置的 API Key 输入框只保留待保存草稿，成功保存后清空。界面依据 `credentialStates` 和 `credentialSources` 显示安全保存、环境变量来源或缺少凭据；不读取已保存的密钥。留空保留现有凭据，输入新值替换。保存成功后按实际回执显示已保存、等待生效或已保存并应用；连接成功仍由单独的探测确认。
+
+`providers` 的 `discover` 支持尚未保存的 `connection:{protocol,baseUrl,credential}`。`credential` 可以是 `{kind:"none"}`、`{kind:"draft",value}` 或 `{kind:"saved",providerId,expectedRevision}`。已保存凭据按供应商与当前文件版本解析，草稿密钥仅用于该次请求；获取模型不写配置或凭据，原有按供应商 ID 获取的入口保留。
+
+供应商目录返回整体及各项目的 `application`，其 `kind` 为 `saved`、`applied`、`deferred`、`unknown` 或 `failed`，并携带目标 `revision`。`deferred.reason` 区分 `busy` 与 `disconnected`；`failed.message` 是脱敏错误。`pendingApply` 继续表示尚有项目未确认当前保存版本。明确失败按目标版本及服务代际保留，显式重试、新版本或新服务代际才能再次尝试。
 
 ## Desktop 后台命令兼容
 

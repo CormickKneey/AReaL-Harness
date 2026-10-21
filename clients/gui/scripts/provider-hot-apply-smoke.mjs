@@ -17,6 +17,7 @@ const { _electron: electron } = require("playwright-core");
 const { ServiceConnection, waitForServiceProcessExit, waitForProcessExit } = require("../app/src/core/service-client.cjs");
 const WebSocket = require("ws");
 const binary = process.env.AREAL_CORE_BIN;
+const activeSaveOnly = process.argv.includes("--active-save");
 assert.ok(binary && resolve(binary) === binary, "Set AREAL_CORE_BIN to an existing absolute fixed Core build");
 assert.equal(process.env.AREAL_GUI_EXECUTABLE, undefined, "This runner validates the source Electron application");
 const sha = value => createHash("sha256").update(value).digest("hex");
@@ -34,19 +35,39 @@ execFileSync("git", ["init", "-b", "main"], { cwd: workspace, stdio: "ignore" })
 const secrets = { first: `fixture-hot-first-${randomUUID()}`, second: `fixture-hot-second-${randomUUID()}` };
 const requests = [], checks = [], errors = [], identities = [], receipts = [], guiProcesses = [];
 const ownedPids = new Set();
+let heldResponse;
+const activeSaveEvidence = { released: false };
+function finishResponse(response) {
+  response.end(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`);
+}
+function releaseHeldResponse() {
+  if (heldResponse && !activeSaveEvidence.released) {
+    activeSaveEvidence.released = true;
+    finishResponse(heldResponse);
+  }
+}
 const server = createServer(async (request, response) => {
   try {
+    if (request.url === "/v1/models") {
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ data: [{ id: "fixture-model" }, { id: "fixture-added-model" }] }));
+      return;
+    }
     assert.equal(request.url, "/v1/chat/completions", "Only the local model endpoint is available");
     let body = "";
     for await (const chunk of request) body += chunk;
     const payload = JSON.parse(body);
     const credential = Object.keys(secrets).find(label => request.headers.authorization === `Bearer ${secrets[label]}`) ?? "unknown";
     const kind = payload.messages?.some(message => message.role === "system" && JSON.stringify(message.content).includes("Generate a concise semantic session title")) ? "sessionName" : "turn";
-    const markers = JSON.stringify(payload.messages).match(/HOT_(?:FIRST_CONVERSATION|OLD_CONVERSATION_AFTER_ROTATION|NEW_CONVERSATION_AFTER_ROTATION|EXPLICIT_SEND_AFTER_REOPEN)/g);
+    const markers = JSON.stringify(payload.messages).match(/HOT_(?:FIRST_CONVERSATION|OLD_CONVERSATION_AFTER_ROTATION|NEW_CONVERSATION_AFTER_ROTATION|EXPLICIT_SEND_AFTER_REOPEN|ACTIVE_SAVE|AFTER_ACTIVE_SAVE)/g);
     requests.push({ model: payload.model, credential, kind, marker: markers?.at(-1) ?? null });
     assert.notEqual(credential, "unknown", "A request must use one of this runner's synthetic credentials");
     response.writeHead(200, { "Content-Type": "text/event-stream" });
-    response.end(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: "HOT_APPLY_OK" }, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`);
+    response.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: "HOT_APPLY_OK" }, finish_reason: null }] })}\n\n`);
+    if (kind === "turn" && markers?.at(-1) === "HOT_ACTIVE_SAVE") {
+      heldResponse = response;
+      response.on("close", () => { activeSaveEvidence.responseClosed = true; });
+    } else finishResponse(response);
   } catch (error) {
     errors.push(`Model fixture: ${error.message}`);
     response.writeHead(400, { "Content-Type": "application/json" });
@@ -120,8 +141,8 @@ function runtimePids(hostPid) {
   }
   return rows.filter(row => descendants.has(row.pid) && row.executable === "areal-runtime").map(row => row.pid).sort((a, b) => a - b);
 }
-async function identity(label) {
-  await until(settled, `${label} backend settles`);
+async function identity(label, { active = false } = {}) {
+  if (!active) await until(settled, `${label} backend settles`);
   const { service } = await observer.request("snapshot");
   const { descriptor, status } = await coreRead();
   const value = { desktopPid: service.pid, desktopGeneration: service.lifecycle?.desktopGeneration,
@@ -144,18 +165,21 @@ function unchanged(before, after, label) {
   assert.deepEqual(after.runtimePids, before.runtimePids, `${label} must preserve the actual owned Runtime PID`);
   for (const pid of [before.desktopPid, before.hostPid, before.corePid, ...before.runtimePids]) process.kill(pid, 0);
 }
-async function openSettings() {
+async function openSettings(name = "Hot apply fixture") {
   await button("设置").click();
   await page.getByRole("heading", { name: "模型设置", exact: true }).waitFor();
-  await page.locator(".provider-catalog-row").filter({ hasText: "Hot apply fixture" }).click();
-  await page.getByRole("tab", { name: "连接配置", exact: true }).click();
+  await page.locator(".provider-catalog-row").filter({ hasText: name }).click();
+  assert.equal(await page.getByRole("tab", { name: "连接配置", exact: true }).count(), 0, "Provider connection and models share one page");
 }
 async function saveProvider(label) {
   const before = await identity(`${label} before`);
   await button("保存").click();
   await button("返回应用").click({ trial: true, timeout: 180000 });
   await until(async () => await button("保存").isDisabled() && await button("返回应用").isEnabled(), `${label} UI save completion`, 180000);
-  const saved = await command("providers", { operation: "list" });
+  const saved = await until(async () => {
+    const result = await command("providers", { operation: "list" });
+    return result.pendingApply ? null : result;
+  }, `${label} actual Core application`);
   const core = await coreRead();
   receipts.push({ label, revision: saved.revision, pendingApply: saved.pendingApply,
     projects: saved.projects, catalog: core.catalog.data, providers: core.providers.data });
@@ -171,20 +195,20 @@ async function saveProvider(label) {
   unchanged(before, await identity(`${label} after`), label);
   return saved;
 }
-async function chooseModel() {
+async function chooseModel(model = "fixture-model") {
   await button("模型").click();
   await button("选择模型").click();
-  await page.getByRole("radio", { name: "fixture-model", exact: true }).click();
+  await page.getByRole("radio", { name: model, exact: true }).click();
   await page.keyboard.press("Escape");
 }
-async function send(marker, expectedCredential) {
+async function send(marker, expectedCredential, model = "fixture-model") {
   const before = requests.filter(request => request.kind === "turn").length;
   await page.getByTestId("chat-input").fill(marker);
   await button("发送").click();
   await until(async () => await page.getByTestId("areal-workbench").getAttribute("data-thread-id"), "submitted thread identity");
   const threadId = await page.getByTestId("areal-workbench").getAttribute("data-thread-id");
   await until(async () => project(await state()).state.threads[threadId]?.turns?.at(-1)?.status === "completed" && requests.filter(request => request.kind === "turn").length === before + 1, `${marker} completed`);
-  assert.deepEqual(requests.filter(request => request.kind === "turn").at(-1), { model: "fixture-model", credential: expectedCredential, kind: "turn", marker });
+  assert.deepEqual(requests.filter(request => request.kind === "turn").at(-1), { model, credential: expectedCredential, kind: "turn", marker });
   await page.getByText("HOT_APPLY_OK", { exact: true }).last().waitFor();
   return threadId;
 }
@@ -211,6 +235,13 @@ async function launch() {
 async function closeGui() {
   observer?.close(); observer = undefined;
   if (!app) return;
+  if (page && !page.isClosed()) {
+    const discard = button("取消修改");
+    if (await discard.isVisible() && await discard.isEnabled()) {
+      await discard.click();
+      await button("放弃修改并继续").click();
+    }
+  }
   const current = app;
   const process = current.process();
   if (process.exitCode === null) {
@@ -276,7 +307,7 @@ async function scanSecrets(directory) {
   }
 }
 console.log("Provider hot apply evidence:", scratch);
-try {
+providerHotApplyChecks: try {
   await launch();
   await app.evaluate(({ dialog }, path) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] }); }, workspace);
   await page.evaluate(() => window.arealDesktop.chooseProject());
@@ -295,6 +326,75 @@ try {
   await button("返回应用").click();
   await createProjectConversation(page, "workspace");
   await chooseModel();
+  if (activeSaveOnly) {
+    const before = await identity("active save before");
+    const canonicalBefore = await readFile(config, "utf8");
+    await page.getByTestId("chat-input").fill("HOT_ACTIVE_SAVE");
+    await button("发送").click();
+    await until(() => heldResponse, "original synthetic SSE request is held");
+    const threadId = await page.getByTestId("areal-workbench").getAttribute("data-thread-id");
+    await until(async () => project(await state()).state.threads[threadId]?.turns?.at(-1)?.status === "inProgress", "original turn remains active");
+    const original = structuredClone(project(await state()).configurations[threadId]);
+    const originalTurn = structuredClone(project(await state()).state.threads[threadId].turns.at(-1).configuration);
+    const appliedBefore = (await coreRead()).status.configuration.applied;
+    activeSaveEvidence.before = { threadId, configuration: original, turnConfiguration: originalTurn, applied: appliedBefore };
+    await openSettings();
+    await page.getByRole("textbox", { name: "供应商名称", exact: true }).fill("Hot apply fixture edited during turn");
+    await page.getByRole("textbox", { name: "API Key", exact: true }).fill(secrets.second);
+    assert.equal(await page.getByRole("tab", { name: "模型", exact: true }).count(), 0);
+    await button("添加模型").click();
+    await page.getByRole("textbox", { name: "模型 ID", exact: true }).fill("fixture-added-model");
+    await button("保存模型").click();
+    await button("保存").click();
+    await until(async () => await button("返回应用").isEnabled(), "active save UI settles");
+    const saved = await command("providers", { operation: "list" });
+    const coreWhileActive = await coreRead();
+    const current = project(await state());
+    activeSaveEvidence.afterSave = { revision: saved.revision, pendingApply: saved.pendingApply,
+      provider: saved.data.find(item => item.id === "fixture"), applied: coreWhileActive.status.configuration.applied,
+      configuration: current.configurations[threadId], turn: current.state.threads[threadId].turns.at(-1),
+      alerts: await page.getByRole("alert").allTextContents(), savedIndicator: await button("保存").isDisabled() };
+    await writeFile(join(scratch, "active-save.json"), JSON.stringify(activeSaveEvidence, null, 2));
+    await page.screenshot({ path: join(scratch, "active-save-result.png"), animations: "disabled" });
+    assert.notEqual(saved.revision, first.revision, "Saving provider and model edits during an active turn must persist a new canonical revision");
+    assert.notEqual(await readFile(config, "utf8"), canonicalBefore);
+    assert.equal(saved.data.find(item => item.id === "fixture").name, "Hot apply fixture edited during turn");
+    assert.ok(saved.data.find(item => item.id === "fixture").models.some(item => item.id === "fixture-added-model"));
+    assert.equal(saved.pendingApply, true, "Busy Core application is honestly deferred after persistence");
+    assert.equal(await button("保存").isDisabled(), true, "The persisted draft must no longer require another Save");
+    assert.deepEqual(coreWhileActive.status.configuration.applied, appliedBefore);
+    assert.equal(coreWhileActive.status.activeTurns.some(turn => turn.threadId === threadId), true);
+    assert.equal(current.state.threads[threadId].turns.at(-1).status, "inProgress");
+    assert.deepEqual(current.configurations[threadId], original);
+    assert.deepEqual(current.state.threads[threadId].turns.at(-1).configuration, originalTurn);
+    assert.equal(activeSaveEvidence.responseClosed, undefined, "Saving cannot cancel the held original request");
+    assert.equal(activeSaveEvidence.released, false);
+    unchanged(before, await identity("active save persisted", { active: true }), "save during active turn");
+    const secondReference = saved.data.find(item => item.id === "fixture").apiKeyEnv;
+    assert.notEqual(secondReference, firstReference);
+    await persistedCredentials({ first: firstReference, second: secondReference });
+    await button("返回应用").click();
+    releaseHeldResponse();
+    await until(async () => project(await state()).state.threads[threadId]?.turns?.at(-1)?.status === "completed", "original turn completes only after fixture release");
+    await until(async () => {
+      const core = await coreRead();
+      return core.status.configuration.applied.revision === saved.revision
+        && core.catalog.data.some(item => item.providerId === "fixture" && item.modelId === "fixture-added-model" && item.available);
+    }, "saved revision applies automatically without another UI save");
+    const applied = await command("providers", { operation: "list" });
+    assert.equal(applied.pendingApply, false);
+    assert.deepEqual(project(await state()).configurations[threadId], original);
+    unchanged(before, await identity("active save automatically applied"), "deferred automatic apply");
+    assert.deepEqual(requests.filter(request => request.kind === "turn"), [{ model: "fixture-model", credential: "first", kind: "turn", marker: "HOT_ACTIVE_SAVE" }]);
+    await createProjectConversation(page, "workspace");
+    await chooseModel("fixture-added-model");
+    await send("HOT_AFTER_ACTIVE_SAVE", "second", "fixture-added-model");
+    activeSaveEvidence.afterApply = { revision: applied.revision, pendingApply: applied.pendingApply, applied: (await coreRead()).status.configuration.applied };
+    checks.push("Active-turn UI save persists name, added model and rotated key, leaves the running request and configuration unchanged, then applies automatically and executes the added model with the new key");
+    assert.deepEqual(errors, []);
+    passed = true;
+    break providerHotApplyChecks;
+  }
   const oldThread = await send("HOT_FIRST_CONVERSATION", "first");
   const oldConfiguration = structuredClone(project(await state()).configurations[oldThread]);
   assert.equal(oldConfiguration.model.providerId, "fixture");
@@ -361,6 +461,8 @@ try {
   errors.push(error.stack ?? String(error));
   if (page && app) await captureSmokeFailure(page, scratch, error);
 } finally {
+  releaseHeldResponse();
+  if (activeSaveOnly) await writeFile(join(scratch, "active-save.json"), JSON.stringify(activeSaveEvidence, null, 2));
   const cleanupErrors = [];
   try { await closeGui(); }
   catch (error) { cleanupErrors.push(`GUI: ${error.message}`); }
@@ -384,7 +486,7 @@ try {
     await scanSecrets(scratch);
   } catch (error) { errors.push(error.message); passed = false; }
   await writeFile(join(scratch, "model-requests.json"), JSON.stringify(requests, null, 2));
-  await writeFile(join(scratch, "manifest.json"), JSON.stringify({ passed, checks, errors, cleanup, binary, coreHashes, sourceHashes,
+  await writeFile(join(scratch, "manifest.json"), JSON.stringify({ passed, mode: activeSaveOnly ? "active-save" : "full", checks, errors, cleanup, binary, coreHashes, sourceHashes,
     source: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
     diffSha256: sha(execFileSync("git", ["diff", "HEAD"], { cwd: root })),
     guiProcesses: guiProcesses.map(process => ({ pid: process.pid, exitCode: process.exitCode })),

@@ -6,7 +6,7 @@ const { randomUUID, randomBytes } = require('node:crypto');
 const { isDeepStrictEqual } = require('node:util');
 const { SubscriptionStore } = require('./subscription.cjs');
 const { definitions, connectionMetadata } = require('@areal/provider-config');
-const { ModelConfiguration, protocolToCore, baseUrl: endpointBase } = require('./model-config.cjs');
+const { ModelConfiguration, protocolToCore, baseUrl: endpointBase, credentialValue } = require('./model-config.cjs');
 
 function connection(baseUrl, protocol) {
   if (!['chatCompletions', 'responses'].includes(protocol)) throw new Error('请选择 Chat Completions 或 Responses');
@@ -280,11 +280,60 @@ class AppProviders {
     });
   }
   async close() {
+    this.closed = true;
+    clearTimeout(this.reconciliationTimer);
+    await this.reconciliation;
     this.preparedSubscriptionStatus = null;
     try { if (this.openaiPromise) await (await this.openaiPromise).close(); }
     finally { if (this.networkPromise) (await this.networkPromise).close(); }
   }
-  public() { const value = this.config.public(); return { ...value, definitions, data: value.data.map(item => ({ ...item, connection: connectionMetadata(item, value.credentialSources) })) }; }
+  public() {
+    const value = this.config.public();
+    const projects = value.projects.map(item => ({ ...item, application: this.applicationState(this.backend.projects.get(item.projectId), value.revision) }));
+    const states = projects.map(item => item.application);
+    const application = ['unknown', 'failed', 'deferred'].map(kind => states.find(state => state.kind === kind)).find(Boolean)
+      ?? { kind: states.some(state => state.kind === 'applied') ? 'applied' : 'saved', revision: value.revision };
+    return { ...value, projects, application, definitions, data: value.data.map(item => ({ ...item, connection: connectionMetadata(item, value.credentialSources) })) };
+  }
+  applicationState(project, revision = this.value.revision) {
+    if (!project?.service) return { kind: 'saved', revision };
+    if (this.pendingApplications.has(project.id)) return { kind: 'unknown', revision };
+    if (!project.client?.ready) return { kind: 'deferred', revision, reason: 'disconnected' };
+    const failure = project.providerFailure;
+    if (failure?.revision === revision && failure.serviceId === project.service.serviceId && failure.generation === project.service.generation)
+      return { kind: 'failed', revision, message: failure.message };
+    return project.providerRevision === revision && !project.providerError
+      ? { kind: 'applied', revision } : { kind: 'deferred', revision, reason: 'busy' };
+  }
+  applicationFailed(target, revision, error) {
+    if (!this.currentTarget(target)) return;
+    if (error?.data?.reason === 'MODEL_CONFIGURATION_BUSY') {
+      delete target.project.providerFailure;
+      target.project.providerError = null;
+      return;
+    }
+    const message = this.redact(error?.message ?? '模型配置暂未生效，请重试。');
+    target.project.providerFailure = { revision, serviceId: target.serviceId, generation: target.generation, message };
+    target.project.providerError = message;
+  }
+  requestReconciliation(delay = 0) {
+    if (this.closed || this.backend.closing || this.reconciliationTimer || this.reconciliation) return;
+    this.reconciliationTimer = setTimeout(() => {
+      this.reconciliationTimer = null;
+      this.reconciliation = (async () => {
+        for (const project of this.backend.projects.values()) {
+          if (this.closed || this.backend.closing) break;
+          const state = this.applicationState(project);
+          if (project.client?.ready && ['deferred', 'unknown'].includes(state.kind)) await this.reconcileProject(project);
+        }
+      })().catch(() => {}).finally(() => {
+        this.reconciliation = null;
+        this.backend.onChange();
+        if ([...this.backend.projects.values()].some(project => project.client?.ready && ['deferred', 'unknown'].includes(this.applicationState(project).kind))) this.requestReconciliation(2000);
+      });
+    }, delay);
+    this.reconciliationTimer.unref?.();
+  }
   model(ref, project) { return (project?.providerSnapshot ?? this.value).data.find(p => p.id === ref?.providerId)?.models.find(m => m.id === ref.modelId); }
   acceptModelSelection(selection) {
     if (!selection || !Number.isSafeInteger(selection.acceptedAt)) return Promise.resolve();
@@ -320,13 +369,32 @@ class AppProviders {
     }
   }
   async command(request) {
+    if (request.operation === 'list') {
+      if (!this.saving && !this.backend.providerUpdating) {
+        await this.config.current();
+        for (const project of this.backend.projects.values()) if (project.client?.ready && this.pendingApplications.has(project.id)) await this.reconcilePending(this.target(project));
+      }
+      return this.public();
+    }
     if (this.saving || this.backend.providerUpdating) throw new Error('模型配置正在保存，请稍后重试');
-    if (request.operation === 'list') { await this.config.current(); for (const project of this.backend.projects.values()) if (project.client?.ready && this.pendingApplications.has(project.id)) await this.reconcilePending(this.target(project)); return this.public(); }
     if (request.operation === 'probe' || request.operation === 'discover') { await this.config.current(); return this.test(request); }
     if (['saveAndApply', 'removeAndApply', 'defaultAndApply'].includes(request.operation)) return this.saveAndApply(request);
     if (request.operation === 'apply') return this.apply(request);
+    if (request.operation === 'save') return this.save(request);
     if (!['save', 'remove', 'default'].includes(request.operation)) throw new Error('不支持的供应商操作');
     return this.write(request);
+  }
+  async save(request) {
+    let candidate;
+    try {
+      await this.write(request, next => { candidate = structuredClone(next); });
+    } catch (error) {
+      if (!candidate) throw error;
+      const observed = await this.config.current().catch(() => null);
+      if (!observed || observed.revision === request.expectedRevision || !isDeepStrictEqual(observed.data, candidate.data) || !isDeepStrictEqual(observed.defaultModel, candidate.defaultModel)) throw error;
+    }
+    this.requestReconciliation();
+    return this.public();
   }
   async write(request, prepared) {
     this.saving = true;
@@ -415,6 +483,7 @@ class AppProviders {
     this.rememberProof(target, proof, snapshot);
     target.project.models = models.data ?? models.models ?? [];
     target.project.providerError = null;
+    delete target.project.providerFailure;
   }
   reconcilePending(target) { return this.inProject(target.project, () => this.inspectPending(target)); }
   async inspectPending(target, notAccepted) {
@@ -443,12 +512,14 @@ class AppProviders {
         this.pendingApplications.delete(target.project.id);
         const error = operation.error ?? notAccepted;
         target.project.providerError = this.redact(error?.message ?? 'Core 已拒绝模型配置应用。');
+        this.applicationFailed(target, pending.targetRevision, error);
         return { rejected: true, error };
       } else throw new Error('模型配置应用仍待确认，请等待后刷新；不会重复提交或回滚。');
     } catch (error) {
       if (this.currentTarget(target)) target.project.providerError = this.redact(error.message);
       if (error.configurationSettled) {
         this.pendingApplications.delete(target.project.id);
+        this.applicationFailed(target, pending.targetRevision, error);
         return { rejected: true, error };
       }
       return { pending: true, error };
@@ -519,27 +590,41 @@ class AppProviders {
     const target = this.target(project);
     return this.inProject(project, async () => {
       try {
+        if (this.closed || this.backend.closing) return;
         this.requireTarget(target);
         if (!['areal/server/modelConfiguration/read', 'areal/server/modelConfiguration/apply'].every(method => target.client.capabilities?.methods?.includes(method))) throw new Error('请更新 Core 后再应用模型配置。');
         const reconciled = await this.inspectPending(target);
         if (reconciled?.pending) return;
         const snapshot = await this.config.current();
         this.requireTarget(target);
+        if (this.applicationState(project, snapshot.revision).kind === 'failed') return;
         target.proof = await this.readProof(target);
         this.rememberProof(target, target.proof, snapshot);
         if (target.proof.applied.revision === snapshot.revision) {
           await this.confirmProof(target, target.proof, snapshot);
           return;
         }
-        if (this.backend.providerUpdating || this.backend.resourcesUpdating || this.backend.activeCommands || this.backend.hasWork()) throw new Error('模型配置尚未应用，请等待任务结束后在模型设置中应用。');
+        if (this.saving || this.backend.providerUpdating || this.backend.resourcesUpdating || this.backend.activeCommands || this.backend.starting.size || this.backend.hasWork()) {
+          project.providerError = null;
+          return;
+        }
         const status = await target.client.request('areal/server/status');
         this.requireTarget(target);
-        if (!status.restartSafe) throw new Error('模型配置尚未应用，请等待任务结束后在模型设置中应用。');
-        const outcome = await this.applyProject(snapshot, target);
-        if (!outcome.applied) throw outcome.error;
+        if (!status.restartSafe || this.saving || this.backend.providerUpdating || this.backend.resourcesUpdating || this.backend.activeCommands || this.backend.starting.size || this.backend.hasWork()) {
+          project.providerError = null;
+          return;
+        }
+        this.backend.providerUpdating = true;
+        try {
+          if (this.closed || this.backend.closing) return;
+          const outcome = await this.applyProject(snapshot, target);
+          if (!outcome.applied && !outcome.pending) this.applicationFailed(target, snapshot.revision, outcome.error);
+        } finally { this.backend.providerUpdating = false; }
       } catch (error) {
-        this.requireTarget(target);
-        project.providerError = this.redact(error.message);
+        this.applicationFailed(target, this.value.revision, error);
+      } finally {
+        this.backend.onChange();
+        if (project.client?.ready && ['deferred', 'unknown'].includes(this.applicationState(project).kind)) this.requestReconciliation(2000);
       }
     });
   }
@@ -591,13 +676,29 @@ class AppProviders {
       return this.public();
     } finally { this.backend.providerUpdating = false; }
   }
-  async test({ id, model, operation }) {
+  async test({ id, model, operation, connection: draft }) {
+    if (operation === 'discover' && draft !== undefined) {
+      if (!draft || typeof draft !== 'object' || Array.isArray(draft)) throw new Error('连接配置无效');
+      const endpoint = connection(draft.baseUrl, draft.protocol).endpoint;
+      const credential = draft.credential;
+      let apiKey;
+      if (credential?.kind === 'none') apiKey = '';
+      else if (credential?.kind === 'draft') apiKey = credentialValue(credential.value);
+      else if (credential?.kind === 'saved') {
+        if (credential.expectedRevision !== this.value.revision) throw new Error('供应商配置已变化，请刷新后重新获取模型');
+        const provider = this.value.data.find(item => item.id === credential.providerId);
+        if (!provider) throw new Error('供应商已不存在，请刷新');
+        apiKey = this.key(provider);
+      } else throw new Error('认证方式无效');
+      if (credential.kind !== 'none' && !apiKey) throw new Error('请填写 API Key，或使用已保存的凭据');
+      return this.testConnection({ endpoint, protocol: protocolToCore(draft.protocol) }, { operation, apiKey });
+    }
     const provider = this.value.data.find(p => p.id === id);
     if (!provider) throw new Error('请先保存供应商');
     return this.testConnection(provider, { model, operation });
   }
-  async testConnection(provider, { model, operation }) {
-    const key = this.key(provider);
+  async testConnection(provider, { model, operation, apiKey }) {
+    const key = apiKey ?? this.key(provider);
     const url = operation === 'discover' ? `${endpointBase(provider.endpoint)}/models` : provider.endpoint;
     if (operation === 'probe' && !provider.models.some(m => m.id === model && m.enabled)) throw new Error('请选择已启用的模型');
     const body = provider.protocol === 'responses' ? { model, input: [{ role: 'user', content: 'Reply with OK.' }], store: false, stream: true } : { model, messages: [{ role: 'user', content: 'Reply with OK.' }], stream: true };
@@ -605,7 +706,7 @@ class AppProviders {
     try {
       response = await (await this.network()).fetch(url, { method: operation === 'discover' ? 'GET' : 'POST', redirect: 'error', signal: AbortSignal.timeout(30000), headers: { ...(key ? { Authorization: `Bearer ${key}` } : {}), 'Content-Type': 'application/json' }, ...(operation === 'probe' ? { body: JSON.stringify(body) } : {}) });
     } catch (error) { throw connectionError(error); }
-    if (!response.ok) { await response.body?.cancel(); throw new Error(response.status === 401 || response.status === 403 ? '认证失败：请检查 API Key 及模型访问权限' : `模型服务返回 HTTP ${response.status}`); }
+    if (!response.ok) { await response.body?.cancel().catch(() => {}); throw new Error(response.status === 401 || response.status === 403 ? '认证失败：请检查 API Key 及模型访问权限' : `模型服务返回 HTTP ${response.status}`); }
     if (operation === 'probe') {
       const { probeResponse } = await import('@areal/chatgpt-provider/core');
       try { return await probeResponse(response, provider.protocol === 'chat-completions' ? 'chatCompletions' : provider.protocol); }
@@ -613,12 +714,14 @@ class AppProviders {
     }
     // Do not reflect upstream response text (which may contain the credential) into IPC.
     let bytes = 0, chunks = [];
-    for await (const chunk of response.body) { bytes += chunk.length; if (bytes > 1024 * 1024) throw new Error('模型服务响应过大'); chunks.push(chunk); }
+    try {
+      for await (const chunk of response.body) { bytes += chunk.length; if (bytes > 1024 * 1024) throw new Error('模型服务响应过大'); chunks.push(chunk); }
+    } catch { throw new Error('模型列表读取失败，请重试或手动添加模型'); }
     let data;
     try { data = JSON.parse(Buffer.concat(chunks).toString()); } catch { throw new Error('模型服务未返回有效的 JSON 响应'); }
     if (operation === 'discover') {
       if (!Array.isArray(data.data)) throw new Error('服务未返回模型列表，请手动添加模型');
-      const models = data.data.filter(p => typeof p?.id === 'string' && p.id.length <= 256 && (!key || !p.id.includes(key))).slice(0, 64);
+      const models = [...new Map(data.data.filter(p => typeof p?.id === 'string' && p.id.trim() && p.id.length <= 256 && (!key || !p.id.includes(key))).map(p => [p.id.trim(), { ...p, id: p.id.trim() }])).values()].slice(0, 64);
       const parameters = Object.fromEntries(models.filter(p => validContextWindow(p.context_window)).map(p => [p.id, { contextWindowTokens: p.context_window }]));
       return { models: models.map(p => p.id), ...(Object.keys(parameters).length ? { modelParameters: parameters } : {}) };
     }

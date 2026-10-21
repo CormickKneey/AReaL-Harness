@@ -13,6 +13,7 @@ const { chromium } = require("playwright-core");
 const dist = join(gui, "renderer/dist");
 const evidence = await mkdtemp(join(tmpdir(), "areal-provider-ui-"));
 const apiKeyFeedbackOnly = process.argv.includes("--api-key-feedback");
+const connectionFlowOnly = process.argv.includes("--connection-flow");
 const checks = [],
   errors = [];
 const server = createServer(async (request, response) => {
@@ -67,6 +68,9 @@ providerUiChecks: try {
     };
     window.calls = [];
     window.fixtureWork = false;
+    window.fixtureDiscoveryManual = false;
+    window.fixtureDiscoveries = [];
+    window.finishDiscovery = (index, result) => window.fixtureDiscoveries[index].resolve(result);
     window.fixtureProviders = {
       revision: "fixture-0",
       data: [
@@ -140,8 +144,10 @@ providerUiChecks: try {
         window.calls.push({ name, params });
         if (name === "providers") {
           const store = window.fixtureProviders;
-          if (params.operation === "saveAndApply") {
-            if (window.fixtureWork)
+          if (["save", "saveAndApply"].includes(params.operation)) {
+            if (params.expectedRevision !== store.revision)
+              return { ok: false, error: { message: "供应商配置已变化，请刷新后重新保存" } };
+            if (window.fixtureWork && params.operation === "saveAndApply")
               return { ok: false, error: { message: "任务正在进行，完成后再保存；修改仍保留。" } };
             const raw = params.provider;
             const id = raw.id || `fixture-new-${++revision}`;
@@ -163,13 +169,19 @@ providerUiChecks: try {
             store.credentialStates[id] =
               params.authentication === "none" ? "notRequired" : "available";
             store.revision = `fixture-${++revision}`;
-            store.pendingApply = false;
+            store.pendingApply = window.fixtureWork;
+            store.application = store.pendingApply
+              ? { kind: "deferred", revision: store.revision, reason: "busy" }
+              : { kind: "applied", revision: store.revision };
+            store.projects = store.projects.map(project => ({ ...project, applied: !store.pendingApply }));
           }
           if (params.operation === "apply") {
             if (window.fixtureWork)
               return { ok: false, error: { message: "请等待任务完成后再应用模型配置" } };
             store.pendingApply = false;
           }
+          if (params.operation === "discover" && window.fixtureDiscoveryManual)
+            return new Promise(resolve => { window.fixtureDiscoveries.push({ params, resolve }); });
           if (params.operation === "discover")
             return { ok: true, value: { models: ["fixture-model", "fixture-discovered"] } };
           if (params.operation === "probe") return { ok: true, value: { state: "connected" } };
@@ -199,7 +211,97 @@ providerUiChecks: try {
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByRole("button", { name: "模型设置", exact: true }).click();
   await page.locator(".provider-catalog-row").filter({ hasText: "API Fixture" }).click();
-  await page.getByRole("tab", { name: "连接配置", exact: true }).click();
+  if (connectionFlowOnly) {
+    assert.equal(await page.getByRole("tab", { name: "连接配置", exact: true }).count(), 0, "Connection settings and models must be one page");
+    assert.equal(await page.getByRole("tab", { name: "模型", exact: true }).count(), 0);
+    const controls = [
+      page.getByRole("tablist", { name: "API 格式", exact: true }),
+      page.getByRole("textbox", { name: "供应商名称", exact: true }),
+      page.getByTestId("provider-base-url"),
+      page.getByTestId("provider-api-key"),
+      page.getByRole("button", { name: "添加模型", exact: true }),
+    ];
+    const boxes = [];
+    for (const control of controls) {
+      assert.equal(await control.isVisible(), true);
+      boxes.push(await control.boundingBox());
+    }
+    assert.ok(boxes.every((box, index) => index === 0 || boxes[index - 1].y < box.y), "Fields appear in protocol, name, Base URL, API Key, models order");
+    await page.getByText("API Key 已安全保存。留空保留，输入新值替换。", { exact: true }).waitFor();
+    assert.equal(await page.getByTestId("provider-api-key").inputValue(), "");
+    await page.screenshot({ path: join(evidence, "connection-single-page.png"), fullPage: true });
+    await page.evaluate(() => { window.fixtureDiscoveryManual = true; window.calls = []; });
+    await page.getByRole("button", { name: "添加供应商", exact: true }).click();
+    await page.getByTestId("custom-provider").click();
+    assert.equal(await page.getByRole("textbox", { name: "供应商名称", exact: true }).isVisible(), true, "Selecting a provider opens the ordered form directly");
+    await page.getByTestId("provider-base-url").fill("https://old-draft.fixture.invalid/v1");
+    await page.getByTestId("provider-api-key").fill("synthetic-unsaved-draft-key");
+    await page.waitForFunction(() => window.fixtureDiscoveries.length === 1);
+    assert.deepEqual(await page.evaluate(() => window.fixtureDiscoveries[0].params.connection), {
+      protocol: "chatCompletions", baseUrl: "https://old-draft.fixture.invalid/v1",
+      credential: { kind: "draft", value: "synthetic-unsaved-draft-key" },
+    });
+    assert.equal(await page.evaluate(() => window.calls.some(call => ["save", "saveAndApply"].includes(call.params.operation))), false);
+    await page.getByTestId("provider-base-url").fill("https://current-draft.fixture.invalid/v1");
+    await page.waitForFunction(() => window.fixtureDiscoveries.length === 2);
+    await page.evaluate(() => window.finishDiscovery(1, { ok: true, value: { models: ["fresh-model"], modelParameters: { "fresh-model": { contextWindowTokens: 180000 } } } }));
+    await page.getByRole("checkbox", { name: "fresh-model", exact: true }).waitFor();
+    await page.evaluate(() => window.finishDiscovery(0, { ok: true, value: { models: ["obsolete-model"] } }));
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(await page.getByRole("checkbox", { name: "obsolete-model", exact: true }).count(), 0, "Late old discovery cannot overwrite the current connection result");
+    assert.equal(await page.getByRole("dialog").count(), 0, "Automatic discovery stays on the same page");
+    await page.getByRole("checkbox", { name: "fresh-model", exact: true }).check();
+    await page.getByRole("button", { name: "添加所选模型", exact: true }).click();
+    await page.locator(".provider-model-row").filter({ hasText: "fresh-model" }).waitFor();
+    assert.equal(await page.evaluate(() => window.fixtureProviders.data.length), 1, "Selecting discovered models only updates the unsaved draft");
+    assert.equal(await page.evaluate(() => window.calls.some(call => ["save", "saveAndApply"].includes(call.params.operation))), false);
+    await page.getByTestId("provider-base-url").fill("https://failed-draft.fixture.invalid/v1");
+    await page.waitForFunction(() => window.fixtureDiscoveries.length === 3);
+    await page.evaluate(() => window.finishDiscovery(2, { ok: false, error: { message: "合成服务模型列表失败" } }));
+    await page.getByText("合成服务模型列表失败", { exact: true }).waitFor();
+    assert.equal(await page.getByTestId("provider-api-key").inputValue(), "synthetic-unsaved-draft-key");
+    await page.getByRole("button", { name: "添加模型", exact: true }).click();
+    await page.getByRole("textbox", { name: "模型 ID", exact: true }).fill("manual-fallback-model");
+    await page.getByRole("button", { name: "保存模型", exact: true }).click();
+    await page.evaluate(() => { window.fixtureWork = true; });
+    await page.getByRole("button", { name: "保存", exact: true }).click();
+    await page.waitForFunction(() => window.fixtureProviders.data.length === 2);
+    const saved = await page.evaluate(() => ({ revision: window.fixtureProviders.revision, provider: window.fixtureProviders.data.at(-1), pending: window.fixtureProviders.pendingApply, save: window.calls.findLast(call => call.params.operation === "save") }));
+    assert.ok(saved.save, "Provider Save persists through the existing save operation");
+    assert.equal(saved.pending, true);
+    assert.deepEqual(saved.provider.models.map(model => model.id), ["fresh-model", "manual-fallback-model"]);
+    assert.equal(saved.provider.models[0].parameters.contextWindowTokens, 180000);
+    assert.equal(await page.getByTestId("provider-api-key").inputValue(), "");
+    assert.equal(await page.getByRole("button", { name: "保存", exact: true }).isDisabled(), true);
+    await page.getByText(/已保存.*任务结束/).waitFor();
+    assert.equal(await page.evaluate(() => window.calls.some(call => ["cancel", "restart", "configure"].includes(call.name))), false);
+    await page.screenshot({ path: join(evidence, "connection-saved-pending.png"), fullPage: true });
+    await page.getByRole("textbox", { name: "供应商名称", exact: true }).fill("Next unsaved provider name");
+    await page.getByTestId("provider-api-key").fill("synthetic-next-unsaved-key");
+    const listsBefore = await page.evaluate(() => window.calls.filter(call => call.params.operation === "list").length);
+    await page.evaluate(() => {
+      window.fixtureWork = false;
+      window.fixtureProviders.revision = "fixture-external-revision";
+      window.fixtureProviders.pendingApply = false;
+      window.fixtureProviders.application = { kind: "applied", revision: window.fixtureProviders.revision };
+      window.fixtureProviders.data.at(-1).name = "Externally updated provider";
+      window.fixtureProviders.projects = window.fixtureProviders.projects.map(project => ({ ...project, applied: true }));
+    });
+    await page.waitForFunction(before => window.calls.filter(call => call.params.operation === "list").length > before, listsBefore);
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(await page.getByText(/已保存.*任务结束/).count(), 0, "Pending feedback follows the latest applied projection");
+    assert.equal(await page.getByRole("textbox", { name: "供应商名称", exact: true }).inputValue(), "Next unsaved provider name");
+    assert.equal(await page.getByTestId("provider-api-key").inputValue(), "synthetic-next-unsaved-key");
+    await page.getByRole("button", { name: "保存", exact: true }).click();
+    await page.getByText("供应商配置已变化，请刷新后重新保存", { exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => window.calls.findLast(call => call.params.operation === "save").params.expectedRevision), saved.revision, "Polling preserves the draft's original CAS baseline");
+    assert.equal(await page.evaluate(() => window.fixtureProviders.data.at(-1).name), "Externally updated provider");
+    assert.equal(await page.getByTestId("provider-api-key").inputValue(), "synthetic-next-unsaved-key");
+    checks.push("Single page orders protocol, name, URL, key and models; stored keys remain empty and explained; discovery uses the unsaved draft, ignores stale responses and never saves; manual models remain available after failure; active-work Save persists and reports pending application; status polling preserves the next unsaved draft and its CAS baseline");
+    assert.deepEqual(errors, []);
+    passed = true;
+    break providerUiChecks;
+  }
   const apiKey = page.getByTestId("provider-api-key");
   const savedKeyStatus = "API Key 已安全保存。留空保留，输入新值替换。";
   await page.screenshot({ path: join(evidence, "saved-api-key.png"), fullPage: true });
@@ -236,7 +338,7 @@ providerUiChecks: try {
   assert.deepEqual(
     await page.evaluate(() => {
       const saved = window.calls.findLast(
-        (call) => call.name === "providers" && call.params.operation === "saveAndApply",
+        (call) => call.name === "providers" && call.params.operation === "save",
       );
       return {
         authentication: saved.params.authentication,
@@ -266,10 +368,9 @@ providerUiChecks: try {
   await page.getByRole("button", { name: "放弃修改并继续", exact: true }).click();
   await page.locator(".provider-catalog-row").filter({ hasText: "ChatGPT" }).click();
   await page.locator(".provider-catalog-row").filter({ hasText: "API Fixture" }).click();
-  await page.getByRole("tab", { name: "连接配置", exact: true }).click();
   assert.equal(await page.getByText(savedKeyStatus, { exact: true }).count(), 1);
   assert.equal(await apiKey.inputValue(), "");
-  assert.equal(await page.getByText("已保存并应用。", { exact: true }).count(), 0);
+  assert.equal(await page.getByText("已保存并应用。", { exact: true }).count(), 1, "Reopening projects the confirmed applied revision");
   for (const [source, state, status] of [
     [
       "environment",
@@ -290,7 +391,6 @@ providerUiChecks: try {
     await page.getByText(status, { exact: true }).waitFor();
     await page.locator(".provider-catalog-row").filter({ hasText: "ChatGPT" }).click();
     await page.locator(".provider-catalog-row").filter({ hasText: "API Fixture" }).click();
-    await page.getByRole("tab", { name: "连接配置", exact: true }).click();
     assert.equal(await page.getByText(status, { exact: true }).count(), 1);
     assert.equal(await apiKey.inputValue(), "");
     assert.equal(
@@ -307,14 +407,13 @@ providerUiChecks: try {
     passed = true;
     break providerUiChecks;
   }
-  await page.getByRole("tab", { name: "模型", exact: true }).click();
-  await page.getByText("帮助", { exact: true }).click();
-  await page.locator('[aria-label="供应商计费方式"]').filter({ hasText: "API 计费" }).waitFor();
-  await page.getByRole("button", { name: "编辑模型 fixture-model", exact: true }).click();
+  assert.equal(await page.getByText("帮助", { exact: true }).count(), 0);
+  await page.getByRole("button", { name: "模型 fixture-model 更多操作", exact: true }).click();
+  await page.getByRole("menuitem", { name: "编辑模型 fixture-model", exact: true }).click();
   await page.getByRole("textbox", { name: "显示名称", exact: true }).fill("Renamed fixture");
   await page.getByRole("button", { name: "保存模型", exact: true }).click();
   await page.getByRole("button", { name: "保存", exact: true }).click();
-  await page.getByText("已保存", { exact: true }).waitFor();
+  await page.getByText("已保存并应用。", { exact: true }).waitFor();
   assert.equal(await page.getByRole("button", { name: "应用模型配置", exact: true }).count(), 0);
   assert.equal(
     await page.evaluate(
@@ -334,8 +433,9 @@ providerUiChecks: try {
   });
   await page.getByRole("textbox", { name: "供应商名称", exact: true }).fill("Busy save draft");
   await page.getByRole("button", { name: "保存", exact: true }).click();
-  await page.getByText("任务正在进行，完成后再保存；修改仍保留。", { exact: true }).waitFor();
-  assert.equal(await page.evaluate(() => window.fixtureProviders.data[0].name), "API Fixture");
+  await page.getByText(/已保存.*任务结束/).waitFor();
+  assert.equal(await page.evaluate(() => window.fixtureProviders.data[0].name), "Busy save draft");
+  assert.equal(await page.evaluate(() => window.fixtureProviders.pendingApply), true);
   assert.equal(
     await page.getByRole("textbox", { name: "供应商名称", exact: true }).inputValue(),
     "Busy save draft",
@@ -362,14 +462,13 @@ providerUiChecks: try {
     .getByRole("textbox", { name: "供应商名称", exact: true })
     .fill("API Fixture Confirmed");
   await page.getByRole("button", { name: "保存", exact: true }).click();
-  await page.getByText("已保存", { exact: true }).waitFor();
+  await page.getByText("已保存并应用。", { exact: true }).waitFor();
   checks.push(
-    "busy save rejects before writing, keeps the draft and guards navigation; explicit retry saves successfully",
+    "busy save persists without cancelling work, later edits remain protected by navigation, and an idle save reports applied",
   );
   await page.locator(".provider-catalog-row").filter({ hasText: "ChatGPT" }).click();
   await page.locator('[aria-label="ChatGPT 连接状态"]').filter({ hasText: "可用" }).waitFor();
-  await page.getByRole("combobox", { name: "已保存 ChatGPT 账号", exact: true }).click();
-  await page.getByRole("option", { name: /ChatGPT 2/ }).click();
+  await page.getByRole("tablist", { name: "已保存 ChatGPT 账号", exact: true }).getByRole("tab", { name: /ChatGPT 2/ }).click();
   assert.equal(await page.evaluate(() => window.fixtureSubscription.activeAccountId), "second");
   for (const [state, authenticated, label] of [
     ["refreshing", true, "正在刷新凭据"],
@@ -476,10 +575,9 @@ providerUiChecks: try {
   );
   await page.getByRole("button", { name: "添加供应商", exact: true }).click();
   await page.getByTestId("custom-provider").click();
-  await page.getByRole("button", { name: /^无需认证/ }).click();
+  await page.getByRole("tablist", { name: "认证方式", exact: true }).getByRole("tab", { name: "无需认证", exact: true }).click();
   await page.getByTestId("provider-base-url").fill("https://custom.fixture.invalid/v1");
   assert.equal(await page.getByTestId("provider-api-key").count(), 0);
-  await page.getByRole("button", { name: "获取模型", exact: true }).click();
   await page.getByRole("checkbox", { name: "fixture-discovered", exact: true }).check();
   await page.getByRole("button", { name: "添加所选模型", exact: true }).click();
   await page.getByRole("button", { name: "保存", exact: true }).click();
@@ -493,21 +591,19 @@ providerUiChecks: try {
   );
   await page.screenshot({ path: join(evidence, "gateway-models.png"), fullPage: true });
   checks.push(
-    "service -> authentication -> saved connection detection -> model selection works for a custom gateway",
+    "custom gateway discovery uses the unsaved no-auth connection and selected models persist on Save",
   );
   await page.getByRole("button", { name: "添加供应商", exact: true }).click();
   await page.getByTestId("OpenAI").click();
-  await page.getByRole("button", { name: /^使用 API Key/ }).click();
-  assert.equal(await page.getByTestId("provider-base-url").isVisible(), false);
+  assert.equal(await page.getByTestId("provider-base-url").isVisible(), true);
   await page.getByTestId("provider-api-key").fill("fixture-key-only");
-  await page.getByRole("button", { name: "获取模型", exact: true }).click();
   await page.getByRole("checkbox", { name: "fixture-discovered", exact: true }).check();
   await page.getByRole("button", { name: "添加所选模型", exact: true }).click();
   await page.getByRole("button", { name: "保存", exact: true }).click();
   assert.equal(
     await page.evaluate(() =>
       window.calls
-        .filter((call) => call.name === "providers" && call.params.operation === "saveAndApply")
+        .filter((call) => call.name === "providers" && call.params.operation === "save")
         .some(
           (call) =>
             call.params.authentication === "apiKey" && call.params.apiKey === "fixture-key-only",
@@ -516,7 +612,7 @@ providerUiChecks: try {
     true,
   );
   checks.push(
-    "API Key method and independent API billing are visible; preset address/protocol stay progressively collapsed",
+    "API provider templates open visible connection fields directly and save the selected models with the draft key",
   );
   await page.setViewportSize({ width: 800, height: 900 });
   await page.screenshot({ path: join(evidence, "compact.png"), fullPage: true });
@@ -527,6 +623,14 @@ providerUiChecks: try {
   assert.equal(await page.locator("vite-error-overlay").count(), 0);
   assert.deepEqual(errors, []);
   passed = true;
+} catch (error) {
+  errors.push(error.stack ?? String(error));
+  const page = browser?.contexts()[0]?.pages()[0];
+  if (page && !page.isClosed()) {
+    await page.screenshot({ path: join(evidence, "failure.png"), fullPage: true });
+    await writeFile(join(evidence, "failure.txt"), await page.locator("body").innerText());
+  }
+  throw error;
 } finally {
   if (browser) await browser.close();
   await new Promise((resolve) => server.close(resolve));
@@ -539,8 +643,8 @@ providerUiChecks: try {
         errors,
         browserPath:
           "Browser plugin not available; existing local Chromium with Playwright automation",
-        viewports: apiKeyFeedbackOnly ? ["1280x1000"] : ["1280x1000", "800x900"],
-        scope: apiKeyFeedbackOnly ? "api-key-feedback" : "provider-ui",
+        viewports: apiKeyFeedbackOnly || connectionFlowOnly ? ["1280x1000"] : ["1280x1000", "800x900"],
+        scope: connectionFlowOnly ? "connection-flow" : apiKeyFeedbackOnly ? "api-key-feedback" : "provider-ui",
         fixtureOnly: true,
       },
       null,

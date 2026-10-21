@@ -29,17 +29,12 @@
 .model-settings .provider-detail-heading h2 { font-size: var(--text-ui-lg); font-weight: 600; margin: 0 0 var(--spacing-inline); overflow-wrap: anywhere; }
 .model-settings .provider-detail-heading p { margin: 0; overflow-wrap: anywhere; }
 .model-settings .provider-enable-control { display: flex; align-items: center; gap: var(--spacing-inline); flex-shrink: 0; font-size: var(--text-ui-caption); }
-.model-settings .provider-detail-tabs { width: 100%; justify-content: start; border-bottom: 1px solid var(--color-border); margin-bottom: var(--spacing-field); }
-.model-settings .provider-detail-tabs [role="tab"] { flex: 0 1 auto; padding-inline: var(--spacing-field); }
-.model-settings .provider-detail-tabs [role="tab"]::after { bottom: -3px; }
 .model-settings .provider-inline { min-inline-size: 0; margin: 0; padding: 0; border: 0; background: transparent; }
 .model-settings .provider-connection-form > * + * { margin-top: var(--spacing-section); }
 .model-settings .provider-name-control,
 .model-settings .provider-save-actions,
 .model-settings .provider-connection-summary { display: flex; align-items: center; gap: var(--spacing-inline); }
 .model-settings .provider-name-field > label { display: block; margin-bottom: var(--spacing-inline); }
-.model-settings .provider-connection-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: var(--spacing-field); }
-.model-settings .provider-connection-fields > :first-child { grid-column: 1 / -1; }
 .model-settings .provider-connection-summary { justify-content: space-between; padding: var(--spacing-field); border: 1px solid var(--color-border); border-radius: var(--radius-panel); margin-bottom: var(--spacing-section); font-size: var(--text-ui-base); }
 .model-settings .provider-connection-summary > span { min-width: 0; overflow-wrap: anywhere; }
 .model-settings .provider-connection-summary > button { flex-shrink: 0; }
@@ -61,3 +56,7 @@
   .model-settings .provider-detail { border-left: 0; padding-left: 0; border-top: 1px solid var(--color-border); padding-top: var(--spacing-field); }
   .model-settings .provider-catalog-row small { flex-basis: auto; max-width: 55%; margin-left: auto; text-align: right; }
 }
+
+.model-settings .provider-discovered-models { display: grid; gap: var(--spacing-inline); margin-block: var(--spacing-field); }
+.model-settings .provider-discovered-models > label { display: flex; align-items: center; gap: var(--spacing-inline); overflow-wrap: anywhere; }
+.model-settings .provider-discovered-models > button { justify-self: start; }

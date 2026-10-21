@@ -82,6 +82,93 @@ test("running task save fails before persistence or Core mutation", async () => 
   assert.equal(f.backend.providerUpdating, false);
 });
 
+test("save persists during active work while the applied catalog and task configuration remain unchanged", async () => {
+  const f = fixture({ busy: true });
+  const response = await f.service.command({ ...f.request, operation: "save" });
+  assert.notEqual(response.revision, f.original.revision);
+  assert.equal(response.data[0].name, "Updated");
+  assert.equal(response.data[0].models[0].id, "new-model");
+  assert.equal(response.pendingApply, true);
+  assert.equal(response.projects[0].applied, false);
+  assert.deepEqual(f.project.models, [{ id: "old-model" }]);
+  assert.deepEqual(f.project.configurations.running, { model: "old-model" });
+  assert.equal(f.calls.filter(([method]) => method === applyMethod).length, 0);
+  assert.equal(f.service.pendingApplications.size, 0, "An unsent deferred apply has no request receipt");
+  assert.equal(f.backend.providerUpdating, false);
+  await f.service.close();
+});
+
+test("save accepts a new zero-model provider without discovery or an implicit model request", async () => {
+  const f = fixture({ busy: true });
+  f.service.network = async () => assert.fail("Saving an empty catalog must not require discovery");
+  const provider = { ...f.request.provider, models: [] };
+  delete provider.id;
+  const response = await f.service.command({ ...f.request, operation: "save", provider });
+  assert.equal(response.data.length, 2);
+  assert.equal(response.data[1].name, "Updated");
+  assert.deepEqual(response.data[1].models, []);
+  assert.equal(response.pendingApply, true);
+  await f.service.close();
+});
+
+test("draft discovery uses unsaved normalized connection and transient key without persistence", async () => {
+  const f = fixture({ busy: true });
+  const secret = "synthetic-draft-discovery-key";
+  const requests = [];
+  f.service.config.credential = async () => assert.fail("Discovery cannot allocate or persist a credential");
+  f.service.network = async () => ({ fetch: async (url, options) => {
+    requests.push({ url, method: options.method, authorization: options.headers.Authorization, redirect: options.redirect });
+    return Response.json({ data: [{ id: "draft-model", context_window: 160000 }, { id: secret }] });
+  } });
+  const result = await f.service.command({ operation: "discover", connection: {
+    protocol: "responses", baseUrl: "https://unsaved.fixture.invalid/v1/responses/",
+    credential: { kind: "draft", value: secret },
+  } });
+  assert.deepEqual(requests, [{ url: "https://unsaved.fixture.invalid/v1/models", method: "GET", authorization: `Bearer ${secret}`, redirect: "error" }]);
+  assert.deepEqual(result, { models: ["draft-model"], modelParameters: { "draft-model": { contextWindowTokens: 160000 } } });
+  assert.deepEqual(f.service.config.value, f.original);
+  assert.deepEqual(f.service.config.vault.keys, {});
+  assert.equal(f.calls.some(([method]) => method === "write" || method === applyMethod), false);
+});
+
+test("saved-key draft discovery resolves only the requested current provider revision", async () => {
+  const f = fixture();
+  f.service.config.value.data[0].apiKeyEnv = "AREAL_CREDENTIAL_existing";
+  const requests = [];
+  f.service.config.key = item => {
+    assert.equal(item.id, "demo");
+    assert.equal(item.apiKeyEnv, "AREAL_CREDENTIAL_existing");
+    return "synthetic-stored-key";
+  };
+  f.service.network = async () => ({ fetch: async (url, options) => {
+    requests.push({ url, authorization: options.headers.Authorization });
+    return Response.json({ data: [{ id: "stored-model" }] });
+  } });
+  const connection = { protocol: "chatCompletions", baseUrl: "https://draft.fixture.invalid/v1", credential: { kind: "saved", providerId: "demo", expectedRevision: "old" } };
+  assert.deepEqual(await f.service.command({ operation: "discover", connection }), { models: ["stored-model"] });
+  assert.deepEqual(requests, [{ url: "https://draft.fixture.invalid/v1/models", authorization: "Bearer synthetic-stored-key" }]);
+  await assert.rejects(f.service.command({ operation: "discover", connection: { ...connection, credential: { ...connection.credential, expectedRevision: "stale" } } }));
+  assert.equal(requests.length, 1, "Stale credential metadata must fail before a network request");
+  assert.equal(f.calls.some(([method]) => method === "write"), false);
+});
+
+test("draft discovery redacts a transient key when response body iteration fails", async () => {
+  const f = fixture();
+  const secret = "synthetic-transient-stream-key";
+  let consumed = false;
+  f.service.network = async () => ({ fetch: async () => ({ ok: true, body: {
+    async *[Symbol.asyncIterator]() { consumed = true; throw new Error(`upstream failed for ${secret}`); },
+  } }) });
+  await assert.rejects(f.service.command({ operation: "discover", connection: {
+    protocol: "responses", baseUrl: "https://stream.fixture.invalid/v1", credential: { kind: "draft", value: secret },
+  } }), error => {
+    assert.equal(consumed, true, "The test must reach the response body failure");
+    assert.equal(`${error.stack} ${JSON.stringify(error)}`.includes(secret), false);
+    return true;
+  });
+  assert.equal(f.calls.some(([method]) => method === "write"), false);
+});
+
 test("old Core fails capability preflight before touching the document", async () => {
   const f = fixture({ unsupported: true });
   await assert.rejects(f.service.command(f.request), /更新.*Core|更新后台/);

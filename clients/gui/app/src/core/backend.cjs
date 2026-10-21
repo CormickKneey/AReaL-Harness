@@ -487,6 +487,7 @@ class CoreBackend {
         if (method === 'turn/started' || method === 'turn/completed') {
           void this.listThreads(project).catch(() => {});
         }
+        if (method === 'turn/completed') this.providers.requestReconciliation();
       });
       client.onClose(() => { if (project.client === client) {
         project.taskNotificationMonitor?.stop();

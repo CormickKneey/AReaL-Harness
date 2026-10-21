@@ -21,6 +21,11 @@ const requests = [];
 const modelRequests = [];
 let releaseHeldReply;
 const server = createServer(async (request, response) => {
+  if (request.method === "GET" && request.url.endsWith("/models")) {
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ data: [] }));
+    return;
+  }
   let body = ""; for await (const chunk of request) body += chunk;
   const payload = JSON.parse(body);
   const naming = payload.messages?.some(message => message.role === "system" && JSON.stringify(message.content).includes("Generate a concise semantic session title"));
@@ -63,23 +68,11 @@ const checks = [], errors = [];
 const stoppedServices = [];
 const button = name => page.getByRole("button", { name, exact: true });
 async function saveProvider() {
-  const before = await call("providers", { operation: "list" });
-  for (let attempt = 0; attempt < 4; attempt++) {
-    await button("保存").click();
-    await button("返回应用").click({ trial: true, timeout: 180_000 });
-    if (await button("保存").isDisabled()) {
-      assert.equal(await button("应用模型配置").count(), 0);
-      return;
-    }
-    const rejected = page.getByText("任务或操作正在进行，完成后再保存；修改仍保留。", { exact: true });
-    assert.equal(await rejected.isVisible(), true, "failed saves must identify a known pre-submission busy rejection");
-    const after = await call("providers", { operation: "list" });
-    assert.equal(after.revision, before.revision, "busy refusal must not commit the provider draft");
-    assert.deepEqual(after.data, before.data);
-    assert.equal(after.pendingApply, false);
-    checks.push("known busy refusal retains the uncommitted provider draft and unchanged authoritative catalog before explicit UI retry");
-  }
-  assert.fail("provider remained busy after four explicit UI attempts");
+  await button("保存").click();
+  await button("返回应用").click({ trial: true, timeout: 180_000 });
+  assert.equal(await button("保存").isDisabled(), true, "One Save persists the draft without a busy retry");
+  await until(async () => (await call("providers", { operation: "list" })).pendingApply === false, "saved configuration is applied");
+  assert.equal(await button("应用模型配置").count(), 0);
 }
 
 const state = () => page.evaluate(() => window.arealDesktop.snapshot());
@@ -90,7 +83,7 @@ async function call(name, params) {
 }
 async function until(predicate, label) {
   const deadline = Date.now() + 30000;
-  while (Date.now() < deadline) { const snapshot = await state(); if (predicate(snapshot)) return snapshot; await new Promise(resolve => setTimeout(resolve, 80)); }
+  while (Date.now() < deadline) { const snapshot = await state(); if (await predicate(snapshot)) return snapshot; await new Promise(resolve => setTimeout(resolve, 80)); }
   throw new Error(`Timeout: ${label}`);
 }
 async function stopService() {
@@ -519,7 +512,7 @@ try {
   assert.equal(await page.getByRole("status", { name: "模型 theta-model 状态", exact: true }).count(), 0, "compact model rows show the name only");
   assert.equal(await page.getByText("帮助", { exact: true }).count(), 0);
   assert.equal(await page.getByText("凭据来源", { exact: true }).count(), 0);
-  assert.equal(await page.getByRole("tab", { name: "模型", exact: true }).getAttribute("aria-selected"), "true");
+  assert.equal(await page.getByRole("tab", { name: "模型", exact: true }).count(), 0, "Connection fields and models share one page");
   assert.equal(await page.getByRole("combobox", { name: "备用默认模型", exact: true }).count(), 0, "global default belongs to session settings");
   const search = page.getByRole("searchbox", { name: "搜索模型名称或 ID", exact: true });
   const modelRow = page.locator(".provider-model-row").filter({ hasText: "theta-model" });
@@ -545,13 +538,10 @@ try {
   await editor.getByRole("spinbutton", { name: "模型最大输出 Token", exact: true }).fill("12000");
   await page.screenshot({ path: join(scratch, "model-editor-dialog.png"), animations: "disabled" });
   await editor.getByRole("button", { name: "保存模型", exact: true }).click();
-  await page.getByRole("tab", { name: "连接配置", exact: true }).click();
-  assert.equal(await page.getByTestId("provider-base-url").isVisible(), true, "connection tab exposes endpoint");
-  await page.getByRole("tab", { name: "模型", exact: true }).click();
-  assert.equal(await button("保存").isEnabled(), true, "tab switches preserve provider draft");
+  assert.equal(await page.getByTestId("provider-base-url").isVisible(), true, "The same page exposes the connection endpoint");
+  assert.equal(await button("保存").isEnabled(), true, "Model edits remain an unsaved provider draft");
   await page.screenshot({ path: join(scratch, "model-settings-models.png"), animations: "disabled" });
-  checks.push("provider model search precedes results, centered editor discards edits, and tabs preserve the provider draft");
-  await page.getByRole("tab", { name: "连接配置", exact: true }).click();
+  checks.push("provider model search precedes results, centered editor discards edits, and the same page retains the unsaved provider draft");
   await page.getByRole("textbox", { name: "API Key", exact: true }).fill("fixture-key");
   assert.match(await providerStatus.innerText(), /缺少凭据/, "unsaved credentials cannot claim readiness");
   await saveProvider();
@@ -614,7 +604,6 @@ try {
   checks.push("single save confirms persistence/Core readiness; user chooses a model in the existing Composer and Core executes it");
   // 启用开关、凭据与配置应用分别验收；两个可用模型之间必须能实际切换。
   await page.locator(".provider-catalog-row").filter({ hasText: "arena" }).click();
-  await page.getByRole("tab", { name: "连接配置", exact: true }).click();
   await page.getByRole("textbox", { name: "API Key", exact: true }).fill("fixture-key");
   // 真实 Core 完成保存/同步后暂留回执，稳定覆盖目录已刷新但设置操作尚未结算的窗口。
   await app.evaluate(({ app }) => {
@@ -626,7 +615,7 @@ try {
     globalThis.modelApplyReceipt = { ready, release, restore: () => { ServiceConnection.prototype.request = original; } };
     ServiceConnection.prototype.request = async function (method, params, mutation) {
       const result = await original.call(this, method, params, mutation);
-      if (method === "command" && params.name === "providers" && params.request.operation === "saveAndApply") {
+      if (method === "command" && params.name === "providers" && params.request.operation === "save") {
         reached(); await held;
       }
       return result;
@@ -654,7 +643,6 @@ try {
   assert.deepEqual(requests.at(-1), { model: "arena-model", authenticated: true, authorizationPresent: true });
   await button("模型").click(); await button("配置模型").click();
   await page.locator(".provider-catalog-row").filter({ hasText: "arena" }).click();
-  await page.getByRole("tab", { name: "连接配置", exact: true }).click();
   // 无需认证是同一 Core 文件的编辑；不能继续发送已退役的保存凭据。
   await page.getByRole("tablist", { name: "认证方式", exact: true }).getByRole("tab", { name: "无需认证", exact: true }).click();
   assert.match(await providerStatus.innerText(), /可用/);
@@ -695,7 +683,6 @@ try {
   await button("模型").click(); await button("配置模型").click();
   await page.locator(".provider-catalog-row").filter({ hasText: /^env/ }).click();
   assert.match(await providerStatus.innerText(), /已停用/);
-  await page.getByRole("tab", { name: "连接配置", exact: true }).click();
   await page.getByRole("textbox", { name: "API Key", exact: true }).fill("");
   await page.getByRole("switch", { name: "启用供应商", exact: true }).click();
   await saveProvider();
