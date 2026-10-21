@@ -13,6 +13,7 @@ import { ComposerAttachment, composerInput, composerPaste, isComposerFile, type 
 import { useComposerSkills, transferComposerSkills, clearComposerSkills, readComposerSkills } from "./ComposerSkills.js";
 import { ComposerMcpIcon } from "./ComposerIcons.js";
 import { ComposerMcp } from "./ComposerMcp.js";
+import { useI18n } from "./i18n/IntlProvider.js";
 import { Button } from "./components/ui/button.js";
 import type { LexicalChatInputHandle } from "./LexicalChatInput.js";
 import type { Action, Data } from "./services.js";
@@ -49,6 +50,7 @@ export function DraftComposer({
   prepareProject?: () => Promise<Data>;
   onAnnotate?: (target: ImageAnnotationTarget) => void;
 }) {
+  const { t } = useI18n();
   const prefs = useApplicationPreferences();
   const key = draftKey ?? `areal-gui:draft:${project.id}:new`;
   const reviewKey = reviewCommentKey(project.id, "new");
@@ -105,8 +107,8 @@ export function DraftComposer({
     || (currentModel?.reasoningEffortOptions && preferredEffort && !currentModel.reasoningEffortOptions.includes(preferredEffort))
     ? "" : preferredEffort;
   const preferenceNotice = model === null && !chosenProfile?.model
-    ? initialSelection.notice === "model-unavailable" ? "上次使用的模型当前不可用，已显示备用默认模型，请确认后发送。"
-      : initialSelection.notice === "effort-unsupported" ? "上次使用的思考强度当前不受支持，已使用模型默认值。" : ""
+    ? initialSelection.notice === "model-unavailable" ? t("chat.composer.previousModelUnavailable")
+      : initialSelection.notice === "effort-unsupported" ? t("chat.composer.previousEffortUnsupported") : ""
     : "";
   const [unknown, setUnknown] = useState(() => localStorage.getItem(`${key}:pending-create`));
   const busy = useSyncExternalStore(subscribeSending, () => sending.has(key));
@@ -279,7 +281,6 @@ export function DraftComposer({
         <button onClick={() => { setProfileSelection(""); localStorage.removeItem(`${key}:profile`); }}>恢复默认配置</button>
       </div>}
       {project.root && !project.state?.connected && (project.error || project.state?.error) && <p role="alert" className="notice">连接不可用，输入已保留。{project.error || project.state?.error}</p>}
-      {preferenceNotice && <p className="composer-error" role="status">{preferenceNotice}</p>}
       {draftError && <p role="alert" className="px-3 py-2 text-ui-sm text-destructive">{draftError}</p>}
       {reviewDraft.error && <p role="alert" className="px-3 py-2 text-ui-sm text-destructive">{reviewDraft.error}</p>}
       <div className="composer-input-stack">
@@ -357,6 +358,7 @@ export function DraftComposer({
         />}
       />
       </div>
+      {preferenceNotice && <p className="composer-preference-notice" role="status">{preferenceNotice}</p>}
       <ComposerMcp projectId={project.id} action={readAction} open={mcpOpen} anchor={menuAnchor} onClose={() => { setMcpOpen(false); api.current?.focus(); }} />
     </div>
   );

@@ -6,6 +6,8 @@ export const commonMessages = {
   "chat.message.expand": { "zh-CN": "展开消息", en: "Expand message" },
   "chat.message.collapse": { "zh-CN": "收起消息", en: "Collapse message" },
   "chat.composer.actionMenu": { "zh-CN": "添加上下文", en: "Add context" },
+  "chat.composer.previousModelUnavailable": { "zh-CN": "上次使用的模型当前不可用，请确认或重新选择模型。", en: "The previously used model is unavailable. Confirm or choose a model before sending." },
+  "chat.composer.previousEffortUnsupported": { "zh-CN": "上次使用的思考强度当前不受支持，已使用模型默认值。", en: "The previous reasoning effort is unsupported. The model default is selected." },
   "chat.composer.workspaceFileDragHint": { "zh-CN": "松开以引用此文件或目录", en: "Release to reference this file or folder" },
   "common.loading": { "zh-CN": "加载中...", en: "Loading..." },
   "common.closeDialog": { "zh-CN": "关闭弹窗", en: "Close dialog" },

@@ -1742,6 +1742,7 @@ button.composer-project:hover > svg,
 .composer-input-stack { position: relative; }
 .composer-menu-anchor { position: absolute; left: 0; right: 0; bottom: 100%; z-index: 20; }
 .composer-input-stack > form { position: relative; }
+.composer-preference-notice { margin: 8px 12px 0; color: var(--color-foreground-subtle); font-size: var(--text-ui-sm); line-height: 1.5; overflow-wrap: anywhere; }
 .composer-add-menu:focus-visible { outline: none; }
 .composer-add-menu { background: var(--color-composer-catalog); box-shadow: 0 8px 28px #0003; }
 .composer-add-menu button { min-height: 28px; }

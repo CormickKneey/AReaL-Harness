@@ -35,7 +35,7 @@ import { Cpu, Server, Smartphone, Database } from "lucide-react"; // 恢复 Inbo
 import * as React from "react";
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { DismissIcon as X } from "./interfaceIcons.js";
-import { LeaveProjectIcon, NewProjectIcon, ProjectFolderIcon, ProjectNewChatIcon, ProjectOpenFolderIcon, SidePanelIcon, SidebarToggleIcon, TaskSummaryIcon } from "./homeChromeIcons.js";
+import { ComposerPlusIcon, LeaveProjectIcon, NewProjectIcon, ProjectFolderIcon, ProjectNewChatIcon, ProjectOpenFolderIcon, SidePanelIcon, SidebarToggleIcon, TaskSummaryIcon } from "./homeChromeIcons.js";
 import { UpdateIndicator } from "./UpdateIndicator.js";
 import { call, type PlatformServices, type Snapshot, type Data, type Action, type PreparedCreator } from "./services.js";
 import { MemoTaskItem } from "./TaskListItem.js";
@@ -595,10 +595,10 @@ function AppContent({ services }: { services: PlatformServices }) {
     }
   };
   const choose = async () => {
-    setPanel("");
     try {
       const id = await services.chooseProject();
       if (id) {
+        setPanel("");
         recordWorkspaceLocation({ projectId: id, threadId: id === project?.id ? "" : localStorage.getItem(`areal-gui:thread:${id}`) ?? "" });
         setNoProject(false);
         setProjectId(id);
@@ -1479,6 +1479,7 @@ function AppContent({ services }: { services: PlatformServices }) {
                   <section className="project-group" data-sidebar-projects>
                   <SidebarDragSurface className="section-heading" data-sidebar-drop-zone="projects" {...sidebarDrag.target("projects", (source, edge) => dropRequest(source, { type: "projects" }, edge))}>
                     <SidebarSectionToggle label={archived ? "已归档任务" : "项目"} ariaLabel="项目分类" controls="sidebar-projects" expanded={!collapsedProjects["sidebar:projects"]} onToggle={() => toggleSidebarGroup("sidebar:projects")} />
+                    <Button type="button" variant="ghost" size="icon-sm" className="section-action-btn" aria-label={t("settings.openProject")} title={t("settings.openProject")} onClick={() => void requestNavigation(() => void choose())}><ComposerPlusIcon width={16} height={16} /></Button>
                     <DropdownMenu>
                       <DropdownMenuTrigger render={<button className="section-action-btn" aria-label="侧栏整理"><MoreHorizontal size={16} /></button>} />
                       <DropdownMenuContent>

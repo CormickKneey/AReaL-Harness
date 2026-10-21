@@ -63,7 +63,7 @@ export function ComposerModelMenu({
     const [page, setPage] = useState<"effort" | "models">("effort");
     const model = options.find((option) => option.value === value);
     const label = model?.label ?? "请选择模型";
-    const reasoning = model?.reasoning !== false;
+    const reasoning = !!model && model.reasoning !== false;
     const efforts = model?.efforts ?? [];
     const selectedEffort = effort && (!model?.efforts || efforts.includes(effort)) ? effort : undefined;
     const index = selectedEffort ? efforts.indexOf(selectedEffort) : -1;

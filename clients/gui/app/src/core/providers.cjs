@@ -390,7 +390,7 @@ class AppProviders {
         return { apiKey };
       } catch { throw new Error('无法显示 API Key，请解锁系统安全存储后重试。'); }
     }
-    if (request.operation === 'probe' || request.operation === 'discover') { await this.config.current(); return this.test(request); }
+    if (request.operation === 'probe' || request.operation === 'discover') return this.test(request);
     if (['saveAndApply', 'removeAndApply', 'defaultAndApply'].includes(request.operation)) return this.saveAndApply(request);
     if (request.operation === 'apply') return this.apply(request);
     if (request.operation === 'save') return this.save(request);
@@ -698,6 +698,7 @@ class AppProviders {
       if (credential?.kind === 'none') apiKey = '';
       else if (credential?.kind === 'draft') apiKey = credentialValue(credential.value);
       else if (credential?.kind === 'saved') {
+        await this.config.current();
         if (credential.expectedRevision !== this.value.revision) throw new Error('供应商配置已变化，请刷新后重新获取模型');
         const provider = this.value.data.find(item => item.id === credential.providerId);
         if (!provider) throw new Error('供应商已不存在，请刷新');
@@ -706,6 +707,7 @@ class AppProviders {
       if (credential.kind !== 'none' && !apiKey) throw new Error('请填写 API Key，或使用已保存的凭据');
       return this.testConnection({ endpoint, protocol: protocolToCore(draft.protocol) }, { operation, apiKey });
     }
+    await this.config.current();
     const provider = this.value.data.find(p => p.id === id);
     if (!provider) throw new Error('请先保存供应商');
     return this.testConnection(provider, { model, operation });

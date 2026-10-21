@@ -34,7 +34,13 @@ export async function probeResponse(response, protocol = 'responses') {
     let end
     while ((end = buffer.indexOf('\n')) !== -1) {
       const line = buffer.slice(0, end).replace(/\r$/, ''); buffer = buffer.slice(end + 1)
-      if (!line) dispatch()
+      if (!line) {
+        dispatch()
+        if (completed) {
+          if (!text.trim()) throw invalid()
+          return { state: 'connected' }
+        }
+      }
       else if (line.startsWith('data:')) data.push(line.slice(5).replace(/^ /, ''))
     }
   }
