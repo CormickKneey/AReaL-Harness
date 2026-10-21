@@ -6,6 +6,7 @@
 
 | 报告 | 证据范围 |
 |---|---|
+| [Standard122 权限修复后复验](standard122-permission-rerun.md) | 双模型244题、失败重试5次，与历史DSH/Codex比较；保留失败与用量缺口 |
 | [分析子任务权限与本地工具验证](inspection-permissions-v2.md) | 默认只读、显式继承、写租约及 macOS Git/Bash 修复；保留失败与 UNKNOWN |
 | [委派准入与并发修复](delegation-admission-repair.md) | 真实 Scope 准入、创建锁和额度竞态的机制回归 |
 | [子任务结果消费与收尾续轮](child-result-consumption.md) | 固定版本 Codex/DSH 对照、已见终态去重、迟到结果与压缩边界；确定性请求数回归，不宣称整体提速 |

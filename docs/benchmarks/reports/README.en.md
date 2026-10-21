@@ -6,6 +6,7 @@ Historical records do not define current capabilities. Use the [run guide](../RE
 
 | Report | Evidence scope |
 |---|---|
+| [Standard122 after permission repairs](standard122-permission-rerun.en.md) | Two-model 244-task rerun, five failure retries, historical DSH/Codex comparison; failures and incomplete usage retained |
 | [Inspection permissions and local tools](inspection-permissions-v2.en.md) | Default read-only, explicit inheritance, writer leases and macOS Git/Bash repairs; failures and UNKNOWN retained |
 | [Delegation admission and concurrency](delegation-admission-repair.en.md) | Effective Scope admission, creation locks and quota-race mechanism regressions |
 | [Child-result consumption and completion](child-result-consumption.en.md) | Fixed-version Codex/DSH references, observed terminal-result deduplication, late results and compaction; deterministic request counts, no overall speedup claim |
