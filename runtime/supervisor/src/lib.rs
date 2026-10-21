@@ -105,6 +105,9 @@ struct Registry {
     processes: BTreeMap<String, Process>,
     operations: BTreeMap<String, Operation>,
     revoked_owners: BTreeSet<String>,
+    failure_reason: Option<String>,
+    cleanup_failure: Option<String>,
+    backend_cleanup_confirmed: bool,
 }
 
 pub struct Supervisor {
@@ -215,6 +218,10 @@ impl Supervisor {
         }))
     }
     pub fn connection_info(&self) -> ConnectionInfo {
+        let restricted = self.backend.check_scope(
+            ScopeAccess::Restricted,
+            !self.config.read_only_paths.is_empty(),
+        );
         let mut info = ConnectionInfo {
             protocol_version: VERSION.into(),
             runtime_epoch: self.epoch.clone(),
@@ -222,14 +229,19 @@ impl Supervisor {
             root_scope_id: self.root.clone(),
             capabilities: json!({
                 "transport": "privateStdio", "authentication": "inheritedPipe", "reconnect": false,
-                "sandbox": self.backend.sandbox_profile(), "restrictedScopeIsolation": self.backend.restricted_scope_isolation(), "processCleanup": "executorManagedProcesses",
+                "failureIsolationV1":true,
+                "sandbox": self.backend.sandbox_profile(), "restrictedScopeIsolation": self.backend.restricted_scope_isolation() && restricted.is_ok(), "processCleanup": "executorManagedProcesses",
                 "processTreeCleanupVerified": false, "coreHostIsolated": false,
                 "directoryObjectIsolation": false, "sandboxDenialAttribution": false,
                 "processLimits": self.config.limits,
                 "fullAccess":self.config.full_access,"readOnlyPaths":self.config.read_only_paths.iter().map(|p| self.workspace.uri(p)).collect::<Vec<_>>(),"rootNetwork": if self.config.allow_network { NetworkRequest::Inherit } else { NetworkRequest::Deny },
-                "methods": ["runtime.status", "connection.open", "connection.close", "scope.create", "scope.createParticipant", "scope.get", "scope.revoke",
+                "methods": ["runtime.status", "connection.open", "connection.close", "scope.check", "scope.create", "scope.createParticipant", "scope.get", "scope.revoke",
                     "scope.waitClosed", "owner.revoke", "process.start", "process.get", "process.terminate", "process.wait", "output.read", "operation.get"]
             }),
+        };
+        info.capabilities["restrictedScopes"] = match restricted {
+            Ok(()) => json!({"available":true}),
+            Err(error) => json!({"available":false,"error":error}),
         };
         if self.config.file_helper.is_some() {
             info.capabilities["methods"]
@@ -261,7 +273,14 @@ impl Supervisor {
     }
     pub fn status(&self) -> Value {
         let state = self.registry.lock().unwrap();
+        let recovery = state.failure_reason.as_ref().map(|reason| json!({
+            "state": if state.backend_cleanup_confirmed { "restartRequired" } else { "inspectionRequired" },
+            "reason": reason, "cleanupConfirmed": state.backend_cleanup_confirmed, "cleanupFailure": state.cleanup_failure,
+            "processes": state.processes.values().filter(|p| !p.info.cleanup_confirmed).take(16).map(|p| &p.info).collect::<Vec<_>>(),
+            "unconfirmedProcesses": state.processes.values().filter(|p| !p.info.cleanup_confirmed).count()
+        }));
         json!({"rotationRecommended":state.scopes.len()*5>=self.config.max_scopes*4||state.operations.len()*5>=self.config.max_operations*4,"runtimeEpoch":self.epoch,"scopes":{"used":state.scopes.len(),"limit":self.config.max_scopes},
+            "admissionOpen":state.scopes[&self.root].info.state == ScopeState::Active,"recovery":recovery,
             "operations":{"used":state.operations.len(),"limit":self.config.max_operations},
             "activeProcesses":state.processes.values().filter(|p|p.info.state==ProcessState::Running || p.info.state==ProcessState::Starting).count(),
             "outputBytes":{"used":state.scopes[&self.root].info.output_bytes,"limit":state.scopes[&self.root].info.limits.output_bytes}})
@@ -329,6 +348,59 @@ impl Supervisor {
         let digest = digest("scope.createParticipant", &request)?;
         self.create_scope_inner(request.scope, Some(request.participation), digest)
     }
+
+    pub fn check_scope(&self, request: CheckScope) -> Result<ScopeCheck> {
+        let (reads, writes, network) = {
+            let state = self.registry.lock().unwrap();
+            ensure_active(state.scopes.get(&self.root).unwrap())?;
+            self.validate_paths(&state, &request.parent_scope_id)?;
+            let parent = state
+                .scopes
+                .get(&request.parent_scope_id)
+                .ok_or_else(not_found)?;
+            ensure_active(parent)?;
+            let reads = self
+                .workspace
+                .roots(&request.permissions.read_roots, &parent.reads)?;
+            let writes = self
+                .workspace
+                .roots(&request.permissions.write_roots, &parent.writes)?;
+            if writes.iter().any(|path| !within(path, &reads)) {
+                return Err(denied(
+                    "write roots must also be included in child read roots",
+                ));
+            }
+            let network = match request.permissions.network {
+                NetworkRequest::Deny => NetworkRequest::Deny,
+                NetworkRequest::Inherit => parent.info.network,
+            };
+            (reads, writes, network)
+        };
+        // 预检可能执行可信沙箱探针，不持全局登记锁，也不创建 Scope/操作/任务进程。
+        self.backend.check_scope(
+            self.scope_access(&reads, &writes, network),
+            !self.config.read_only_paths.is_empty(),
+        )?;
+        Ok(ScopeCheck { available: true })
+    }
+
+    fn scope_access(
+        &self,
+        reads: &[PathBuf],
+        writes: &[PathBuf],
+        network: NetworkRequest,
+    ) -> ScopeAccess {
+        if self.config.full_access
+            && reads.iter().any(|p| p == std::path::Path::new("/"))
+            && writes.iter().any(|p| p == std::path::Path::new("/"))
+            && network == NetworkRequest::Inherit
+        {
+            ScopeAccess::Unrestricted
+        } else {
+            ScopeAccess::Restricted
+        }
+    }
+
     pub fn create_scope(&self, request: CreateScope) -> Result<ScopeInfo> {
         let digest = digest("scope.create", &request)?;
         self.create_scope_inner(request, None, digest)
@@ -445,6 +517,10 @@ impl Supervisor {
             cleanup_error: None,
         };
         let directories = bind_directories(&reads, &writes)?;
+        self.backend.check_scope(
+            self.scope_access(&reads, &writes, info.network),
+            !self.config.read_only_paths.is_empty(),
+        )?;
         state.scopes.insert(
             scope_id,
             Scope {
@@ -552,15 +628,8 @@ impl Supervisor {
                     .as_ref()
                     .map(|helper| helper.executable.clone())
                     .or_else(|| task_program.clone());
-                let scope_access = if self.config.full_access
-                    && scope.reads.iter().any(|p| p == std::path::Path::new("/"))
-                    && scope.writes.iter().any(|p| p == std::path::Path::new("/"))
-                    && scope.info.network == NetworkRequest::Inherit
-                {
-                    ScopeAccess::Unrestricted
-                } else {
-                    ScopeAccess::Restricted
-                };
+                let scope_access =
+                    self.scope_access(&scope.reads, &scope.writes, scope.info.network);
                 let mut execution = Execution {
                     process_id: handle(&self.epoch, "process"),
                     argv: request.argv,
@@ -658,6 +727,8 @@ impl Supervisor {
                             sandbox_denied: false,
                             stop_reason: None,
                             cleanup_error: None,
+                            cleanup_confirmed: false,
+                            failure_reason: None,
                         },
                         ancestors,
                         cancel,
@@ -696,7 +767,7 @@ impl Supervisor {
                             &request.operation_id,
                             "execution supervisor panicked",
                         );
-                        let _ = runtime.backend.shutdown().await;
+                        runtime.fence_backend().await;
                     }
                 });
                 self.changed();
@@ -776,13 +847,14 @@ impl Supervisor {
                 self.start_failed(&process_id, operation_id, error, OperationState::Failed);
                 return;
             }
-            _ => {
-                self.unknown(
-                    &process_id,
-                    operation_id,
-                    "backend start outcome is unknown",
-                );
-                let _ = self.backend.shutdown().await;
+            other => {
+                let reason = match other {
+                    Ok(Err(error)) => format!("backend start outcome is unknown: {error}"),
+                    Err(_) => "backend start outcome is unknown: startup deadline exceeded".into(),
+                    Ok(Ok(_)) => unreachable!(),
+                };
+                self.unknown(&process_id, operation_id, &reason);
+                self.fence_backend().await;
                 return;
             }
         };
@@ -820,19 +892,29 @@ impl Supervisor {
                 }
                 _ = tokio::time::sleep_until(cleanup_deadline), if stopping => {
                     self.unknown(&process_id, operation_id, "executor cleanup timed out");
-                    let _ = self.backend.shutdown().await;
+                    self.fence_backend().await;
                     return;
                 }
                 result = async { termination.as_mut().unwrap().await }, if termination.is_some() => {
                     termination = None;
                     if result.is_err() {
                         self.unknown(&process_id, operation_id, "executor termination could not be confirmed");
-                        let _ = self.backend.shutdown().await;
+                        self.fence_backend().await;
                         return;
                     }
                 }
                 event = events.recv() => match event {
                     Some(Event::Output(stream, bytes)) => self.append(&process_id, stream, &bytes),
+                    Some(Event::Failed { error, cleanup_confirmed }) => {
+                        let reason = format!("executor failed: {error}");
+                        if cleanup_confirmed {
+                            self.execution_unknown(&process_id, operation_id, &reason);
+                        } else {
+                            self.unknown(&process_id, operation_id, &reason);
+                            self.fence_backend().await;
+                        }
+                        return;
+                    }
                     Some(Event::Exited { exit_code, signal, sandbox_denied }) if !exited => {
                         exited = true;
                         let mut state = self.registry.lock().unwrap();
@@ -842,7 +924,7 @@ impl Supervisor {
                     Some(Event::Closed) if exited => { self.finished(&process_id); return; }
                     _ => {
                         self.unknown(&process_id, operation_id, "executor output/exit stream was lost or violated ordering");
-                        let _ = self.backend.shutdown().await;
+                        self.fence_backend().await;
                         return;
                     }
                 }
@@ -911,6 +993,7 @@ impl Supervisor {
         let process = state.processes.get_mut(process_id).unwrap();
         process.info.state = ProcessState::Unknown;
         process.info.cleanup_error = Some(reason.into());
+        process.info.failure_reason = Some(reason.into());
         process.output.closed = true;
         process.output.truncated = true;
         let owners = process.ancestors.clone();
@@ -929,8 +1012,69 @@ impl Supervisor {
             );
         }
         // 丢失后端事实时封闭整个连接；不释放未知资源的名额、不伪造 CLOSED。
+        state.failure_reason.get_or_insert_with(|| reason.into());
+        state.backend_cleanup_confirmed = false;
         revoke_locked(&mut state, &self.root);
         self.changed();
+    }
+
+    fn execution_unknown(&self, process_id: &str, operation_id: &str, reason: &str) {
+        let mut state = self.registry.lock().unwrap();
+        let process = state.processes.get_mut(process_id).unwrap();
+        process.info.state = ProcessState::Unknown;
+        process.info.failure_reason = Some(reason.into());
+        process.output.truncated = true;
+        let scope = process.info.scope_id.clone();
+        if matches!(
+            state.operations[operation_id].info.state,
+            OperationState::Accepted | OperationState::Running
+        ) {
+            complete_operation(
+                &mut state,
+                operation_id,
+                Err(unavailable(reason)),
+                OperationState::Unknown,
+            );
+        }
+        // 后端已证明资源清理，仅隔离本执行所属的 Scope；UNKNOWN 历史不改写、不重放。
+        release_process(&mut state, process_id);
+        if scope != self.root {
+            revoke_locked(&mut state, &scope);
+        }
+        self.changed();
+    }
+
+    async fn fence_backend(&self) {
+        let result =
+            tokio::time::timeout(self.config.cleanup_timeout, self.backend.shutdown()).await;
+        if matches!(result, Ok(Ok(()))) {
+            let mut state = self.registry.lock().unwrap();
+            state.backend_cleanup_confirmed = true;
+            state.cleanup_failure = None;
+            let unknown: Vec<_> = state
+                .processes
+                .iter()
+                .filter(|(_, p)| p.info.state == ProcessState::Unknown)
+                .map(|(id, _)| id.clone())
+                .collect();
+            for id in unknown {
+                state.processes.get_mut(&id).unwrap().info.cleanup_error = None;
+                release_process(&mut state, &id);
+            }
+            for scope in state.scopes.values_mut() {
+                scope.info.cleanup_error = None;
+            }
+            close_empty_scopes(&mut state);
+            self.changed();
+        } else {
+            let mut state = self.registry.lock().unwrap();
+            state.cleanup_failure = Some(match result {
+                Ok(Err(error)) => error.to_string(),
+                Err(_) => "backend shutdown cleanup deadline exceeded".into(),
+                Ok(Ok(())) => unreachable!(),
+            });
+            self.changed();
+        }
     }
 
     fn stop(&self, process_id: &str, reason: &str) -> Result<()> {
@@ -1017,7 +1161,10 @@ impl Supervisor {
             if process.state == ProcessState::Unknown {
                 return Err(Error::new(
                     ErrorCode::CleanupFailed,
-                    "process outcome or cleanup is unknown",
+                    process
+                        .failure_reason
+                        .or(process.cleanup_error)
+                        .unwrap_or_else(|| "process outcome or cleanup is unknown".into()),
                 ));
             }
             if process.state == ProcessState::Exited {
@@ -1218,7 +1365,13 @@ fn revoke_locked(state: &mut Registry, scope_id: &str) {
 }
 fn release_process(state: &mut Registry, process_id: &str) {
     let process = state.processes.get_mut(process_id).unwrap();
-    process.info.state = ProcessState::Exited;
+    if process.info.cleanup_confirmed {
+        return;
+    }
+    if process.info.state != ProcessState::Unknown {
+        process.info.state = ProcessState::Exited;
+    }
+    process.info.cleanup_confirmed = true;
     process.output.closed = true;
     let owners = process.ancestors.clone();
     for owner in owners {

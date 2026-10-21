@@ -70,7 +70,17 @@ try {
     "areal-runtime",
     "areal-runtime-fs",
     ...(process.platform === "linux" ? ["areal-runtime-reaper"] : []),
+    ...(process.platform === "darwin" ? ["shells"] : []),
   ]);
+  if (process.platform === "darwin") {
+    assert.deepEqual((await readdir(join(bundle, "libexec/areal/shells"))).sort(), [
+      "COPYING",
+      "bash",
+      "build.json",
+      "corresponding-source.tar.gz",
+      "sh",
+    ]);
+  }
   assert.equal(
     Object.keys(manifest.files).some((path) => path.startsWith("libexec/areal/tools/")),
     false,

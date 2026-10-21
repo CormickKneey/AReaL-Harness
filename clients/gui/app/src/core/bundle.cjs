@@ -10,9 +10,15 @@ const executables = Object.keys(executablePaths);
 
 // 搜索已编译进文件助手；兼容旧发行包中的可选工具资源并保持路径校验。
 function coreBundleFiles(manifest) {
-  const tools = Object.keys(manifest.files ?? {}).filter(path => path.startsWith('libexec/areal/tools/'));
+  const tools = Object.keys(manifest.files ?? {}).filter(path => path.startsWith('libexec/areal/tools/') || path.startsWith('libexec/areal/shells/'));
+  // 旧包不强制新增资源；声明了私有 shell 的包必须同时携带许可证和对应源码。
+  if (tools.some(path => path.startsWith('libexec/areal/shells/')) || manifest.thirdPartyComponents?.some(component => component.name === 'Bash')) {
+    for (const name of ['bash', 'sh', 'COPYING', 'corresponding-source.tar.gz', 'build.json']) {
+      if (!tools.includes('libexec/areal/shells/' + name)) throw new Error('安装包缺少私有 shell 资源 ' + name);
+    }
+  }
   for (const path of tools) {
-    if (!/^libexec\/areal\/tools\/[A-Za-z0-9._+/-]+$/.test(path) || path.split('/').some(part => !part || part === '.' || part === '..')) {
+    if (!/^libexec\/areal\/(?:tools|shells)\/[A-Za-z0-9._+/-]+$/.test(path) || path.split('/').some(part => !part || part === '.' || part === '..')) {
       throw new Error('Core 工具清单路径无效');
     }
   }
@@ -57,7 +63,7 @@ function verifyCoreBundle(resourcesPath, { platform = process.platform, arch = p
     }
     paths[name] = path;
   }
-  for (const relative of coreBundleFiles(manifest).filter(path => path.startsWith('libexec/areal/tools/'))) {
+  for (const relative of coreBundleFiles(manifest).filter(path => !Object.values(executablePaths).includes(path))) {
     const path = join(root, relative);
     if (!existsSync(path) || !lstatSync(path).isFile() || !/^[a-f0-9]{64}$/.test(manifest.files[relative] ?? '')) throw new Error(`安装包缺少 Core 工具资源 ${relative}`);
     if (hashes && createHash('sha256').update(readFileSync(path)).digest('hex') !== manifest.files[relative]) throw new Error(`Core 工具资源校验失败：${relative}`);

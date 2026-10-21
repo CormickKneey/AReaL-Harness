@@ -5064,6 +5064,11 @@
                     "executionPolicy": {
                       "additionalProperties": false,
                       "properties": {
+                        "deferredWrite": {
+                          "default": false,
+                          "description": "继承可写权限的分析者先并行读取，首次潜在写入后持有租约直到资源结算。",
+                          "type": "boolean"
+                        },
                         "exclusiveWrite": {
                           "default": false,
                           "type": "boolean"
@@ -10504,6 +10509,11 @@
                     "executionPolicy": {
                       "additionalProperties": false,
                       "properties": {
+                        "deferredWrite": {
+                          "default": false,
+                          "description": "继承可写权限的分析者先并行读取，首次潜在写入后持有租约直到资源结算。",
+                          "type": "boolean"
+                        },
                         "exclusiveWrite": {
                           "default": false,
                           "type": "boolean"
@@ -26070,6 +26080,11 @@
                       "executionPolicy": {
                         "additionalProperties": false,
                         "properties": {
+                          "deferredWrite": {
+                            "default": false,
+                            "description": "继承可写权限的分析者先并行读取，首次潜在写入后持有租约直到资源结算。",
+                            "type": "boolean"
+                          },
                           "exclusiveWrite": {
                             "default": false,
                             "type": "boolean"
@@ -30157,6 +30172,11 @@
                         "executionPolicy": {
                           "additionalProperties": false,
                           "properties": {
+                            "deferredWrite": {
+                              "default": false,
+                              "description": "继承可写权限的分析者先并行读取，首次潜在写入后持有租约直到资源结算。",
+                              "type": "boolean"
+                            },
                             "exclusiveWrite": {
                               "default": false,
                               "type": "boolean"
@@ -37552,6 +37572,11 @@
                       "executionPolicy": {
                         "additionalProperties": false,
                         "properties": {
+                          "deferredWrite": {
+                            "default": false,
+                            "description": "继承可写权限的分析者先并行读取，首次潜在写入后持有租约直到资源结算。",
+                            "type": "boolean"
+                          },
                           "exclusiveWrite": {
                             "default": false,
                             "type": "boolean"
@@ -50113,6 +50138,11 @@
                     "executionPolicy": {
                       "additionalProperties": false,
                       "properties": {
+                        "deferredWrite": {
+                          "default": false,
+                          "description": "继承可写权限的分析者先并行读取，首次潜在写入后持有租约直到资源结算。",
+                          "type": "boolean"
+                        },
                         "exclusiveWrite": {
                           "default": false,
                           "type": "boolean"
@@ -54898,6 +54928,11 @@
           "anyOf": [
             {
               "properties": {
+                "cleanupConfirmed": {
+                  "default": false,
+                  "description": "执行结果 UNKNOWN 与资源清理确认分开；旧 Runtime 缺失此字段时保守视为未确认。",
+                  "type": "boolean"
+                },
                 "cleanupError": {
                   "type": [
                     "string",
@@ -54908,6 +54943,12 @@
                   "format": "int32",
                   "type": [
                     "integer",
+                    "null"
+                  ]
+                },
+                "failureReason": {
+                  "type": [
+                    "string",
                     "null"
                   ]
                 },
@@ -55230,6 +55271,11 @@
           "properties": {
             "runtime": {
               "properties": {
+                "cleanupConfirmed": {
+                  "default": false,
+                  "description": "执行结果 UNKNOWN 与资源清理确认分开；旧 Runtime 缺失此字段时保守视为未确认。",
+                  "type": "boolean"
+                },
                 "cleanupError": {
                   "type": [
                     "string",
@@ -55240,6 +55286,12 @@
                   "format": "int32",
                   "type": [
                     "integer",
+                    "null"
+                  ]
+                },
+                "failureReason": {
+                  "type": [
+                    "string",
                     "null"
                   ]
                 },
@@ -62411,6 +62463,11 @@
                     "executionPolicy": {
                       "additionalProperties": false,
                       "properties": {
+                        "deferredWrite": {
+                          "default": false,
+                          "description": "继承可写权限的分析者先并行读取，首次潜在写入后持有租约直到资源结算。",
+                          "type": "boolean"
+                        },
                         "exclusiveWrite": {
                           "default": false,
                           "type": "boolean"
@@ -72089,6 +72146,11 @@
                     "executionPolicy": {
                       "additionalProperties": false,
                       "properties": {
+                        "deferredWrite": {
+                          "default": false,
+                          "description": "继承可写权限的分析者先并行读取，首次潜在写入后持有租约直到资源结算。",
+                          "type": "boolean"
+                        },
                         "exclusiveWrite": {
                           "default": false,
                           "type": "boolean"
@@ -77029,6 +77091,11 @@
                     "executionPolicy": {
                       "additionalProperties": false,
                       "properties": {
+                        "deferredWrite": {
+                          "default": false,
+                          "description": "继承可写权限的分析者先并行读取，首次潜在写入后持有租约直到资源结算。",
+                          "type": "boolean"
+                        },
                         "exclusiveWrite": {
                           "default": false,
                           "type": "boolean"
@@ -81099,6 +81166,11 @@
                     "executionPolicy": {
                       "additionalProperties": false,
                       "properties": {
+                        "deferredWrite": {
+                          "default": false,
+                          "description": "继承可写权限的分析者先并行读取，首次潜在写入后持有租约直到资源结算。",
+                          "type": "boolean"
+                        },
                         "exclusiveWrite": {
                           "default": false,
                           "type": "boolean"
@@ -96035,6 +96107,11 @@
                       "executionPolicy": {
                         "additionalProperties": false,
                         "properties": {
+                          "deferredWrite": {
+                            "default": false,
+                            "description": "继承可写权限的分析者先并行读取，首次潜在写入后持有租约直到资源结算。",
+                            "type": "boolean"
+                          },
                           "exclusiveWrite": {
                             "default": false,
                             "type": "boolean"
@@ -100110,6 +100187,11 @@
                     "executionPolicy": {
                       "additionalProperties": false,
                       "properties": {
+                        "deferredWrite": {
+                          "default": false,
+                          "description": "继承可写权限的分析者先并行读取，首次潜在写入后持有租约直到资源结算。",
+                          "type": "boolean"
+                        },
                         "exclusiveWrite": {
                           "default": false,
                           "type": "boolean"
@@ -104206,6 +104288,11 @@
                     "executionPolicy": {
                       "additionalProperties": false,
                       "properties": {
+                        "deferredWrite": {
+                          "default": false,
+                          "description": "继承可写权限的分析者先并行读取，首次潜在写入后持有租约直到资源结算。",
+                          "type": "boolean"
+                        },
                         "exclusiveWrite": {
                           "default": false,
                           "type": "boolean"
@@ -108310,6 +108397,11 @@
                     "executionPolicy": {
                       "additionalProperties": false,
                       "properties": {
+                        "deferredWrite": {
+                          "default": false,
+                          "description": "继承可写权限的分析者先并行读取，首次潜在写入后持有租约直到资源结算。",
+                          "type": "boolean"
+                        },
                         "exclusiveWrite": {
                           "default": false,
                           "type": "boolean"
@@ -113838,6 +113930,11 @@
               "executionPolicy": {
                 "additionalProperties": false,
                 "properties": {
+                  "deferredWrite": {
+                    "default": false,
+                    "description": "继承可写权限的分析者先并行读取，首次潜在写入后持有租约直到资源结算。",
+                    "type": "boolean"
+                  },
                   "exclusiveWrite": {
                     "default": false,
                     "type": "boolean"

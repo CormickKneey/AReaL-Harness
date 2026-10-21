@@ -86,6 +86,36 @@ fn failure(i: &ConfigInputs) -> ConfigError {
 }
 
 #[test]
+fn inspection_permissions_are_explicit_validated_and_keep_the_read_only_default() {
+    let root = tempfile::tempdir().unwrap();
+    let mut i = inputs(root.path());
+    assert_eq!(
+        load_config(&i).unwrap().inspection_permissions,
+        InspectionPermissions::ReadOnly
+    );
+    write(
+        &mut i,
+        "schema_version=2\n[delegation]\ninspection_permissions='inherit'\n",
+    );
+    let configured = load_config(&i).unwrap();
+    assert_eq!(
+        configured.inspection_permissions,
+        InspectionPermissions::Inherit
+    );
+    assert_eq!(
+        configured.diagnostic(false)["delegation"]["inspection_permissions"],
+        "inherit"
+    );
+    set(&mut i, "AREAL_HARNESS_INSPECTION_PERMISSIONS", "read-only");
+    assert_eq!(
+        load_config(&i).unwrap().inspection_permissions,
+        InspectionPermissions::ReadOnly
+    );
+    set(&mut i, "AREAL_HARNESS_INSPECTION_PERMISSIONS", "automatic");
+    assert_eq!(failure(&i).kind, ConfigErrorKind::InvalidValue);
+}
+
+#[test]
 fn trajectory_defaults_are_disabled_and_shared_across_core_data_directories() {
     let temp = tempfile::tempdir().unwrap();
     let mut i = inputs(temp.path());

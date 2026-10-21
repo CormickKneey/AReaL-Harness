@@ -216,6 +216,7 @@ async fn completion(rx: &mut mpsc::Receiver<Event>) -> (Vec<u8>, Option<i32>, Op
         let mut status = None;
         while let Some(event) = rx.recv().await {
             match event {
+                Event::Failed { error, .. } => panic!("executor failed: {error}"),
                 Event::Output(_, bytes) => {
                     assert!(status.is_none());
                     output.extend(bytes);

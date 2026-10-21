@@ -273,6 +273,7 @@ fn walk(
     let table = matches!(
         names.as_slice(),
         [] | ["server"]
+            | ["delegation"]
             | ["model"]
             | ["model", "providers"]
             | ["model", "providers", _]
@@ -421,6 +422,7 @@ fn walk(
             | ["logging", "filter"]
             | ["tools", "extensions_file"]
             | ["permissions", "mode"]
+            | ["delegation", "inspection_permissions"]
     );
     let decimal = matches!(
         names.as_slice(),

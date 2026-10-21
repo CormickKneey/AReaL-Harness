@@ -483,7 +483,11 @@ impl Invocation<'_> {
                             self.cancel,
                         )
                         .await
-                        .map(|value| (true, value))
+                        .map(|value| {
+                            let success =
+                                self.call.name != "agent_spawn" || value["status"] != "failed";
+                            (success, value)
+                        })
                         .map_err(|error| {
                             if matches!(error.downcast_ref::<Error>(), Some(Error::Storage(_))) {
                                 unknown(error)
@@ -505,14 +509,6 @@ impl Invocation<'_> {
                     .map_err(invalid);
             }
             Backend::Builtin => {
-                if self.call.name == "task_state" {
-                    return self
-                        .engine
-                        .task_state(self.cell, args["pendingAfter"].as_str())
-                        .await
-                        .map(|value| (true, value))
-                        .map_err(invalid);
-                }
                 let runtime = self
                     .engine
                     .runtime

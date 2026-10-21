@@ -7,7 +7,17 @@ use tokio::process::Command;
 #[tokio::test]
 async fn native_hook_group_allows_progress_without_releasing_foreign_exclusion() {
     let dir = tempfile::tempdir().unwrap();
-    let mut daemon = Command::new(env!("CARGO_BIN_EXE_areal-runtime"))
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        // 与产品启动桥接一致，由系统父进程启动本地原生程序，保留原退出状态和管道。
+        let mut command = Command::new("/usr/bin/python3");
+        command.args(["-I", "-S", "-c", "import subprocess,sys; r=subprocess.run(sys.argv[1:]).returncode; sys.exit(r if r>=0 else 128-r)"]);
+        command.arg(env!("CARGO_BIN_EXE_areal-runtime"));
+        command
+    };
+    #[cfg(not(target_os = "macos"))]
+    let mut command = Command::new(env!("CARGO_BIN_EXE_areal-runtime"));
+    let mut daemon = command
         .arg("--workspace")
         .arg(dir.path())
         .args([

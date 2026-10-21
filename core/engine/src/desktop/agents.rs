@@ -318,7 +318,7 @@ impl Engine {
             ..Default::default()
         };
         worker
-            .create_inner(cwd, None, None, vec![], None, Some(data))
+            .create_inner(cwd, None, None, vec![], None, Some(data), false)
             .await
             .map(|(t, _)| t)
     }

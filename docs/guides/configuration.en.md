@@ -55,9 +55,27 @@ The launcher creates `scratch/` beside dataDir and sets an individual Thread `TM
 
 ## Automatic collaboration and compatibility verification policy
 
-Ordinary Agent collaboration needs no additional feature switch or shared/isolated mode selection. Core chooses shared read-only execution, a shared exclusive writer, or an isolated candidate from task requirements and effective permissions. Automatic isolation also requires independent Runtime/file helpers and a snapshot-compatible workspace. Ordinary modification may select a shared exclusive writer before starting if isolation is unavailable; candidate-only patches or explicitly required trusted verification cannot silently lose those guarantees.
+Ordinary Agent collaboration needs no additional feature switch or shared/isolated mode selection. Core chooses shared inspection, a shared exclusive writer, or an isolated candidate from task requirements and effective permissions. Automatic isolation also requires independent Runtime/file helpers and a snapshot-compatible workspace. Ordinary modification may select a shared exclusive writer before starting if isolation is unavailable; candidate-only patches or explicitly required trusted verification cannot silently lose those guarantees.
 
 The host constructs internal execution boundaries from existing write authorization and parent restrictions. YOLO cannot override read-only Profiles, denied tools, or Runtime limits, and project instructions or model plans cannot create grants. Without trusted checks, automatic isolation does not claim verification passed. Existing `--workgroup-policy` continues to provide deployment-controlled strict write paths and final checks for legacy Workflows, explicit groups, and delegations requiring trusted verification. Ordinary usage needs no second policy JSON. See [execution selection](../design/multi-agent.en.md) and [legacy Workgroup configuration](workgroups.en.md).
+
+## Inspection child permissions
+
+Work responsibility and execution authority are separate: `intent="inspect", delivery="report"` requires a report and does not authorize edits. Deployment policy decides whether source read-only access is additionally enforced.
+
+```toml
+[delegation]
+inspection_permissions = "read-only" # default, enforced read-only
+# inspection_permissions = "inherit" # explicit candidate, inherit effective parent authority
+```
+
+`AREAL_HARNESS_INSPECTION_PERMISSIONS` accepts `read-only` / `inherit` and overrides TOML. The policy is fixed at startup and requires a safe service restart to change. Redacted diagnostics expose `delegation.inspection_permissions`; model workspace facts expose `inspectionPermissions`.
+
+`read-only` preserves the existing contract: read-only sources and writable private scratch, rejected before child model work when the restricted Scope is unavailable. `inherit` adds no inspection-specific read-only/network-denial restriction. Parent authority, Profiles, denied tools and approval rules still apply; an already restricted parent still requires its sandbox. This mode cannot promise that a child cannot edit sources: behavioral instructions are not OS enforcement. Explicit legacy `workspaceMode="sharedReadOnly"` and research Agents are unchanged.
+
+In inherited mode, trusted native file reads and model reasoning may overlap. Commands, file mutations and ambient tools can have side effects; before the first such action the child takes an exclusive workspace lease until Turn process cleanup and durable settlement. Calls with hooks are also treated as potentially writing; shell text is never guessed to be read-only. Waiting for the lease is cancellable, control queries take no lease, and these children cannot delegate recursively or start services that outlive the Turn. Keep the default mode, narrow the parent/trusted Profile, or use the explicit legacy read-only route when enforcement is required. Failures never silently switch policy.
+
+This remains an explicit deployment candidate; local regressions do not justify replacing the default. See [delegation design](../design/multi-agent.en.md) for both modes and counterexamples.
 
 ## Models and limits
 

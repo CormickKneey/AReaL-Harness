@@ -658,6 +658,7 @@ impl Engine {
                     request.dynamic_tools,
                     Some(host),
                     Some(data),
+                    false,
                 )
                 .await?;
             engine.ensure_profile_workflow(thread, &hash).await
@@ -1023,6 +1024,21 @@ impl Engine {
         }
         let goal_enabled = cell.goal_role.load(Ordering::Acquire) != 0;
         let exclusive = cell.exclusive_writer;
+        let restricted_unavailable = self.runtime.as_ref().is_some_and(|runtime| {
+            runtime.client.info().capabilities["restrictedScopes"]["available"] == false
+        });
+        let inspection_unavailable = restricted_unavailable
+            && (!self.inspection_inherits_permissions()
+                || config.read_only
+                || self
+                    .runtime
+                    .as_ref()
+                    .is_none_or(|runtime| !runtime.writable));
+        let writing_unavailable = config.read_only
+            || self
+                .runtime
+                .as_ref()
+                .is_none_or(|runtime| !runtime.writable);
         let bindings = cell.bindings.read().await;
         let mut definitions = bindings.registry.definitions();
         let core_names: Vec<_> = crate::desktop::definitions()
@@ -1031,6 +1047,23 @@ impl Engine {
             .collect();
         definitions.retain(|d| {
             let name = d["function"]["name"].as_str().unwrap_or("");
+            let native_research = bindings.registry.get(name).is_ok_and(|entry| {
+                matches!(entry.backend, crate::tools::Backend::Agent)
+            });
+            let native_coordination = bindings.registry.get(name).is_ok_and(|entry| {
+                matches!(entry.backend, crate::tools::Backend::Coordination)
+            });
+            // 只投影可信原生委派的已知能力；不按名称过滤外部工具，也不改变历史句柄的控制入口。
+            if restricted_unavailable && name == "delegate_tasks"
+                && native_research
+            {
+                return false;
+            }
+            if inspection_unavailable && writing_unavailable && name == "agent_spawn"
+                && native_coordination
+            {
+                return false;
+            }
             (!matches!(name, "task_spawn" | "task_wait" | "task_channel_read") || goal_enabled)
                 && (!matches!(name, "task_spawn" | "task_wait")
                     || cell.goal_role.load(Ordering::Acquire) == 1)
@@ -1067,6 +1100,23 @@ impl Engine {
                             )
                     }))
         });
+        if inspection_unavailable {
+            for definition in &mut definitions {
+                if definition["function"]["name"] == "agent_spawn"
+                    && bindings.registry.get("agent_spawn").is_ok_and(|entry| {
+                        matches!(entry.backend, crate::tools::Backend::Coordination)
+                    })
+                {
+                    // 可写协作仍按原授权准入；模型不能把不可用只读分析冒充为可写任务。
+                    definition["function"]["parameters"]["properties"]["intent"]["enum"] =
+                        json!(["modify"]);
+                    let description = definition["function"]["description"].as_str().unwrap_or("");
+                    definition["function"]["description"] = json!(format!(
+                        "{description} Read-only inspection is unavailable in this deployment. Do not use modify to bypass an inspection permission boundary."
+                    ));
+                }
+            }
+        }
         if let Some(service) = self.workgroups.get() {
             for definition in &mut definitions {
                 if definition["function"]["name"] == "workgroup_start" {
@@ -1160,6 +1210,7 @@ impl Engine {
             .turns
             .last()
             .and_then(|t| t.configuration.as_ref())
+            .or_else(|| state.thread.desktop.as_ref().map(|d| &d.configuration))
             .is_some_and(|c| c.read_only);
         let side = state.thread.is_side();
         Ok(areal_runtime_protocol::PermissionRequest {

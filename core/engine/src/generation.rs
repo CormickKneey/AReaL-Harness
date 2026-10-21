@@ -5,7 +5,9 @@ use super::*;
 // 已完整交给本次请求的结算回执，不应仅因自动汇总重复出现而使有效最终答复失效。
 // 只忽略等待与调用额度元数据；制品、交付、错误或正文有变化时仍须再次交给模型。
 fn execution_receipts_observed(messages: &[model::Message], reports: &[Value]) -> bool {
-    let normalize = |mut value: Value| -> Option<Value> {
+    let normalize = |value: Value| -> Option<Value> {
+        // 工具交给模型的是公共 executionId 视图；底层所有者和线程身份不属于回执版本。
+        let mut value = agents::model_execution_view(value);
         if value["timedOut"] == true {
             return None;
         }
@@ -147,6 +149,7 @@ impl Engine {
         let mut group_results = Vec::<Value>::new();
         let mut child_results = Value::Null;
         let mut observed_children = HashSet::new();
+        let mut child_observations = agents::ChildResultObservations::default();
         let projected = self.project_instructions(cell).await?;
         let instructions = projected.as_ref().map(|(text, _)| text.clone());
         if instructions.is_some() {
@@ -381,8 +384,13 @@ impl Engine {
                         Some("Current authoritative goal: ")
                     } else if text.starts_with("Built-in Browser guidance: ") {
                         Some("Built-in Browser guidance: ")
+                    } else if text.starts_with("Choose checks that can falsify the implementation")
+                    {
+                        Some("Choose checks that can falsify the implementation")
                     } else if text.starts_with("This execution is headless.") {
                         Some("This execution is headless.")
+                    } else if text.starts_with("Settled child Agent results ") {
+                        Some("Settled child Agent results ")
                     } else {
                         None
                     };
@@ -779,6 +787,12 @@ impl Engine {
                             }
                             return Err(error);
                         }
+                        // 仅已完成且被接受的响应确认输入消费；预检、断流或 steer 不提前确认。
+                        child_observations.observe_request(
+                            &state,
+                            &messages,
+                            &mut observed_children,
+                        );
                         if calls.is_empty() {
                             drop(state);
                             drop(permit);
@@ -792,9 +806,12 @@ impl Engine {
                                 reports = self.join_model_children(cell, &mut observed_children, false) => reports?,
                             };
                             if reports != child_results {
+                                let already_observed = child_observations.covers(&reports);
                                 child_results = reports;
-                                complete_item(cell, &thread_id, &turn_id, &item_id).await;
-                                continue 'restart;
+                                if !already_observed {
+                                    complete_item(cell, &thread_id, &turn_id, &item_id).await;
+                                    continue 'restart;
+                                }
                             }
                             if self.workgroups.get().is_some()
                                 || self.automatic_workgroups.get().is_some()

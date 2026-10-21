@@ -33,6 +33,8 @@ make build
 
 仅二进制变化时，共享服务空闲会自动重启，无需每次手动操作。若报配置冲突，执行诊断中的完整重启命令；有后台任务时先等待结算，确需取消才加 `--cancel`。频繁切换开发版/安装版时，可给开发版指定独立的外部目录，例如 `--data-dir /tmp/areal-dev-state`，启动和重启都传入同一参数；该目录使用独立历史。服务兼容性见[本地服务契约](../api/local-service.md#实例兼容性与历史)。
 
+macOS 的 `make build/release` 还按 SHA-256 锁定的源码和补丁构建独立 Bash，并缓存到 `target/runtime-shell`、复制到 `target/<profile>/shells`；首次构建需要网络、C 编译器和 Python 3.11+（支持 tar 数据过滤器的补丁版本）。仅运行 `cargo build` 不生成这部分完整 Runtime 资源。运行任务时不下载 shell，不替换系统程序。该独立组件保留 GPL-3.0-or-later 许可证与完整对应源码，项目 Rust 代码继续采用 Apache-2.0；见[发行要求](releasing.md)。
+
 ## 验证入口
 
 | 修改范围 | 命令 |
@@ -43,6 +45,7 @@ make build
 | 常规回归 | `make verify` |
 | 原生集成 | `make verify-harness`，包含常规回归 |
 | 统一委派集成 | `make unified-execution-smoke`：真实 Runtime 的并行候选组合、交付回执、父任务权限、取消与恢复；已包含在 `make harness-smoke` / `make verify-native`；Linux CI 在允许 Bubblewrap user namespaces 的受控容器中执行，`make verify` 保持跨平台常规回归 |
+| 子任务权限集成 | `make delegation-permissions-smoke`：真实 Runtime 的强制只读、沙箱不可用提前拒绝、显式继承读取和父子读取协作；模型 fixture，不评价任务能力；已包含在 `make harness-smoke` |
 | CI 原生增量 | `make verify-native`，仅运行原生后端与 Harness 集成 smoke |
 | 容量 | `make capacity`，独立运行 |
 | 仅文档 | `python3 scripts/check-docs.py`，同时核对命令与实现 |

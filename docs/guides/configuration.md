@@ -55,9 +55,27 @@ launcher 自动创建与 dataDir 同级的 `scratch/`，为每个 Thread 设置�
 
 ## 自动协作与兼容验收策略
 
-普通 Agent 协作无需额外功能开关，也无需用户指定共享或隔离模式。Core 根据任务要求及有效权限选择共享只读、共享独占写入或隔离候选执行。自动隔离还要求可用的独立 Runtime/文件助手以及满足快照约束的工作区；普通修改不具备隔离条件时可在启动前采用共享独占写入。明确要求候选补丁或可信验收的任务不能降低要求。
+普通 Agent 协作无需额外功能开关，也无需用户指定共享或隔离模式。Core 根据任务要求及有效权限选择共享分析、共享独占写入或隔离候选执行。自动隔离还要求可用的独立 Runtime/文件助手以及满足快照约束的工作区；普通修改不具备隔离条件时可在启动前采用共享独占写入。明确要求候选补丁或可信验收的任务不能降低要求。
 
 宿主使用现有写授权和父任务限制构造内部执行边界。YOLO 不覆盖只读 Profile、工具拒绝或 Runtime 上限，项目里的说明或模型提供的计划不能新增授权。未配置可信检查时，自动隔离不宣称验收通过；现有 `--workgroup-policy` 继续表示由部署方提供的严格写范围和最终 checks，用于兼容 Workflow、显式工作组和要求可信验收的委派。普通使用不需要维护第二份策略 JSON，详见[执行选择](../design/multi-agent.md)与[兼容 Workgroup 配置](workgroups.md)。
+
+## 分析子任务的权限策略
+
+工作职责与执行权限分别表达：`intent="inspect", delivery="report"` 要求分析报告，不会授权修改；部署配置决定是否额外强制源码只读。
+
+```toml
+[delegation]
+inspection_permissions = "read-only" # 默认，强制只读
+# inspection_permissions = "inherit" # 显式候选，继承父任务有效权限
+```
+
+环境变量 `AREAL_HARNESS_INSPECTION_PERMISSIONS` 接受 `read-only` / `inherit`，覆盖 TOML；该部署策略启动时固定，修改后须安全重启服务。脱敏配置诊断的 `delegation.inspection_permissions` 和模型工作区事实 `inspectionPermissions` 显示实际选择。
+
+`read-only` 保留原行为：源码只读、独立 scratch 可写，受限 Scope 不可用则在子模型启动前拒绝。`inherit` 不因普通分析自动增加只读/禁网限制，原有父权限、Profile、工具拒绝和审批规则仍有效；父任务本就受限时仍需要可用的相应沙箱。它不承诺子任务无法修改源码，不能把行为指令当成 OS 保护。旧显式 `workspaceMode="sharedReadOnly"` 与研究 Agent 不受该配置影响。
+
+继承模式下，可信原生文件读取与模型推理可以并行；命令、文件修改或外部工具可能有副作用，首次执行前取得工作区独占租约并持有至该 Turn 的进程清理和持久结算完成。有 hooks 的调用也按潜在写入处理；不会根据 shell 文本猜测只读。等待锁可取消，控制查询不占锁；这类子任务不能递归委派或启动跨 Turn 服务。需要强制只读时保留默认模式，或通过父配置/可信 Profile 和旧显式共享只读入口收窄，不会在失败后静默改为继承。
+
+该选项是显式部署候选，不因局部回归通过而替换默认值。两种模式及反例见[委派设计](../design/multi-agent.md)。
 
 ## 模型与限额
 

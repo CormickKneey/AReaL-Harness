@@ -508,7 +508,25 @@ mod shutdown_tests {
         engine.shutdown().await;
         assert_eq!(engine.mcp_list()["data"][0]["state"], "cleanupFailed");
         drop(engine);
-        let reopened = Engine::open(root.path(), Arc::new(Pending), Limits::default()).unwrap();
+        // 已完成的 mutation 任务可能仍在释放最后的 Store 引用；等待实际锁释放，不能固定 sleep。
+        // 这里只重试明确的目录占用，持续泄漏仍须在有界期限内失败。
+        let reopened = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                match Engine::open(root.path(), Arc::new(Pending), Limits::default()) {
+                    Ok(engine) => break engine,
+                    Err(error)
+                        if error
+                            .to_string()
+                            .contains("another Core owns the data directory") =>
+                    {
+                        tokio::task::yield_now().await;
+                    }
+                    Err(error) => panic!("reopen failed: {error:#}"),
+                }
+            }
+        })
+        .await
+        .expect("old Core did not release its directory lock after shutdown");
         assert_eq!(reopened.mcp_list()["data"][0]["state"], "cleanupFailed");
         assert!(
             reopened

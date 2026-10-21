@@ -130,8 +130,12 @@ impl Supervisor {
                         status,
                     );
                     if status == OperationState::Unknown {
-                        let _ = runtime.revoke(&runtime.root);
-                        let _ = runtime.backend.shutdown().await;
+                        runtime.unknown(
+                            &process_id,
+                            &operation_id,
+                            "process input acknowledgement lost; operation outcome is UNKNOWN",
+                        );
+                        runtime.fence_backend().await;
                     }
                     runtime.changed();
                 });

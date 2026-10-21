@@ -49,6 +49,7 @@ use tracing::{Instrument, info_span};
 
 #[derive(Clone, Debug)]
 pub struct Limits {
+    pub inspection_permissions: areal_config::InspectionPermissions,
     pub goals: goals::Policy,
     pub max_threads: usize,
     pub model_concurrency: usize,
@@ -96,6 +97,7 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
+            inspection_permissions: areal_config::InspectionPermissions::ReadOnly,
             goals: goals::Policy::default(),
             max_threads: 20_000,
             model_concurrency: 32,
@@ -186,6 +188,7 @@ struct Active {
     started: std::time::Instant,
     isolated_children: usize,
     workspace_exclusive: bool,
+    deferred_workspace_guard: Option<tokio::sync::OwnedRwLockWriteGuard<()>>,
     // Includes queued model work, tool waits and cleanup. Never wait for this
     // permit during admission: waiting parents must not deadlock their children.
     _admission: OwnedSemaphorePermit,
@@ -231,6 +234,7 @@ struct Cell {
     settled: watch::Sender<bool>,
     interaction_changed: watch::Sender<u64>,
     resource_gate: Mutex<()>,
+    delegation_creation: Mutex<()>,
 }
 impl Cell {
     fn new(thread: Thread, depth: usize, bindings: tools::Bindings) -> Arc<Self> {
@@ -240,10 +244,9 @@ impl Cell {
                 .parent_thread_id
                 .as_ref()
                 .map(|_| bindings.registry.clone()),
-            exclusive_writer: thread
-                .desktop
-                .as_ref()
-                .is_some_and(|d| d.execution_policy.exclusive_write),
+            exclusive_writer: thread.desktop.as_ref().is_some_and(|d| {
+                d.execution_policy.exclusive_write || d.execution_policy.deferred_write
+            }),
             goal_role: AtomicUsize::new(if thread.goal_owner.is_some() { 2 } else { 0 }),
             depth,
             research: thread.source == "nativeResearchAgent",
@@ -264,6 +267,7 @@ impl Cell {
             settled: watch::channel(true).0,
             interaction_changed: watch::channel(0).0,
             resource_gate: Mutex::new(()),
+            delegation_creation: Mutex::new(()),
         })
     }
     fn emit(&self, method: &str, params: Value) {
@@ -299,7 +303,6 @@ pub struct Engine {
     workgroups: std::sync::OnceLock<Arc<workgroup::service::Service>>,
     automatic_workgroups: std::sync::OnceLock<Arc<workgroup::service::Service>>,
     workspace_gate: Arc<RwLock<()>>,
-    delegation_creation: Mutex<()>,
     desktop: desktop::Desktop,
     plugin_hooks: plugin_hooks::Manager,
 }
@@ -602,7 +605,6 @@ impl Engine {
             workgroups: std::sync::OnceLock::new(),
             automatic_workgroups: std::sync::OnceLock::new(),
             workspace_gate: Arc::new(RwLock::new(())),
-            delegation_creation: Mutex::new(()),
         }))
     }
     pub fn model_name(&self) -> String {

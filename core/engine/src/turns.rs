@@ -293,6 +293,7 @@ impl Engine {
             started: std::time::Instant::now(),
             isolated_children: 0,
             workspace_exclusive: false,
+            deferred_workspace_guard: None,
             _admission: admission,
             id: turn.id.clone(),
             cancel: cancel.clone(),
@@ -686,7 +687,13 @@ impl Engine {
                     self.prepare_turn_plugins(cell.clone(), turn_id, pending).await?;
                 }
                 anyhow::ensure!(!cancel.is_cancelled(), "cancelled before turn preparation completed");
-                if exclusive {
+                // 继承分析者的已冻结插件 hooks 可能在首个工具之前产生副作用，沿用整轮作者租约。
+                let inherited_hooks = {
+                    let state = cell.state.lock().await;
+                    state.thread.desktop.as_ref().is_some_and(|d| d.execution_policy.deferred_write)
+                        && state.active.as_ref().is_some_and(|active| !active.hooks.is_empty())
+                };
+                if exclusive || inherited_hooks {
                     let guard=tokio::select! {biased; _=cancel.cancelled()=>anyhow::bail!("cancelled before writer admission"), guard=self.workspace_gate.clone().write_owned()=>guard};
                     self.ensure_workspace_processes_settled().await?;
                     cell.state.lock().await.active.as_mut().unwrap().workspace_exclusive=true;
@@ -1004,6 +1011,14 @@ impl Engine {
         }
         // 副作用与清理均已结束；必须先释放写租约，再发布资源已结算的观察结果。
         drop(workspace_guard);
+        drop(
+            state
+                .active
+                .as_mut()
+                .unwrap()
+                .deferred_workspace_guard
+                .take(),
+        );
         // 轨迹发送仅观察最终结算，不参与请求成败；时间来自执行记录而非上传时钟。
         if let Some(turn) = state.thread.turns.last() {
             let status = match turn.status {

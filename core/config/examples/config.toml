@@ -4,6 +4,10 @@ schema_version = 2
 # 默认 YOLO；需要工具审批时改为 ASK_PERMISSIONS。
 mode = "YOLO"
 
+[delegation]
+# 默认保留强制只读；显式 inherit 继承父权限，不承诺源码不可写。
+inspection_permissions = "read-only"
+
 [server]
 listen = "127.0.0.1:4500"
 # data_dir defaults to <AREAL_HARNESS_HOME>/state.

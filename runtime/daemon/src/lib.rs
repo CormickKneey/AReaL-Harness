@@ -332,6 +332,9 @@ fn immediate(runtime: &Supervisor, method: &str, params: Value) -> Option<Result
         "scope.createParticipant" => parse(params)
             .and_then(|request| runtime.create_participant_scope(request))
             .map(|value| json!(value)),
+        "scope.check" => parse(params)
+            .and_then(|request| runtime.check_scope(request))
+            .map(|v| json!(v)),
         "scope.create" => parse(params)
             .and_then(|request| runtime.create_scope(request))
             .map(|v| json!(v)),

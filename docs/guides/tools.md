@@ -6,6 +6,8 @@ Core 注册表将名称、JSON Schema 与内置/命令/客户端/MCP/插件后�
 
 本地默认 YOLO；文件工具与命令 cwd 接受工作区外绝对路径，Core 规范化为 `workspace://host`，Runtime full-access 才允许。相对路径仍从工作区解析，argv 中使用普通文件路径。ASK_PERMISSIONS 在执行前审批实际参数，见[权限配置](configuration.md#permissions)。launcher 自动提供每 Thread scratch；隔离 Workgroup 使用其工作区内的私有 `.scratch/agent-<threadId>`，其 Scope 边界继续有效。
 
+模型请求同时带有实际 workspacePath、workspaceUri、commandCwd、scratchPath 和已探测的 restrictedScopes。`workspace://repo` 映射到实际工作区根，不是状态目录下的 repo 子目录；临时 scratch 不是交付目录。生成文件应从用户要求的最终位置重新打开，业务计算应使用独立预期或小样本核对；schema、退出码和内部加总一致各自只证明对应的局部约束。Scope 创建前的明确 UNSUPPORTED/权限拒绝作为未派发的工具失败返回，UNKNOWN 仍停止执行。
+
 内置 `run_command` 向模型提供普通 object schema，描述中要求 `command` 或 `argv` 二选一，避免部分模型端点拒绝顶层 `oneOf`。Core 的执行校验仍保留完整 `oneOf` 契约，拒绝同时提供或同时省略两个入口；模型投影和执行校验均包含 Runtime 的期限上限。该投影只适用于内置命令工具，不修改外部工具的 schema。
 
 | 工具 | 关键参数与边界 |
@@ -22,7 +24,7 @@ Core 注册表将名称、JSON Schema 与内置/命令/客户端/MCP/插件后�
 | `read_process/write_process/terminate_process` | 本 Turn 进程句柄；续读、输入与终止 |
 | `read_history` | `itemId?,before?,limit?=8,after?,maxBytes?=8192`；按新到旧分页（1–16），nextBefore 续页；指定 itemId 后以 nextCursor 回取原始 JSON |
 | `read_tool_result` | `resultId,after?=null,maxBytes?=8192`；读取本 Thread 历史调用的原始 JSON，按 nextCursor 续页，不执行原工具 |
-| `task_state` | `{pendingAfter?}`；返回有界的已观察文件/进程/子任务/scratch 与 summaryThroughItemId，不进行实时探测 |
+| `task_state` | `{pendingAfter?}`；返回已观察文件/进程/子任务、workspacePath/workspaceUri/commandCwd/scratchPath 与 summaryThroughItemId；超大路径明确省略，不进行实时探测 |
 
 文件最大 8 MiB，单次写/patch 64 KiB，另受每个调用参数 64 KiB 预算限制。显式 fileVersion 和 expectedSha256 互斥；SHA 为 null 表示仅新建。成功编辑返回新版本与规范路径，shell/外部编辑不自动刷新观察，CAS 冲突后需重新读取。行过长或遇到非 UTF-8 二进制内容时使用 fs_read；PNG/JPEG/WebP 图像使用 image_read。read 通过 Python、search 通过内置 Rust 搜索助手在同一 Scope 中执行、最长 15 秒；Linux 从可信宿主 PATH 查找并解析可执行 Python 3，macOS 使用受支持的系统 Python；没有解释器时仅 read_file 不可用，启动服务不受影响。受限 Scope 仍要求解释器位于 Runtime 允许的系统路径中，不自动扩大沙箱权限。搜索库编译进 Runtime 文件助手，使用 Runtime 提供的助手绝对路径，不读取宿主 rg 配置或工作区外 ignore。
 
@@ -33,6 +35,8 @@ Core 注册表将名称、JSON Schema 与内置/命令/客户端/MCP/插件后�
 原生文件源上限仍为 8 MiB；更大文本应使用命令工具流式筛选并限制输出。按需加载不会消除历史累积，最终请求另受 `model.max_request_bytes` 约束，见[配置](configuration.md)。
 
 `verify_command` 将完整输出（最多 64 MiB）及 receipt 写入 scratch/verification，记录退出状态、日志与执行前后源码指纹。指纹覆盖 Git 跟踪和未忽略文件，非 Git 目录使用排除依赖/构建/缓存的扫描；源码变化使验证过期。receipt 位于任务可写目录，不是对恶意任务的认证。收尾时未结束的验证进程需要续读终态或显式终止；普通后台 run_command 不受此约束，也不会唤醒已结束 Turn。
+
+macOS 的受限命令直接调用 `bash`/`sh` 时使用随 Runtime 发布的私有 Bash，here-document 使用独立 scratch；系统 Git 在沙箱前解析到可信工具链程序，默认不读取工作区外的系统/用户 Git 配置。源码写入、网络和外部临时文件权限仍由原 Scope 限制。嵌套硬编码 `/bin/bash` 或其 shebang 仍是系统旧 Bash，完整边界见 [Runtime 契约](../api/runtime.md#macos-受限命令的系统工具)。
 
 ## 设计取舍
 
@@ -74,6 +78,8 @@ read_process 省略 after 接续本 Turn 最近返回的游标，显式 null 从
 
 ## 扩展配置
 
+`task_state` 是 Core 诊断查询，不创建 Runtime Scope、不运行执行 hooks，也不占普通工具执行槽；明确的执行准入拒绝后仍可查询已知句柄和工作区事实。权限规则和所属会话校验继续有效。独立计算和最终交付核对的模型指导由显式 `limits.execution_tracking` 候选提供，默认关闭；任务收益需要单独验证。
+
 在用户 TOML 中设置 `[tools] extensions_file="tools.json"`，JSON 可包含 policy、tools、hooks、mcpServers、plugins、agents。文件限 1 MiB，启动时校验，不自动读取工作区配置。可运行的插件配置见 [tools.json](../../core/sdk-typescript/examples/tools.json)，MCP 见[专页](mcp.md)。
 
 命令工具项为 `{definition:{name,description,inputSchema,outputSchema?},argv,timeoutMs}`；最多 128 个总工具，名称 1–64 ASCII 字母/数字/下划线/连字符，不能重名。schema 使用 Draft 2020-12，禁止外部 `$ref`，输入根为 object，不自动填 schema default。
@@ -93,6 +99,8 @@ read_process 省略 after 接续本 Turn 最近返回的游标，显式 null 从
 输入一行 `{event,threadId,turnId,callId,tool,arguments,result}`，stdout 对象可含 decision（默认 allow）、reason、updatedArguments。初始拒绝、pre 阻止和 UNKNOWN 不运行 post。主工具和 hook 分别 journal；post 崩溃不抹掉已确认的工具结果。检查 UNKNOWN 后通过 acknowledge 记录说明。
 
 客户端工具宿主自行负责副作用；TUI/Web 不执行任意客户端回调。插件与 stdio MCP 的宿主信任边界见[插件](../design/plugins.md)和 [MCP](mcp.md)。
+
+普通 `agent_spawn` 的 `intent="inspect"` 是工作职责。默认额外强制源码只读；可信部署显式设置 `delegation.inspection_permissions="inherit"` 才继承父权限。工作区事实的 `inspectionPermissions` 与 `restrictedScopes` 分别表示策略和环境能力；不可用的 restrictedScopes 只阻止实际需要受限执行的子任务，父/Profile 已有只读不会被移除。继承模式下原生读取可并行，命令或外部副作用取得整 Turn 写租约；无法保证源码不可写。强制只读模式、旧 sharedReadOnly 和下述研究 Agent 继续要求 OS 隔离。详见[权限策略](configuration.md#分析子任务的权限策略)。
 
 <a id="research-agents"></a>
 ## 可选研究 Agent

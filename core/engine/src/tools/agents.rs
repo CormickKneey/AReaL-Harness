@@ -1,6 +1,7 @@
 //! Optional model-controlled research tasks; Core owns lifetime, Runtime owns permissions.
 use super::*;
 use areal_protocol::ToolDefinition;
+use areal_protocol::delegation::{ExecutionOwner, ExecutionRef};
 
 pub(super) fn definitions() -> Vec<ToolDefinition> {
     let task = json!({"oneOf":[{"type":"string","minLength":1,"maxLength":16000},
@@ -150,17 +151,36 @@ pub(super) fn invoke<'a>(
 }
 
 impl Engine {
-    pub(super) async fn task_state(
+    pub(crate) fn workspace_context(&self, cell: &Cell) -> Option<crate::model::Message> {
+        let runtime = self.runtime.as_ref()?;
+        let paths = json!({
+            "workspacePath":runtime.workspace,"workspaceUri":"workspace://repo",
+            "commandCwd":runtime.workspace,"scratchPath":self.command_scratch(cell),
+            "restrictedScopes":runtime.client.info().capabilities.get("restrictedScopes"),
+            "inspectionPermissions":self.limits.inspection_permissions.as_str(),
+        });
+        Some(crate::model::Message::text(
+            "system",
+            format!(
+                "Execution environment facts: {paths}. File-tool workspace://repo names workspacePath; run_command without cwd starts at commandCwd. Requested relative deliverable paths resolve at commandCwd. scratchPath is temporary storage, not the deliverable directory. inspectionPermissions=read-only requires restricted inspection children; inherit keeps parent permissions and adds no read-only OS guarantee. Parent/Profile read-only constraints still apply. If restrictedScopes.available=false, children requiring restricted execution cannot run: keep that work local and do not retry the same unavailable delegation or widen permissions. Delegate only separable work with useful evidence and enough benefit to justify coordination."
+            ),
+        ))
+    }
+
+    pub(crate) async fn task_state(
         &self,
         cell: &Cell,
         pending_after: Option<&str>,
     ) -> anyhow::Result<Value> {
-        let (mut value, children) = {
+        let (mut value, children, execution_ids) = {
             let state = cell.state.lock().await;
             let active = state.active.as_ref().context("Turn inactive")?;
             let mut value = active.handles.snapshot();
             value["pendingVerifications"] = active.handles.pending_verification_page(pending_after);
             value["turnId"] = json!(active.id);
+            value["workspacePath"] = json!(self.runtime.as_ref().map(|runtime| &runtime.workspace));
+            value["workspaceUri"] = json!("workspace://repo");
+            value["commandCwd"] = json!(self.runtime.as_ref().map(|runtime| &runtime.workspace));
             value["scratchPath"] = json!(self.command_scratch(cell));
             value["scratchUri"] = json!(self.scratch_uri(cell));
             value["summaryThroughItemId"] = json!(
@@ -170,13 +190,51 @@ impl Engine {
                     .as_ref()
                     .map(|c| &c.through_item_id)
             );
-            (value, active.children.clone())
+            let records: Vec<_> = state
+                .thread
+                .desktop
+                .as_ref()
+                .into_iter()
+                .flat_map(|d| &d.executions)
+                .filter(|record| match &record.owner {
+                    ExecutionOwner::Turn { turn_id, .. } => turn_id == &active.id,
+                    ExecutionOwner::TaskRun { goal_id, .. } => state
+                        .thread
+                        .goals
+                        .goal
+                        .as_ref()
+                        .is_some_and(|goal| &goal.id == goal_id),
+                })
+                .collect();
+            value["executions"] = json!(records.iter().take(64).map(|record| json!({
+                "executionId":record.execution_id,"strategy":record.strategy,"title":prefix(&record.title,160),
+                "creationError":record.error.as_ref().map(|error|prefix(error,256)),
+            })).collect::<Vec<_>>());
+            value["executionCount"] = json!(records.len());
+            if records.len() > 64 {
+                value["listsTruncated"] = json!(true);
+            }
+            let execution_ids: BTreeMap<_, _> = records
+                .into_iter()
+                .filter_map(|record| match &record.execution {
+                    Some(ExecutionRef::Thread { thread_id, .. }) => {
+                        Some((thread_id.clone(), record.execution_id.clone()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            (value, active.children.clone(), execution_ids)
         };
         let mut agents = Vec::new();
         for id in children.iter().take(64) {
             let child = self.cell(id).await?;
             let state = child.state.lock().await;
-            let row = json!({"threadId":id,"status":state.thread.turns.last().map(|t| &t.status)});
+            let mut row = json!({"status":state.thread.turns.last().map(|t| &t.status)});
+            if let Some(execution_id) = execution_ids.get(id) {
+                row["executionId"] = json!(execution_id);
+            } else {
+                row["threadId"] = json!(id);
+            }
             if value.to_string().len() + serde_json::to_vec(&agents)?.len() + row.to_string().len()
                 > 14000
             {
@@ -188,7 +246,7 @@ impl Engine {
         value["agentCount"] = json!(children.len());
         // Include metadata in the total budget too (deep scratch paths can be
         // large). Never return a truncated path or opaque handle as usable.
-        for field in ["files", "processes", "agents"] {
+        for field in ["files", "processes", "agents", "executions"] {
             while value.to_string().len() > MAX_RESULT - 512 {
                 if value[field].as_array_mut().unwrap().pop().is_none() {
                     break;
@@ -200,6 +258,11 @@ impl Engine {
             value.as_object_mut().unwrap().remove("scratchPath");
             value.as_object_mut().unwrap().remove("scratchUri");
             value["scratchPathsOmitted"] = json!(true);
+        }
+        if value.to_string().len() > MAX_RESULT - 512 {
+            value.as_object_mut().unwrap().remove("workspacePath");
+            value.as_object_mut().unwrap().remove("commandCwd");
+            value["workspacePathsOmitted"] = json!(true);
         }
         Ok(value)
     }
