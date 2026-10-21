@@ -116,6 +116,7 @@ function responsesProviders(t, endpoint, environment = {}) {
     apiKeyEnv: "AREAL_CREDENTIAL_fixture",
     models: [{ id: "fixture-model", enabled: true }],
   }] };
+  providers.config.current = async () => providers.value;
   t.after(() => providers.close());
   return providers;
 }
@@ -149,6 +150,87 @@ test("Responses connection probe sends the saved endpoint and validates real SSE
     authorization: `Bearer ${responsesKey}`,
     body: { model: "fixture-model", input: [{ role: "user", content: "Reply with OK." }], store: false, stream: true },
   }]);
+});
+
+test("self-contained model discovery works without saved configuration and saved keys still check revisions", { timeout: 5000 }, async t => {
+  const requests = [];
+  const port = await listen(t, httpServer((req, res) => {
+    requests.push({ path: req.url, authorization: req.headers.authorization ?? null });
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ data: [{ id: "draft-model" }] }));
+  }));
+  const providers = responsesProviders(t, `http://127.0.0.1:${port}/v1/responses`);
+  providers.config.current = async () => { throw new Error("saved configuration unavailable"); };
+  for (const credential of [{ kind: "none" }, { kind: "draft", value: "synthetic-draft-key" }]) {
+    assert.deepEqual(await providers.command({ operation: "discover", connection: {
+      protocol: "responses", baseUrl: `http://127.0.0.1:${port}/v1`, credential,
+    } }), { models: ["draft-model"] });
+  }
+  assert.deepEqual(requests, [
+    { path: "/v1/models", authorization: null },
+    { path: "/v1/models", authorization: "Bearer synthetic-draft-key" },
+  ]);
+  providers.config.current = async () => {
+    providers.config.value.revision = "new-revision";
+    return providers.config.value;
+  };
+  await assert.rejects(providers.command({ operation: "discover", connection: {
+    protocol: "responses", baseUrl: `http://127.0.0.1:${port}/v1`,
+    credential: { kind: "saved", providerId: "responses-fixture", expectedRevision: "stale" },
+  } }), /刷新/);
+  assert.equal(requests.length, 2, "a stale stored credential never reaches the upstream server");
+});
+
+for (const protocol of ["responses", "chat-completions"]) {
+  test(`${protocol} connection probe completes and releases an open successful stream`, { timeout: 5000 }, async (t) => {
+    let endedByServer = false;
+    let closed;
+    const disconnected = new Promise(resolve => { closed = resolve; });
+    const server = httpServer(async (req, res) => {
+      for await (const _ of req) {}
+      res.on("close", closed);
+      res.writeHead(200, { "Content-Type": "text/event-stream" });
+      res.write(protocol === "responses"
+        ? 'data: {"type":"response.output_text.delta","delta":"OK"}\n\ndata: {"type":"response.completed","response":{"status":"completed"}}\n\n'
+        : 'data: {"choices":[{"index":0,"delta":{"content":"OK"},"finish_reason":null}]}\n\ndata: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n');
+    });
+    const port = await listen(t, server);
+    const providers = responsesProviders(t, `http://127.0.0.1:${port}/v1/responses`);
+    providers.value.data[0].protocol = protocol;
+    let timer;
+    const guard = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        endedByServer = true;
+        server.closeAllConnections();
+        reject(new Error("connection probe must complete before upstream EOF"));
+      }, 1500);
+    });
+    try {
+      assert.deepEqual(await Promise.race([providers.test(responsesProbe), guard]), { state: "connected" });
+      assert.equal(endedByServer, false);
+      await Promise.race([disconnected, guard]);
+    } finally { clearTimeout(timer); }
+  });
+}
+
+test("connection probes reject empty, incomplete and failed terminal replies", { timeout: 5000 }, async t => {
+  const cases = [
+    { protocol: "responses", body: 'data: {"type":"response.completed","response":{"status":"completed"}}\n\n' },
+    { protocol: "responses", body: 'data: {"type":"response.output_text.delta","delta":"OK"}\n\n' },
+    { protocol: "responses", body: 'data: {"type":"response.output_text.delta","delta":"OK"}\n\ndata: {"type":"response.failed"}\n\n' },
+    { protocol: "chat-completions", body: 'data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n' },
+    { protocol: "chat-completions", body: 'data: {"choices":[{"index":0,"delta":{"content":"OK"},"finish_reason":"length"}]}\n\n' },
+  ];
+  for (const sample of cases) await t.test(`${sample.protocol} rejects ${sample.body}`, async t => {
+    const port = await listen(t, httpServer(async (req, res) => {
+      for await (const _ of req) {}
+      res.writeHead(200, { "Content-Type": "text/event-stream" });
+      res.end(sample.body);
+    }));
+    const providers = responsesProviders(t, `http://127.0.0.1:${port}/v1/responses`);
+    providers.value.data[0].protocol = sample.protocol;
+    await assert.rejects(providers.test(responsesProbe), /未完成有效/);
+  });
 });
 
 test("Responses connection refusal reports a safe actionable transport failure", { timeout: 5000 }, async (t) => {
@@ -351,6 +433,7 @@ for (const kind of ["http", "socks"])
       const backend = { hooks: { environment: () => ({ ...process.env }) } };
       const providers = new AppProviders(backend);
       providers.config.value = { data: [{ id: 'fixture', endpoint: process.env.FIXTURE_ENDPOINT, protocol: 'chat-completions', models: [{ id: 'fixture-model', enabled: true }] }] };
+      providers.config.current = async () => providers.value;
       try {
         const found = await providers.test({ id: 'fixture', operation: 'discover' });
         if (JSON.stringify(found.models) !== '["fixture-model"]') throw new Error('discovery failed');

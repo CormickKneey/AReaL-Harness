@@ -19,6 +19,7 @@ await mkdir(workspace); await mkdir(join(userHome, ".areal"), { recursive: true 
 execFileSync("git", ["init", "-b", "main"], { cwd: workspace, stdio: "ignore" });
 const requests = [];
 const modelRequests = [];
+const probeRequests = [];
 let releaseHeldReply;
 const server = createServer(async (request, response) => {
   if (request.method === "GET" && request.url.endsWith("/models")) {
@@ -28,6 +29,14 @@ const server = createServer(async (request, response) => {
   }
   let body = ""; for await (const chunk of request) body += chunk;
   const payload = JSON.parse(body);
+  if (payload.messages?.length === 1 && payload.messages[0].content === "Reply with OK.") {
+    const probe = { terminalSent: true, closed: false };
+    probeRequests.push(probe);
+    response.on("close", () => { probe.closed = true; });
+    response.writeHead(200, { "Content-Type": "text/event-stream" });
+    response.write('data: {"choices":[{"index":0,"delta":{"content":"OK"},"finish_reason":null}]}\n\ndata: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n');
+    return;
+  }
   const naming = payload.messages?.some(message => message.role === "system" && JSON.stringify(message.content).includes("Generate a concise semantic session title"));
   if (!naming) {
     requests.push({ model: payload.model, authenticated: request.headers.authorization === "Bearer fixture-key", authorizationPresent: request.headers.authorization !== undefined });
@@ -436,7 +445,7 @@ async function verifyModelDefaults(projectId) {
   const secondWorkspace = join(scratch, "second-workspace");
   await mkdir(secondWorkspace); execFileSync("git", ["init", "-b", "main"], { cwd: secondWorkspace, stdio: "ignore" });
   await app.evaluate(({ dialog }, path) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] }); }, secondWorkspace);
-  await page.evaluate(() => window.arealDesktop.chooseProject());
+  await button("打开项目").click();
   await until(snapshot => snapshot.projects.find(item => item.root === secondWorkspace)?.state?.connected, "second project ready");
   await createProjectConversation(page, "second-workspace"); await expectModel("Alpha", "高");
   await page.screenshot({ path: join(scratch, "last-model-cross-project.png"), animations: "disabled" });
@@ -479,7 +488,7 @@ async function verifyModelDefaults(projectId) {
 }
 try {
   await launch();
-  await page.evaluate(() => window.arealDesktop.chooseProject());
+  await button("打开项目").click();
   await createProjectConversation(page, "workspace");
   const ready = await until(s => fixtureProject(s)?.state?.connected && fixtureProject(s).models.length === 3, "unavailable Core catalog");
   const projectId = fixtureProject(ready).id;
@@ -564,7 +573,27 @@ try {
   assert.equal(saved.pendingApply, false, "save confirms persistence and Core synchronization");
   await until(s => fixtureProject(s).models.some(m => m.available === true), "single save makes model available in Core");
   await page.screenshot({ path: join(scratch, "saved-model-configuration.png"), animations: "disabled" });
+  await button("测试连接").click();
+  await page.getByText("模型 theta-model 连接成功", { exact: true }).waitFor({ timeout: 5000 });
+  assert.equal(await button("测试连接").isEnabled(), true);
+  await until(() => probeRequests.length === 1 && probeRequests[0].closed, "successful probe releases the held HTTP stream");
+  await page.screenshot({ path: join(scratch, "connection-probe-terminal.png"), animations: "disabled" });
+  checks.push("The settings Test connection action succeeds and releases a gateway stream that sends a valid terminal event without closing");
   await button("返回应用").click();
+  await createProjectConversation(page, "workspace");
+  await page.getByTestId("chat-input").fill("OPEN_PROJECT_CANCEL_DRAFT");
+  const projectBeforeCancel = await page.getByTestId("areal-workbench").getAttribute("data-project-id");
+  await app.evaluate(({ dialog }) => { dialog.showOpenDialog = async () => ({ canceled: true, filePaths: [] }); });
+  await button("打开项目").click();
+  assert.equal((await page.getByTestId("chat-input").textContent()).trim(), "OPEN_PROJECT_CANCEL_DRAFT");
+  assert.equal(await page.getByTestId("areal-workbench").getAttribute("data-project-id"), projectBeforeCancel);
+  assert.equal((await state()).projects.filter(item => item.root === workspace).length, 1);
+  await app.evaluate(({ dialog }, path) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] }); }, workspace);
+  await button("打开项目").click();
+  assert.equal((await state()).projects.filter(item => item.root === workspace).length, 1, "opening an existing project does not duplicate it");
+  await page.getByTestId("chat-input").fill("");
+  await page.screenshot({ path: join(scratch, "open-project-entry.png"), animations: "disabled" });
+  checks.push("Projects + opens the existing picker directly; cancel preserves the project and draft; reopening a directory keeps one registration");
   await button("定时任务").click();
   await button("新建自动化").click();
   await page.getByTestId("chat-input").waitFor();
@@ -737,6 +766,24 @@ try {
   await button("返回应用").click();
   await createProjectConversation(page, "workspace");
   await until(s => fixtureProject(s).models.length === 0, "empty Core catalog");
+  const fallbackNotice = page.getByRole("status").filter({ hasText: "上次使用的模型" });
+  await fallbackNotice.waitFor();
+  assert.doesNotMatch(await fallbackNotice.innerText(), /已显示备用默认模型/);
+  assert.equal(await button("发送").isDisabled(), true);
+  for (const width of [1440, 980]) {
+    await app.evaluate(({ BrowserWindow }, width) => BrowserWindow.getAllWindows()[0].setSize(width, 960), width);
+    await page.waitForFunction(width => innerWidth === width, width);
+    await page.waitForFunction(() => {
+      const bar = document.querySelector(".composer-project-bar")?.getBoundingClientRect();
+      const surface = document.querySelector(".draft-composer .composer-surface")?.getBoundingClientRect();
+      return bar && surface && surface.top <= bar.bottom + 1;
+    });
+    const rect = await fallbackNotice.boundingBox();
+    assert.ok(rect && rect.x >= 0 && rect.width > 0 && rect.x + rect.width <= width);
+    await page.screenshot({ path: join(scratch, `fallback-notice-${width}.png`), animations: "disabled" });
+  }
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1440, 960));
+  checks.push("Missing fallback displays truthful text; the project bar stays attached to the composer in normal and narrow windows");
   assert.equal(await button("模型").isEnabled(), true);
   await button("模型").click();
   await page.getByRole("heading", { name: "模型设置", exact: true }).waitFor();
@@ -773,6 +820,7 @@ try {
   const hashes = Object.fromEntries(await Promise.all(files.map(async file => [file, createHash("sha256").update(await readFile(join(gui, file))).digest("hex")])));
   const coreUnchanged = createHash("sha256").update(await readFile(coreBinary)).digest("hex") === coreSha256;
   await writeFile(join(scratch, "model-requests.json"), JSON.stringify(modelRequests, null, 2));
+  await writeFile(join(scratch, "probe-requests.json"), JSON.stringify(probeRequests, null, 2));
   if (!coreUnchanged) { errors.push("Core binary changed during acceptance"); passed = false; process.exitCode = 1; }
   await writeFile(join(scratch, "manifest.json"), JSON.stringify({ passed, checks, errors, failure, stoppedServices, source: execFileSync("git", ["rev-parse", "HEAD"], { cwd: gui, encoding: "utf8" }).trim(), hashes, core: { binary: coreBinary, sha256: coreSha256, unchanged: coreUnchanged }, executable: process.env.AREAL_GUI_EXECUTABLE || "source Electron", scope: "isolated Electron/Core model selection, defaults, and cold recovery; deterministic local authenticated fixture" }, null, 2));
   console.log(JSON.stringify({ passed, evidence: scratch, checks, errors }));
