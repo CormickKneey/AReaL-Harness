@@ -51,7 +51,7 @@ export function ModelSettings({ action, onOpenSessionSettings }: { action: Actio
   const provider = draft ?? items.find(p => p.id === selected);
   const authentication = provider?.authentication ?? (provider?.apiKeyEnv ? "apiKey" : "none");
   const visibleModels = (provider?.models ?? []).map((model: Data, index: number) => ({ model, index })).filter(({ model }: { model: Data }) => `${model.displayName ?? ""} ${model.id}`.toLowerCase().includes(modelQuery.toLowerCase()));
-  const edit = (patch: Data) => setDraft({ ...provider, ...patch, basedOnRevision: draft?.basedOnRevision ?? state.value?.revision });
+  const edit = (patch: Data) => { setDraft({ ...provider, ...patch, basedOnRevision: draft?.basedOnRevision ?? state.value?.revision }); setMessage(""); };
   const select = (item: Data) => { setSelected(item.id); setPicker(false); setConnectionChoice(null); setDraft(null); setKey(undefined); setKeyVisible(false); setModelQuery(""); setError(""); setMessage(""); };
   const choose = (id: string) => navigate(() => { setSelected(id); setDetailTab("models"); setPicker(false); setConnectionChoice(null); setDraft(null); setKey(undefined); setKeyVisible(false); setModelQuery(""); setError(""); setMessage(""); });
   const save = async (candidate = provider, apiKey = key) => {
@@ -69,10 +69,13 @@ export function ModelSettings({ action, onOpenSessionSettings }: { action: Actio
     }
     const saved = candidate.id ? result.data.find((p: Data) => p.id === candidate.id) : result.data.at(-1);
     state.accept(result); select(saved); setProbe({});
-    setMessage("");
+    setMessage({ id: "settings.modelSettings.savedAndApplied" });
     return saved;
   };
   const baseline = items.find(item => item.id === selected);
+  const credentialSource = provider?.id && state.value?.credentialStates?.[provider.id] === "available" ? state.value?.credentialSources?.[provider.id] : "none";
+  const apiKeyStatus = credentialSource === "stored" ? t("settings.modelSettings.apiKeyStored")
+    : credentialSource === "environment" ? t("settings.modelSettings.apiKeyEnvironment") : t("settings.modelSettings.apiKeyMissing");
   // 开关与输入框是草稿；状态只投影 Core 的已保存目录和凭据诊断。
   const savedStatus = (item?: Data) => !item ? t("settings.modelSettings.unsaved") : !item.enabled ? t("settings.modelSettings.disabled")
     : state.value?.credentialStates?.[item.id] === "unavailable" ? t("settings.modelSettings.missingCredentials") : t("settings.modelSettings.available");
@@ -216,6 +219,7 @@ export function ModelSettings({ action, onOpenSessionSettings }: { action: Actio
           </div>
           {authentication === "apiKey" ? <>
             <ProviderApiKeySection apiKeyValue={key ?? ""} apiKeyVisible={keyVisible} onApiKeyChange={value => { setKey(value); edit({}); }} onToggleApiKeyVisibility={() => setKeyVisible(!keyVisible)} onApiKeyBlur={() => {}} />
+            <p role="status" className="settings-muted">{apiKeyStatus}</p>
           </> : null}
           <SettingsDisclosure title={<> {t("settings.modelSettings.advancedParameters")}</>}><div className="settings-field-pair mt-3">
             <label>{t("settings.modelSettings.maximumOutputTokens")}<Input type="number" min={1} step={1} value={provider.parameters.maxOutputTokens ?? ""} onChange={e => edit({ parameters: { ...provider.parameters, maxOutputTokens: e.target.value === "" ? null : Number(e.target.value) } })} /></label>

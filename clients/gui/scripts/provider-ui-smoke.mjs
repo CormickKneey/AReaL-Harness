@@ -12,6 +12,7 @@ const require = createRequire(join(gui, "app/package.json"));
 const { chromium } = require("playwright-core");
 const dist = join(gui, "renderer/dist");
 const evidence = await mkdtemp(join(tmpdir(), "areal-provider-ui-"));
+const apiKeyFeedbackOnly = process.argv.includes("--api-key-feedback");
 const checks = [],
   errors = [];
 const server = createServer(async (request, response) => {
@@ -39,7 +40,7 @@ const server = createServer(async (request, response) => {
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 let browser,
   passed = false;
-try {
+providerUiChecks: try {
   browser = await chromium.launch({
     headless: true,
     executablePath: process.env.AREAL_GUI_TEST_BROWSER ?? "/usr/bin/chromium",
@@ -112,15 +113,27 @@ try {
         },
       ],
     };
-    let revision = 0;
+    let revision = 0,
+      projectionSequence = 0,
+      projectionListener;
     window.arealDesktop = {
-      snapshot: async () => snapshot,
-      onState: (listener) => {
-        window.setTestState = listener;
+      requestProjection: (requestId) => projectionListener({
+        requestId,
+        frame: {
+          projection: 1,
+          stream: "provider-ui-fixture",
+          sequence: ++projectionSequence,
+          kind: "full",
+          snapshot: structuredClone(snapshot),
+        },
+      }),
+      onProjection: (listener) => {
+        projectionListener = listener;
         return () => {};
       },
       theme: async () => ({ platform: "darwin", dark: false, id: "light" }),
       onTheme: () => () => {},
+      onMcpAppEvent: () => () => {},
       presentReady: async () => {},
       preview: async () => ({}),
       command: async (name, params) => {
@@ -186,6 +199,115 @@ try {
   await page.getByRole("button", { name: "设置", exact: true }).click();
   await page.getByRole("button", { name: "模型设置", exact: true }).click();
   await page.locator(".provider-catalog-row").filter({ hasText: "API Fixture" }).click();
+  await page.getByRole("tab", { name: "连接配置", exact: true }).click();
+  const apiKey = page.getByTestId("provider-api-key");
+  const savedKeyStatus = "API Key 已安全保存。留空保留，输入新值替换。";
+  await page.screenshot({ path: join(evidence, "saved-api-key.png"), fullPage: true });
+  assert.equal(
+    await page.getByText(savedKeyStatus, { exact: true }).count(),
+    1,
+    "opening a stored connection must explain that its API Key is saved while the replacement draft stays empty",
+  );
+  assert.equal(await apiKey.inputValue(), "");
+  assert.equal(await apiKey.getAttribute("type"), "password");
+  assert.equal(await apiKey.isEditable(), true);
+  assert.equal(
+    await page.getByRole("button", { name: "显示 API Key", exact: true }).isDisabled(),
+    true,
+  );
+  await apiKey.fill("fixture-replacement-key");
+  assert.equal(
+    await page.getByRole("button", { name: "显示 API Key", exact: true }).isEnabled(),
+    true,
+  );
+  await page.getByRole("button", { name: "显示 API Key", exact: true }).click();
+  assert.equal(await apiKey.getAttribute("type"), "text");
+  assert.equal(await apiKey.inputValue(), "fixture-replacement-key");
+  await page.getByRole("button", { name: "隐藏 API Key", exact: true }).click();
+  await page.getByRole("button", { name: "保存", exact: true }).click();
+  await page.getByText("已保存并应用。", { exact: true }).waitFor();
+  assert.equal(await apiKey.inputValue(), "");
+  assert.equal(await apiKey.getAttribute("type"), "password");
+  assert.equal(
+    await page.getByRole("button", { name: "显示 API Key", exact: true }).isDisabled(),
+    true,
+  );
+  assert.equal(await page.getByText(savedKeyStatus, { exact: true }).count(), 1);
+  assert.deepEqual(
+    await page.evaluate(() => {
+      const saved = window.calls.findLast(
+        (call) => call.name === "providers" && call.params.operation === "saveAndApply",
+      );
+      return {
+        authentication: saved.params.authentication,
+        apiKey: saved.params.apiKey,
+        source: window.fixtureProviders.credentialSources["fixture-api"],
+        state: window.fixtureProviders.credentialStates["fixture-api"],
+      };
+    }),
+    {
+      authentication: "apiKey",
+      apiKey: "fixture-replacement-key",
+      source: "stored",
+      state: "available",
+    },
+  );
+  assert.equal(
+    await page.evaluate(
+      () => window.calls.filter((call) => call.params?.operation === "probe").length,
+    ),
+    0,
+    "saving and applying a credential must not claim a connection probe succeeded",
+  );
+  assert.equal(await page.getByText(/连接成功/).count(), 0);
+  await apiKey.fill("fixture-next-draft");
+  assert.equal(await page.getByText("已保存并应用。", { exact: true }).count(), 0);
+  await page.getByRole("button", { name: "取消修改", exact: true }).click();
+  await page.getByRole("button", { name: "放弃修改并继续", exact: true }).click();
+  await page.locator(".provider-catalog-row").filter({ hasText: "ChatGPT" }).click();
+  await page.locator(".provider-catalog-row").filter({ hasText: "API Fixture" }).click();
+  await page.getByRole("tab", { name: "连接配置", exact: true }).click();
+  assert.equal(await page.getByText(savedKeyStatus, { exact: true }).count(), 1);
+  assert.equal(await apiKey.inputValue(), "");
+  assert.equal(await page.getByText("已保存并应用。", { exact: true }).count(), 0);
+  for (const [source, state, status] of [
+    [
+      "environment",
+      "available",
+      "正在使用环境变量中的 API Key。留空保留，输入新值替换。",
+    ],
+    ["none", "unavailable", "尚未配置可用的 API Key。"],
+    ["stored", "available", savedKeyStatus],
+  ]) {
+    await page.evaluate(
+      ({ source, state }) => {
+        window.fixtureProviders.credentialSources["fixture-api"] = source;
+        window.fixtureProviders.credentialStates["fixture-api"] = state;
+      },
+      { source, state },
+    );
+    await page.getByRole("button", { name: "刷新供应商", exact: true }).click();
+    await page.getByText(status, { exact: true }).waitFor();
+    await page.locator(".provider-catalog-row").filter({ hasText: "ChatGPT" }).click();
+    await page.locator(".provider-catalog-row").filter({ hasText: "API Fixture" }).click();
+    await page.getByRole("tab", { name: "连接配置", exact: true }).click();
+    assert.equal(await page.getByText(status, { exact: true }).count(), 1);
+    assert.equal(await apiKey.inputValue(), "");
+    assert.equal(
+      await page.getByRole("button", { name: "显示 API Key", exact: true }).isDisabled(),
+      true,
+    );
+  }
+  checks.push(
+    "Core credential metadata distinguishes stored, environment and missing keys; replacement drafts stay editable and empty after save; save feedback clears on editing and never implies a connection probe",
+  );
+  if (apiKeyFeedbackOnly) {
+    assert.equal(await page.locator("vite-error-overlay").count(), 0);
+    assert.deepEqual(errors, []);
+    passed = true;
+    break providerUiChecks;
+  }
+  await page.getByRole("tab", { name: "模型", exact: true }).click();
   await page.getByText("帮助", { exact: true }).click();
   await page.locator('[aria-label="供应商计费方式"]').filter({ hasText: "API 计费" }).waitFor();
   await page.getByRole("button", { name: "编辑模型 fixture-model", exact: true }).click();
@@ -417,7 +539,8 @@ try {
         errors,
         browserPath:
           "Browser plugin not available; existing local Chromium with Playwright automation",
-        viewports: ["1280x1000", "800x900"],
+        viewports: apiKeyFeedbackOnly ? ["1280x1000"] : ["1280x1000", "800x900"],
+        scope: apiKeyFeedbackOnly ? "api-key-feedback" : "provider-ui",
         fixtureOnly: true,
       },
       null,

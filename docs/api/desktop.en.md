@@ -323,6 +323,8 @@ The desktop `providers` command returns a fixed `error.code` and actionable guid
 
 Diagnostics omit raw exceptions, upstream text, URL queries, and credentials. HTTP 401/403 retain authentication guidance. Other HTTP errors retain their status code. Invalid streams retain model and protocol guidance. Responses probes still send `input`, `store:false`, and `stream:true` to the saved endpoint and require valid text with a successful terminal event.
 
+The API key input in model settings holds only an unsaved draft and clears after a successful save. The UI uses `credentialStates` and `credentialSources` to show secure storage, an environment source, or missing credentials without reading the saved key. A blank input preserves existing credentials; a new value replaces them. Successful saves show “Saved and applied.” A separate probe confirms connection success.
+
 ## Desktop background command compatibility
 
 The authenticated `areal.desktop-service.v1` snapshot adds `service.commandContract: "areal.desktop-commands.v1"`. This declaration belongs to the resident Desktop code and is independent of Rust Core capabilities. Main projects an exact match as `desktopCapabilities.currentCommands` at the snapshot root and on each project. It does not trust the same projection supplied by an older snapshot.

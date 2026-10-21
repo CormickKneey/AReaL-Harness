@@ -56,7 +56,7 @@ export function ApiKeyInput({
         type="button"
         variant="ghost"
         size="icon"
-        disabled={readOnly}
+        disabled={readOnly || !value}
         className="absolute top-1/2 right-1.5 -translate-y-1/2"
         aria-label={visible ? t("settings.apiKeyInput.hideAPIKey") : t("settings.apiKeyInput.showAPIKey")} onClick={onToggleVisibility}
       >

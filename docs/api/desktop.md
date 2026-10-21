@@ -321,6 +321,8 @@ GUI 服务的窄命令 `trajectory` 支持 `{operation:"status"}`、`{operation:
 
 诊断不包含原始异常、上游文本、地址查询参数或凭据。HTTP 401/403 继续返回认证提示，其他 HTTP 错误保留状态码；无效流式回复继续返回模型与协议提示。Responses 探测仍向已保存端点发送 `input`、`store:false` 和 `stream:true`，并要求有效文本及成功终态。
 
+模型设置的 API Key 输入框只保留待保存草稿，成功保存后清空。界面依据 `credentialStates` 和 `credentialSources` 显示安全保存、环境变量来源或缺少凭据；不读取已保存的密钥。留空保留现有凭据，输入新值替换。保存成功显示“已保存并应用”，连接成功仍由单独的探测确认。
+
 ## Desktop 后台命令兼容
 
 共享 Desktop 的 `areal.desktop-service.v1` 认证快照新增 `service.commandContract: "areal.desktop-commands.v1"`。这项声明来自驻留 Desktop 代码，与 Rust Core 的能力独立。Main 将精确匹配结果投影为顶层及每个项目的 `desktopCapabilities.currentCommands`，不采用旧快照自行声明的同名投影。
