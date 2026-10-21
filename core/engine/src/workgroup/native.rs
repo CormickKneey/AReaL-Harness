@@ -20,7 +20,7 @@ use std::{
     },
     task::{Context as TaskContext, Poll},
 };
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::Semaphore;
 
 #[derive(Clone, Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -63,7 +63,7 @@ impl LoadState {
 /// No request/usage is invented when a waiter is cancelled before admission.
 struct RequestLoad {
     load: Arc<Mutex<LoadState>>,
-    active: bool,
+    phase: crate::model::RequestPhase,
 }
 
 impl RequestLoad {
@@ -75,18 +75,30 @@ impl RequestLoad {
         }
         Self {
             load,
-            active: false,
+            phase: crate::model::RequestPhase::Waiting,
         }
     }
-    fn start(mut self) -> Self {
+    fn phase(&mut self, next: crate::model::RequestPhase) {
+        use crate::model::RequestPhase::{Active, Backoff, Waiting};
+        if self.phase == next {
+            return;
+        }
         let mut state = self.load.lock().unwrap();
         state.update();
-        state.snapshot.waiting -= 1;
-        state.snapshot.in_flight += 1;
-        state.snapshot.started_requests += 1;
-        self.active = true;
-        drop(state);
-        self
+        match self.phase {
+            Active => state.snapshot.in_flight -= 1,
+            Waiting => state.snapshot.waiting -= 1,
+            Backoff => {}
+        }
+        match next {
+            Active => {
+                state.snapshot.in_flight += 1;
+                state.snapshot.started_requests += 1;
+            }
+            Waiting => state.snapshot.waiting += 1,
+            Backoff => {}
+        }
+        self.phase = next;
     }
     fn completed(&self) {
         self.load.lock().unwrap().snapshot.completed_requests += 1;
@@ -95,20 +107,14 @@ impl RequestLoad {
 
 impl Drop for RequestLoad {
     fn drop(&mut self) {
-        let mut state = self.load.lock().unwrap();
-        state.update();
-        if self.active {
-            state.snapshot.in_flight -= 1;
-        } else {
-            state.snapshot.waiting -= 1;
-        }
+        self.phase(crate::model::RequestPhase::Backoff);
     }
 }
 
 struct InFlight {
-    // Drop the load count before releasing the permit to a new caller.
-    load: RequestLoad,
-    _permit: OwnedSemaphorePermit,
+    // 许可释放前更新实际占用；HTTP 退避和重新排队也遵守同一边界。
+    load: Arc<Mutex<RequestLoad>>,
+    _permit: Arc<crate::model::RequestCapacity>,
 }
 
 impl SharedModel {
@@ -182,7 +188,7 @@ impl Stream for MeteredStream {
             this.settled = true;
             // 请求失败仍是失败；池的消费统计不能把已确认的终态消费再次标为未知。
             if !this.failed {
-                this.request.load.completed();
+                this.request.load.lock().unwrap().completed();
             }
             if let Some(last) = &this.last_usage {
                 let mut total = this.usage.lock().unwrap();
@@ -271,24 +277,41 @@ impl Model for SharedModel {
         limits: ToolCallLimits,
         cap: Option<u64>,
     ) -> Result<ModelStream> {
-        let load = RequestLoad::waiting(self.load.clone());
+        let load = Arc::new(Mutex::new(RequestLoad::waiting(self.load.clone())));
         let permit = self.permits.clone().acquire_owned().await?;
-        {
-            let mut usage = self.usage.lock().unwrap();
+        let usage = self.usage.clone();
+        let max_requests = self.max_requests;
+        let reserve = Box::new(move || {
+            let mut usage = usage.lock().unwrap();
             ensure!(
-                self.max_requests == 0 || usage.requests < self.max_requests,
+                max_requests == 0 || usage.requests < max_requests,
                 "root model request budget exhausted"
             );
             usage.requests += 1;
-        }
+            Ok(())
+        });
+        reserve()?;
+        load.lock()
+            .unwrap()
+            .phase(crate::model::RequestPhase::Active);
+        let observer = load.clone();
+        let permit = crate::model::RequestCapacity::new(
+            self.permits.clone(),
+            permit,
+            reserve,
+            Some(Box::new(move |phase| observer.lock().unwrap().phase(phase))),
+            crate::model::RequestCapacity::current_cancel(),
+        );
+        let stream = permit
+            .scope(
+                self.inner
+                    .chat_with_limits(messages, tools, purpose, limits, cap),
+            )
+            .await?;
         let request = InFlight {
-            load: load.start(),
+            load,
             _permit: permit,
         };
-        let stream = self
-            .inner
-            .chat_with_limits(messages, tools, purpose, limits, cap)
-            .await?;
         Ok(Box::pin(MeteredStream {
             inner: stream,
             request,

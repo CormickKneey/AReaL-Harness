@@ -1548,3 +1548,43 @@ async fn shared_budget_prioritizes_new_corrections_over_the_initial_question() {
     assert!(state.turns[0].items.iter().any(|item| matches!(item, areal_protocol::Item::UserMessage { content, .. } if content[0].as_text() == initial)));
     engine.shutdown().await;
 }
+
+#[tokio::test]
+async fn manual_compaction_uses_single_model_capacity_without_nested_admission() {
+    let data = tempfile::tempdir().unwrap();
+    let model = continuity_model("Earlier implementation retained; use the latest correction.");
+    let engine = Engine::open(
+        data.path(),
+        model.clone(),
+        Limits {
+            model_concurrency: 1,
+            context_window_tokens: 30000,
+            context_output_reserve_tokens: 1000,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let thread = engine.create("/workspace".into()).await.unwrap();
+    turn(&engine, &thread.id, "Earlier implementation requirements").await;
+    turn(&engine, &thread.id, "Latest corrected requirements").await;
+    let result = tokio::time::timeout(
+        Duration::from_secs(5),
+        engine.context_compact(thread.id.clone()),
+    )
+    .await;
+    engine.shutdown().await;
+    assert!(
+        result.is_ok(),
+        "manual compaction nested the same single-slot model admission"
+    );
+    let view = result.unwrap().unwrap();
+    assert!(!view["checkpoint"].is_null());
+    assert!(
+        model
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(purpose, _)| *purpose == RequestPurpose::Summary)
+    );
+}

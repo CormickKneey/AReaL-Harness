@@ -1007,9 +1007,9 @@ impl Engine {
                 let request_span = request.span.clone();
                 let response: anyhow::Result<()> = async {
                     // 摘要也使用同一容量；失败后先归还名额再退避。
-                    let _permit = tokio::select! {
+                    let permit = tokio::select! {
                         _ = cancel.cancelled() => anyhow::bail!("cancelled before summary admission"),
-                        permit = self.permits.acquire() => permit?,
+                        permit = self.permits.clone().acquire_owned() => permit?,
                     };
                     if budget.window > 0 {
                         let output = model.capabilities().summary_output_tokens.unwrap_or(budget.reserve);
@@ -1017,9 +1017,13 @@ impl Engine {
                         fit_summary_input(&mut input, budget.window - output)?;
                     }
                     self.reserve_agent_model_request(cell)?;
+                    let engine = self.clone();
+                    let request_cell = cell.clone();
+                    let permit = model::RequestCapacity::new(self.permits.clone(), permit,
+                        Box::new(move || engine.reserve_agent_model_request(&request_cell)), None, Some(cancel.clone()));
                     // 预检可能缩短摘要证据；轨迹必须记录真正提交给模型的消息。
                     trajectory::record_messages(&tracing::Span::current(), "gen_ai.input.messages", &input);
-                    let pending = tokio::time::timeout(self.limits.stream_idle_timeout, model::REQUEST_OWNER.scope((snapshot.id.clone(), snapshot.turns.last().map_or_else(String::new, |t| t.id.clone())), model.chat_with_limits(input.clone(), Vec::new(), model::RequestPurpose::Summary, model::ToolCallLimits { max_calls: 0, max_buffer_bytes: self.limits.max_tool_buffer_bytes }, None)));
+                    let pending = tokio::time::timeout(self.limits.stream_idle_timeout, model::REQUEST_OWNER.scope((snapshot.id.clone(), snapshot.turns.last().map_or_else(String::new, |t| t.id.clone())), permit.scope(model.chat_with_limits(input.clone(), Vec::new(), model::RequestPurpose::Summary, model::ToolCallLimits { max_calls: 0, max_buffer_bytes: self.limits.max_tool_buffer_bytes }, None))));
                     tokio::pin!(pending);
                     let mut stream = tokio::select! {
                         _ = cancel.cancelled() => {

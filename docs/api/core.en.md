@@ -437,3 +437,5 @@ Tool execution is classified by its registered backend. `ToolPolicy.parallelRead
 Rust callers constructing exhaustive `ToolPolicy` literals must supply `parallel_read_calls` or use `..ToolPolicy::default()`. Existing deployment JSON may omit the field and retains serial dispatch.
 
 Native Runtime tool results include `turnElapsedSeconds`, the observed elapsed seconds of the current Turn, allowing the model to respect explicit user deadlines. This is not a new task, automatic completion or verification evidence. Core inserts no additional user message and does not decorate coordination receipts, preserving receipt-consumption version checks.
+
+Shared model-pool `requests` and `ModelLoad.startedRequests` count local request admissions, including internal HTTP retries. `inFlight` and `occupiedSlotSeconds` exclude backoff; requeueing contributes to `waiting`. Cancellation can occur between admission and upstream observation, and such reservations remain UNKNOWN. Field types are unchanged; these counters do not establish server inference or billing.

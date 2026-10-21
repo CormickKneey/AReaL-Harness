@@ -451,3 +451,5 @@ Rust `Limits` 与 `ResolvedCoreConfig` 增加上述实验控制字段及 `comman
 Rust `ToolPolicy` 的穷举结构体字面量调用方需要补上 `parallel_read_calls`，或使用 `..ToolPolicy::default()`；旧部署 JSON 可省略该字段并保持串行。
 
 原生 Runtime 工具结果提供 `turnElapsedSeconds`，表示当前 Turn 的真实已用秒数，便于模型遵守用户显式时限。该事实不构成新任务、自动完成或验收结论；不额外插入用户消息，也不装饰协调回执，以保持已消费回执的版本判断。
+
+共享模型池的 `requests` 和 `ModelLoad.startedRequests` 统计本地请求准入，包括 HTTP 内部重试；`inFlight` 与 `occupiedSlotSeconds` 不包含退避，重新排队计入 `waiting`。取消可发生在准入与上游观察之间，这类预留仍保留 UNKNOWN。字段类型保持不变；统计不等于服务端实际推理或计费。

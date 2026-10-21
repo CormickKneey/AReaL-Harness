@@ -572,7 +572,7 @@ impl Engine {
             };
             let mut network_retries: usize = 0;
             'request: loop {
-                let permit = match self.permits.try_acquire() {
+                let permit = match self.permits.clone().try_acquire_owned() {
                     Ok(permit) => permit,
                     Err(_) => {
                         if let Some(thread_id) = &side_thread_id {
@@ -586,7 +586,7 @@ impl Engine {
                         }
                         tokio::select! {
                             _ = cancel.cancelled() => anyhow::bail!("cancelled"),
-                            permit = self.permits.acquire() => permit?,
+                            permit = self.permits.clone().acquire_owned() => permit?,
                         }
                     }
                 };
@@ -600,6 +600,15 @@ impl Engine {
                     );
                 }
                 self.reserve_agent_model_request(cell)?;
+                let engine = self.clone();
+                let request_cell = cell.clone();
+                let permit = model::RequestCapacity::new(
+                    self.permits.clone(),
+                    permit,
+                    Box::new(move || engine.reserve_agent_model_request(&request_cell)),
+                    None,
+                    Some(cancel.clone()),
+                );
                 let mut operation = trajectory::Operation::new(
                     info_span!(
                         target: trajectory::TARGET,
@@ -676,14 +685,14 @@ impl Engine {
                         model::REQUEST_OWNER
                             .scope((thread_id.clone(), turn_id.clone()), async {
                                 anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
-                                model
-                                    .chat_with_limits(
+                                permit
+                                    .scope(model.chat_with_limits(
                                         messages.clone(),
                                         tool_definitions.clone(),
                                         model::RequestPurpose::Solve,
                                         tool_limits,
                                         None,
-                                    )
+                                    ))
                                     .await
                             })
                             .instrument(model_span.clone()),

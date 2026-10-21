@@ -521,4 +521,4 @@ hooks = [{ type = "command", command = "python3 /absolute/path/hook.py", timeout
 
 有效来源、显式审阅、执行与剩余限制见 [插件指南](plugins.md)。
 
-求解和摘要均按每次实际 Engine 请求占用模型容量，失败后先释放再退避；网络恢复请求也消费 Agent 请求额度。`network.retry_mode="bounded"` 关闭 Core 的持续恢复，仍保留既有有限 HTTP/响应恢复；`persistent` 仍可显式保留长期恢复。未知用量和已执行工具不因恢复而清零或重放。本地部署可以显式选择 bounded；这不宣称其在所有可用性条件下优于 persistent。
+求解和摘要的 HTTP 请求共用 Engine 与共享模型池容量；外层恢复和 HTTP 内部重试均先释放失败请求的全部许可，再退避、排队并重新计入请求额度。退避不计入模型池活动占用，活跃流仍持有许可。已准入但在取消时未观察到最终用量的尝试保持 UNKNOWN，不假设为零。`network.retry_mode="bounded"` 关闭 Core 的持续恢复，仍保留既有有限 HTTP/响应恢复；`persistent` 仍可显式保留长期恢复。未知用量和已执行工具不因恢复而清零或重放。本地部署可以显式选择 bounded；这不宣称其在所有可用性条件下优于 persistent。

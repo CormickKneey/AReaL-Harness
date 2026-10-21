@@ -1019,3 +1019,152 @@ async fn summary_requests_share_capacity_but_release_it_before_network_backoff()
     );
     assert_eq!(model.healthy_after_summaries.load(Ordering::SeqCst), 1);
 }
+
+#[tokio::test]
+async fn default_http_retries_release_nested_capacity_and_preserve_budget_and_cancellation() {
+    use areal_engine::model::{HttpModel, ModelProtocol};
+    use axum::{Json, Router, body::Body, http::StatusCode, response::IntoResponse, routing::post};
+    struct HttpState {
+        failed: tokio::sync::Semaphore,
+        healthy: tokio::sync::Semaphore,
+        finish: tokio::sync::Semaphore,
+        bad_requests: AtomicUsize,
+        healthy_requests: AtomicUsize,
+    }
+    for action in ["complete", "cancel", "budget"] {
+        let http = Arc::new(HttpState {
+            failed: tokio::sync::Semaphore::new(0),
+            healthy: tokio::sync::Semaphore::new(0),
+            finish: tokio::sync::Semaphore::new(0),
+            bad_requests: AtomicUsize::new(0),
+            healthy_requests: AtomicUsize::new(0),
+        });
+        let state = http.clone();
+        let app = Router::new().route("/", post(move |Json(body): Json<Value>| {
+            let state = state.clone();
+            async move {
+                if body["messages"].to_string().contains("failing HTTP route") {
+                    state.bad_requests.fetch_add(1, Ordering::SeqCst);
+                    state.failed.add_permits(1);
+                    return (StatusCode::SERVICE_UNAVAILABLE, [("retry-after", "2")], "temporary failure").into_response();
+                }
+                state.healthy_requests.fetch_add(1, Ordering::SeqCst);
+                state.healthy.add_permits(1);
+                let events = stream::once(async { Ok::<_, std::convert::Infallible>("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"healthy\"}}]}\n\n") })
+                    .chain(stream::once(async move {
+                        state.finish.acquire().await.unwrap().forget();
+                        Ok("data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1}}\n\ndata: [DONE]\n\n")
+                    }));
+                axum::http::Response::builder().header("content-type", "text/event-stream").body(Body::from_stream(events)).unwrap()
+            }
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        // 保留 HttpModel 默认两次 HTTP 重试，不能仅验证关闭内部重试的理想路径。
+        let inner = Arc::new(
+            HttpModel::with_protocol(
+                endpoint,
+                "fixture".into(),
+                None,
+                ModelProtocol::ChatCompletions,
+            )
+            .unwrap(),
+        );
+        let pool = if action == "budget" {
+            SharedModel::new(inner, 1, 2).unwrap()
+        } else {
+            SharedModel::pool(inner, 1).unwrap()
+        };
+        let data = tempfile::tempdir().unwrap();
+        let engine = Engine::open(
+            data.path(),
+            pool.clone(),
+            Limits {
+                model_concurrency: 1,
+                watchdog_disable: true,
+                ..Limits::default()
+            },
+        )
+        .unwrap();
+        let bad = engine.create("/workspace".into()).await.unwrap();
+        let bad_turn = engine
+            .start(&bad.id, vec![Input::text("failing HTTP route")])
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), http.failed.acquire())
+            .await
+            .unwrap()
+            .unwrap()
+            .forget();
+        let good = engine.create("/workspace".into()).await.unwrap();
+        engine
+            .start(&good.id, vec![Input::text("healthy HTTP route")])
+            .await
+            .unwrap();
+        let admitted =
+            tokio::time::timeout(Duration::from_millis(900), http.healthy.acquire()).await;
+        let progressed_during_backoff = admitted.is_ok();
+        if let Ok(Ok(permit)) = admitted {
+            permit.forget();
+        }
+        if action == "complete" && progressed_during_backoff {
+            let second = engine.create("/workspace".into()).await.unwrap();
+            engine
+                .start(&second.id, vec![Input::text("second healthy HTTP route")])
+                .await
+                .unwrap();
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            assert_eq!(
+                http.healthy_requests.load(Ordering::SeqCst),
+                1,
+                "live streams must retain nested request capacity"
+            );
+        }
+        http.finish.add_permits(8);
+        if action == "cancel" {
+            engine.interrupt(&bad.id, &bad_turn.id).await.unwrap();
+        }
+        let good_done = settled(&engine, &good.id).await;
+        let bad_done = settled(&engine, &bad.id).await;
+        engine.shutdown().await;
+        server.abort();
+        assert!(
+            progressed_during_backoff,
+            "default HTTP retry held Engine or SharedModel capacity: {action}"
+        );
+        assert_eq!(good_done.turns[0].status, TurnStatus::Completed);
+        if action == "complete" {
+            assert_eq!(http.bad_requests.load(Ordering::SeqCst), 3);
+        } else {
+            assert_eq!(http.bad_requests.load(Ordering::SeqCst), 1);
+        }
+        assert_eq!(
+            bad_done.turns[0].status,
+            if action == "cancel" {
+                TurnStatus::Interrupted
+            } else {
+                TurnStatus::Failed
+            }
+        );
+        let usage = pool.usage();
+        let observed =
+            http.bad_requests.load(Ordering::SeqCst) + http.healthy_requests.load(Ordering::SeqCst);
+        if action == "cancel" {
+            // 取消可能落在本地准入与服务端观察之间；该次预留必须保留 UNKNOWN。
+            assert!((observed..=observed + 1).contains(&usage.requests));
+            assert!(usage.unknown_requests >= http.bad_requests.load(Ordering::SeqCst));
+        } else {
+            assert_eq!(usage.requests, observed, "{action}");
+            assert_eq!(
+                usage.unknown_requests,
+                http.bad_requests.load(Ordering::SeqCst),
+                "failed HTTP attempts remain UNKNOWN, not zero usage: {action}"
+            );
+        }
+        let load = pool.load().unwrap();
+        assert_eq!(load.in_flight, 0);
+        assert_eq!(load.waiting, 0);
+        assert_eq!(load.started_requests as usize, usage.requests);
+    }
+}

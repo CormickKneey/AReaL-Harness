@@ -2,6 +2,8 @@ mod decoder;
 use decoder::{ChatDecoder, Decoder, ResponsesDecoder};
 
 mod audit;
+mod capacity;
+pub(crate) use capacity::{RequestCapacity, RequestPhase};
 mod request_budget;
 mod telemetry;
 mod tool_calls;
@@ -1102,7 +1104,13 @@ impl Model for HttpModel {
                     delay_ms = delay.as_millis() as u64,
                     "retrying model request before stream acceptance"
                 );
-                tokio::time::sleep(delay).await;
+                drop(result);
+                capacity::retry_after(delay).await.with_context(|| {
+                    format!(
+                        "HTTP retry after status {} was not admitted",
+                        audit.value["httpStatus"]
+                    )
+                })?;
                 continue;
             }
             break result.map_err(|error| {

@@ -50,26 +50,70 @@ impl Engine {
         if !self.limits.context_compaction_enabled {
             return Err(Error::Invalid("context compaction is disabled".into()));
         }
-        self.mutate(move|engine|async move{
-            if !engine.accepting_work(){return Err(Error::Closed);}
-            let admission=engine.desktop.lifecycle.gate.lock().await;
-            if !engine.accepting_work(){return Err(Error::Closed);}
-            let cell=engine.cell(&thread_id).await?;
-            let cancel=engine.shutdown.child_token();
-            if cell.state.lock().await.thread.is_side() { return Err(invalid("SIDE_POLICY_VIOLATION")); }
-            {let mut state=cell.state.lock().await;engine.ensure_hook_session_open(&cell,&state.thread)?;if state.active.is_some()||state.compacting||state.thread.goals.goal.as_ref().is_some_and(|g|g.status==areal_protocol::goals::GoalStatus::Active){return Err(Error::Conflict);}state.compacting=true;
-             let activation=id();state.compaction_owner=Some(crate::desktop::mcp_apps::CallOwner{token:activation.clone(),scope:crate::desktop::mcp_apps::CallOwnerScope::CompactionHook{activation},cancellation:cancel.clone(),identity,thread:thread_id.clone(),turn:String::new(),call:String::new(),instance:None});}
+        self.mutate(move |engine| async move {
+            if !engine.accepting_work() {
+                return Err(Error::Closed);
+            }
+            let admission = engine.desktop.lifecycle.gate.lock().await;
+            if !engine.accepting_work() {
+                return Err(Error::Closed);
+            }
+            let cell = engine.cell(&thread_id).await?;
+            let cancel = engine.shutdown.child_token();
+            if cell.state.lock().await.thread.is_side() {
+                return Err(invalid("SIDE_POLICY_VIOLATION"));
+            }
+            {
+                let mut state = cell.state.lock().await;
+                engine.ensure_hook_session_open(&cell, &state.thread)?;
+                if state.active.is_some()
+                    || state.compacting
+                    || state
+                        .thread
+                        .goals
+                        .goal
+                        .as_ref()
+                        .is_some_and(|g| g.status == areal_protocol::goals::GoalStatus::Active)
+                {
+                    return Err(Error::Conflict);
+                }
+                state.compacting = true;
+                let activation = id();
+                state.compaction_owner = Some(crate::desktop::mcp_apps::CallOwner {
+                    token: activation.clone(),
+                    scope: crate::desktop::mcp_apps::CallOwnerScope::CompactionHook { activation },
+                    cancellation: cancel.clone(),
+                    identity,
+                    thread: thread_id.clone(),
+                    turn: String::new(),
+                    call: String::new(),
+                    instance: None,
+                });
+            }
             drop(admission);
-            let result=async {
-                let _permit=tokio::select!{_=cancel.cancelled()=>return Err(invalid("compaction cancelled")),p=engine.permits.acquire()=>p.map_err(invalid)?};
+            let result = async {
+                // 模型容量在实际摘要请求内统一取得；入口再次取同一许可会在容量为 1 时自锁。
                 let thread = cell.state.lock().await.thread.clone();
-                let overhead = engine.recorded_context_overhead(&cell, &thread).await.map_err(invalid)?;
-                engine.compact_context_with_trigger(&cell,&cancel,overhead,None,true,"manual").await.map_err(invalid)
-            }.await;
-            {let mut state=cell.state.lock().await;cancel.cancel();state.compaction_owner=None;state.compacting=false;}
+                let overhead = engine
+                    .recorded_context_overhead(&cell, &thread)
+                    .await
+                    .map_err(invalid)?;
+                engine
+                    .compact_context_with_trigger(&cell, &cancel, overhead, None, true, "manual")
+                    .await
+                    .map_err(invalid)
+            }
+            .await;
+            {
+                let mut state = cell.state.lock().await;
+                cancel.cancel();
+                state.compaction_owner = None;
+                state.compacting = false;
+            }
             engine.goals.request(&cell.id);
             result?;
-            engine.context_read(&thread_id,0,16).await
-        }).await
+            engine.context_read(&thread_id, 0, 16).await
+        })
+        .await
     }
 }
