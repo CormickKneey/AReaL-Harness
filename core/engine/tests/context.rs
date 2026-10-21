@@ -1480,23 +1480,34 @@ async fn shared_budget_prioritizes_new_corrections_over_the_initial_question() {
     let model = continuity_model(
         "Preserve the newest correction; earlier project descriptions are obsolete.",
     );
-    let engine = Engine::open(
-        data.path(),
-        model.clone(),
-        Limits {
-            context_window_tokens: 30000,
-            context_output_reserve_tokens: 1000,
-            context_target_tokens: 6000,
-            ..Default::default()
-        },
-    )
-    .unwrap();
+    let limits = Limits {
+        context_window_tokens: 30000,
+        context_output_reserve_tokens: 1000,
+        ..Default::default()
+    };
+    let engine = Engine::open(data.path(), model.clone(), limits.clone()).unwrap();
     let thread = engine.create("/workspace".into()).await.unwrap();
     let initial = format!(
         "OBSOLETE INITIAL PROJECT SUMMARY {}",
         "old background details ".repeat(300)
     );
     turn(&engine, &thread.id, &initial).await;
+    let base_view = engine.context_read(&thread.id, 0, 32).await.unwrap();
+    let overhead = base_view["budget"]["estimatedInputTokens"].as_u64().unwrap()
+        - base_view["budget"]["historyEstimatedTokens"].as_u64().unwrap();
+    engine.shutdown().await;
+    drop(engine);
+    // 软、硬窗口都以实际指令/工具开销计量，确保原文确实竞争有限额度，而非全部可容纳。
+    let engine = Engine::open(
+        data.path(),
+        model.clone(),
+        Limits {
+            context_window_tokens: overhead as usize + 4000,
+            context_target_tokens: overhead as usize + 2400,
+            ..limits
+        },
+    )
+    .unwrap();
     for index in 0..8 {
         let current = format!(
             "Correction {index}: only repair current GUI scope. {}",
