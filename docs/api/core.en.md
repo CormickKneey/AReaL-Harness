@@ -441,6 +441,8 @@ Tool execution is classified by its registered backend. `ToolPolicy.parallelRead
 
 Isolated workers inherit the parent deployment’s pure `ToolPolicy`, without external tools, hooks, plugins or credentials. Parent global hooks conservatively reduce read width to 1. The subscription adapter preserves Core’s `parallel_tool_calls` boolean; Core execution barriers still apply.
 
+When the subscription catalog explicitly declares `use_responses_lite=true`, the adapter fills an unspecified `reasoning.context` with `all_turns`. A valid catalog default fills `text.verbosity` only when `support_verbosity=true`. Explicit request values win; model names are never used to infer capabilities. Capability hints are cleared with catalog invalidation and account changes. Missing declarations add no defaults. This aligns request encoding and does not establish reasoning continuity or a performance gain; check the effective mode in responses.
+
 Rust callers constructing exhaustive `ToolPolicy` literals must supply `parallel_read_calls` and `completion_focus` or use `..ToolPolicy::default()`. Existing deployment JSON may omit the field and retains serial dispatch.
 
 Native Runtime tool results include `turnElapsedSeconds`, the observed elapsed seconds of the current Turn, allowing the model to respect explicit user deadlines. This is not a new task, automatic completion or verification evidence. Core inserts no additional user message and does not decorate coordination receipts, preserving receipt-consumption version checks.

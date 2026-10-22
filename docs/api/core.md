@@ -455,6 +455,8 @@ Rust `Limits` 与 `ResolvedCoreConfig` 增加上述实验控制字段及 `comman
 
 隔离 worker 继承父部署的纯 `ToolPolicy`，不复制外部工具、hooks、插件或凭据；父部署存在全局 hooks 时读取宽度保守为 1。订阅适配器保留 Core 的 `parallel_tool_calls` 布尔值，实际执行仍受 Core 屏障约束。
 
+订阅目录显式声明 `use_responses_lite=true` 时，适配器为未指定的 `reasoning.context` 补入 `all_turns`；目录声明 `support_verbosity=true` 且默认值有效时，补入 `text.verbosity`。显式请求值优先，不按模型名猜测。目录、账号切换与缓存失效同步清理能力提示；缺少能力声明时不补默认值。这只对齐请求协议，不能证明推理连续性或性能收益；响应中的实际模式仍须检查。
+
 Rust `ToolPolicy` 的穷举结构体字面量调用方需要补上 `parallel_read_calls` 和 `completion_focus`，或使用 `..ToolPolicy::default()`；旧部署 JSON 可省略该字段并保持串行。
 
 原生 Runtime 工具结果提供 `turnElapsedSeconds`，表示当前 Turn 的真实已用秒数，便于模型遵守用户显式时限。该事实不构成新任务、自动完成或验收结论；不额外插入用户消息，也不装饰协调回执，以保持已消费回执的版本判断。

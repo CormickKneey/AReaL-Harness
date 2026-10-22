@@ -10,7 +10,7 @@ import { probeResponse } from './probe.js'
 export { probeResponse } from './probe.js'
 import { subscriptionNetwork } from './network.js'
 import { ModelCatalog } from './catalog.js'
-import { protocolAdapters } from './adapters.js'
+import { protocolAdapters, subscriptionModelHints } from './adapters.js'
 export { subscriptionRequest } from './adapters.js'
 
 export const CORE_PROVIDER_ID = 'areal_chatgpt'
@@ -116,7 +116,7 @@ export class CoreSubscription {
       let size = 0; const chunks = []
       for await (const chunk of req) { size += chunk.length; if (size > 16 * 1024 * 1024) { deny(413, 'Request too large'); return } chunks.push(chunk) }
       let body, adjustments
-      try { const raw = JSON.parse(Buffer.concat(chunks)); body = protocolAdapters[this.kind].encode(raw); adjustments = protocolAdapters[this.kind].adjustments?.(raw) ?? [] } catch { deny(400, 'Invalid subscription request'); return }
+      try { const raw = JSON.parse(Buffer.concat(chunks)); const hints = this.catalog?.hintsFor(raw?.model) ?? subscriptionModelHints(this.models.find(m=>m.id===raw?.model)); body = protocolAdapters[this.kind].encode(raw, hints); adjustments = protocolAdapters[this.kind].adjustments?.(raw) ?? [] } catch { deny(400, 'Invalid subscription request'); return }
       if (!this.models.some(m => m.id === body.model)) { deny(400, 'Unknown subscription model'); return }
       if (this.onRequest) audit = { providerId: this.id, protocol: 'responses', model: body.model, startedAt: new Date().toISOString(), completedAt: null,
         upstreamHttpStatus: null, upstreamContentType: null, localHttpStatus: null, outcome: 'failed', failureKind: 'request', streamFailureReason: null, adjustments }

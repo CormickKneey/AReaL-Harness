@@ -1,7 +1,28 @@
 // Only provider transport: no conversation store, tool execution or Agent loop.
-export function subscriptionRequest(body) {
+// 只使用目录公开声明的能力，不按模型名猜测；显式请求值始终优先。
+export function subscriptionModelHints(model) {
+  return Object.freeze({
+    ...(model?.use_responses_lite === true ? { reasoningContext: "all_turns" } : {}),
+    ...(model?.support_verbosity === true &&
+    ["low", "medium", "high"].includes(model.default_verbosity)
+      ? { verbosity: model.default_verbosity }
+      : {}),
+  });
+}
+
+export function subscriptionRequest(body, hints = {}) {
   if (!body || typeof body.model !== "string" || !Array.isArray(body.input) || body.stream !== true)
     throw new Error("需要流式 Responses 请求");
+  for (const key of ["reasoning", "text"]) {
+    if (body[key] != null && (typeof body[key] !== "object" || Array.isArray(body[key])))
+      throw new Error("模型控制必须为对象");
+  }
+  const reasoning = { ...body.reasoning },
+    text = { ...body.text };
+  if (reasoning.context === undefined && hints.reasoningContext === "all_turns")
+    reasoning.context = hints.reasoningContext;
+  if (text.verbosity === undefined && ["low", "medium", "high"].includes(hints.verbosity))
+    text.verbosity = hints.verbosity;
   const instructions = [],
     input = [];
   for (const item of body.input) {
@@ -28,12 +49,13 @@ export function subscriptionRequest(body) {
       ? { parallel_tool_calls: body.parallel_tool_calls }
       : {}),
     ...(body.tool_choice ? { tool_choice: body.tool_choice } : {}),
-    ...(body.reasoning ? { reasoning: body.reasoning } : {}),
+    ...(body.reasoning || Object.keys(reasoning).length ? { reasoning } : {}),
+    ...(body.text || Object.keys(text).length ? { text } : {}),
   };
 }
 
 // SIWC permits user tools in namespaces; Core keeps plain tool names and call IDs.
-export function openaiRequest(body) {
+export function openaiRequest(body, hints) {
   const unsupported = [
     "background",
     "conversation",
@@ -57,7 +79,7 @@ export function openaiRequest(body) {
   ];
   if (unsupported.some((field) => body[field] != null))
     throw new Error("ChatGPT 不支持此请求参数；请修改配置后重试");
-  const value = subscriptionRequest(body);
+  const value = subscriptionRequest(body, hints);
   if (body.parallel_tool_calls !== undefined) value.parallel_tool_calls = body.parallel_tool_calls;
   if (body.service_tier !== undefined) value.service_tier = body.service_tier;
   if (value.tools?.length) {

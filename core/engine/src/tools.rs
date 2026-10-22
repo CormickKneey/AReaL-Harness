@@ -1423,7 +1423,7 @@ impl Engine {
         {
             content.push(json!({"type":"inputText","text":format!("previousMatchingFailures={}: {note}", result["previousMatchingFailures"])}));
         }
-        let prepared = if coordination {
+        let prepared = if coordination && call.name == "agent_wait_any" {
             self.prepare_coordination_result(cell, &item_id, &call.name, &result)
                 .await?
         } else {
@@ -1480,7 +1480,7 @@ impl Engine {
                 && call.name.starts_with("agent_")
             {
                 execution.output_projection.as_mut().unwrap()["executionIdentityVersion"] =
-                    json!(2);
+                    json!(if call.name == "agent_wait_any" { 2 } else { 1 });
             }
             execution.duration_ms = Some(started.elapsed().as_millis() as u64);
         }

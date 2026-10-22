@@ -1,4 +1,5 @@
 import { ProviderError, responseError, safeRefresh } from "./errors.js";
+import { subscriptionModelHints } from "./adapters.js";
 
 export class ModelCatalog {
   constructor(session, fetch, { now = Date.now, ttlMs = 30_000 } = {}) {
@@ -8,6 +9,7 @@ export class ModelCatalog {
   }
   clear() {
     this.models = [];
+    this.transportHints = new Map();
     this.revision = null;
     this.fetchedAt = null;
     this.expiresAt = 0;
@@ -20,6 +22,9 @@ export class ModelCatalog {
       sessionRevision: this.revision,
       overrides: false,
     };
+  }
+  hintsFor(modelId) {
+    return this.transportHints.get(modelId) ?? Object.freeze({});
   }
   async discover({ force = false } = {}) {
     if (
@@ -81,7 +86,7 @@ export class ModelCatalog {
     if (revision !== this.session.revision || this.session.busy)
       throw new ProviderError("account_changed", { phase: "catalog" });
     const seen = new Set();
-    this.models = data.models
+    const accepted = data.models
       .filter((m) => {
         if (
           m.visibility !== "list" ||
@@ -95,17 +100,18 @@ export class ModelCatalog {
         seen.add(m.slug);
         return true;
       })
-      .slice(0, 256)
-      .map((m) => ({
-        id: m.slug,
-        name:
-          typeof m.display_name === "string" &&
-          m.display_name.length <= 256 &&
-          !m.display_name.includes(access)
-            ? m.display_name
-            : m.slug,
-        source: "account",
-      }));
+      .slice(0, 256);
+    this.transportHints = new Map(accepted.map((m) => [m.slug, subscriptionModelHints(m)]));
+    this.models = accepted.map((m) => ({
+      id: m.slug,
+      name:
+        typeof m.display_name === "string" &&
+        m.display_name.length <= 256 &&
+        !m.display_name.includes(access)
+          ? m.display_name
+          : m.slug,
+      source: "account",
+    }));
     this.revision = revision;
     this.fetchedAt = this.now();
     this.expiresAt = this.fetchedAt + this.ttlMs;
