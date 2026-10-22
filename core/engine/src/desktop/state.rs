@@ -1345,11 +1345,7 @@ impl Engine {
             } else {
                 self.scope_permissions(cell).write_roots
             },
-            network: if readonly || side || workspace {
-                areal_runtime_protocol::NetworkRequest::Deny
-            } else {
-                areal_runtime_protocol::NetworkRequest::Inherit
-            },
+            network: crate::permissions::base_network_policy(configuration, side),
         })
     }
 }

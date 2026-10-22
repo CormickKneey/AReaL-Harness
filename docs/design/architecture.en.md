@@ -101,6 +101,8 @@ Ordinary [agent delegation](multi-agent.en.md) shares a workspace with independe
 
 Optional [research agents](../guides/tools.en.md#research-agents) use Core-managed read-only source access, private scratch and shared budgets. Dispatch is asynchronous by default and model-selected. Short-handle caches belong to the active Turn, survive compaction and expire on completion; Store retains original execution history. The model HTTP layer audits redacted parameters and usage; incomplete-response recovery does not replay executed tools. See [Core API](../api/core.en.md#recovery).
 
+Subscription forwarding retains only bounded, volatile account/Thread/Turn routing affinity using trusted Core request ownership. Routing state never enters model history or owns recovery or tool scheduling.
+
 `core/engine/src/model/tool_calls.rs` centralizes request-level tool buffer budgets and sanitized diagnostics. Engine supplies execution allowances; model adapters bound resource use while accumulating responses. Automatic lossless media compression belongs to modality preprocessing with separate round-trip verification. The current tool buffer budget counts original UTF-8 bytes and does not trigger media compression.
 
 Engine’s `diagnostics` module bounds non-authoritative diagnostic retention; server wires startup and periodic collection. service-host manages leases and cleanup for host/launcher logs and handshake temporary directories. Diagnostic cleanup preserves history and Goal recovery semantics; policies are described in [Core API](../api/core.en.md#recovery) and the [local service contract](../api/local-service.en.md).

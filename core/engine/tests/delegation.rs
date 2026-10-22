@@ -452,6 +452,8 @@ async fn artifact_readiness_matches_the_guard_without_reading_unsettled_bytes() 
         .await
         .unwrap();
     assert_eq!(pending["capabilities"]["supportsArtifact"], true);
+    assert_eq!(pending["capabilities"]["sourceView"], "snapshotAtCreation");
+    assert_eq!(pending["capabilities"]["networkPolicy"], "unknown");
     assert_eq!(pending["capabilities"]["readArtifact"], false);
     assert_eq!(pending["artifact"]["available"], false);
     let not_ready = fixture
@@ -651,6 +653,7 @@ async fn inspect_uses_read_only_children_and_foreign_parent_cannot_read_the_exec
         .await
         .unwrap();
     assert_eq!(result["strategy"], "sharedReadOnly");
+    assert_eq!(result["capabilities"]["networkPolicy"], "deny");
     let done = fixture.wait(&result).await;
     assert_eq!(done["status"], "completed");
     let child = fixture
@@ -698,6 +701,7 @@ async fn inherited_inspection_runs_without_restricted_scopes_but_legacy_read_onl
         .await
         .unwrap();
     assert_eq!(result["strategy"], "sharedInherited");
+    assert_eq!(result["capabilities"]["networkPolicy"], "inherit");
     let done = fixture.wait(&result).await;
     assert_eq!(done["status"], "completed");
     let child = fixture
@@ -1142,6 +1146,7 @@ async fn environment_bound_modifications_use_a_shared_exclusive_writer() {
     request.writes = vec!["result.txt".into()];
     let result = fixture.engine.delegate(request).await.unwrap();
     assert_eq!(result["strategy"], "sharedExclusive");
+    assert_eq!(result["capabilities"]["sourceView"], "currentShared");
     let done = fixture.wait(&result).await;
     assert_eq!(done["status"], "completed");
     let child = fixture

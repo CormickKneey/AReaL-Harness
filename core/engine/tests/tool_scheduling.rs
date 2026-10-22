@@ -365,6 +365,47 @@ async fn reads_overlap_without_reordering_history_or_crossing_write_barriers() {
 }
 
 #[tokio::test]
+async fn safe_reads_refill_a_free_slot_before_the_slowest_read_finishes() {
+    let dir = tempfile::tempdir().unwrap();
+    let calls = vec![
+        call("fs_stat", "a"),
+        call("fs_stat", "b"),
+        call("fs_stat", "c"),
+        call("fs_stat", "d"),
+        call("fs_create", "e"),
+    ];
+    let (engine, _, mut runtime, thread, _) =
+        open(dir.path(), calls, Limits::default(), parallel()).await;
+    let (a, b) = runtime.pair("/a", "/b").await;
+    runtime.assert_no_dispatch().await;
+    b.succeed();
+    let c = runtime.next().await;
+    assert!(c.path().ends_with("/c"));
+    runtime.assert_no_dispatch().await;
+    c.succeed();
+    let d = runtime.next().await;
+    assert!(d.path().ends_with("/d"));
+    d.succeed();
+    runtime.assert_no_dispatch().await;
+    a.succeed();
+    let write = runtime.next().await;
+    assert!(write.path().ends_with("/e"));
+    write.succeed();
+    let done = bounded(engine.wait(&thread)).await.unwrap();
+    assert_eq!(done.turns[0].status, TurnStatus::Completed);
+    let ids: Vec<_> = done.turns[0]
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::DynamicToolCall { call_id, .. } => Some(call_id.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ids, ["a", "b", "c", "d", "e"]);
+    close(engine, runtime).await;
+}
+
+#[tokio::test]
 async fn defaults_finite_output_repeated_failure_limits_and_hooks_keep_serial_execution() {
     for case in 0..4 {
         let dir = tempfile::tempdir().unwrap();
@@ -375,9 +416,9 @@ async fn defaults_finite_output_repeated_failure_limits_and_hooks_keep_serial_ex
             1 => limits.max_output_bytes = 1_000_000,
             2 => limits.max_repeated_tool_failures = 2,
             _ => extensions.hooks.push(HookDefinition {
-                name: "unmatched".into(),
-                event: HookEvent::PreToolUse,
-                matcher: "unused".into(),
+                name: "matching".into(),
+                event: HookEvent::PostToolUseFailure,
+                matcher: "*".into(),
                 argv: vec!["/bin/true".into()],
                 timeout_ms: 1000,
             }),
@@ -402,6 +443,34 @@ async fn defaults_finite_output_repeated_failure_limits_and_hooks_keep_serial_ex
 }
 
 #[tokio::test]
+async fn an_unmatched_write_hook_does_not_serialize_trusted_reads() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut extensions = parallel();
+    extensions.hooks.push(HookDefinition {
+        name: "write-only".into(),
+        event: HookEvent::PreToolUse,
+        matcher: "fs_create".into(),
+        argv: vec!["/bin/true".into()],
+        timeout_ms: 1000,
+    });
+    let (engine, _, mut runtime, thread, _) = open(
+        dir.path(),
+        vec![call("fs_stat", "a"), call("fs_stat", "b")],
+        Limits::default(),
+        extensions,
+    )
+    .await;
+    let (a, b) = runtime.pair("/a", "/b").await;
+    b.succeed();
+    a.succeed();
+    assert_eq!(
+        bounded(engine.wait(&thread)).await.unwrap().turns[0].status,
+        TurnStatus::Completed
+    );
+    close(engine, runtime).await;
+}
+
+#[tokio::test]
 async fn unknown_waits_for_other_inflight_reads_and_never_dispatches_the_following_write() {
     let dir = tempfile::tempdir().unwrap();
     let (engine, model, mut runtime, thread, _) = open(
@@ -409,7 +478,8 @@ async fn unknown_waits_for_other_inflight_reads_and_never_dispatches_the_followi
         vec![
             call("fs_stat", "a"),
             call("fs_stat", "b"),
-            call("fs_create", "c"),
+            call("fs_stat", "c"),
+            call("fs_create", "d"),
         ],
         Limits::default(),
         parallel(),

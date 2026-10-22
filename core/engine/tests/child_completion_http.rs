@@ -3,7 +3,7 @@ use areal_engine::{
     model::{HttpModel, ModelOptions, ModelProtocol},
 };
 use areal_protocol::{AgentMessagePhase, Input, Item, TurnStatus};
-use axum::{Json, Router, routing::post};
+use axum::{Json, Router, http::HeaderMap, routing::post};
 use serde_json::{Value, json};
 use std::{
     sync::{
@@ -23,6 +23,7 @@ struct Fixture {
     total_requests: AtomicUsize,
     ready: mpsc::UnboundedSender<()>,
     release: Semaphore,
+    owners: std::sync::Mutex<std::collections::BTreeMap<String, (String, String)>>,
 }
 
 fn content(value: &Value) -> String {
@@ -38,7 +39,7 @@ fn content(value: &Value) -> String {
 }
 
 impl Fixture {
-    async fn respond(&self, request: Value) -> String {
+    async fn respond(&self, headers: HeaderMap, request: Value) -> String {
         self.total_requests.fetch_add(1, Ordering::SeqCst);
         let messages = request[if self.responses { "input" } else { "messages" }]
             .as_array()
@@ -54,6 +55,33 @@ impl Fixture {
             m["role"] == "system"
                 && content(&m["content"]).starts_with("Generate a concise semantic session title")
         });
+        if self.responses && !naming {
+            let thread = headers["x-areal-thread-id"].to_str().unwrap().to_owned();
+            let turn = headers["x-areal-turn-id"].to_str().unwrap().to_owned();
+            assert_eq!(headers["x-areal-model-purpose"], "solve");
+            assert_eq!(headers["session-id"].to_str().unwrap(), thread);
+            assert_eq!(headers["thread-id"].to_str().unwrap(), thread);
+            let previous = if child {
+                self.child_requests.load(Ordering::SeqCst)
+            } else {
+                self.parent_requests.load(Ordering::SeqCst)
+            };
+            if previous == 0 {
+                assert!(!headers.contains_key("x-codex-turn-state"));
+            } else {
+                assert_eq!(headers["x-codex-turn-state"], "wire-route");
+            }
+            let mut owners = self.owners.lock().unwrap();
+            let owner = owners
+                .entry(if child { "child" } else { "root" }.into())
+                .or_insert_with(|| (thread.clone(), turn.clone()));
+            assert_eq!(owner, &(thread, turn));
+        } else {
+            assert!(!headers.contains_key("x-areal-thread-id"));
+            assert!(!headers.contains_key("x-areal-turn-id"));
+            assert!(!headers.contains_key("session-id"));
+            assert!(!headers.contains_key("x-codex-turn-state"));
+        }
         if naming {
             self.naming_requests.fetch_add(1, Ordering::SeqCst);
             assert!(
@@ -170,16 +198,20 @@ async fn exercise(responses: bool, execution_id: bool) {
         total_requests: AtomicUsize::new(0),
         ready,
         release: Semaphore::new(0),
+        owners: Default::default(),
     });
     let handler = fixture.clone();
     let app = Router::new().route(
         "/",
-        post(move |Json(request): Json<Value>| {
+        post(move |headers: HeaderMap, Json(request): Json<Value>| {
             let handler = handler.clone();
             async move {
                 (
-                    [("content-type", "text/event-stream")],
-                    handler.respond(request).await,
+                    [
+                        ("content-type", "text/event-stream"),
+                        ("x-codex-turn-state", "wire-route"),
+                    ],
+                    handler.respond(headers, request).await,
                 )
             }
         }),
@@ -251,6 +283,11 @@ async fn exercise(responses: bool, execution_id: bool) {
     assert_eq!(fixture.child_requests.load(Ordering::SeqCst), 1);
     assert_eq!(fixture.naming_requests.load(Ordering::SeqCst), 1);
     assert_eq!(fixture.total_requests.load(Ordering::SeqCst), 5);
+    if responses {
+        let owners = fixture.owners.lock().unwrap();
+        assert_eq!(owners["root"].0, parent.id);
+        assert_ne!(owners["root"], owners["child"]);
+    }
     assert_eq!(
         done.turns[0].status,
         TurnStatus::Completed,

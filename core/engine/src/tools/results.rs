@@ -198,6 +198,16 @@ impl Engine {
                 reason = "noNetSaving";
             }
         }
+        if coordination
+            && snapshot.is_some()
+            && value.to_string().len() > MAX_RESULT
+            && let Some(preview) = coordination_handoff_preview(&value)
+        {
+            // 只缩短可按字节回取的正文，不能让通用头尾截断破坏整批回执的状态与游标。
+            value = preview;
+            kind = "coordination-v2-preview-v1";
+            reason = "pagedHandoffPreview";
+        }
         if value.to_string().len() > MAX_RESULT {
             // 先装入可信回取引用，再分配头尾预算；不能让通用截断删掉回取入口。
             let full = value.to_string();
@@ -265,6 +275,34 @@ impl Engine {
         anyhow::ensure!((4..=8192).contains(&max_bytes), "maxBytes must be 4..8192");
         result_page(result_id, &text, offset, max_bytes)
     }
+}
+
+fn coordination_handoff_preview(value: &Value) -> Option<Value> {
+    let mut preview = value.clone();
+    for limit in [2048, 1024, 512, 256, 128, 64, 0] {
+        for key in ["completed", "pending", "agents"] {
+            if let Some(rows) = preview.get_mut(key).and_then(Value::as_array_mut) {
+                for row in rows {
+                    let (Some(text), Some(offset)) = (row["text"].as_str(), row["offset"].as_u64())
+                    else {
+                        continue;
+                    };
+                    let short = prefix(text, limit);
+                    if short.len() < text.len() {
+                        let next = offset.checked_add(short.len() as u64)?;
+                        let short = short.to_owned();
+                        row["text"] = json!(short);
+                        row["nextOffset"] = json!(next);
+                    }
+                }
+            }
+        }
+        if preview.to_string().len() <= MAX_RESULT {
+            return Some(preview);
+        }
+    }
+    // 元数据本身仍超限时保留原有有界原文回取，不丢状态字段或伪造完整交接。
+    None
 }
 
 fn result_page(id: &str, text: &str, offset: usize, max_bytes: usize) -> anyhow::Result<Value> {
@@ -405,6 +443,110 @@ mod tests {
         async fn stream(&self, _: Vec<Message>) -> anyhow::Result<model::ModelStream> {
             unreachable!()
         }
+    }
+
+    #[test]
+    fn handoff_previews_preserve_offsets_pending_failures_and_metadata_overflow() {
+        let text = "失败限制与未完成检查\n".repeat(1000);
+        let raw = json!({"completed":[{"text":text,"offset":9,"status":"failed","error":"verification failed"}],
+            "pending":[{"text":text,"offset":6,"status":"running","resourcesReleased":false}],
+            "allSettled":false,"nextAfter":{"completed":"unchanged-version"}});
+        let preview = coordination_handoff_preview(&raw).unwrap();
+        for key in ["completed", "pending"] {
+            let row = &preview[key][0];
+            assert_eq!(row["status"], raw[key][0]["status"]);
+            assert_eq!(row["offset"], raw[key][0]["offset"]);
+            assert_eq!(
+                row["nextOffset"].as_u64(),
+                Some(row["offset"].as_u64().unwrap() + row["text"].as_str().unwrap().len() as u64)
+            );
+        }
+        assert_eq!(
+            preview["completed"][0]["error"],
+            raw["completed"][0]["error"]
+        );
+        assert_eq!(preview["pending"][0]["resourcesReleased"], false);
+        assert_eq!(preview["allSettled"], false);
+        assert_eq!(preview["nextAfter"], raw["nextAfter"]);
+        let mut overflow = raw;
+        overflow["unresolvedMetadata"] = json!("must retain".repeat(MAX_RESULT));
+        assert!(coordination_handoff_preview(&overflow).is_none());
+    }
+
+    #[tokio::test]
+    async fn oversized_coordination_batch_retains_structured_receipts_and_full_readback() {
+        let directory = tempfile::tempdir().unwrap();
+        let engine = Engine::open(directory.path(), Arc::new(NoModel), Limits::default()).unwrap();
+        let thread = engine.create("/fixture".into()).await.unwrap();
+        let cell = engine.cell(&thread.id).await.unwrap();
+        let reports: Vec<_> = (0..3).map(|index| json!({
+            "executionId":format!("execution-{index}"),"threadId":format!("child-{index}"),
+            "turnId":"child-turn","status":if index==2 {"cancelled"} else {"completed"},
+            "settled":true,"resourcesReleased":true,"sourceItemId":format!("report-{index}"),
+            "text":"检查与限制\n".repeat(1200),"textBytes":19200,"offset":0,"nextOffset":null,
+            "delivery":{"status":"notRequired"},"verification":{"status":"unknown"}
+        })).collect();
+        let raw = json!({"completed":reports,"pending":[],"allSettled":true,
+            "nextAfter":{"execution-0":"version-0","execution-1":"version-1","execution-2":"version-2"}});
+        let prepared = engine
+            .prepare_coordination_result(&cell, "batch-call", "agent_wait_any", &raw)
+            .await
+            .unwrap();
+        assert!(prepared.value.to_string().len() <= MAX_RESULT);
+        assert!(
+            prepared.value.get("prefix").is_none(),
+            "a batch must not become partial JSON strings"
+        );
+        assert_eq!(prepared.value["nextAfter"], raw["nextAfter"]);
+        assert_eq!(prepared.value["allSettled"], true);
+        for (index, report) in prepared.value["completed"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .enumerate()
+        {
+            let original = &raw["completed"][index];
+            for field in [
+                "executionId",
+                "sourceItemId",
+                "status",
+                "settled",
+                "resourcesReleased",
+                "delivery",
+                "verification",
+                "textBytes",
+            ] {
+                assert_eq!(report[field], original[field], "{field}");
+            }
+            let text = report["text"].as_str().unwrap();
+            assert!(!text.is_empty());
+            assert!(original["text"].as_str().unwrap().starts_with(text));
+            assert_eq!(report["nextOffset"].as_u64(), Some(text.len() as u64));
+        }
+        let turn:Turn=serde_json::from_value(json!({"id":"turn","status":"completed","items":[{
+            "type":"dynamicToolCall","id":"batch-call","tool":"agent_wait_any","callId":"call","arguments":{},"status":"completed","success":true,
+            "contentItems":[{"type":"inputText","text":prepared.value.to_string()}],
+            "execution":{"runtimeEpoch":"epoch","scopeId":"scope","operationId":"op","outcome":"succeeded","resultSnapshot":prepared.snapshot}
+        }]})).unwrap();
+        cell.state.lock().await.thread.turns.push(turn);
+        let mut args = json!({"resultId":"batch-call"});
+        let mut full = String::new();
+        loop {
+            let page = engine.read_tool_result(&cell, &args).await.unwrap();
+            full.push_str(page["text"].as_str().unwrap());
+            if page["eof"] == true {
+                break;
+            }
+            args["after"] = page["nextCursor"].clone();
+        }
+        assert_eq!(serde_json::from_str::<Value>(&full).unwrap(), raw);
+        let small = json!({"completed":[{"executionId":"one","offset":4,"text":"ok","nextOffset":null}],"pending":[]});
+        let direct = engine
+            .prepare_coordination_result(&cell, "small", "agent_wait_any", &small)
+            .await
+            .unwrap();
+        assert_eq!(direct.value, small);
+        engine.shutdown().await;
     }
 
     #[tokio::test]

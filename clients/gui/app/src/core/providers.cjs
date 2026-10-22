@@ -91,9 +91,9 @@ class AppProviders {
   async openai() {
     if (!this.openaiPromise) this.openaiPromise = import('@areal/chatgpt-provider/core').then(({ CoreSubscription }) => {
       this.openaiStore = new SubscriptionStore(this.backend, this.encryption);
-      const onRequest = process.env.AREAL_CORE_PROVIDER_AUDIT === '1' ? async ({ providerId, protocol, model, startedAt, completedAt, upstreamHttpStatus, upstreamContentType, localHttpStatus, outcome, failureKind, streamFailureReason, code, state, phase, httpStatus, requestId, adjustments }) => {
+      const onRequest = process.env.AREAL_CORE_PROVIDER_AUDIT === '1' ? async ({ providerId, protocol, model, startedAt, completedAt, upstreamHttpStatus, upstreamContentType, localHttpStatus, outcome, failureKind, streamFailureReason, code, state, phase, httpStatus, requestId, adjustments, sessionIdentitySent, turnStateSent, turnStateReceived }) => {
         await appendFile(join(this.backend.home, 'provider-requests.jsonl'), JSON.stringify({ providerId, protocol, model, startedAt, completedAt,
-          upstreamHttpStatus, upstreamContentType, localHttpStatus, outcome, failureKind, streamFailureReason, code, state, phase, httpStatus, requestId, adjustments }) + '\n', { mode: 0o600 });
+          upstreamHttpStatus, upstreamContentType, localHttpStatus, outcome, failureKind, streamFailureReason, code, state, phase, httpStatus, requestId, adjustments, sessionIdentitySent, turnStateSent, turnStateReceived }) + '\n', { mode: 0o600 });
       } : undefined;
       const service = new CoreSubscription({ store: this.openaiStore, fetch: async (...args) => (await this.network()).fetch(...args), token: this.openaiToken, port: this.transport.port, onListen: async port => { this.transport.port = port; await this.backend.save('subscription-transport.json', this.transport); }, kind: 'openai', onRequest });
       service.account.activateAuthorized = async (id, activate) => {

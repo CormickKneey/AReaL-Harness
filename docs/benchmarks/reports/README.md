@@ -6,6 +6,7 @@
 
 | 报告 | 证据范围 |
 |---|---|
+| [收尾、读取补位与 Responses 路由](completion-cache-routing.md) | 固定100次对照、缓存接近但仍慢30.6%；保留失败、UNKNOWN、机制补修与未晋级结论 |
 | [复杂任务收尾、制品就绪与策略继承](complex-work10-completion-runtime.md) | 固定100次滚动对照、实际GUI安装；协议链路纠正、2次收尾超时及用量UNKNOWN保留，不将旧41%作为因果基线 |
 | [复杂任务并发、共享写入与网络恢复](complex-workflow-concurrency.md) | 通用机制与实际 GUI 安装；100次故障污染矩阵、6次中断补充、20次最终确认分别保留，长尾与用量 UNKNOWN 不隐去 |
 | [复杂协作工具链、交接与收尾修复](complex-workflow-repair.md) | 八个已见任务双方各五次，共80次；保留失败、计量UNKNOWN、复算契约待定与共享写入并行限制 |

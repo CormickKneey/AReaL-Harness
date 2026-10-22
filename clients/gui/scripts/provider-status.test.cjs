@@ -2,6 +2,40 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { AppProviders } = require('../app/src/core/providers.cjs');
+const { mkdtemp, readFile, rm, stat } = require('node:fs/promises');
+const { tmpdir } = require('node:os');
+const { join } = require('node:path');
+
+test('optional desktop audit preserves routing presence without persisting opaque state', async t => {
+  const previous = process.env.AREAL_CORE_PROVIDER_AUDIT;
+  process.env.AREAL_CORE_PROVIDER_AUDIT = '1';
+  t.after(() => {
+    if (previous === undefined) delete process.env.AREAL_CORE_PROVIDER_AUDIT;
+    else process.env.AREAL_CORE_PROVIDER_AUDIT = previous;
+  });
+  const home = await mkdtemp(join(tmpdir(), 'areal-provider-audit-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const providers = new AppProviders({ home }, {});
+  providers.transport = { port: 0 };
+  const service = await providers.openai();
+  t.after(() => service.close());
+  await service.onRequest({ providerId: 'fixture', model: 'model', outcome: 'completed',
+    sessionIdentitySent: true, turnStateSent: false, turnStateReceived: true,
+    'x-codex-turn-state': 'opaque-routing-value', headers: { Authorization: 'fixture-secret' } });
+  const filename = join(home, 'provider-requests.jsonl');
+  const text = await readFile(filename, 'utf8');
+  assert.deepEqual(JSON.parse(text), { providerId: 'fixture', model: 'model', outcome: 'completed',
+    sessionIdentitySent: true, turnStateSent: false, turnStateReceived: true });
+  assert(!text.includes('opaque-routing-value'));
+  assert(!text.includes('fixture-secret'));
+  assert.equal((await stat(filename)).mode & 0o077, 0);
+  delete process.env.AREAL_CORE_PROVIDER_AUDIT;
+  const disabled = new AppProviders({ home }, {});
+  disabled.transport = { port: 0 };
+  const quiet = await disabled.openai();
+  t.after(() => quiet.close());
+  assert.equal(quiet.onRequest, undefined);
+});
 
 function deferred() {
   let resolve;

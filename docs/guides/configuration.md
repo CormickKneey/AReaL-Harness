@@ -348,9 +348,9 @@ turn_model_rounds = 0
 
 活动时间包括根 Turn 的模型排队、执行、工具、交互等待和清理，子任务时间不叠加，轮次间容量等待、暂停和离线时间不计入。显式研究 worker 预算和 Runtime 硬限额继续生效；普通 Turn 没有总时限。Goal 请求禁用 HTTP 层隐式重试，以保留逐次消费的归因；未知消费会停止自动推进。使用与恢复见 [Goal 模式](clients.md#goals)。
 
-连续内置只读工具的并发候选也使用该 JSON：`{"policy":{"parallelReadCalls":4}}`。范围为 1–4，默认 1；显式选择 4 允许有界并发，不扩大模型、工具或输出总预算。未知后端和有状态工具保留屏障，hooks 与有限输出等条件下保持串行，见[Core 契约](../api/core.md#工具并发与执行进度)。未经来源隔离确认，不作为全局性能默认值推广。
+连续内置只读工具的并发候选也使用该 JSON：`{"policy":{"parallelReadCalls":4}}`。范围为 1–4，默认 1；显式选择 4 允许有界并发，不扩大模型、工具或输出总预算。未知后端和有状态工具保留屏障，匹配的 hooks 与有限输出等条件下保持串行，见[Core 契约](../api/core.md#工具并发与执行进度)。未经来源隔离确认，不作为全局性能默认值推广。
 
-`ToolPolicy.completionFocus`（JSON `completionFocus`）是默认 false 的显式行为实验。启用后提示 Agent 先完成用户要求的交付与必要验证，仅为具体未解问题增加复查，子任务按自身边界及时交接，空闲时使用较长等待与回执游标。它不强制 final、不免除验收、不扩大预算，也不推断题目要求。示例：`{"policy":{"parallelReadCalls":4,"completionFocus":true}}`。隔离 worker 继承纯工具策略；缺少未见来源证据时不推广为全局默认。
+`ToolPolicy.completionFocus`（JSON `completionFocus`）是默认 false 的显式行为实验。启用后提示 Agent 先完成用户要求的交付与必要验证，仅为具体未解问题增加复查，子任务按自身边界及时交接，空闲时使用较长等待与回执游标。计划应提前明确有限验收证据，让文档、检查准备与实现并行；后期集成验证须观察已应用输入，不能把隔离快照中准备的脚本当成最终验收。必需交付、相关验收及资源结算完成后及时答复，不把可选截图、额外检查或反复更新计划追加为收尾条件。它不强制 final、不免除验收、不扩大预算，也不推断题目要求。示例：`{"policy":{"parallelReadCalls":4,"completionFocus":true}}`。隔离 worker 继承纯工具策略；缺少未见来源证据时不推广为全局默认。
 
 工具结果视图通过 `[tools] extensions_file` 指向的 JSON 配置，在 `policy.resultViews` 下设置 `mode: off|observe|on`（默认 observe）及 `searchGroups`、`repeatLines` 开关。大结果快照与内置 rg 不依赖该开关；额度和回取行为见[工具指南](tools.md)。
 

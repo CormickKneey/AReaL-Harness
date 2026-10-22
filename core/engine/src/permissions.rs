@@ -9,6 +9,25 @@ pub(crate) use scopes::additional_schema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+// 基础网络策略与实际 scope 请求共用；继承仍受 Runtime 上限和单次授权约束。
+pub(crate) fn base_network_policy(
+    configuration: Option<&areal_protocol::desktop::EffectiveConfig>,
+    side: bool,
+) -> areal_runtime_protocol::NetworkRequest {
+    if side
+        || configuration.is_some_and(|config| {
+            config.read_only
+                || config.options.permission_preset.is_some_and(|preset| {
+                    preset != areal_protocol::desktop::PermissionPreset::FullAccess
+                })
+        })
+    {
+        areal_runtime_protocol::NetworkRequest::Deny
+    } else {
+        areal_runtime_protocol::NetworkRequest::Inherit
+    }
+}
+
 #[derive(Default, Serialize, Deserialize)]
 pub(crate) struct ProjectGrants {
     pub workspace: String,
@@ -510,6 +529,39 @@ fn browser_safe_plan(plan: &Value) -> bool {
 mod tests {
     use super::*;
     use areal_protocol::desktop::EffectiveConfig;
+    #[test]
+    fn network_projection_matches_readonly_side_and_permission_preset_boundaries() {
+        use areal_protocol::desktop::PermissionPreset;
+        use areal_runtime_protocol::NetworkRequest;
+        let mut config = EffectiveConfig::default();
+        assert_eq!(base_network_policy(None, false), NetworkRequest::Inherit);
+        for preset in [
+            None,
+            Some(PermissionPreset::FullAccess),
+            Some(PermissionPreset::Ask),
+            Some(PermissionPreset::AutoReview),
+        ] {
+            config.options.permission_preset = preset;
+            config.read_only = false;
+            assert_eq!(
+                base_network_policy(Some(&config), false),
+                if preset.is_none() || preset == Some(PermissionPreset::FullAccess) {
+                    NetworkRequest::Inherit
+                } else {
+                    NetworkRequest::Deny
+                }
+            );
+            assert_eq!(
+                base_network_policy(Some(&config), true),
+                NetworkRequest::Deny
+            );
+            config.read_only = true;
+            assert_eq!(
+                base_network_policy(Some(&config), false),
+                NetworkRequest::Deny
+            );
+        }
+    }
     #[test]
     fn readonly_preapproval_does_not_approve_hooks_or_external_tool_arguments() {
         let mut config = EffectiveConfig::default();

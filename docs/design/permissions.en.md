@@ -34,7 +34,7 @@ A denied compound command may already have partial effects and is never replayed
 
 ## Independent review
 
-Approve for me makes a separate request through the frozen model adapter. Its input contains user intent, final arguments, requested access and mandatory restrictions. The reviewer receives no executable tools. Structured output must match the request digest. Core records reviewer identity, decision, rationale and usage.
+Approve for me makes a separate request through the frozen model adapter. Its input contains user intent, final arguments, requested access and mandatory restrictions. The reviewer receives no executable tools. Structured output must match the request digest. Core records reviewer identity, decision, rationale and usage. Review retains its 20-second overall deadline, 512-token output budget and no-tool restriction. Actual HTTP requests use the same model-capacity boundary as solve and summary: internal backoff releases capacity, retries queue and account again, and active responses retain their slot. Cancellation never dispatches the pending operation or replays unknown effects. Routing is isolated by Thread, Turn and permissionReview purpose.
 
 Explicit refusal prevents execution. Uncertainty, invalid output, timeout or service failure uses the existing human approval path. Noninteractive tasks deny execution when required human approval is unavailable. Review cannot override hard denial, read-only or mandatory human gates. PermissionRequest hooks retain their existing contract and do not replace the reviewer.
 

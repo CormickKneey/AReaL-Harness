@@ -722,6 +722,12 @@ impl Engine {
             "readArtifact":false,
             "supportsArtifact":matches!(record.execution, Some(ExecutionRef::Workgroup { .. })),
             "contract":if matches!(record.execution, Some(ExecutionRef::Workgroup { .. })) { "frozen" } else { "live" },
+            "sourceView":match &record.execution {
+                Some(ExecutionRef::Workgroup { .. }) => "snapshotAtCreation",
+                Some(ExecutionRef::Thread { .. }) => "currentShared",
+                None => "unavailable",
+            },
+            "networkPolicy":"unknown",
         });
         if let Some(error) = &record.error
             && record.execution.is_none()
@@ -742,6 +748,13 @@ impl Engine {
                     .iter()
                     .find(|t| &t.id == turn_id)
                     .ok_or(Error::NotFound)?;
+                if let Some(configuration) = turn.configuration.as_ref() {
+                    value["capabilities"]["networkPolicy"] =
+                        json!(crate::permissions::base_network_policy(
+                            Some(configuration),
+                            state.thread.is_side()
+                        ));
+                }
                 let raw =
                     crate::agents::snapshot_turn(&state, turn_id, offset, 8192).map_err(invalid)?;
                 value["threadId"] = json!(thread_id);

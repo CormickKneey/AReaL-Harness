@@ -26,6 +26,14 @@ let holdNextSolve = false;
 let releaseHeld;
 let holdNextReview = false;
 let releaseReview;
+let retryReviewFailures = 0;
+let retryReviewObserved = false;
+const capacityFirstMarker = " [ ] ";
+const capacitySecondMarker = " [  ] ";
+let capacityFirstStarted;
+let capacitySecondStarted = false;
+let capacityGate;
+let releaseCapacity;
 function event(response, delta, finish = null) {
   response.write(
     `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`,
@@ -38,15 +46,22 @@ const fixture = createServer(async (request, response) => {
   const body = JSON.parse(raw);
   if (respondToSessionName(body, response)) return;
   requests.push(body);
+  const reviewing = body.messages.some(
+    (message) =>
+      message.role === "system" &&
+      typeof message.content === "string" &&
+      message.content.includes("AReaL permission review"),
+  );
+  if (reviewing && retryReviewFailures > 0) {
+    retryReviewFailures--;
+    reviews.push(body);
+    retryReviewObserved = true;
+    response.writeHead(503, { "retry-after": "2" });
+    response.end("Temporary local review fixture failure");
+    return;
+  }
   response.writeHead(200, { "content-type": "text/event-stream" });
-  if (
-    body.messages.some(
-      (message) =>
-        message.role === "system" &&
-        typeof message.content === "string" &&
-        message.content.includes("AReaL permission review"),
-    )
-  ) {
+  if (reviewing) {
     assert.ok(!body.tools?.length, "the reviewer cannot execute tools");
     reviews.push(body);
     if (holdNextReview) {
@@ -79,6 +94,11 @@ const fixture = createServer(async (request, response) => {
             .filter((part) => part.type === "text")
             .map((part) => part.text)
             .join("");
+    if (text === capacityFirstMarker) {
+      capacityFirstStarted?.();
+      await capacityGate;
+    }
+    if (text === capacitySecondMarker) capacitySecondStarted = true;
     const calls = JSON.parse(text);
     const results = body.messages.slice(index + 1).filter((message) => message.role === "tool");
     if (results.length < calls.length) {
@@ -182,11 +202,11 @@ async function stop() {
   clearTimeout(timer);
   child = undefined;
 }
-async function thread(preset) {
+async function thread(preset, cwd = workspace) {
   return (
     await rpc.call("areal/thread/start", {
       requestId: randomUUID(),
-      cwd: workspace,
+      cwd,
       options: { permissionPreset: preset },
     })
   ).thread.id;
@@ -438,11 +458,85 @@ try {
     "a child retains its own private scratch inside the inherited authority boundary",
   );
   checks.push({ restrictedChildPrivateScratch: true });
+
+  // 新增模型用途也必须遵守同一请求容量；退避不挡健康请求，在途流仍占名额。
+  await stop();
+  await writeFile(config, "schema_version = 1\n[limits]\nmodel_concurrency = 1\n");
+  await start();
+  const retryId = await thread("autoReview");
+  // 不共享源码租约，探针只判断 Engine 模型容量，不把工作区一致性等待算成容量阻塞。
+  const healthyWorkspace = join(workspace, "healthy-workspace");
+  await mkdir(healthyWorkspace);
+  const healthyId = await thread("fullAccess", healthyWorkspace);
+  const outside = join(root, "review-backoff/output.txt");
+  await mkdir(dirname(outside), { recursive: true });
+  retryReviewFailures = 1;
+  retryReviewObserved = false;
+  const reviewAt = reviews.length;
+  const waitingReview = await turn(retryId, [
+    command(`printf forbidden > '${outside}'`, { permissionRequest: additional(outside) }),
+  ]);
+  for (let i = 0; i < 500 && !retryReviewObserved; i++) await delay(10);
+  assert.equal(retryReviewObserved, true, "the real HTTP reviewer entered retry backoff");
+  const healthyStarted = new Promise((resolve) => {
+    capacityFirstStarted = resolve;
+  });
+  capacityGate = new Promise((resolve) => {
+    releaseCapacity = resolve;
+  });
+  const healthyTurn = (
+    await rpc.call("turn/start", {
+      threadId: healthyId,
+      input: [{ type: "text", text: capacityFirstMarker }],
+    })
+  ).turn.id;
+  const progressed = await Promise.race([
+    healthyStarted.then(() => true),
+    delay(900).then(() => false),
+  ]);
+  let secondHealthy;
+  if (progressed) {
+    const id = await thread("fullAccess", healthyWorkspace);
+    secondHealthy = {
+      id,
+      turn: (
+        await rpc.call("turn/start", {
+          threadId: id,
+          input: [{ type: "text", text: capacitySecondMarker }],
+        })
+      ).turn.id,
+    };
+    await delay(80);
+  }
+  const boundedWhileLive = !capacitySecondStarted;
+  await rpc.call("turn/interrupt", { threadId: retryId, turnId: waitingReview });
+  releaseCapacity();
+  const interrupted = await rpc.waitEvent(
+    "turn/completed",
+    (params) => params.threadId === retryId && params.turn.id === waitingReview,
+  );
+  assert.equal(interrupted.turn.status, "interrupted");
+  await complete(healthyId, healthyTurn);
+  if (secondHealthy) await complete(secondHealthy.id, secondHealthy.turn);
+  assert.equal(
+    await exists(outside),
+    false,
+    "cancelled reviewer backoff cannot dispatch the operation",
+  );
+  assert.equal(reviews.length - reviewAt, 1, "cancellation prevents the next review HTTP attempt");
+  checks.push({
+    reviewBackoffReleasesCapacity: progressed,
+    liveRequestLimitPreserved: boundedWhileLive,
+    cancelledBackoffNoDispatch: true,
+  });
+  assert.equal(progressed, true, "review retry backoff retained the sole Engine model slot");
+  assert.equal(boundedWhileLive, true, "an active response stream must retain its model slot");
   passed = true;
   console.log(JSON.stringify({ checks, reviews: reviews.length, evidence }, null, 2));
 } finally {
   releaseHeld?.();
   releaseReview?.();
+  releaseCapacity?.();
   await stop();
   fixture.closeAllConnections();
   await new Promise((resolve) => fixture.close(resolve));

@@ -6,6 +6,7 @@ Historical records do not define current capabilities. Use the [run guide](../RE
 
 | Report | Evidence scope |
 |---|---|
+| [Completion, read refill and Responses routing](completion-cache-routing.en.md) | Fixed100 comparison; cache fractions converge but30.6% wall gap remains; failures, UNKNOWN and rejected promotion retained |
 | [Completion, artifact readiness and policy inheritance](complex-work10-completion-runtime.en.md) | Fixed100 rolling comparison and local GUI installation; corrected protocol relay, two completion timeouts and UNKNOWN usage retained; historical41% is not a causal baseline |
 | [Complex-workflow concurrency, shared writes and network recovery](complex-workflow-concurrency.en.md) | Generic mechanisms and actual GUI installation; contaminated100, interrupted6 and final20 kept separate, including remaining tails and UNKNOWN usage |
 | [Complex workflow environment, handoff and completion repairs](complex-workflow-repair.en.md) | Eight seen tasks, five repetitions per arm, 80 runs; retained failures, UNKNOWN usage, ambiguous reproduction contract and shared-writer serialization limits |
