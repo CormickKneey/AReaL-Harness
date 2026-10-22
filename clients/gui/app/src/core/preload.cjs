@@ -1,6 +1,15 @@
 'use strict';
 const { contextBridge, ipcRenderer } = require('electron');
 let quitSubscription = null;
+let quitProgress = { state: 'idle' };
+const quitProgressListeners = new Set();
+ipcRenderer.on('areal-core:quit-progress', (_event, value) => {
+  if (value?.state === 'idle') quitProgress = { state: 'idle' };
+  else if (value?.state === 'quitting' && ['checking', 'stopping', 'finishing'].includes(value.phase))
+    quitProgress = { state: 'quitting', phase: value.phase };
+  else return;
+  for (const listener of quitProgressListeners) listener(quitProgress);
+});
 function answerQuitRequest(subscription, allowed) {
   if (subscription.pending === null) return;
   const id = subscription.pending;
@@ -19,6 +28,11 @@ ipcRenderer.on('areal-core:quit-request', (_event, id) => {
 });
 contextBridge.exposeInMainWorld('arealDesktop', {
   presentReady: () => ipcRenderer.invoke('areal-core:present-ready'),
+  onQuitProgress: listener => {
+    quitProgressListeners.add(listener);
+    listener(quitProgress);
+    return () => quitProgressListeners.delete(listener);
+  },
   onQuitRequested: listener => {
     if (quitSubscription) answerQuitRequest(quitSubscription, false);
     const subscription = { listener, pending: null };

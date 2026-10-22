@@ -20,10 +20,27 @@ impl Engine {
             .as_ref()
             .ok_or_else(|| rt::Error::new(rt::ErrorCode::Unavailable, "Runtime unavailable"))?;
         let client = &runtime.client;
-        let parent = runtime.command_scope.as_ref().map_or_else(
+        let mut parent = runtime.command_scope.as_ref().map_or_else(
             || client.info().root_scope_id.clone(),
             |scope| scope.scope_id.clone(),
         );
+        let parent_thread = cell.state.lock().await.thread.parent_thread_id.clone();
+        if let Some(parent_id) = parent_thread {
+            let owner = self
+                .cell(&parent_id)
+                .await
+                .map_err(|e| rt::Error::new(rt::ErrorCode::Unavailable, e.to_string()))?;
+            if let Some(scope) = owner
+                .state
+                .lock()
+                .await
+                .active
+                .as_ref()
+                .and_then(|active| active.base_scope.clone())
+            {
+                parent = scope;
+            }
+        }
         let needed = {
             let state = cell.state.lock().await;
             let hooks = state.active.as_ref().map_or_else(

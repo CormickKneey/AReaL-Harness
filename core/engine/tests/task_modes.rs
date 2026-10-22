@@ -162,6 +162,7 @@ fn create(mode: TaskMode, thread_id: Option<String>) -> TaskCreate {
         thread_id,
         interaction_mode: None,
         schedule: None,
+        schedule_v2: None,
         token_budget: Some(100000),
         max_turns: Some(8),
         max_active_seconds: Some(60),

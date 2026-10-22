@@ -176,6 +176,7 @@ async fn profile_without_workflow_exposes_its_deployed_tool_allowlist() {
         .create_configured(
             "test-client".into(),
             areal_protocol::desktop::ThreadStart {
+                options: None,
                 admission_guard: None,
                 request_id: "start-1".into(),
                 cwd: Some("/workspace".into()),
@@ -228,6 +229,7 @@ async fn profile_without_workflow_exposes_its_deployed_tool_allowlist() {
         .create_configured(
             "test-client".into(),
             areal_protocol::desktop::ThreadStart {
+                options: None,
                 admission_guard: None,
                 request_id: "start-2".into(),
                 cwd: Some("/workspace".into()),

@@ -5,6 +5,7 @@ use areal_engine::{
 };
 use async_trait::async_trait;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 struct Held;
 #[async_trait]
@@ -295,13 +296,30 @@ async fn pause_targets_current_run_but_accepted_replay_survives_new_run_and_rest
     let path = root.path().join("desktop/task-mode.json");
     let mut persisted: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    persisted["tasks"]["task"]["revision"] = json!(20);
-    let mut next = persisted["tasks"]["task"]["runs"][1].clone();
+    assert_eq!(persisted["version"], 5);
+    let task_key = format!("{:x}", Sha256::digest(b"task"));
+    let head = &mut persisted["tasks"][task_key];
+    let ledger = root.path().join("desktop/task-ledger");
+    let mut task: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(ledger.join(head["body"].as_str().unwrap())).unwrap(),
+    )
+    .unwrap();
+    task["revision"] = json!(20);
+    let mut next = task["runs"][1].clone();
     next["id"] = json!("run-2");
-    persisted["tasks"]["task"]["runs"]
-        .as_array_mut()
-        .unwrap()
-        .push(next);
+    task["runs"].as_array_mut().unwrap().push(next);
+    let bytes = serde_json::to_vec(&task).unwrap();
+    let digest = format!("{:x}", Sha256::digest(&bytes));
+    // 只发布新不可变叶；保留根中的原始回执索引，验证跨新 Run 的受理重放。
+    std::fs::write(ledger.join(&digest), &bytes).unwrap();
+    head["body"] = json!(digest);
+    head["hot_bytes"] = json!(bytes.len());
+    head["settlement_limit"] = json!(
+        head["settlement_limit"]
+            .as_u64()
+            .unwrap()
+            .max(bytes.len() as u64)
+    );
     write_tasks(root.path(), &persisted);
     let engine = Engine::open(root.path(), Arc::new(Held), Limits::default()).unwrap();
     assert_eq!(

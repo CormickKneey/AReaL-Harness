@@ -1,5 +1,6 @@
 'use strict';
 const diagnostics = require('./diagnostics.cjs');
+const { commandSemantics } = require('@areal/workbench/desktop-contract');
 const { startupTrace } = require('./startup-timing.cjs');
 const { spawn } = require('node:child_process');
 const { randomUUID } = require('node:crypto');
@@ -14,9 +15,10 @@ const { desktopExecutables } = require('./desktop-executables.cjs');
 const { sameOwner, scrubOwnerEnvironment } = require('./application-owner.cjs');
 let diagnosticsConnectionGeneration = 0;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-const currentCommands = new Set(['send', 'editMessage', 'continue', 'prepareCreator', 'feedback']);
+const currentCommands = new Set(['send', 'editMessage', 'continue', 'prepareCreator', 'feedback', 'create', 'configure']);
 const currentManagePrefixes = ['plugin', 'marketplace', 'mcpApp', 'mcpForm'];
-const currentManageOperations = new Set(['mcpExtensionCall', 'mcpToolResult', 'connectorConfigure', 'connectorCredential', 'hookAcknowledge']);
+const currentManageOperations = new Set(['mcpExtensionCall', 'mcpToolResult', 'connectorConfigure', 'connectorCredential', 'hookAcknowledge',
+  'taskCreate', 'taskUpdate', 'taskPause', 'taskResume', 'taskStopRun', 'taskResumeRun', 'taskCancel', 'taskReply']);
 const uuid = value => typeof value === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value);
 const desktopKind = kind => ['stopDesktop', 'updateDesktop'].includes(kind);
 const needsOriginalCheck = operation => operation.phase === 'admissionUnconfirmed'
@@ -83,12 +85,14 @@ async function waitForProcessExit(pid) {
 }
 
 class ServiceConnection {
-  constructor(onState = () => {}, onClose = () => {}, onNotification = () => {}, onNotificationOpen = () => {}, onBrowserRequest = null, onBrowserCancel = null, onMcpAppNotification = () => {}) {
+  constructor(onState = () => {}, onClose = () => {}, onNotification = () => {}, onNotificationOpen = () => {}, onBrowserRequest = null, onBrowserCancel = null, onMcpAppNotification = () => {}, onMcpPageToolNotice = () => {}, onMcpPageToolsRevoked = () => {}) {
     this.onNotification = onNotification;
     this.onNotificationOpen = onNotificationOpen;
     this.onBrowserRequest = onBrowserRequest;
     this.onBrowserCancel = onBrowserCancel;
     this.onMcpAppNotification = onMcpAppNotification;
+    this.onMcpPageToolNotice = onMcpPageToolNotice;
+    this.onMcpPageToolsRevoked = onMcpPageToolsRevoked;
     this.onState = onState; this.onClose = onClose; this.pending = new Map(); this.nextId = 0;
   }
   async connect(metadata) {
@@ -113,6 +117,8 @@ class ServiceConnection {
         if (packet?.snapshot && Object.hasOwn(packet.snapshot, 'projection'))
           message[key] = { ...packet, snapshot: projection.read(packet.snapshot) };
       } catch { socket.terminate(); return; }
+      if (message.method === 'mcpPageToolNotice') { this.onMcpPageToolNotice(message.params); return; }
+      if (message.method === 'mcpPageToolsRevoked') { this.onMcpPageToolsRevoked(message.params); return; }
       if (message.method === 'mcpAppNotification') { if (this.socket === socket) this.onMcpAppNotification?.(message.params); return; }
       if (message.method === 'notification') { this.onNotification(message.params); return; }
       if (message.method === 'notificationOpen') { this.onNotificationOpen(message.params); return; }
@@ -136,7 +142,7 @@ class ServiceConnection {
       if (this.socket !== socket) return;
       for (const entry of this.pending.values()) {
         clearTimeout(entry.timer);
-        entry.reject(Object.assign(new Error(entry.mutation ? '后台连接中断，操作结果未确认；请重连后核对任务，不会自动重发。' : '后台服务连接已断开'), { submissionUnknown: entry.mutation, code: 'DISCONNECTED' }));
+        entry.reject(Object.assign(new Error(entry.mutation ? '后台连接中断，操作结果未确认；请重连后核对任务，不会自动重发。' : '后台服务连接已断开'), { submissionUnknown: entry.mutation, code: 'DISCONNECTED', requestId: entry.requestId, recovery: { kind: entry.mutation ? 'queryOriginal' : 'retryRead' } }));
       }
       this.pending.clear(); this.onClose();
     });
@@ -147,15 +153,16 @@ class ServiceConnection {
     });
   }
   request(method, params, mutation = false) {
-    if (this.socket?.readyState !== WebSocket.OPEN) return Promise.reject(Object.assign(new Error('后台服务已断开，请重新连接'), { code: 'DISCONNECTED' }));
+    if (this.socket?.readyState !== WebSocket.OPEN) return Promise.reject(Object.assign(new Error('后台服务已断开，请重新连接'), { code: 'DISCONNECTED', submissionUnknown: false, outcome: { kind: mutation ? 'rejected' : 'noMutation' }, recovery: { kind: mutation ? 'none' : 'retryRead' } }));
     if (method === 'hello') params = { ...params, capabilities: { ...params?.capabilities, projection: 1 } };
     const id = ++this.nextId;
+    const requestId = method === 'command' ? params.request?.requestId ?? params.request?.draftId : undefined;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(Object.assign(new Error('后台请求超时，请核对结果后继续；不会自动重发。'), { submissionUnknown: mutation }));
+        reject(Object.assign(new Error(mutation ? '后台请求超时，请核对结果后继续；不会自动重发。' : '读取状态超时，请重试。'), { submissionUnknown: mutation, code: 'TIMEOUT', requestId, recovery: { kind: mutation ? 'queryOriginal' : 'retryRead' } }));
       }, 150000);
-      this.pending.set(id, { resolve, reject, timer, mutation });
+      this.pending.set(id, { resolve, reject, timer, mutation, requestId });
       this.socket.send(JSON.stringify({ id, method, params }), error => { if (error) this.socket.terminate(); });
     });
   }
@@ -209,13 +216,14 @@ class SharedCoreBackend {
   }
   disconnected() {
     this.onBrowserDisconnected?.();
+    this.onMcpPageToolsDisconnected?.();
     const stopped = !!this.connection && this.stoppedConnection === this.connection;
     const message = stopped ? '后台服务已停止，可按需重新连接' : '后台服务已断开，请重新连接';
     this.connectionState = { state: 'unavailable', message };
     this.status = { ...this.status, connected: false };
     this.value = { ...this.value, projects: this.value.projects.map(p => ({ ...p, error: stopped ? null : message, state: p.state ? { ...p.state, connected: false, error: stopped ? null : message } : null })) };
-    this.onChange();
     this.scheduleReconnect();
+    this.onChange();
   }
   clearReconnect() { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
   canReconnect() {
@@ -224,6 +232,7 @@ class SharedCoreBackend {
   }
   scheduleReconnect() {
     if (!(this.metadata?.identity ?? this.identity) || !this.canReconnect() || this.reconnectTimer) return;
+    this.connectionState = { state: 'connecting' };
     const delay = Math.min(30000, 500 * 2 ** Math.min(this.reconnectAttempts ?? 0, 6));
     this.reconnectAttempts = (this.reconnectAttempts ?? 0) + 1;
     this.reconnectTimer = setTimeout(() => {
@@ -233,13 +242,18 @@ class SharedCoreBackend {
       // 只恢复观察连接：不调用 initialize，不启动 Core、不重放任何未知提交。
       this.connecting = (async () => {
         const control = await this.readControl();
-        if (control?.state) { this.controlState = control.state; this.reconnectBlocked = true; return; }
+        if (control?.state) {
+          this.controlState = control.state; this.reconnectBlocked = true;
+          this.connectionState = { state: 'unavailable', recovery: 'check', message: '后台操作已保留，请检查原请求后继续。' };
+          this.onChange(); return;
+        }
         this.loadReferences(control);
         if (await this.attach({ passive: true })) {
           for (const reference of this.lifecycleReferences.values()) await this.readLifecycle(reference);
         }
       })().catch(error => {
-        if (error.code === 'DISCONNECTED') return;
+        if (error.submissionUnknown !== true && (error.code === 'DISCONNECTED'
+          || error.code === 'TIMEOUT' && error.recovery?.kind === 'retryRead')) return;
         this.reconnectBlocked = true;
         this.connectionState = { state: 'unavailable', message: error.message };
         this.onChange();
@@ -263,11 +277,16 @@ class SharedCoreBackend {
       return this.onBrowserRequest?.(request) ?? Promise.reject(new Error('Browser host unavailable'));
     }, request => { if (this.connection === connection) this.onBrowserCancel?.(request); }, event => {
       if (this.connection === connection && !this.disposed) this.onMcpAppNotification?.(event);
+    }, event => {
+      if (this.connection === connection && !this.disposed) this.onMcpPageToolNotice?.(event);
+    }, event => {
+      if (this.connection === connection && !this.disposed) this.onMcpPageToolsDisconnected?.(event);
     });
     try { await connection.connect(metadata); }
     catch (e) { connection.close(); if (e.code === 'DISCONNECTED') return false; throw e; }
     if (this.disposed) { connection.close(); throw new Error('GUI 连接已关闭'); }
     if (passive && !this.canReconnect()) { connection.close(); return false; }
+    if (this.connection) this.onMcpPageToolsDisconnected?.();
     this.connection?.close(); this.connection = connection; this.sequence = -1;
     const helloTrace = startupTrace('service.hello', { servicePid: metadata.pid });
     helloTrace.advance('hello');
@@ -424,7 +443,22 @@ class SharedCoreBackend {
   async addProject(path) {
     await this.init();
     this.assertLifecycleScope('addProject');
-    return this.connection.request('addProject', { path }, true);
+    const connection = this.connection;
+    try { return await connection.request('addProject', { path }, true); }
+    catch (error) {
+      if (error.submissionUnknown || ['admitted', 'unconfirmed'].includes(error.outcome?.kind)) throw error;
+      const packet = await connection.request('snapshot').catch(() => null);
+      if (!packet || connection !== this.connection || !this.status.connected) throw error;
+      this.accept(packet);
+      const project = this.value.projects.find(project => project.root === path
+        && !project.state?.connected && project.error && project.error === error.message);
+      if (!project) throw error;
+      return project.id;
+    }
+  }
+  async mcpPageTools(request) {
+    if (!this.status.connected || !this.connection) throw new Error('Page tool owner lease is disconnected');
+    return this.connection.request('mcpPageTools', request, true);
   }
   async browserClaim(identity) {
     this.assertLifecycleScope('browserClaim');
@@ -461,8 +495,9 @@ class SharedCoreBackend {
     const ownedRecovery = name === 'manage' && request.operation === 'processSubmission' && request.guiOwned === true;
     const { guiOwned, ...params } = request;
     // 队列业务键跨 GUI/共享服务连接保留，外层丢失响应后也能只读核对。
-    if (['queueEdit', 'send', 'editMessage', 'continue'].includes(name)) params.requestId ??= randomUUID();
-    const pending = this.connection.request('command', { name, request: name === 'media' ? encodeMedia(params) : params }, !(name === 'providers' && params.operation === 'revealKey')).then(value => {
+    const semantics = commandSemantics(name, params);
+    if (semantics.requestId) params[semantics.requestId] ??= randomUUID();
+    const pending = this.connection.request('command', { name, request: name === 'media' ? encodeMedia(params) : params }, semantics.effect === 'mutation').then(value => {
       if (ownedRecovery && value.confirmed) {
         this.guiTerminals.set(value.result.id, { projectId: request.projectId, threadId: request.threadId, id: value.result.id });
       }
@@ -472,7 +507,7 @@ class SharedCoreBackend {
     });
     if (ownedStart || ownedRecovery) this.guiTerminalStarts.add(pending);
     try { return await pending; }
-    catch (error) { if (['queueEdit', 'send', 'editMessage', 'continue'].includes(name) && error.submissionUnknown) error.requestId ??= params.requestId; throw error; }
+    catch (error) { if (semantics.requestId) error.requestId ??= params[semantics.requestId]; throw error; }
     finally { this.guiTerminalStarts.delete(pending); }
   }
   async resources(request) {

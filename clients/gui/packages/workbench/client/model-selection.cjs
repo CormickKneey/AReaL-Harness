@@ -16,4 +16,11 @@ function resolveNewConversationModel(models, lastAcceptedModel) {
   };
 }
 
-module.exports = { resolveNewConversationModel };
+function resolveModelEffort(model, preferredEffort) {
+  if (!model || model.capabilities?.reasoning === false) return undefined;
+  const options = model.reasoningEffortOptions ?? [];
+  return [preferredEffort, model.parameters?.reasoningEffort, 'medium', options[0]]
+    .find(effort => effort != null && options.includes(effort));
+}
+
+module.exports = { resolveNewConversationModel, resolveModelEffort };

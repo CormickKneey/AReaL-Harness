@@ -152,6 +152,8 @@ pub fn parse_agent_profile(value: &str) -> Result<areal_protocol::desktop::Versi
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LaunchSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_origin: Option<areal_protocol::service::Identity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner: Option<areal_protocol::service::Owner>,
     pub args: LocalArgs,
     pub home: PathBuf,
@@ -362,6 +364,7 @@ impl LaunchSpec {
         let service_id = storage::digest(data.as_os_str().as_encoded_bytes())[..24].to_owned();
         storage::registry(&root, &service_id)?;
         Ok(Self {
+            recovery_origin: None,
             owner: None,
             args: resolved,
             home: root,
@@ -414,6 +417,7 @@ mod tests {
     #[test]
     fn restart_command_uses_current_binary_and_preserves_deployment_args() {
         let spec = LaunchSpec {
+            recovery_origin: None,
             owner: None,
             args: LocalArgs {
                 workspace: Some("/tmp/work space".into()),

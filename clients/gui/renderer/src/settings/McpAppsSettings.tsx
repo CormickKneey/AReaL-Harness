@@ -22,6 +22,17 @@ export type McpAppServer = {
 };
 export type McpAppsCommand = (request: Record<string, unknown>) => Promise<unknown>;
 export const toolTitle = (tool: McpAppTool) => tool.title ?? tool.annotations?.title ?? tool.name;
+export function mcpAppEntrypoints<Server extends McpAppServer>(servers: readonly Server[], kind: "global" | "thread" | "file", fileName?: string) {
+    return servers.flatMap((server) => server.tools.filter((tool) => {
+        const meta = tool._meta?.["openai/ui"] as { entrypoints?: unknown } | undefined;
+        return Array.isArray(meta?.entrypoints) && meta.entrypoints.some((entry: unknown) => {
+            if (typeof entry !== "object" || !entry) return false;
+            const value = entry as { type?: unknown; extensions?: unknown };
+            return value.type === kind && (kind !== "file" || Array.isArray(value.extensions) &&
+                value.extensions.some(ext => typeof ext === "string" && /^\.[a-z0-9._-]+$/i.test(ext) && fileName?.toLowerCase().endsWith(ext.toLowerCase())));
+        });
+    }).map(tool => ({ server, tool })));
+}
 const base = { title: z.string().min(1), description: z.string().optional() };
 const fieldSchema = z.discriminatedUnion("type", [
     z.object({ ...base, type: z.literal("boolean") }).strict(),
@@ -300,31 +311,7 @@ export function McpAppEntrypoints({
     onOpen: (server: McpAppServer, tool: McpAppTool) => void;
 }) {
   const { t } = useI18n();
-    const entries = servers.flatMap((server) =>
-        server.tools
-            .filter((tool) => {
-                const meta = tool._meta?.["openai/ui"] as { entrypoints?: unknown } | undefined;
-                return (
-                    Array.isArray(meta?.entrypoints) &&
-                    meta.entrypoints.some((entry: unknown) => {
-                        if (typeof entry !== "object" || !entry) return false;
-                        const value = entry as { type?: unknown; extensions?: unknown };
-                        if (value.type !== kind) return false;
-                        return (
-                            kind !== "file" ||
-                            (Array.isArray(value.extensions) &&
-                                value.extensions.some(
-                                    (ext) =>
-                                        typeof ext === "string" &&
-                                        /^\.[a-z0-9._-]+$/i.test(ext) &&
-                                        fileName?.toLowerCase().endsWith(ext.toLowerCase()),
-                                ))
-                        );
-                    })
-                );
-            })
-            .map((tool) => ({ server, tool })),
-    );
+    const entries = mcpAppEntrypoints(servers, kind, fileName);
     return (
         <nav aria-label={t("settings.mcpAppsSettings.appEntryPoints")}>
             {entries.map(({ server, tool }) => (

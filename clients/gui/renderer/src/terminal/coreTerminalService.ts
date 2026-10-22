@@ -178,7 +178,7 @@ export function createTerminalServices(action: Action, projectId: string, thread
                 // must never turn an uncertain creation into a fresh request.
                 if (!previous) { attempt.inFlight = true; saveAttempt(clientId, attempt); }
                 let result;
-                try { result = attempt.result ?? await api('processStart', { requestId: attempt.requestId, terminal: true, lifetime, guiOwned: true, timeoutMs: 86_400_000, tty: true, cols, rows }); }
+                try { result = attempt.result ?? await api('processStart', { requestId: attempt.requestId, terminal: true, lifetime, guiOwned: true, tty: true, cols, rows }); }
                 catch (error) {
                     attempt.inFlight = false;
                     if (!(error as { submissionUnknown?: boolean }).submissionUnknown) saveAttempt(clientId, { ...attempt, state: 'rejected', message: (error as Error).message });

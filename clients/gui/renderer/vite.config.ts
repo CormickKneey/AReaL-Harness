@@ -21,6 +21,14 @@ export default defineConfig(({ mode }): UserConfig => ({
   base: "./",
   plugins: [react(), tailwindcss(), ...(mode === "design-system" ? [] : [remoteShell])],
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
+  optimizeDeps: mode === "design-system" ? {
+    include: [
+      "@areal/workbench/desktop-contract",
+      "@areal/workbench/model-selection",
+      "@areal/workbench/state-projection",
+      "@areal/provider-config",
+    ],
+  } : undefined,
   build: {
     outDir: mode === "design-system" ? "../dist/design-system" : "dist",
     emptyOutDir: true,

@@ -209,6 +209,7 @@ async fn runtime(data: &Path) -> Runtime {
                     json!({"protocolVersion":"areal.runtime.v0","runtimeEpoch":epoch,"connectionId":"fixture","rootScopeId":root,"capabilities":{"methods":["scope.check","fs.execute"]}})
                 }
                 "scope.check" => json!({"available":true}),
+                "scope.get" => scope.clone(),
                 "scope.create" => {
                     created.fetch_add(1, Ordering::SeqCst);
                     scope.clone()
@@ -343,7 +344,8 @@ async fn reads_overlap_without_reordering_history_or_crossing_write_barriers() {
     let done = bounded(engine.wait(&thread)).await.unwrap();
     assert_eq!(done.turns[0].status, TurnStatus::Completed);
     assert_eq!(model.requests.load(Ordering::SeqCst), 2);
-    assert_eq!(runtime.scopes.load(Ordering::SeqCst), 1);
+    // All calls share one authority/base pair for the Turn.
+    assert_eq!(runtime.scopes.load(Ordering::SeqCst), 2);
     assert_eq!(runtime.closed.load(Ordering::SeqCst), 1);
     let ids: Vec<_> = done.turns[0]
         .items

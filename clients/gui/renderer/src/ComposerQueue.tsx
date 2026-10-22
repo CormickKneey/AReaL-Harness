@@ -21,6 +21,7 @@ import {
 import { queueText } from "./Queue.js";
 import { imageAnnotationTitle } from "./imageAnnotations.js";
 import type { Action, Data } from "./services.js";
+import { recoveredOutcome } from "./recoveryPresentation.js";
 
 const queueLabel = (item: Data) => imageAnnotationTitle(queueText(item));
 
@@ -90,7 +91,10 @@ export function ComposerQueue({
         setBusy(true);
         try {
             const result = await action("reconcile", { projectId: project.id });
-            const known = result.outcomes?.[unknown!.requestId];
+            const request = unknown!;
+            const known = recoveredOutcome({ outcomes: result.outcomes }, request.requestId, thread.id,
+                result.outcomes?.[request.requestId]?.operation ? { requestId: request.requestId, method: `areal/queue/${request.operation}`,
+                    target: { kind: "thread", threadId: thread.id } } : undefined);
             const observed =
                 known ??
                 (await action("queue", { projectId: project.id, threadId: thread.id, ...unknown }));
@@ -99,9 +103,9 @@ export function ComposerQueue({
                 localStorage.removeItem(operationKey);
                 setUnknown(null);
                 setError(
-                    outcome.accepted
-                        ? "队列操作已确认。"
-                        : (outcome.message ?? "操作已被拒绝，请核对当前队列。"),
+                    outcome.status === "failed" || outcome.accepted === false
+                        ? (outcome.message ?? "队列操作执行失败，请核对当前队列。")
+                        : "队列操作已确认。",
                 );
             }
         } catch (cause) {

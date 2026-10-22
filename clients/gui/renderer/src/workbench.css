@@ -56,6 +56,16 @@ pre {
   border-radius: 20px;
   font-size: var(--text-ui-base);
 }
+.areal-workbench:has(> .startup-screen) { padding: 0; background: var(--color-background); }
+.areal-workbench:has(> .startup-screen)::after { display: none; }
+.startup-screen { position: relative; width: 100%; height: 100%; display: grid; place-items: center; }
+.startup-drag-region { position: absolute; inset: 0 0 auto; height: var(--shell-bar-height); -webkit-app-region: drag; }
+.startup-content { display: flex; flex-direction: column; align-items: center; gap: 16px; max-width: 520px; padding: 32px; text-align: center; }
+.startup-content > img { width: 40px; height: 40px; object-fit: contain; }
+.startup-content > p { margin: 0; color: var(--color-foreground-subtle); }
+.startup-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.startup-content pre { max-height: 160px; overflow: auto; text-align: left; }
+.startup-settings { width: min(900px, 100%); height: 100%; padding: calc(var(--shell-bar-height) + 12px) 24px 24px; overflow: auto; }
 .areal-workbench:has(.sidebar-with-rail) { --page-frame-left: 52px; --page-clip-start: calc(-1 * var(--page-radius)); }
 .areal-workbench:has(.workspace-side-panel[data-open="true"]) { --main-clip-end: calc(-1 * var(--page-radius)); }
 /* One noninteractive outline spans navigation, conversation and workbench.
@@ -599,12 +609,15 @@ button.composer-project:hover > svg,
 .message-column {
   --message-reading-inset: 32px;
   width: 100%;
+  min-width: 0;
   max-width: var(--reading-width, 768px);
   margin: 0 auto;
   padding: var(--message-reading-inset) 16px;
 }
 .message-column > section { display: flex; flex-direction: column; min-width: 0; }
 .message-column > section + section { margin-top: 12px; }
+.messages-embedded, .messages-embedded-content { min-width: 0; max-width: 100%; }
+.message-embedded-column { padding: 0; }
 .message-response-space { height: 0; overflow-anchor: none; }
 .user-message {
   display: flex;
@@ -644,6 +657,10 @@ button.composer-project:hover > svg,
 .user-message-body > ul { padding-inline-start: 24px; }
 .user-message-body li { padding-inline-start: 5.25px; margin-block: 0; }
 .user-message-body li::marker { color: currentColor; }
+.user-message-with-skills > .user-message-body,
+.user-message-with-skills > .user-message-body > p:first-child { display: inline; }
+.user-message-skill { display: inline; white-space: nowrap; margin-inline-end: 6px; color: var(--color-file-reference, var(--color-brand)); }
+.user-message-skill > svg { display: inline-block; vertical-align: -0.125em; margin-inline-end: 4px; }
 .conversation-code-block { min-width: 0; width: 100%; overflow: hidden; margin-block: 1.25em; border: 1px solid color-mix(in srgb, var(--color-foreground) 4.7%, transparent); border-radius: 20px; background: color-mix(in srgb, var(--color-foreground) 5.5%, transparent); }
 .dark .conversation-code-block { border-color: color-mix(in srgb, var(--color-foreground) 4.3%, transparent); background: color-mix(in srgb, var(--color-foreground) 8%, transparent); }
 .conversation-markdown > .conversation-code-block:not(:last-child) { margin-bottom: 1.25em; }
@@ -2485,6 +2502,7 @@ body { font-family: var(--font-sans); }
 .composer-image-card:is(:hover, :focus-within) .composer-remove-attachment { opacity: 1; }
 .composer-attachment-error { font-size: 12px; color: var(--color-destructive); overflow-wrap: anywhere; }
 .composer-text-card:has(.composer-attachment-error) { flex-wrap: wrap; }
+.composer-model-empty { display: block; min-width: 0; max-width: min(160px, 100%); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer-effort-menu, .composer-model-menu { width: 254px; border-radius: 18px; background: var(--color-composer-catalog, var(--color-background)); gap: 0; padding: 12px; }
 .composer-effort-center { text-align: center; min-width: 0; }
 .composer-effort-center strong { display: block; font-size: 14px; font-weight: 450; color: var(--color-brand); line-height: 17px; }
@@ -2497,12 +2515,13 @@ body { font-family: var(--font-sans); }
 .composer-slider-shell input { appearance: none; width: 100%; height: 28px; margin: 0; background: transparent; position: relative; cursor: pointer; }
 .composer-slider-shell input::-webkit-slider-runnable-track { height: 28px; background: transparent; }
 .composer-slider-shell input::-webkit-slider-thumb { appearance: none; width: 28px; height: 28px; border-radius: 50%; background: white; box-shadow: 0 1px 4px #0003, 0 0 0 1px #0000000d; }
+.composer-slider-option { position: absolute; top: 0; width: 28px; height: 28px; transform: translateX(-50%); border-radius: 50%; cursor: pointer; }
+.composer-slider-option:hover { background: color-mix(in srgb, var(--color-brand) 15%, transparent); }
+.composer-slider-option:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 2px; }
 .composer-slider-shell input:focus-visible { outline: 2px solid var(--color-brand); outline-offset: 3px; border-radius: 20px; }
 .composer-effort-unavailable { font-size: 12px; color: var(--color-foreground-subtle); margin-top: 8px; text-align: center; }
 .composer-model-heading { padding: 2px 8px 7px; font-size: 13px; color: var(--color-foreground-subtle); }
 .composer-model-heading button { margin-right: 8px; }
-.composer-model-configure { width: 100%; margin-top: 8px; border-top: 1px solid var(--color-border); border-radius: 0; }
-.composer-effort-menu .composer-model-configure { height: 30px; padding-block: 0; color: var(--color-foreground-subtle); font-size: 12px; font-weight: 450; }
 @media (max-width: 760px) {
   .composer-catalog-description { display: none; }
   .composer-catalog-row { font-size: 13px; }

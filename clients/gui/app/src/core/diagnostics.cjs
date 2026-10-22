@@ -13,6 +13,7 @@ const { randomUUID } = require('node:crypto');
  * | {type:'resource-sample',rssBytes:number,heapUsedBytes:number,uptimeSeconds:number,eventLoopDelayMs:number}
  * | {type:'uncaught-exception',errorName:unknown,code:unknown}
  * | {type:'desktop-exit-timeout',cause:'completed-lifecycle'|'external-quit'|'signal',stage:'disconnect'|'metadata'}
+ * | {type:'quit-stage',attempt:number,elapsedMs:number,stage:'checking'|'readiness'|'reconcile'|'native-confirmation'|'stop'|'terminal'|'finalizing'|'disconnect'|'exit-ready'|'canceled'|'failed'|'incomplete'}
  * | {type:'exit-requested'|'process-exit',exitCode:number} | {type:'crash-reporter',state:'ready'|'unavailable'}} Incident
  */
 const RUNS = 8, SHARDS = 4, SHARD_BYTES = 256 * 1024, LINE_BYTES = 1024, READ_BYTES = 16 * 1024 * 1024, SCAN_ENTRIES = 128;
@@ -25,6 +26,7 @@ const SIGNALS = new Set(['SIGTERM', 'SIGINT', 'SIGKILL', 'SIGABRT', 'SIGSEGV', '
 const ERRORS = new Set(['Error', 'TypeError', 'RangeError', 'ReferenceError', 'SyntaxError', 'URIError', 'EvalError', 'AggregateError']);
 const OWN_FILES = new Set(['run.json', 'exit.json', 'health.json', ...Array.from({ length: SHARDS }, (_, i) => `events-${i}.ndjson`)]);
 const HEALTH_STATES = new Set(['recording', 'write-failed', 'initialization-failed', 'exited']);
+const QUIT_STAGES = new Set(['checking', 'readiness', 'reconcile', 'native-confirmation', 'stop', 'terminal', 'finalizing', 'disconnect', 'exit-ready', 'canceled', 'failed', 'incomplete']);
 let recorder, initialized = false;
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const integer = (value, min = 0, max = Number.MAX_SAFE_INTEGER) => Number.isSafeInteger(value) && value >= min && value <= max ? value : undefined;
@@ -69,6 +71,10 @@ function projectIncident(event, maps) {
     case 'desktop-exit-timeout':
       value.cause = choose(new Set(['completed-lifecycle', 'external-quit', 'signal']), event.cause);
       value.stage = choose(new Set(['disconnect', 'metadata']), event.stage);
+      break;
+    case 'quit-stage':
+      if (!QUIT_STAGES.has(event.stage) || integer(event.attempt, 1) === undefined || integer(event.elapsedMs) === undefined) return null;
+      value.attempt = event.attempt; value.elapsedMs = event.elapsedMs; value.stage = event.stage;
       break;
     case 'crash-reporter': value.state = event.state === 'ready' ? 'ready' : 'unavailable'; break;
     case 'application-owner-lost': case 'renderer-unresponsive': case 'renderer-responsive': break;

@@ -93,7 +93,7 @@ impl Engine {
                 execution:Some(ExecutionRef::Thread{thread_id:thread.id.clone(),turn_id:turn.id.clone()}),execution_id:None,
             });
             task.revision+=1;
-            engine.save_tasks(&mut tasks,next,&task_id).await?;
+            engine.save_tasks(&mut tasks,next,&task_id,true).await?;
             drop(tasks);
             worker_state.thread=candidate;
             engine.activate(&worker,&mut worker_state,&turn,engine.shutdown.child_token(),permit);
@@ -115,20 +115,20 @@ impl Engine {
         let Some(goal) = thread.goals.goal.as_ref() else {
             return Ok(());
         };
-        let workers = self
-            .task_modes
-            .state
-            .lock()
-            .await
+        let snapshot = self.task_modes.state.lock().await.clone();
+        let workers = if let Some(run) = snapshot
             .tasks
             .values()
-            .find_map(|t| {
-                t.runs
-                    .iter()
-                    .find(|r| r.goal_id.as_deref() == Some(&goal.id))
-                    .map(|r| r.workers.clone())
-            })
-            .unwrap_or_default();
+            .flat_map(|task| &task.runs)
+            .find(|run| run.goal_id.as_deref() == Some(&goal.id))
+        {
+            run.workers.clone()
+        } else {
+            if snapshot.cold_run(Some(&goal.id), None)?.is_some() {
+                return Err(Error::Conflict);
+            }
+            Vec::new()
+        };
         for worker in &workers {
             let outcome = self.task_worker_outcome(&thread.id, worker, false).await?;
             if !worker.settled
@@ -196,11 +196,14 @@ impl Engine {
                 {
                     // 隔离执行已经结束，但写回需要活跃轮次承接权限与取消边界。
                     // 唤醒原协调者继续交付，不能把候选视作完成或再次派发 worker。
+                    let snapshot = self.task_modes.state.lock().await.clone();
+                    let existed = snapshot
+                        .message_exists(&task.id, &format!("{execution_id}:delivery-ready"))?;
                     self.edit_task(&task.id, |task| {
                         let run = task.runs.iter_mut().find(|candidate| candidate.id == run.id).unwrap();
                         run.wait_requested = false;
                         let message_id = format!("{execution_id}:delivery-ready");
-                        if task.messages.len() < MAX_MESSAGES && !task.messages.iter().any(|message| message.id == message_id) {
+                        if !existed && !task.messages.iter().any(|message| message.id == message_id) {
                             task.channel_sequence += 1;
                             task.messages.push(ChannelMessage {
                                 id:message_id, sequence:task.channel_sequence, run_id:run.id.clone(), author:execution_id.clone(),
@@ -245,7 +248,7 @@ impl Engine {
                 w.status = status.clone();
                 w.settled = true;
                 run.wait_requested = false;
-                if task.messages.len() < MAX_MESSAGES {
+                {
                     task.channel_sequence += 1;
                     task.messages.push(ChannelMessage {
                         id: id(),

@@ -24,7 +24,10 @@ impl Engine {
         Ok(())
     }
 
-    async fn schedule_host(&self, owner: &str) -> Option<Arc<dyn tools::DynamicToolHost>> {
+    pub(super) async fn schedule_host(
+        &self,
+        owner: &str,
+    ) -> Option<Arc<dyn tools::DynamicToolHost>> {
         self.task_modes
             .hosts
             .lock()
@@ -42,11 +45,17 @@ impl Engine {
                 .is_some_and(|h| h.id() == host.id())
     }
 
-    pub(crate) async fn is_desktop_schedule_goal(&self, goal_id: &str) -> bool {
-        self.task_modes.state.lock().await.tasks.values().any(|t| {
+    pub(crate) async fn is_desktop_schedule_goal(&self, goal_id: &str) -> Result<bool> {
+        let state = self.task_modes.state.lock().await;
+        if state.tasks.values().any(|t| {
             t.mode == TaskMode::Scheduled
                 && t.runs.iter().any(|r| r.goal_id.as_deref() == Some(goal_id))
-        })
+        }) {
+            return Ok(true);
+        }
+        Ok(state
+            .cold_run(Some(goal_id), None)?
+            .is_some_and(|(id, _)| state.tasks[&id].mode == TaskMode::Scheduled))
     }
 
     /// 先结算旧执行，再决定触发。未开始的离线时间合并一次；忙碌时间直接跳过。
@@ -196,7 +205,7 @@ impl Engine {
                                 m.sequence = t.channel_sequence;
                             }
                         }
-                        if t.messages.len() < MAX_MESSAGES {
+                        {
                             t.channel_sequence += 1;
                             t.messages.push(ChannelMessage {
                                 id: id(),
@@ -244,38 +253,9 @@ impl Engine {
             // A trigger and ifIdle drain share admission: either the queued Run is
             // visible to the safety check or drain prevents its creation.
             let _admission = self.desktop.lifecycle.gate.lock().await;
-            if !task.paused
-                && !task.cancelled
-                && self.accepting_work()
-                && task.next_run_at.is_some_and(|at| at <= now())
-            {
-                self.edit_task(task_id, |t| {
-                    if t.paused || t.cancelled {
-                        return;
-                    }
-                    let Some(at) = t.next_run_at.filter(|at| *at <= now()) else {
-                        return;
-                    };
-                    let busy = t.runs.last().is_some_and(|r| !r.status.terminal());
-                    if !busy && host.is_none() {
-                        return;
-                    }
-                    let interval = t.schedule.as_ref().and_then(|s| s.interval_seconds);
-                    let count = interval.map_or(1, |n| ((now() - at) / n as i64 + 1) as u64);
-                    t.next_run_at = interval
-                        .map(|n| at.saturating_add((count as i64).saturating_mul(n as i64)));
-                    if busy {
-                        t.skipped_runs = t.skipped_runs.saturating_add(count);
-                        t.last_skipped_at = Some(at);
-                    } else if t.runs.len() < MAX_RUNS {
-                        let mut admitted = new_run(None, at);
-                        admitted.objective = Some(t.objective.clone());
-                        t.runs.push(admitted);
-                    } else {
-                        t.paused = true;
-                    }
-                })
-                .await?;
+            if self.accepting_work() {
+                self.admit_schedule_due(task_id, host.is_some(), self.schedule_now())
+                    .await?;
             }
         }
         let task = self.task_read(task_id).await?;
@@ -338,7 +318,8 @@ impl Engine {
                 return Ok(());
             }
             candidate.preparations.insert(run.id.clone(), p.clone());
-            self.save_tasks(&mut state, candidate, task_id).await?;
+            self.save_tasks(&mut state, candidate, task_id, true)
+                .await?;
             p
         };
         if !self.host_current(&host).await {
@@ -402,11 +383,8 @@ impl Engine {
         if !view["goal"].is_null() {
             return Ok(());
         }
-        let used = task
-            .runs
-            .iter()
-            .map(|r| r.usage.tokens_used.saturating_add(r.usage.reserved_tokens))
-            .fold(0, u64::saturating_add);
+        let usage = self.task_modes.state.lock().await.usage(task_id);
+        let used = usage.tokens_used.saturating_add(usage.reserved_tokens);
         let budget = task.token_budget.map(|n| n.saturating_sub(used));
         if budget == Some(0) {
             return Err(invalid("task token budget exhausted"));

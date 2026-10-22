@@ -121,7 +121,12 @@ class SessionObservers {
         const result = {
             ...this.keys(viewer),
             sequence: initial ? 0 : ++viewer.sequence,
-            snapshot: { ...viewer.thread.state, goalControlAllowed: viewer.thread.state.goalControlAllowed && Object.values(viewer.entry.project.outcomes ?? {}).some(record =>
+            snapshot: { ...viewer.thread.state,
+                permissionCapabilities: {
+                    supported: viewer.entry.project.client?.capabilities?.features?.permissionPresets === true,
+                    fullAccessAvailable: viewer.entry.project.client?.capabilities?.features?.permissionFullAccess === true,
+                },
+                goalControlAllowed: viewer.thread.state.goalControlAllowed && Object.values(viewer.entry.project.outcomes ?? {}).some(record =>
                 record.remote?.hostId === this.remote.crypto.identityId(this.remote.config.identity) && record.remote?.devicePeerId === viewer.connection.peer && record.remote?.projectId === viewer.entry.projectId && record.remote?.method === "session.control" && record.remote?.target?.operation === "goalCreate" && record.admissionState === "accepted" && record.receipt?.goalId === viewer.thread.state.goals?.goal?.id) },
         };
         // secure.send 同步序列化、入有界队列；不把可变投影交给稍后的异步写入。

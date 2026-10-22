@@ -1044,6 +1044,7 @@ async fn long_child_feedback(
         Limits {
             model_concurrency: 4,
             stream_idle_timeout: Duration::from_secs(idle_seconds),
+            model_request_timeout: Duration::from_secs(idle_seconds),
             ..Limits::default()
         },
     )

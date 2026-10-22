@@ -162,6 +162,10 @@ TUI 与共享服务 PTY 检查共用终端画面解析器，处理增量重绘�
 
 ## Task Mode 回归
 
+`cargo test --locked -p areal-app-server --lib calendar_` 通过公开 Task dispatcher、Core 测试时钟和真实调度器核对 UTC 字面值、前五次持久 Run、Host 准备与模型观察、重启、夏令时、迟到边界和已受理计划。测试时钟只在 test-support 中可用，不是生产 RPC。GUI 日历路径使用 `AREAL_TASK_CALENDAR_REGRESSION=1 pnpm --dir clients/gui run test:task-conversation`，验证配置会话、Core 预览、错过窗口和保存后重开；本地确定性模型不代表真实供应商效果。
+
+`AREAL_COMPAT_OLD_BIN=/absolute/v4/areal AREAL_CORE_BIN=/absolute/current/areal node examples/desktop-api/calendar-storage.mjs` 要求两个已确认身份的固定产物。它用旧二进制创建真实 v4 状态，通过当前 Core 的生产 WebSocket 路由验证迁移、只读 preview/context 权限、原收据和不可变引用，再确认旧二进制拒绝 v5 且不修改 Task 文件。脚本打印独立 Evidence 目录，保留根、收据、哈希、日志和进程停止结果；它不执行模型或 GUI，也不覆盖安装包升级。
+
 `cargo test --locked -p areal-engine --test task_modes` 覆盖异步提问期间继续工作、独立回复与同 Run 恢复、单个问题过期时仍有其他待答问题的唤醒、headless 提问和审批、定时持久恢复、前台 Goal 异步提问、跨协调 Turn 的 worker 与共享预算、取消清理及重启回复去重。app-server 单元回归校验 Task 请求/响应/通知符合生成 schema，并验证 Thread 授权过滤与独立订阅/退订。
 
 `node examples/desktop-api/schedule-host.mjs` 使用真实 Core/WS 与持久重启验证 Host 离线补执行、每轮新 Thread、受限身份与订阅的授权、准备失败后同 Run 继续、准备期间停止及旧 Host 迟到回复。`node clients/gui/scripts/schedule-desktop-smoke.mjs` 使用隔离 Electron/Core 和确定性本地模型验证对话创建、时区、新会话无历史、忙碌跳过、暂停和停止分离及普通审批 UI，保留截图与 JSON。设置 `AREAL_SCHEDULE_APPROVAL_EXPIRY=1` 会等待默认 300 秒期限，并验证 Turn 结算及同 Run 明确恢复后的新审批；未设置时不声称超时恢复通过。这些证据不替代真实供应商或安装包验收。
@@ -187,6 +191,24 @@ TUI 与共享服务 PTY 检查共用终端画面解析器，处理增量重绘�
 `node clients/gui/scripts/remote-gui-quit-e2e.mjs --self-test` 只检查确定性模型的两个阶段和拒绝条件，不加载 Electron、不启动网络，也不构成原生验收。原生运行需要操作系统安全存储可用；生产后台 `enableDirect` 失败返回退出码 2 和 `blocked`，不得替换 safeStorage。报告保存在独占 scratch 的 `report.json`；失败现场保留，若适配器仍存活，先核查并结算该隔离服务后显式停止。报告不包含服务凭据，不宣称精确 Core RPC 派发次数；不覆盖睡眠、手机真机、Relay、公网或发行安装验收。
 
 ## CI 门禁与冷启动
+
+推送 GUI/Core 集成分支前，先获取目标远程引用，通过 `make setup` 和 `make gui-install` 准备锁定依赖，再运行 `make ci-preflight CI_BASE=upstream-readonly/main`。`CI_BASE` 指向实际 PR 目标，其 merge-base 驱动与 CI 相同的增量设计和文案检查。该入口复用格式、Rust/Python 静态检查、文档、GUI 类型/公开检查、快速回归、浏览器契约及实时 GUI 依赖审计；不启动产品，不替代 Rust 集成、Linux 可移植性、Electron 用户路径或全锁文件审计。可移植 Node fixture 使用 `node:os` 临时目录；WebSocket 替身必须完成真实的 `send(data, callback)` 契约，避免背压静默阻塞后续消息。
+
+`pnpm --dir clients/gui test:macos-dmg` 在 macOS 上独立通过真实 `codesign` 和 `hdiutil` 验证签名 framework 暂存。它需要允许磁盘映像设备访问的环境；受限 Agent 沙箱可能返回 `Device not configured`。应记录环境失败，并在允许的宿主环境重跑相同测试，不跳过断言，也不据此宣称安装包验收通过。macOS GUI job 显式执行该检查；可移植 `verify` 不创建磁盘映像。
+
+GUI CI 只构建一次 Core 和 Renderer，再将历史兼容、迁移、Composer、模型选择、队列和对话派生拆成独立隔离的 matrix job（最多三个并发，`fail-fast: false`）。同轮 artifact 以 tar 保留可执行权限，并记录精确 checkout SHA；smoke 拒绝不匹配的源码。锁定的 pnpm/Electron/FFmpeg 下载使用缓存；构建成功即可保存构建缓存，不再因后续 smoke 失败丢失缓存。使用 `gh run rerun <run-id> --failed` 只重试失败的 smoke 和 gate，复用已通过的构建及场景。缺失产物、失败、取消或意外跳过仍使 gate 失败，不使用 `continue-on-error`。
+
+恢复去重的归属包含项目、聊天和 Core 连接代际；适配器重建后不能复用旧代际的完成/失败尝试。`thread-restoration-ui-smoke.mjs` 使用真实构建的 Renderer 及受控 Desktop 投影复现此边界，同时保持未知提交不重发。
+
+明确拒绝的发送提示由 Composer 持有，并在后续受理后清除；全局提示继续保留真正的未确认或已受理结果。
+
+对话派生 smoke 直接使用 `desktop-contract` 的命令校验和 read/mutation 语义，结合项目/聊天归属验证草稿带回期间的观察；不再维护另一份只读 RPC 白名单。保留全部原始命令及传输 mutation 标记，并继续核对模型请求数、Turn 数和工作区字节不变。
+
+容量与取消夹具对刻意挂起的 SSE 流发送协议注释心跳，并在释放或断线时清理定时器；空闲超时测试仍保留无活动的流。
+
+模型保留检查比较 Core 配置版本和选择的模型、参数、Profile、选项与 Skills，不再将包含派生元数据的整个有效快照序列化比较。smoke 为 Electron 退出设置期限；退出失败时只终止该 fixture 启动返回的子进程，保留测试失败，并继续按代际核对 Core 清理，避免 Node 一直等待到 job 超时。
+
+`make test` 使用 Cargo `--no-fail-fast`，先收集 workspace 各测试目标的失败，再返回失败退出码；断言和 job 超时继续生效。大范围 Core/协议/存储集成在推送前除 `ci-preflight` 外，还需完成适用的 Rust 行为测试。可移植 CI 排除 `areal-runtime-exec-native`，专用 native/container 通道仍须通过。
 
 `make script-test` 不要求产品二进制；`make launcher-test` 先构建整个 workspace，再执行真实 Rust launcher 回归。直接运行 launcher suite 时缺二进制是失败，不是 skip。`make verify` 包含两个入口。GUI 低成本隐私和 trajectory polling 回归通过 `pnpm --dir clients/gui test:regressions` 执行；`make gui-install` 同时准备 Electron 和 FFmpeg。
 

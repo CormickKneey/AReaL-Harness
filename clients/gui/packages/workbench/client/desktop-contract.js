@@ -1,5 +1,5 @@
 import contract from './desktop-contract.cjs';
-export const { commandDefinitions, validateCommand, validateCommandResponse, validatePreview, desktopError } = contract;
+export const { commandDefinitions, commandSemantics, validateCommand, validateCommandResponse, validatePreview, desktopError, validateMcpPageDeclaration, validateMcpPageCall, validateMcpPageReply } = contract;
 /** @typedef {import('./desktop-contract.cjs').CommandName} CommandName */
 /** @typedef {import('./desktop-contract.cjs').DesktopError} DesktopError */
 /** @template T @typedef {import('./desktop-contract.cjs').DesktopResult<T>} DesktopResult */
@@ -7,3 +7,4 @@ export const { commandDefinitions, validateCommand, validateCommandResponse, val
 /** @typedef {import('./desktop-contract.cjs').PreviewRequest} PreviewRequest */
 /** @typedef {import('./desktop-contract.cjs').OwnedPreviewOperation} OwnedPreviewOperation */
 /** @typedef {import('./desktop-contract.cjs').TrajectoryStatus} TrajectoryStatus */
+/** @typedef {import('./desktop-contract.cjs').HistoryRequest} HistoryRequest */

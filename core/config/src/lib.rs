@@ -291,6 +291,7 @@ pub struct ResolvedCoreConfig {
     pub max_side_turn_seconds: u64,
     pub max_children_per_turn: usize,
     pub max_agent_depth: usize,
+    pub model_request_timeout_seconds: u64,
     pub stream_idle_timeout_seconds: u64,
     pub max_history_bytes: usize,
     pub max_output_bytes: usize,
@@ -367,6 +368,10 @@ impl ResolvedCoreConfig {
                 "max_completion_retries": self.max_completion_retries, "watchdog_disable": self.watchdog_disable },
             "logging": { "filter": self.log_filter },
         });
+        result["network"]["model_request_timeout_seconds"] =
+            serde_json::json!(self.model_request_timeout_seconds);
+        result["limits"]["model_request_timeout_seconds"] =
+            serde_json::json!(self.model_request_timeout_seconds);
         result["context"]["reference_tokens"] = serde_json::json!(self.context_reference_tokens);
         result["limits"]["context_reference_tokens"] =
             serde_json::json!(self.context_reference_tokens);

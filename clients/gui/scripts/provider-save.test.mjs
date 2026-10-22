@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { AppProviders } from "../app/src/core/providers.cjs";
+import { CoreBackend } from "../app/src/core/backend.cjs";
+import { CoreClient } from "../packages/runtime-client/core.js";
 
 const readMethod = "areal/server/modelConfiguration/read";
 const applyMethod = "areal/server/modelConfiguration/apply";
@@ -442,4 +444,170 @@ test("invalid custom capability declarations are rejected before persistence", a
     await assert.rejects(f.service.command(f.request), /模型能力/);
     assert.equal(f.calls.some(([method]) => method === "write"), false);
   }
+});
+
+
+async function connectFixture(t, { catalogFailure = false, replaceOwner = false } = {}) {
+  const f = fixture();
+  const native = f.project.client.request;
+  const originalConnect = CoreClient.prototype.connect, originalRequest = CoreClient.prototype.request;
+  const connected = [];
+  let providers = [{ id: "demo", models: [{ id: "old-model" }] }, { id: "areal_chatgpt", revision: "retired", models: [{ id: "retired-model" }] }];
+  const catalog = () => providers.flatMap(provider => provider.models);
+  Object.setPrototypeOf(f.backend, CoreBackend.prototype);
+  Object.assign(f.backend, {
+    providers: f.service, starting: new Map(), stopReconciliation() {}, scheduleReconciliation() {}, listThreads: async () => {},
+    resources: { syncMcp: async () => { f.calls.push(["mcp-sync"]); } },
+    analytics: { syncProject: async () => {} },
+    notifications: { publish() {} }, library: { value: { threads: {} } },
+    submit: async (_project, method, params) => {
+      f.calls.push([method, params]);
+      if (method === "areal/provider/remove") providers = providers.filter(provider => provider.id !== params.id);
+      else if (method === "areal/provider/upsert") providers.push(params);
+      else assert.fail(method);
+    },
+  });
+  f.project.client.close = () => {};
+  f.project.model = { state: { threads: {} }, connection: value => connected.push(value) };
+  f.service.syncSubscription = async project => f.backend.submit(project, "areal/provider/upsert", { id: "subscription", models: [{ id: "subscription-model" }] });
+  CoreClient.prototype.connect = async function() {
+    this.ready = true;
+    this.capabilities = { methods: [readMethod, applyMethod] };
+  };
+  CoreClient.prototype.request = async function(method, params) {
+    if ([readMethod, applyMethod, "areal/server/status"].includes(method)) return native(method, params);
+    f.calls.push([method, params]);
+    if (method === "areal/provider/list") return { data: providers };
+    if (method === "areal/model/list") {
+      if (catalogFailure) throw new Error("fixture final catalog unavailable");
+      const result = { data: catalog() };
+      if (replaceOwner) { f.project.client = { ready: true }; f.project.models = [{ id: "replacement-model" }]; }
+      return result;
+    }
+    if (["areal/profile/list", "areal/task/list", "areal/inbox/list"].includes(method)) return { data: [] };
+    assert.fail(method);
+  };
+  t.after(async () => {
+    f.project.taskNotificationMonitor?.stop();
+    CoreClient.prototype.connect = originalConnect;
+    CoreClient.prototype.request = originalRequest;
+    await f.service.close();
+  });
+  return { ...f, connected };
+}
+
+test("connect installs one authoritative catalog after provider retirement, subscription and MCP synchronization", async t => {
+  const f = await connectFixture(t);
+  await f.backend.connect(f.project);
+  assert.deepEqual(f.project.models, [{ id: "old-model" }, { id: "subscription-model" }]);
+  assert.deepEqual(f.connected, [true]);
+  const methods = f.calls.map(([method]) => method);
+  assert.equal(methods.filter(method => method === "areal/model/list").length, 1);
+  assert.ok(methods.indexOf("areal/model/list") > methods.indexOf("mcp-sync"));
+  assert.equal(f.project.providerRevision, "old");
+  assert.equal(f.service.applicationState(f.project).kind, "applied");
+});
+
+test("connect refuses readiness when the final catalog fails", async t => {
+  const f = await connectFixture(t, { catalogFailure: true });
+  await assert.rejects(f.backend.connect(f.project), /final catalog unavailable/);
+  assert.deepEqual(f.connected, []);
+  assert.deepEqual(f.project.models, [{ id: "old-model" }]);
+  assert.ok(f.calls.some(([method]) => method === "mcp-sync"));
+  assert.equal(f.project.providerRevision, "old");
+  assert.equal(f.service.applicationState(f.project).kind, "applied");
+});
+
+test("a stale catalog callback cannot install models or mark the replacement connection ready", async t => {
+  const f = await connectFixture(t, { replaceOwner: true });
+  await assert.rejects(f.backend.connect(f.project), { code: "STALE_CONNECTION" });
+  assert.deepEqual(f.project.models, [{ id: "replacement-model" }]);
+  assert.deepEqual(f.connected, []);
+});
+
+test("matched proof refreshes Settings and ordinary reconciliation by default", async t => {
+  const f = fixture();
+  t.after(() => f.service.close());
+  f.project.models = [];
+  const outcomes = await f.service.applyProjects(f.original);
+  assert.equal(outcomes[0].applied, true);
+  assert.deepEqual(f.project.models, [{ id: "old-model", enabled: true }]);
+  f.project.models = [];
+  await f.service.reconcileProject(f.project);
+  assert.deepEqual(f.project.models, [{ id: "old-model", enabled: true }]);
+  assert.equal(f.calls.filter(([method]) => method === "areal/model/list").length, 2);
+  assert.equal(f.calls.filter(([method]) => method === applyMethod).length, 0);
+});
+
+test("deferred refresh preserves fresh application and lost-receipt reconciliation without another apply", async t => {
+  for (const lostApply of [false, true]) {
+    const f = fixture({ lostApply });
+    t.after(() => f.service.close());
+    f.service.config.value = { ...f.original, revision: "next" };
+    await f.service.reconcileProject(f.project, { refreshModels: false });
+    assert.equal(f.project.providerRevision, "next");
+    assert.equal(f.service.applicationState(f.project).kind, "applied");
+    assert.equal(f.service.pendingApplications.size, 0);
+    assert.equal(f.calls.filter(([method]) => method === applyMethod).length, 1);
+    assert.equal(f.calls.filter(([method]) => method === "areal/model/list").length, 0);
+    assert.deepEqual(f.project.models, [{ id: "old-model" }]);
+  }
+});
+
+test("deferred reconciliation settles applied and changed-generation receipts while unknown never replays", async t => {
+  for (const state of ["applied", "unknown", "generationChanged"]) {
+    const f = fixture();
+    t.after(() => f.service.close());
+    f.service.requestReconciliation = () => {};
+    const pending = { requestId: "original-request", serviceId: "service-p", generation: "generation-p", expectedApplied: { revision: "before", sequence: 0 }, targetRevision: "old", snapshot: f.original };
+    f.service.pendingApplications.set("p", pending);
+    if (state === "generationChanged") f.project.service.generation = "generation-next";
+    f.project.client.request = async (method, params) => {
+      f.calls.push([method, params]);
+      if (method === "areal/model/list") return { data: [{ id: "old-model", enabled: true }] };
+      assert.equal(method, readMethod);
+      if (params.requestId) assert.equal(params.requestId, "original-request");
+      const proof = { serviceId: "service-p", generation: f.project.service.generation, applied: { revision: "old", sequence: 1 }, modelRevision: "model-current", credentialStates: { demo: "notRequired" } };
+      return { ...proof, operation: { requestId: "original-request", state, ...(state === "applied" ? { result: proof } : {}) } };
+    };
+    await f.service.reconcileProject(f.project, { refreshModels: false });
+    assert.equal(f.service.pendingApplications.size, state === "unknown" ? 1 : 0);
+    assert.equal(f.service.applicationState(f.project).kind, state === "unknown" ? "unknown" : "applied");
+    assert.deepEqual(f.project.models, [{ id: "old-model" }]);
+    assert.equal(f.calls.some(([method]) => method === applyMethod || method === "areal/model/list"), false);
+    assert.equal(f.calls[0][1].requestId, state === "generationChanged" ? undefined : "original-request");
+  }
+});
+
+test("deferred refresh retains credential confirmation and original non-admission settlement", async t => {
+  const missing = fixture();
+  t.after(() => missing.service.close());
+  missing.service.config.value.data[0].apiKeyEnv = "AREAL_CREDENTIAL_fixture";
+  missing.service.config.vault.keys.AREAL_CREDENTIAL_fixture = "fixture";
+  missing.service.config.key = () => "synthetic-key";
+  await missing.service.reconcileProject(missing.project, { refreshModels: false });
+  assert.equal(missing.service.applicationState(missing.project).kind, "failed");
+  assert.match(missing.project.providerError, /凭据/);
+  assert.equal(missing.calls.some(([method]) => method === "areal/model/list"), false);
+  const rejected = fixture({ unacceptedError: { code: -32602 } });
+  t.after(() => rejected.service.close());
+  rejected.service.config.value = { ...rejected.original, revision: "next" };
+  await rejected.service.reconcileProject(rejected.project, { refreshModels: false });
+  assert.equal(rejected.service.pendingApplications.size, 0);
+  assert.equal(rejected.service.applicationState(rejected.project).kind, "failed");
+  const sent = rejected.calls.find(([method]) => method === applyMethod)[1];
+  assert.equal(rejected.calls.findLast(([method]) => method === readMethod)[1].requestId, sent.requestId);
+});
+
+test("a stale default-refresh response cannot overwrite a replacement owner's catalog", async t => {
+  const f = fixture();
+  t.after(() => f.service.close());
+  const native = f.project.client.request;
+  f.project.client.request = async (method, params) => {
+    const result = await native(method, params);
+    if (method === "areal/model/list") { f.project.client = { ready: true }; f.project.models = [{ id: "replacement-model" }]; }
+    return result;
+  };
+  await f.service.reconcileProject(f.project);
+  assert.deepEqual(f.project.models, [{ id: "replacement-model" }]);
 });

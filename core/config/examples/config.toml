@@ -68,6 +68,7 @@ max_tool_buffer_bytes = 4194304
 
 [network]
 retry_mode = "persistent"
+model_request_timeout_seconds = 300
 stream_idle_timeout_seconds = 30
 
 [logging]

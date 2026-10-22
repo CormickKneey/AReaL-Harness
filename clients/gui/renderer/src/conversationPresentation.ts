@@ -213,7 +213,7 @@ export function executionSegments(items: Data[], turnStatus: string): Data[] {
   for (const item of processItems(items, turnStatus)) {
     if (item.processOwnerId) continue;
     if (item.type === "modelContext" || (item.type === "agentMessage" && !item.text?.trim())) continue;
-    if (item.type === "userMessage" || item.type === "agentMessage" || item.type === "agentMedia") {
+    if (item.type === "userMessage" || item.type === "agentMessage" || item.type === "agentMedia" || item.type === "historyDeferred") {
       result.push(item);
       group = undefined;
       continue;

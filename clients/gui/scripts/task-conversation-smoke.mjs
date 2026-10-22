@@ -8,12 +8,23 @@ import {createServer} from 'node:http';
 import {execFileSync} from 'node:child_process';
 import {createHash,randomUUID} from 'node:crypto';
 import {CoreClient} from '../packages/runtime-client/core.js';
+import {assertApplicationStopped} from './application-cleanup.mjs';
 const gui=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const require=createRequire(join(gui,'app/package.json'));
 const {_electron:electron}=require('playwright-core');
 const binary=process.env.AREAL_CORE_BIN || resolve(gui,'../../target/debug/areal');
 const binarySha256=createHash('sha256').update(await readFile(binary)).digest('hex');
 const scratch=await mkdtemp('/private/tmp/areal-schedule-desktop-');
+const calendarRegression=process.env.AREAL_TASK_CALENDAR_REGRESSION==='1';
+const calendarDropGate=join(scratch,'calendar-drop-response'),calendarTrace=join(scratch,'calendar-create-requests.jsonl');
+const manualRegression=process.env.AREAL_TASK_MANUAL_REGRESSION==='1';
+const manualDropGate=join(scratch,'drop-manual-response'),manualTrace=join(scratch,'manual-requests.jsonl');
+const manualPrepareGate=join(scratch,'hold-manual-prepare'),manualPrepareTrace=join(scratch,'manual-prepares.jsonl');
+const manualMainErrors=join(scratch,'manual-main-errors.jsonl');
+const manualCleanup={exits:[]};
+let calendarUnknownRequestId;
+const manualObjective='立即运行验收 MANUAL_FIXTURE';
+const manualRuns=new Map();
 const loadingRegression=process.env.AREAL_TASK_LOADING_REGRESSION==='1';
 const creationRegression=process.env.AREAL_TASK_CREATION_REGRESSION;
 const creationGate=join(scratch,'hold-task-prepare');
@@ -22,8 +33,11 @@ const inlineRegression=process.env.AREAL_TASK_INLINE_REGRESSION==='1';
 assert.ok(!inlineRegression||(!loadingRegression&&!dailyStartRegression&&process.env.AREAL_TASK_SCHEDULE_REGRESSION!=='1'),'run inline regression separately from other task scenarios');
 const inlineObjective='定时执行内联验收 INLINE_CONVERSATION';
 const inlineRuns=new Map();
+const inlineLongToken='INLINE_LONG_CONTENT_'+ '0123456789abcdef'.repeat(160);
+const inlineLongMarkdown=`执行过程包含需要正常换行的长段落。${'检查任务输出与主会话阅读列保持一致。'.repeat(35)}\n\n内联代码 \`${inlineLongToken}\`\n\n\`\`\`sh\nprintf '%s\\n' '${inlineLongToken}'\n\`\`\``;
 const dailyClock=join(scratch,'daily-clock');
 const loadingRpcGate=join(scratch,'hold-catalog-page');
+const loadingPollDelay=join(scratch,'delay-catalog-poll');
 const loadingGate=join(scratch,'hold-project'), loadingTrace=join(scratch,'loading-trace.log'), prepareFailureGate=join(scratch,'fail-projectless-prepare');
 const watchGates=[];
 let launchApp=process.env.AREAL_GUI_TEST_APP_DIR || join(gui,'app');
@@ -33,6 +47,7 @@ const taskDirectory=join(workspace,'task-working-directory'), independentDirecto
 await mkdir(taskDirectory);await mkdir(independentDirectory);
 execFileSync('git',['init','-b','main'],{cwd:workspace,stdio:'ignore'});
 const errors=[],checks=[],modelRequests=[],catalogEvents=[],held=new Set();
+const regressionFailures=[];
 const pastDailyAnchor=new Date(Date.now()-86400000).toISOString().replace(/\.\d{3}Z$/,'Z');
 const changedAnchor=new Date(Date.now()+172800000).toISOString().replace(/\.\d{3}Z$/,'Z');
 const blockedOnce=new Set();
@@ -54,6 +69,7 @@ const model=createServer(async(request,response)=>{
   if(messages.some(m=>text(m).includes('AREAL_TASK_DRAFT'))) {
    const last=messages.filter(m=>m.role==='user'&&!text(m).startsWith('AReaL runtime context')).at(-1);
    const requestText=text(last??{});
+   if(manualRegression&&requestText.includes('立即运行验收')){finish(JSON.stringify({kind:'proposal',message:'将保存手动验证任务。',objective:manualObjective,interactionMode:'interactive',dailyStart:{kind:'explicit',source:'后天的这个时间开始'},schedule:{at:changedAnchor,intervalSeconds:86400}}));return;}
    if(requestText.includes('创建体验验收')){finish(JSON.stringify({kind:'proposal',message:'将保存安排。',objective:requestText,interactionMode:'interactive',schedule:{at:changedAnchor}}));return;}
    if(inlineRegression&&requestText.includes('定时执行内联验收')){
     finish(JSON.stringify({kind:'proposal',message:'将创建内联执行验收任务。',objective:inlineObjective,interactionMode:'interactive',schedule:{at:new Date(Date.now()+6000).toISOString().replace(/\.\d{3}Z$/,'Z'),intervalSeconds:12}}));return;
@@ -70,6 +86,14 @@ const model=createServer(async(request,response)=>{
    if(requestText.includes('过去的一次性时间')){finish(JSON.stringify({kind:'proposal',message:'已保存过期的一次性任务。',schedule:{at:pastDailyAnchor,intervalSeconds:null}}));return;}
    if(requestText.includes('旧项目目录验收')){finish(JSON.stringify({kind:'proposal',message:'已保存旧项目任务。',objective:'旧项目目录验收 SCHEDULE_FIXTURE_COMPLETE',interactionMode:'interactive',schedule:{at:changedAnchor}}));return;}
    if(requestText.includes('独立目录验收')){finish(JSON.stringify({kind:'proposal',message:'已保存独立任务。',objective:'独立目录验收 SCHEDULE_FIXTURE_COMPLETE',interactionMode:'interactive',schedule:{at:new Date(Date.now()+4000).toISOString().replace(/\.\d{3}Z$/,'Z'),intervalSeconds:8}}));return;}
+   if(calendarRegression&&requestText.includes('日历重试验收')){finish(JSON.stringify({kind:'proposal',message:'等待保存。',objective:'日历重试验收',scheduleV2:{version:1,rule:{kind:'onceLocal',timeZone:'Asia/Shanghai',localTime:'09:00',date:{kind:'relative',days:2}},misfire:{kind:'skip',maxLatenessSeconds:300},overlap:'skip'}}));return;}
+   if(calendarRegression&&requestText.includes('日历验收')){
+    if(requestText.includes('旧格式时刻')){finish(JSON.stringify({kind:'proposal',message:'更改时刻。',schedule:{at:'2040-01-02T10:00:00+08:00'}}));return;}
+    const wrong=requestText.includes('误给固定间隔');
+    const monthly=requestText.includes('月末');
+    const rule=wrong?{kind:'interval',anchorAt:2208988800,intervalSeconds:86400}:{kind:'calendar',timeZone:'Asia/Shanghai',frequency:monthly?'monthly':'weekly',interval:1,localTime:'09:00',anchorDate:'2040-01-01',...(monthly?{monthDays:['last']}:{weekdays:[1,2,3,4,5]})};
+    finish(JSON.stringify({kind:'proposal',message:'日历安排已准备。',objective:'日历验收 SCHEDULE_FIXTURE_COMPLETE',scheduleV2:{version:1,rule,misfire:{kind:'skip',maxLatenessSeconds:300},overlap:'skip'}}));return;
+   }
    if(requestText.includes('只修改时刻')){finish(JSON.stringify({kind:'proposal',message:'已更新并保存执行时间。',schedule:{at:changedAnchor}}));return;}
    if(requestText.includes('保存失败')){finish(JSON.stringify({kind:'proposal',message:'已保存修改，已更新执行时间。',schedule:{at:'broken'}}));return;}
    if(requestText.includes('没有时间')){finish(JSON.stringify({kind:'question',message:'你希望什么时候执行？'}));return;}
@@ -85,18 +109,23 @@ const model=createServer(async(request,response)=>{
   const goalView=JSON.parse(contexts.at(-1).split('Current authoritative goal: ').at(-1));
   const goal=goalView.goal;
   if(goal.limitsPending){tool('goal_set_limits',{expectedRevision:goalView.revision,sources:{}});return;}
+  if(manualRegression&&goal.objective===manualObjective){
+   if(goal.report?.status==='complete'){finish('MANUAL_FIXTURE_DONE');return;}
+   const entry={connected:()=>!response.destroyed&&!response.writableEnded,release:()=>{assert.ok(!response.destroyed,'manual fixture stream remains connected');held.delete(response);tool('goal_update',{expectedRevision:goalView.revision,status:'complete',summary:'MANUAL_FIXTURE_REPORT',evidence:['Manual execution requested by the saved Task button.'],remaining:[]});}};
+   manualRuns.set(goal.id,entry);send({content:'MANUAL_FIXTURE_RUNNING'});held.add(response);response.on('close',()=>held.delete(response));return;
+  }
   if(inlineRegression&&goal.objective===inlineObjective){
    let run=inlineRuns.get(goal.id);
    if(!run){
     const index=inlineRuns.size+1;
     run={index,progress:`第 ${index} 次执行中：INLINE_PROGRESS_${index}。`,final:`第 ${index} 次执行完成：INLINE_FINAL_${index}。`,release:null};
     inlineRuns.set(goal.id,run);
-    send({content:run.progress});held.add(response);response.on('close',()=>held.delete(response));
+    send({content:run.progress+'\n\n'+inlineLongMarkdown});held.add(response);response.on('close',()=>held.delete(response));
     // 由断言释放流，避免固定延迟让慢机器只能看到完成后的结果。
-    run.release=()=>{assert.ok(!response.destroyed,'inline fixture stream remains connected');held.delete(response);tool('goal_update',{expectedRevision:goalView.revision,status:'complete',summary:`INLINE_REPORT_${index}`,evidence:['内联执行中间响应已由界面验收。'],remaining:[]});};
+    run.release=()=>{assert.ok(!response.destroyed,'inline fixture stream remains connected');held.delete(response);tool('run_command',{argv:['printf','%s\n',inlineLongToken],cwd:'workspace://repo',timeoutMs:5000});};
     return;
    }
-   assert.equal(goal.report?.status,'complete','released inline run reaches its real goal completion');
+   if(goal.report?.status!=='complete'){tool('goal_update',{expectedRevision:goalView.revision,status:'complete',summary:`INLINE_REPORT_${run.index}`,evidence:['内联执行中间响应与真实长命令已由界面验收。'],remaining:[]});return;}
    finish(run.final);return;
   }
   if(goal.objective.includes('READ_RESUME')&&!blockedOnce.has(goal.id)) {
@@ -162,14 +191,14 @@ if(loadingRegression||creationRegression){
 const {CoreBackend}=require(${JSON.stringify(join(gui,'app/src/core/backend.cjs'))});
 const {existsSync,appendFileSync,unlinkSync}=require('node:fs');
 const {join}=require('node:path');
-const start=CoreBackend.prototype.start, execute=CoreBackend.prototype.executeCommand;
-CoreBackend.prototype.start=async function(id){
- const project=this.saved.find(project=>project.id===id);
+const start=CoreBackend.prototype.start, readConnection=CoreBackend.prototype.readConnection, execute=CoreBackend.prototype.executeCommand;
+async function holdProject(project){
  if(project?.root.endsWith('slow-workspace')&&existsSync(${JSON.stringify(loadingGate)})){
   appendFileSync(${JSON.stringify(loadingTrace)},'project pending\\n');
   while(existsSync(${JSON.stringify(loadingGate)}))await new Promise(resolve=>setTimeout(resolve,50));
  }
- const value=await start.call(this,id);
+}
+function instrumentProject(value,project){
  if(${JSON.stringify(loadingRegression)}&&!value.loadingFixture){
   value.loadingFixture=true;
   const setTask=value.model.setTask.bind(value.model);
@@ -187,10 +216,29 @@ CoreBackend.prototype.start=async function(id){
     const page=await request(method,{limit:30});
     return {...page,data:page.data.map(row=>({...row,objective:'LATE_CATALOG_TASK'}))};
    }
+   if(method==='areal/task/list'&&params.limit===30&&existsSync(${JSON.stringify(loadingPollDelay)})){
+    appendFileSync(${JSON.stringify(loadingTrace)},'catalog poll pending\\n');
+    const page=await request(method,params);
+    await new Promise(resolve=>setTimeout(resolve,700));
+    appendFileSync(${JSON.stringify(loadingTrace)},'catalog poll returned\\n');
+    return page;
+   }
    return request(method,params);
   };
  }
  return value;
+}
+CoreBackend.prototype.start=async function(id){
+ const project=this.saved.find(project=>project.id===id);
+ await holdProject(project);
+ return instrumentProject(await start.call(this,id),project);
+};
+CoreBackend.prototype.readConnection=async function(id,signal){
+ const project=this.saved.find(project=>project.id===id);
+ await holdProject(project);
+ const connection=await readConnection.call(this,id,signal);
+ instrumentProject(connection.project,project);
+ return connection;
 };
 CoreBackend.prototype.executeCommand=async function(name,request,context){
  if(name==='projectless'&&request.operation==='prepare'){
@@ -216,6 +264,50 @@ CoreBackend.prototype.executeCommand=async function(name,request,context){
   }
  }
  return result;
+};
+require(${JSON.stringify(join(gui,'app/src/main.cjs'))});
+`);
+}
+if(manualRegression||calendarRegression){
+ await writeFile(manualMainErrors,'');
+ launchApp=join(scratch,'manual-app');await mkdir(launchApp);
+ await writeFile(join(launchApp,'package.json'),JSON.stringify({name:'manual-run-fixture',main:'bootstrap.cjs'}));
+ await writeFile(join(launchApp,'bootstrap.cjs'),`
+process.on('uncaughtExceptionMonitor',(error,origin)=>require('node:fs').appendFileSync(${JSON.stringify(manualMainErrors)},JSON.stringify({pid:process.pid,origin,name:error.name,message:error.message,stack:error.stack})+'\\n'));
+const {CoreBackend}=require(${JSON.stringify(join(gui,'app/src/core/backend.cjs'))});
+const fs=require('node:fs');
+const connect=CoreBackend.prototype.connect;
+CoreBackend.prototype.connect=async function(...args){
+ const {CoreClient}=await import(${JSON.stringify(join(gui,'packages/runtime-client/core.js'))});
+ if(!CoreClient.prototype.manualFixture){
+  CoreClient.prototype.manualFixture=true;
+  const clientConnect=CoreClient.prototype.connect;
+  CoreClient.prototype.connect=async function(){
+  const serverRequest=this.onServerRequest;
+  this.onServerRequest=async(method,params,context)=>{
+   if(method==='areal/task/prepare'&&fs.existsSync(${JSON.stringify(manualPrepareGate)})){
+    fs.appendFileSync(${JSON.stringify(manualPrepareTrace)},JSON.stringify(params)+'\\n');
+    while(fs.existsSync(${JSON.stringify(manualPrepareGate)})&&!context.signal.aborted)await new Promise(resolve=>setTimeout(resolve,25));
+   }
+   return serverRequest(method,params,context);
+  };
+  const request=this.request.bind(this);
+  this.request=async(method,params,options)=>{
+   if(method==='areal/task/create'&&params.objective==='日历重试验收')fs.appendFileSync(${JSON.stringify(calendarTrace)},JSON.stringify(params)+'\\n');
+   if(method==='areal/task/runNow')fs.appendFileSync(${JSON.stringify(manualTrace)},JSON.stringify(params)+'\\n');
+   if(method==='areal/request/read'&&fs.existsSync(${JSON.stringify(manualDropGate)})){
+    const original=fs.readFileSync(${JSON.stringify(manualTrace)},'utf8').trim().split(String.fromCharCode(10)).filter(Boolean).map(line=>JSON.parse(line));
+    if(params.taskId||original.some(entry=>entry.requestId===params.requestId))throw new Error('receipt read fixture unavailable');
+   }
+   const result=await request(method,params,options);
+   if(method==='areal/task/create'&&params.objective==='日历重试验收'&&fs.existsSync(${JSON.stringify(calendarDropGate)}))throw Object.assign(new Error('calendar accepted response dropped'),{submissionUnknown:true});
+   if(method==='areal/task/runNow'&&fs.existsSync(${JSON.stringify(manualDropGate)}))throw Object.assign(new Error('accepted response fixture dropped'),{submissionUnknown:true});
+   return result;
+  };
+  return clientConnect.call(this);
+  };
+ }
+ return connect.apply(this,args);
 };
 require(${JSON.stringify(join(gui,'app/src/main.cjs'))});
 `);
@@ -289,6 +381,80 @@ async function checkDailyStartRegression(){
   checks.push('daily start '+entry.name+' saves '+entry.expected);
   await page.getByRole('button',{name:'关闭任务详情',exact:true}).click();
  }
+ assert.deepEqual(errors,[]);
+}
+async function checkCalendarRegression(){
+ await page.getByRole('button',{name:'定时任务',exact:true}).click();
+ await page.getByRole('button',{name:'新建自动化',exact:true}).click();
+ const creation=await assertGlobalCreation();pid=creation.owner.id;
+ await page.getByTestId('chat-input').fill('日历验收，工作日早上09:00执行，误给固定间隔。');await page.getByTestId('chat-send-button').click();
+ await page.getByRole('alert').filter({hasText:'工作日'}).first().waitFor();
+ assert.equal((await call('tasks',{operation:'list'})).data.some(t=>t.projectId===pid),false,'weekday intent cannot silently save a fixed interval');
+ await page.getByTestId('chat-input').fill('日历验收，2040年1月1日起工作日早上09:00执行。');await page.getByTestId('chat-send-button').click();
+ const created=await until(async()=>(await call('tasks',{operation:'list'})).data.find(t=>t.projectId===pid),'calendar task saved');
+ assert.deepEqual(created.scheduleV2.rule.weekdays,[1,2,3,4,5]);assert.deepEqual(created.scheduleV2.misfire,{kind:'skip',maxLatenessSeconds:300});assert.equal(created.schedule,null);
+ await page.getByLabel('后续执行预览',{exact:true}).waitFor();await page.getByText('错过 5 分钟后跳过',{exact:false}).first().waitFor();
+ const visible=await page.getByLabel('后续执行预览',{exact:true}).locator('time').allTextContents();
+ assert.deepEqual(visible,['2040-01-02 09:00','2040-01-03 09:00','2040-01-04 09:00','2040-01-05 09:00','2040-01-06 09:00']);
+ const authoritative=await call('manage',{projectId:pid,operation:'taskSchedulePreview',schedule:created.scheduleV2,count:5});
+ assert.deepEqual(authoritative.occurrences.map(o=>o.localTime),['2040-01-02T09:00:00+08:00','2040-01-03T09:00:00+08:00','2040-01-04T09:00:00+08:00','2040-01-05T09:00:00+08:00','2040-01-06T09:00:00+08:00']);
+ await page.screenshot({path:join(scratch,'calendar-weekdays.png')});
+ const history=await call('manage',{projectId:pid,operation:'taskDraftHistory',taskId:created.id});
+ await page.getByTestId('chat-input').fill('日历验收，旧格式时刻改为10:00。');await page.getByTestId('chat-send-button').click();
+ await page.getByRole('alert').filter({hasText:'完整日历计划'}).first().waitFor();
+ assert.deepEqual((await task(created.id)).scheduleV2,created.scheduleV2,'ambiguous legacy edit cannot turn calendar into once');
+ await page.getByTestId('chat-input').fill('日历验收，改为每月月末09:00执行。');await page.getByTestId('chat-send-button').click();
+ const edited=await until(async()=>{const t=await task(created.id);return t.scheduleV2?.rule.frequency==='monthly'&&t;},'calendar edit saved');
+ assert.deepEqual(edited.scheduleV2.rule.monthDays,['last']);assert.equal(edited.scheduleV2.rule.timeZone,'Asia/Shanghai');
+ await until(async()=>JSON.stringify(await page.getByLabel('后续执行预览',{exact:true}).locator('time').allTextContents())===JSON.stringify(['2040-01-31 09:00','2040-02-29 09:00','2040-03-31 09:00','2040-04-30 09:00','2040-05-31 09:00']),'visible month-end preview agrees with literal dates');
+ await page.screenshot({path:join(scratch,'calendar-month-end.png')});
+ await page.getByRole('button',{name:'关闭任务详情',exact:true}).click();await page.getByText('日历验收 SCHEDULE_FIXTURE_COMPLETE',{exact:true}).first().click();
+ await page.getByLabel('后续执行预览',{exact:true}).waitFor();
+ assert.equal((await call('manage',{projectId:pid,operation:'taskDraftHistory',taskId:created.id})).threadId,history.threadId);
+ await page.getByRole('button',{name:'关闭任务详情',exact:true}).click();
+ const context=await call('manage',{projectId:pid,operation:'taskScheduleContext',timeZone:'Asia/Shanghai'});
+ const missed=await call('manage',{projectId:pid,operation:'taskCreate',mode:'scheduled',objective:'日历错过验收 HOLD',scheduleV2:{version:1,rule:{kind:'once',at:context.coreNow-301},misfire:{kind:'skip',maxLatenessSeconds:300},overlap:'skip'}});
+ const missedState=await until(async()=>{const t=await task(missed.id);return t.lastTriggerDecision?.outcome.kind==='missedWindow'&&t;},'Core missed once decision');
+ assert.equal(missedState.runs.length,0);
+ await page.getByRole('button',{name:'打开自动化 日历错过验收 HOLD',exact:true}).click();
+ await page.getByText('已超过允许的延迟，跳过 1 次计划执行。',{exact:true}).first().waitFor();
+ await page.screenshot({path:join(scratch,'calendar-missed-once.png')});
+ if(!await page.getByLabel('任务资源面板',{exact:true}).count())await page.getByRole('button',{name:'任务资源',exact:true}).click();
+ const immediate=page.getByRole('button',{name:'立即运行',exact:true});await until(()=>immediate.isEnabled(),'missed schedule permits explicit manual admission');await immediate.click();
+ const manualAfterMissed=await until(async()=>{const value=await task(missed.id);return value.runs.at(-1)?.status==='running'&&value;},'manual run after missed once is running');
+ assert.equal(manualAfterMissed.runs.at(-1).trigger,'manual');assert.deepEqual(manualAfterMissed.lastTriggerDecision,missedState.lastTriggerDecision);assert.equal(manualAfterMissed.nextRunAt,null);
+ await page.getByRole('button',{name:'关闭任务详情',exact:true}).click();
+ const activeRow=page.getByRole('button',{name:'打开自动化 日历错过验收 HOLD',exact:true});
+ await until(async()=>await activeRow.isVisible()&&(await activeRow.innerText()).includes('运行中'),'manual run after a missed once displays its active status');
+ for(const [label,checked] of [['已开启',true],['已暂停',false],['已完成',false]]){
+  await page.getByRole('button',{name:'筛选任务',exact:true}).click();
+  const item=page.getByRole('menuitemcheckbox',{name:label,exact:true});
+  if((await item.getAttribute('aria-checked')==='true')!==checked)await item.click();
+  await page.keyboard.press('Escape');
+ }
+ await activeRow.waitFor();await page.screenshot({path:join(scratch,'calendar-missed-manual-running.png')});
+ await control(missed.id,'taskStopRun',manualAfterMissed.runs.at(-1).id);
+ await until(async()=>['cancelled','completed','failed'].includes((await task(missed.id)).runs.at(-1)?.status),'held manual run stops through the ordinary control');
+ for(const label of ['已暂停','已完成']){await page.getByRole('button',{name:'筛选任务',exact:true}).click();const item=page.getByRole('menuitemcheckbox',{name:label,exact:true});if(await item.getAttribute('aria-checked')!=='true')await item.click();await page.keyboard.press('Escape');}
+
+ await writeFile(calendarDropGate,'drop');
+ await page.getByRole('button',{name:'新建自动化',exact:true}).click();
+ const unknownCreation=await assertGlobalCreation();pid=unknownCreation.owner.id;
+ await page.getByTestId('chat-input').fill('日历重试验收，两天后09:00执行。');await page.getByTestId('chat-send-button').click();
+ const unknown=await until(async()=>{const owner=(await snapshot()).projects.find(p=>p.id===pid);return owner.pending?.find(p=>p.method==='areal/task/create'&&p.params.objective==='日历重试验收');},'original civil intent retained as UNKNOWN');
+ calendarUnknownRequestId=unknown.params.requestId;
+ assert.deepEqual(unknown.params.scheduleV2.rule,{kind:'onceLocal',timeZone:'Asia/Shanghai',localTime:'09:00',date:{kind:'relative',days:2}});
+ const acceptedUnknown=(await call('tasks',{operation:'list'})).data.filter(t=>t.projectId===pid&&t.objective==='日历重试验收');assert.equal(acceptedUnknown.length,1);
+ const creates=JSON.parse((await readFile(calendarTrace,'utf8')).trim());assert.deepEqual(creates,unknown.params);
+ await page.screenshot({path:join(scratch,'calendar-unknown.png')});
+ await page.getByRole('button',{name:'关闭创建对话',exact:true}).click();
+ await page.getByRole('button',{name:'新建自动化',exact:true}).click();
+ await until(async()=>!!(await snapshot()).projects.find(p=>p.id===pid).pending?.some(p=>p.params.requestId===unknown.params.requestId),'same UNKNOWN remains after reopening');
+ assert.deepEqual((await snapshot()).projects.find(p=>p.id===pid).pending.find(p=>p.params.requestId===unknown.params.requestId).params,unknown.params);
+ assert.equal((await readFile(calendarTrace,'utf8')).trim().split('\n').length,1,'reopening never re-resolves or repeats UNKNOWN create');
+ await rm(calendarDropGate);
+ await writeFile(join(scratch,'calendar-manifest.json'),JSON.stringify({binary,binarySha256,created,edited,missedState,manualAfterMissed,unknown,acceptedUnknown,modelRequests,proxies:[],injections:["native project-directory chooser returns the isolated fixture workspace", "CoreClient wrapper drops only the accepted calendar create response; no fake save or clock", "an existing HOLD model fixture keeps the explicitly requested manual Run observable"],clock:'production Core SystemTime; explicit 2040 anchor'},null,2));
+ checks.push('real management conversation rejects weekday-to-interval, saves weekday calendar, edits month-end, shows Core preview/skip300 and reopens same history');
  assert.deepEqual(errors,[]);
 }
 async function checkCreationRegression(){
@@ -408,6 +574,7 @@ async function checkLoadingRegression(){
  }
  const create=objective=>call('manage',{projectId:pid,operation:'taskCreate',mode:'scheduled',objective,interactionMode:'interactive',schedule:{at:Math.floor(Date.now()/1000)+86400,timeZone:'Asia/Shanghai'}});
  const first=await create('READY_TASK_FIRST'), second=await create('READY_TASK_SECOND');
+ for(let index=0;index<6;index++)await create(`READY_TASK_SCROLL_${index}`);
  await call('manage',{projectId:slowProject.id,operation:'taskCreate',mode:'scheduled',objective:'DELAYED_OWNER_TASK',interactionMode:'interactive',schedule:{at:Math.floor(Date.now()/1000)+86400,timeZone:'Asia/Shanghai'}});
  assert.equal((await snapshot()).projects.find(p=>p.id===pid).state.tasks?.[first.id],undefined,'healthy rows must come from catalog response rather than prefilled projection');
  for(const entry of [first,second]){const gate=join(scratch,'watch-'+entry.id);watchGates.push(gate);await writeFile(gate,'hold');}
@@ -415,6 +582,7 @@ async function checkLoadingRegression(){
  await page.getByRole('button',{name:'定时任务',exact:true}).click();
  const traced=async value=>(await readFile(loadingTrace,'utf8').catch(()=>'' )).includes(value);
  await until(()=>traced('project pending'),'global catalog waits on unrelated project');
+ const startupPendingAt=Date.now();
  await page.getByRole('button',{name:'打开自动化 READY_TASK_FIRST',exact:true}).waitFor({timeout:4000});
  for(let index=0;index<3;index++)await page.getByRole('button',{name:`打开自动化 READY_TASK_OWNER_${index}`,exact:true}).waitFor({timeout:4000});
  await page.getByText('其余任务仍在读取…',{exact:true}).waitFor();
@@ -440,18 +608,49 @@ async function checkLoadingRegression(){
  await page.getByText('你希望什么时候执行？',{exact:true}).waitFor();
  const management=await page.evaluate(key=>JSON.parse(localStorage.getItem(key)),`areal-gui:task-edit:${pid}:${second.id}`);
  assert.equal((await call('manage',{projectId:pid,operation:'taskDraftRead',threadId:management.threadId})).thread.cwd,workspace);
- await page.getByRole('alert').filter({hasText:'任务目录读取超时'}).waitFor({timeout:10000});
- assert.equal(await page.getByText('其余任务仍在读取…',{exact:true}).count(),0,'timed-out owner ends global pending');
+ await until(()=>Date.now()-startupPendingAt>=6500,'startup readiness remains pending beyond the catalog RPC deadline',10000);
+ const startupPending={elapsedMs:Date.now()-startupPendingAt,pending:await page.getByText('其余任务仍在读取…',{exact:true}).count(),errors:await page.getByRole('alert').allTextContents()};
+ await writeFile(join(scratch,'catalog-startup-pending.json'),JSON.stringify(startupPending,null,2));
+ if(startupPending.pending!==1||startupPending.errors.some(value=>value.includes('任务目录读取超时')))regressionFailures.push('owner startup readiness produced a false 5 s catalog timeout instead of staying pending');
  await page.screenshot({path:join(scratch,'ready-task-while-catalog-pending.png')});
  checks.push('ready task opens and sends through Composer before unrelated catalog returns; pending and stale subscription receipts do not enable management');
  assert.equal(await page.getByRole('button',{name:'打开自动化 DELAYED_OWNER_TASK',exact:true}).count(),0);
  await rm(loadingGate);
- await page.getByRole('button',{name:'重试读取 slow-workspace',exact:true}).click();
+ const obsoleteRetry=page.getByRole('button',{name:'重试读取 slow-workspace',exact:true});
+ if(await obsoleteRetry.count())await obsoleteRetry.click();
  await page.getByRole('button',{name:'打开自动化 DELAYED_OWNER_TASK',exact:true}).waitFor();
- await until(async()=>await page.getByText('其余任务仍在读取…',{exact:true}).count()===0,'catalog completes after explicit retry');
+ await until(async()=>await page.getByText('其余任务仍在读取…',{exact:true}).count()===0,'catalog completes after startup readiness releases');
  assert.equal((await call('tasks',{operation:'list'})).data.some(row=>row.id===first.id),true,'omitted owner preserves global catalog');
  assert.ok(Array.isArray((await call('tasks',{operation:'inbox'})).data),'omitted owner preserves Inbox catalog');
- checks.push('delayed owner times out explicitly, retains no false empty state and returns on explicit retry; global list and Inbox remain supported');
+ checks.push('owner startup stays pending beyond 6.5 s and recovers after release; healthy owners, global list and Inbox remain supported');
+ await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setBounds({width:1280,height:720}));
+ await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+ await page.locator('.task-list-scroll').evaluate(element=>{element.scrollTop=40;});
+ await page.evaluate(()=>{
+  const capture=()=>{
+   const list=document.querySelector('.task-list-scroll');
+   return {at:performance.now(),scrollTop:list.scrollTop,scrollHeight:list.scrollHeight,clientHeight:list.clientHeight,statuses:[...list.querySelectorAll('[role="status"]')].map(element=>element.textContent),rows:[...list.querySelectorAll('.task-list-row')].map(element=>({label:element.getAttribute('aria-label'),selected:element.getAttribute('aria-pressed'),small:element.querySelectorAll('small').length,rect:element.getBoundingClientRect().toJSON()}))};
+  };
+  window.taskPollGeometry={samples:[capture()],timer:setInterval(()=>window.taskPollGeometry.samples.push(capture()),50)};
+ });
+ await writeFile(loadingPollDelay,'delay');
+ const pollCount=async marker=>(await readFile(loadingTrace,'utf8')).split(marker).length-1;
+ await until(async()=>await pollCount('catalog poll pending')>=1,'background catalog RPC enters its real delayed response');
+ await page.screenshot({path:join(scratch,'catalog-background-refresh-pending.png')});
+ await until(async()=>await pollCount('catalog poll returned')>=3,'three repeated background catalog RPCs return real data',15000);
+ await rm(loadingPollDelay);
+ await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+ const pollGeometry=await page.evaluate(()=>{clearInterval(window.taskPollGeometry.timer);const samples=window.taskPollGeometry.samples;delete window.taskPollGeometry;return samples;});
+ const baseline=pollGeometry[0],changed=pollGeometry.filter(sample=>sample.statuses.length||sample.scrollTop!==baseline.scrollTop||sample.rows.length!==baseline.rows.length||sample.rows.some((row,index)=>{
+  const previous=baseline.rows[index];
+  return row.label!==previous?.label||row.selected!==previous.selected||row.small!==previous.small||['x','y','width','height'].some(key=>Math.abs(row.rect[key]-previous.rect[key])>1);
+ }));
+ const pollEvidence={polls:await pollCount('catalog poll returned'),samples:pollGeometry,changedSamples:changed.length};
+ await writeFile(join(scratch,'catalog-background-refresh-geometry.json'),JSON.stringify(pollEvidence,null,2));
+ assert.ok(baseline.scrollHeight>baseline.clientHeight&&baseline.scrollTop>0,'refresh check preserves a nonzero scroll position in an overflowing real catalog');
+ assert.equal(baseline.rows.filter(row=>row.selected==='true').length,1,'refresh check begins with the current task selected');
+ if(changed.length)regressionFailures.push(`background catalog refresh changes row geometry, status lines, scroll or selection in ${changed.length} observed frames`);
+ checks.push('three delayed real background catalog polls measured against row bounds, metadata line count, selected task and nonzero list scroll');
  await writeFile(loadingRpcGate,'hold');
  await until(()=>traced('catalog page fixture-second'),'second page RPC held');
  await page.getByRole('alert').filter({hasText:'任务目录读取超时'}).waitFor({timeout:10000});
@@ -519,6 +718,7 @@ async function checkLoadingRegression(){
  assert.equal(pending.pending,'start');
  checks.push('admitted pending draft keeps its owner and request identity without automatic replay');
  assert.deepEqual(errors,[]);
+ assert.deepEqual(regressionFailures,[],'catalog startup and background refresh regression failures');
 }
 async function checkInlineRegression(){
  await page.getByRole('button',{name:'定时任务',exact:true}).click();
@@ -556,8 +756,39 @@ async function checkInlineRegression(){
  const main=()=>page.getByRole('main',{name:'定时任务会话',exact:true});
  const inline=()=>main().getByLabel('定时任务执行记录',{exact:true});
  const row=id=>inline().locator(`[data-task-run-id="${id}"]`);
- // 只约定可访问区域、Run 标识及标准消息项，不约束内联组件的布局或订阅实现。
  const message=(scope,value)=>scope.locator('[data-turn-id] .assistant-message .conversation-markdown').getByText(value,{exact:true});
+ const inlineLayout=[];
+ async function recordInlineLayout(runId,label){
+  if(label==='completed'){
+   const progress=row(runId).getByRole('button',{name:/^执行过程/}).first();
+   if(await progress.count()&&await progress.getAttribute('aria-expanded')==='false')await progress.click();
+   await row(runId).locator('.conversation-code-content').first().waitFor();
+  }
+  for(const width of [1488,1040]){
+   await app.evaluate(({BrowserWindow},width)=>BrowserWindow.getAllWindows()[0].setSize(width,1056),width);
+   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+   const measurement=await row(runId).evaluate((element,{label,width})=>{
+    const column=document.querySelector('.task-chat-pane > .messages-shell > .messages > .message-column');
+    const embedded=element.querySelector('.messages-embedded');
+    const rect=target=>target.getBoundingClientRect().toJSON();
+    const code=embedded.querySelector('.conversation-code-content');
+    const descendants=[];
+    const collect=root=>{for(const node of root.querySelectorAll('*')){descendants.push(node);if(node.shadowRoot)collect(node.shadowRoot);}};
+    if(code)collect(code);
+    const scrollers=descendants.filter(node=>['auto','scroll'].includes(getComputedStyle(node).overflowX)&&node.scrollWidth>node.clientWidth+20);
+    return {label,width,column:rect(column),run:rect(element),embedded:rect(embedded),readingLimit:parseFloat(getComputedStyle(column).maxWidth),
+     turns:[...embedded.querySelectorAll('[data-turn-id]')].map(node=>({rect:rect(node),display:getComputedStyle(node).display,direction:getComputedStyle(node).flexDirection})),
+     codeScrollers:scrollers.map(node=>({clientWidth:node.clientWidth,scrollWidth:node.scrollWidth})),
+     embeddedScroll:getComputedStyle(embedded).overflowY};
+   },{label,width});
+   inlineLayout.push(measurement);
+   await writeFile(join(scratch,'inline-layout.json'),JSON.stringify(inlineLayout,null,2));
+   if(measurement.run.width>measurement.column.width+1||measurement.embedded.right>measurement.column.right+1||measurement.embedded.left<measurement.column.left-1||measurement.turns.some(turn=>turn.rect.right>measurement.column.right+1))regressionFailures.push(`${label} at ${width}px exceeds shared reading-column bounds`);
+   if(!measurement.codeScrollers.length)regressionFailures.push(`${label} at ${width}px lacks internal long-code scrolling`);
+   if(['auto','scroll'].includes(measurement.embeddedScroll))regressionFailures.push(`${label} at ${width}px creates an independent vertical scroll viewport`);
+   await page.screenshot({path:join(scratch,`inline-${label}-${width}.png`)});
+  }
+ }
  async function assertManagement(){
   assert.equal(await main().count(),1);
   assert.equal(await page.getByLabel('任务资源面板',{exact:true}).count(),0,'resources stay closed');
@@ -594,6 +825,7 @@ async function checkInlineRegression(){
   assert.equal(await row(run.id).locator('[data-turn-status="inProgress"]').count(),1);
   assert.equal(await message(row(run.id),fixture.final).count(),0);
   await assertManagement();
+  if(index===1)await recordInlineLayout(run.id,'live');
   await new Promise(resolve=>setTimeout(resolve,1800));
   assert.equal(await live.isVisible(),true,'intermediate reply remains visible before fixture release');
   assert.equal((await task(created.id)).runs.find(entry=>entry.id===run.id).status,'running');
@@ -603,10 +835,12 @@ async function checkInlineRegression(){
   await message(row(run.id),fixture.final).waitFor();
   await until(async()=>(await task(created.id)).runs.find(entry=>entry.id===run.id)?.status==='completed',`run ${index} completes`);
   completed.push(run);
+  if(index===1)await recordInlineLayout(run.id,'completed');
   checks.push(`inline run ${index}: live standard message before completion, exact final reply with resources closed`);
  }
  assert.notEqual(completed[0].id,completed[1].id);
  assert.notEqual(completed[0].threadId,completed[1].threadId);
+ assert.deepEqual(regressionFailures,[],'embedded execution conversation preserves shared reading layout');
  async function assertRestored(label){
   await inline().waitFor();
   for(const [offset,run] of completed.entries()){
@@ -638,13 +872,95 @@ async function checkInlineRegression(){
  await page.getByRole('button',{name:`打开自动化 ${inlineObjective}`,exact:true}).click();
  await assertRestored('reopen');
 }
+async function closeManualApp(){
+ await app.evaluate(({dialog},trace)=>{const old=dialog.showMessageBox;dialog.showMessageBox=async(...args)=>{const options=args.at(-1);if(options.message==='退出 AReaL Harness？'){require('node:fs').appendFileSync(trace,JSON.stringify({message:options.message,buttons:options.buttons})+'\n');return {response:1};}return old(...args);};},join(scratch,'manual-quit-dialogs.jsonl'));
+ const processHandle=app.process();let timer;
+ try{
+  await Promise.race([app.close(),new Promise((_resolve,reject)=>{timer=setTimeout(()=>reject(Error('owned Electron quit timed out')),15000);})]);
+  await until(()=>processHandle.exitCode!==null||processHandle.signalCode!==null,'owned Electron exits naturally',15000);
+  assert.equal(processHandle.exitCode,0,'owned Electron quit exit code');assert.equal(processHandle.signalCode,null,'owned Electron quit signal');
+  manualCleanup.exits.push({pid:processHandle.pid,exitCode:processHandle.exitCode,signal:processHandle.signalCode});
+  app=null;page=null;
+ }finally{clearTimeout(timer);}
+}
+async function checkManualRegression(){
+ await page.getByRole('button',{name:'定时任务',exact:true}).click();
+ await page.getByRole('button',{name:'新建自动化',exact:true}).click();
+ const creation=await assertGlobalCreation();pid=creation.owner.id;
+ await page.getByTestId('chat-input').fill('立即运行验收，后天的这个时间开始，每天执行。');
+ await page.getByTestId('chat-send-button').click();
+ const created=await until(async()=>(await call('tasks',{operation:'list'})).data.find(row=>row.objective===manualObjective),'saved manual verification Task');
+ await control(created.id,'taskPause');
+ const before=await task(created.id),plan=value=>({schedule:value.schedule,nextRunAt:value.nextRunAt,paused:value.paused,skippedRuns:value.skippedRuns});
+ const showResources=async()=>{if(!await page.getByLabel('任务资源面板',{exact:true}).count())await page.getByRole('button',{name:'任务资源',exact:true}).click();};
+ await showResources();
+ const runNow=()=>page.getByRole('button',{name:'立即运行',exact:true});
+ await until(()=>runNow().isEnabled(),'saved paused Task offers immediate execution');
+ await runNow().click();
+ const first=await until(async()=>{const value=await task(created.id);return value.runs[0]?.threadId&&value;},'manual Run owns real execution Thread');
+ assert.deepEqual(plan(first),plan(before));assert.equal(first.runCount,1);assert.equal(first.runs[0].trigger,'manual');
+ assert.equal(await runNow().isDisabled(),true);await page.getByRole('button',{name:'查看当前运行',exact:true}).waitFor();
+ assert.ok((await page.getByLabel('定时任务执行记录').innerText()).includes('手动触发'));
+ await page.screenshot({path:join(scratch,'manual-running.png')});
+ await page.getByRole('button',{name:'查看当前运行',exact:true}).click();
+ await until(async()=>(await snapshot()).projects.find(project=>project.id===pid).state.threads[first.runs[0].threadId]?.turns?.length,'current Run opens authoritative Thread');
+ await page.getByRole('button',{name:'定时任务',exact:true}).click();
+ await page.getByRole('button',{name:`打开自动化 ${manualObjective}`,exact:true}).click();
+ const fixture=await until(()=>[...manualRuns.values()][0],'manual fixture stream');fixture.release();
+ const complete=await until(async()=>{const value=await task(created.id);return value.runs[0]?.status==='completed'&&value;},'manual Run completes');
+ assert.deepEqual(plan(complete),plan(before));
+ await until(async()=>(await snapshot()).library.threads[`${pid}:${first.runs[0].threadId}`]?.scheduledCompletionId===first.runs[0].id,'manual completion uses existing unread record');
+ assert.equal((await snapshot()).library.threads[`${pid}:${first.runs[0].threadId}`].unread,true);
+ await showResources();await page.locator('.task-resource-history > summary').click();
+ await page.getByLabel('任务资源面板').getByText('MANUAL_FIXTURE_REPORT',{exact:false}).first().waitFor();
+ await page.screenshot({path:join(scratch,'manual-complete.png')});
+ checks.push('real saved Task click preserves paused plan, blocks a second Run, opens execution Thread and records report/unread');
+ await writeFile(manualDropGate,'held');await writeFile(manualPrepareGate,'held');
+ await runNow().click();
+ const second=await until(async()=>{const value=await task(created.id);return value.runCount===2&&value;},'dropped response has one durable accepted Run');
+ await until(async()=>readFile(manualPrepareTrace,'utf8').then(text=>text.includes(second.runs[1].id)).catch(()=>false),'real Host preparation held after admission');
+ assert.equal(second.runs[1].threadId,null);
+ await until(async()=>(await snapshot()).projects.find(project=>project.id===pid).pending.some(entry=>entry.method==='areal/task/runNow'),'lost response remains in durable pending journal');
+ const pending=(await snapshot()).projects.find(project=>project.id===pid).pending.find(entry=>entry.method==='areal/task/runNow');
+ assert.equal(await runNow().isDisabled(),true);
+ const instance=(await snapshot()).projects.find(project=>project.id===pid).core.instanceId;
+ const service=JSON.parse(await readFile(join(env.AREAL_HARNESS_SERVICE_HOME,'services',instance,'service.json'),'utf8'));
+ assert.ok(Number.isInteger(service.corePid)&&service.corePid>0,'crash targets this fixture Core PID');
+ manualCleanup.crashTarget={instance,serviceId:service.serviceId,corePid:service.corePid,hostPid:service.hostPid};
+ process.kill(service.corePid,'SIGKILL');
+ await until(()=>{try{process.kill(service.corePid,0);return false;}catch(error){if(error.code==='ESRCH')return true;throw error;}},'fixture Core exits abruptly during held preparation');
+ const adapter=JSON.parse(await readFile(join(scratch,'core/service.json'),'utf8'));
+ const oldGui=app.process();
+ assert.equal(adapter.applicationOwner.profile,env.AREAL_GUI_USER_DATA);
+ assert.ok(Number.isInteger(adapter.pid)&&adapter.pid>0);
+ manualCleanup.intentionalCrash={guiPid:oldGui.pid,adapterPid:adapter.pid,originalCorePid:service.corePid,runId:second.runs[1].id,requestId:pending.params.requestId};
+ const crashPid=pid=>{try{process.kill(pid,'SIGKILL');}catch(error){if(error.code!=='ESRCH')throw error;}};
+ const exited=pid=>{try{process.kill(pid,0);return false;}catch(error){if(error.code==='ESRCH')return true;throw error;}};
+ crashPid(oldGui.pid);await until(()=>oldGui.signalCode==='SIGKILL','intentional old GUI crash exits');
+ crashPid(adapter.pid);await until(()=>exited(adapter.pid),'intentional old adapter crash exits');
+ const replacement=JSON.parse(await readFile(join(env.AREAL_HARNESS_SERVICE_HOME,'services',instance,'service.json'),'utf8'));
+ assert.ok(Number.isInteger(replacement.corePid)&&replacement.corePid>0);
+ Object.assign(manualCleanup.intentionalCrash,{corePid:replacement.corePid,hostPid:replacement.hostPid});
+ crashPid(replacement.corePid);await until(()=>exited(replacement.corePid)&&exited(replacement.hostPid),'intentional replacement Core crash releases its original host');
+ app=null;page=null;
+ await rm(manualPrepareGate);await rm(manualDropGate);await launch();
+ await until(async()=>!(await snapshot()).projects.find(project=>project.id===pid)?.pending.some(entry=>entry.method==='areal/task/runNow'),'reopen reconciles original request receipt');
+ const recovered=await until(async()=>{const value=await task(created.id);return value.runs[1]?.goalId&&value;},'same accepted Run acquires its Goal after Core restart');
+ const secondFixture=await until(()=>{const entry=manualRuns.get(recovered.runs[1].goalId);return entry?.connected()&&entry;},'same Run has a connected fixture stream after Core restart');secondFixture.release();
+ const restored=await until(async()=>{const value=await task(created.id);return value.runs[1]?.status==='completed'&&value;},'recovered manual Run completes');assert.equal(restored.runCount,2);assert.equal(restored.runs[1].id,second.runs[1].id);assert.deepEqual(plan(restored),plan(before));
+ const trace=(await readFile(manualTrace,'utf8')).trim().split('\n').map(line=>JSON.parse(line));assert.equal(trace.filter(entry=>entry.requestId===pending.params.requestId).length,1,'recovery never replays runNow');
+ await page.getByRole('button',{name:'定时任务',exact:true}).click();await page.getByRole('button',{name:`打开自动化 ${manualObjective}`,exact:true}).click();await showResources();
+ await until(()=>runNow().isEnabled(),'original receipt releases saved Task controls');
+ checks.push('dropped accepted response persists UNKNOWN across intentional Core and desktop crashes; the new instance recovers the same Run and original receipt without replay');
+ await page.screenshot({path:join(scratch,'manual-recovered.png')});assert.deepEqual(errors,[]);
+}
 try{
  await launch();
  await app.evaluate(({dialog,BrowserWindow},path)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[path]});BrowserWindow.getAllWindows()[0].setSize(1488,1056);},workspace);
  await page.evaluate(()=>window.arealDesktop.chooseProject());
  pid=(await until(async()=>(await snapshot()).projects.find(p=>p.root===workspace&&p.state?.connected),'project ready')).id;
  workspacePid=pid;
- if(creationRegression){await checkCreationRegression();passed=true;}else if(inlineRegression){await checkInlineRegression();passed=true;}else if(dailyStartRegression){await checkDailyStartRegression();passed=true;}else if(loadingRegression){await checkLoadingRegression();passed=true;}else{
+ if(calendarRegression){await checkCalendarRegression();passed=true;}else if(manualRegression){await checkManualRegression();passed=true;}else if(creationRegression){await checkCreationRegression();passed=true;}else if(inlineRegression){await checkInlineRegression();passed=true;}else if(dailyStartRegression){await checkDailyStartRegression();passed=true;}else if(loadingRegression){await checkLoadingRegression();passed=true;}else{
  await page.getByRole('button',{name:'设置',exact:true}).click();
  await page.getByRole('button',{name:'外观',exact:true}).click();
  await page.getByRole('combobox',{name:'界面主题',exact:true}).click();
@@ -847,6 +1163,7 @@ try{
  if(page){await writeFile(join(scratch,'failure-state.json'),JSON.stringify(await snapshot(),null,2)).catch(()=>{});await writeFile(join(scratch,'failure.aria.txt'),await page.locator('body').ariaSnapshot()).catch(()=>{});await writeFile(join(scratch,'failure-ui.json'),JSON.stringify(await page.evaluate(()=>({focus:{tag:document.activeElement?.tagName,id:document.activeElement?.id,role:document.activeElement?.getAttribute('role'),label:document.activeElement?.getAttribute('aria-label')},hidden:document.hidden,options:[...document.querySelectorAll('[role=option]')].map(el=>({html:el.outerHTML,rect:el.getBoundingClientRect().toJSON(),visibility:getComputedStyle(el).visibility,display:getComputedStyle(el).display,opacity:getComputedStyle(el).opacity}))})),null,2)).catch(()=>{});await page.screenshot({path:join(scratch,'failure.png')}).catch(()=>{});}
  throw error;
 }finally{
+ await rm(manualPrepareGate,{force:true});await rm(manualDropGate,{force:true});await rm(calendarDropGate,{force:true});
  await rm(creationGate,{force:true});
  await rm(loadingGate,{force:true});await rm(loadingRpcGate,{force:true});
  await rm(prepareFailureGate,{force:true});
@@ -856,15 +1173,35 @@ try{
   try {
    const rows=await call('tasks',{operation:'list',limit:100});
    for(const entry of rows.data){if(!entry.cancelled)await call('manage',{projectId:entry.projectId,operation:'taskCancel',taskId:entry.id,expectedRevision:entry.revision}).catch(()=>{});}
-   await until(async()=>{const state=await call('serviceStatus',{});return !state.busy&&!state.activeCommands;},'fixture cleanup',20000);
-   await app.evaluate(({dialog})=>{const old=dialog.showMessageBox;dialog.showMessageBox=async(...args)=>args.at(-1).message==='停止共享后台服务？'?{response:1}:old(...args);});
-   await call('stopService',{});
+   await until(async()=>{const state=await call('serviceStatus',{});if(state.activeCommands)return false;if(!state.busy)return true;if(!calendarUnknownRequestId)return false;const pending=(await snapshot()).projects.flatMap(project=>project.pending??[]);const onlyOriginal=pending.length===1&&pending[0].method==='areal/task/create'&&pending[0].params.requestId===calendarUnknownRequestId;if(onlyOriginal)manualCleanup.retainedUnknown=calendarUnknownRequestId;return onlyOriginal;},'fixture cleanup permits only the deliberately retained UNKNOWN receipt',20000);
+   await app.evaluate(({dialog})=>{const old=dialog.showMessageBox;dialog.showMessageBox=async(...args)=>args.at(-1).message==='退出 AReaL Harness？'?{response:1}:old(...args);});
+   if(!manualRegression&&!calendarRegression)await call('stopService',{});
   }catch(error){errors.push(`cleanup: ${error.message}`);}
  }
- if(app)await app.close().catch(()=>{});
+ if(manualRegression||calendarRegression){
+  const metadata=await readFile(join(scratch,'core/service.json'),'utf8').then(JSON.parse).catch(()=>null);
+  manualCleanup.adapter=metadata&&{pid:metadata.pid,identity:metadata.identity,desktopGeneration:metadata.desktopGeneration};
+  try{if(app)await closeManualApp();await assertApplicationStopped(binary,env,metadata);manualCleanup.applicationStopped=true;}
+  catch(error){errors.push('manual cleanup: '+error.message);}
+  if(metadata&&!manualCleanup.applicationStopped){
+   manualCleanup.assistedServiceStop=true;
+   const {ServiceConnection,waitForServiceProcessExit}=require('../app/src/core/service-client.cjs');const connection=new ServiceConnection();
+   try{
+    await connection.connect(metadata);const packet=await connection.request('hello',{protocol:metadata.protocol,identity:metadata.identity});
+    try{await connection.request('stopService',{protocol:metadata.protocol,cancel:true,expectedDesktopGeneration:metadata.desktopGeneration,expectedTargets:packet.service.targets},true);}catch(error){if(!error.message.includes('已请求退出'))throw error;}
+    await waitForServiceProcessExit(join(scratch,'core'),metadata);manualCleanup.desktopExited=true;
+   }catch(error){if(!['ENOENT','ECONNREFUSED','ESRCH'].includes(error.code))errors.push('fallback stop service: '+error.message);}finally{connection.close();}
+  }
+  if(app){const handle=app.process();if(handle.exitCode===null&&handle.signalCode===null){manualCleanup.forcedElectronExit=true;handle.kill('SIGKILL');await new Promise(resolve=>handle.once('exit',resolve));}}
+  try{manualCleanup.instances=JSON.parse(execFileSync(binary,['service','list','--json'],{env,encoding:'utf8'})).map(({serviceId,workspace,state,hostPid,corePid})=>({serviceId,workspace,state,hostPid,corePid}));assert.ok(manualCleanup.instances.every(instance=>instance.state==='stopped'),'owned Core instance remains live');}catch(error){errors.push('verify owned Core cleanup: '+error.message);}
+  manualCleanup.mainErrors=(await readFile(manualMainErrors,'utf8')).trim().split('\n').filter(Boolean).map(line=>JSON.parse(line));
+  for(const error of manualCleanup.mainErrors)errors.push('uncaught Main '+error.origin+': '+error.message);
+  await writeFile(join(scratch,'manual-cleanup.json'),JSON.stringify(manualCleanup,null,2));
+  if(errors.length){passed=false;process.exitCode=1;}
+ }else if(app)await app.close().catch(()=>{});
  model.closeAllConnections();await new Promise(resolve=>model.close(resolve));
  await writeFile(join(scratch,'catalog-events.json'),JSON.stringify(catalogEvents,null,2));
- await writeFile(join(scratch,'evidence.json'),JSON.stringify({passed,binary,binarySha256,checks,errors,modelRequests:modelRequests.length},null,2));
+ await writeFile(join(scratch,'evidence.json'),JSON.stringify({passed,binary,binarySha256,checks,errors,regressionFailures,modelRequests:modelRequests.length},null,2));
  await writeFile(join(scratch,'model-requests.json'),JSON.stringify(modelRequests,null,2));
  await writeFile(join(scratch,'manifest.json'),JSON.stringify({passed,sourceCommit:execFileSync('git',['rev-parse','HEAD'],{cwd:gui,encoding:'utf8'}).trim(),diff:execFileSync('git',['diff','--stat'],{cwd:gui,encoding:'utf8'}),binary,binarySha256,checks,errors,boundaries:['real isolated Electron, preload, Desktop adapter and Core','synthetic local model replies','native directory dialog result is stubbed','not installed app or real provider']},null,2));
  console.log(JSON.stringify({passed,scratch,checks,errors}));

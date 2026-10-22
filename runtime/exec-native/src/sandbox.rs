@@ -68,6 +68,7 @@ const BASE: &str = r#"
 (allow process-exec file-read* file-map-executable
   (regex #"^/(System/(Library|iOSSupport/System/Library)|bin|sbin|usr/(bin|sbin|lib|libexec|share))(/|$)"))
 (allow file-read* file-test-existence (literal "/"))
+(allow file-read-metadata (literal "/var") (literal "/tmp") (literal "/etc"))
 (allow file-read-metadata
   (literal "/Applications")
   (regex #"^/Applications/Xcode(_[0-9]+([.][0-9]+)*)?[.]app(/Contents(/Developer(/Library(/Frameworks)?)?)?)?$"))

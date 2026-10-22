@@ -121,6 +121,18 @@ macOS 的 owned TUI 与 Core/Runtime 一样通过可信系统父进程启动，�
 
 TUI 断线会重新发现服务，故障清理完成后可启动新 generation；显式 stop 会留下停止标记，现有窗口不会自动撤销停止。新开窗口或手工 ensure 可重新启动。恢复使用 `thread/resume` 获取快照，不重放请求；Goal 重启后暂停，工具 UNKNOWN 保持原有检查要求。
 
+### GUI 崩溃后的受保护替代
+
+`service status --instance ID --recovery --json` 是显式只读入口，返回 `{service,recovery:{version:1,generation,eligible,reason}}`。默认 status 仍返回严格 v1 Service；Capabilities 仍为 `{version:1,stopOperations:1}`。`eligible:true`、reason 为 `confirmedCoreCrash` 仅表示候选：存活 Host 已在 Core 意外退出后发布绑定原代际的正向清理证明，两把锁均释放，且原代际没有已受理停止意图。缺失、格式错误、过期或旧版证明均不可恢复。锁释放、PID 消失和非零退出码本身不证明清理成功。
+
+可信 GUI 适配器可携带原 LocalArgs、GUI owner 与继承的 lifetime 描述符调用 `service recover --instance ID --expected-generation GENERATION --json`。恢复在原 `start.lock` 下重新核对规范 workspace/data、完整配置与组件/二进制摘要、owner、存活 lifetime、两把租约及持久停止回执；Host 在启动前再次校验授权及最新配置。Runtime 在 shutdown 与请求结算完成后独立报告资源清理成功；输出传输失败不覆盖该事实，也不能单独证明清理。launcher 将证明绑定到自己已回收的 Core/Runtime 子句柄，Host 将其发布到可回收 generation 目录之外。Host/launcher 在发布前死亡、owner 关闭及 Runtime 清理未确认均不能授权替代。
+
+私有单次替代回执在 spawn 前持久化，Host 再将其绑定到 successor 代际。CLI 响应丢失后重复同一原代际请求，只能返回回执记录的兼容 Ready successor；启动未知或 successor 再次崩溃不能从原回执启动第二次替代。已受理、受理未知、结算不完整或已完成的停止回执均阻止恢复，包括控制处理器只落盘受理、尚未更新内存 stopping 标记便退出的情况。明确 blocked、未受理的停止不阻止恢复。这是受理意图顺序：仍在等待 `start.lock` 的后发 stop 尚未受理，继续遵守正常代际检查。
+
+Desktop 还必须在派发前及发布替代结果前检查自身生命周期意图、项目/客户端归属及 closing 状态。恢复读取权威快照与原请求回执，不重放中断的模型、工具或 Turn。现有 Core 启动恢复继续暂停中断 Goal、队列与 worker，并将不确定副作用标为 UNKNOWN；已获授权但尚未启动的 schedule 及未来配置触发保持原有语义。普通 ensure/restart 契约不变。
+
+确定性跨进程回归入口为 `AREAL_TEST_BIN_DIR=/absolute/bin node scripts/local-service-recovery-smoke.mjs`，使用隔离状态与本地模型夹具，不使用用户 profile 或真实供应商。
+
 ## Web 与 Desktop 接入
 
 `areal service stop --expected-generation <generation>` 在启动锁内核对目标换代身份，失配时拒绝停止替代实例。GUI 的取消确认绑定原 Desktop、项目范围和 Core generation；最终公共宿主停止保持同一 cancel 意图。部分停止或未知回执保持恢复状态，不报告全局回滚、不自动重发；客户端须确认原实例登记撤回和进程退出。
@@ -130,7 +142,9 @@ TUI 断线会重新发现服务，故障清理完成后可启动新 generation�
 - 重连重新发现并比较 generation，然后 initialize/initialized 和 thread/resume。先查 request/read 或权威状态再决定重试，不自动重放已提交操作。
 - 需要跨窗口的动态 ToolHost 应放在稳定 Main/独立宿主连接中。窗口上的动态工具不会自动转移；连接丢失仍按现有 Host generation 与 UNKNOWN 语义处理。
 
-内部控制使用 home/services/INSTANCE_ID/control.sock 上的单行 JSON，目录 0700、登记与凭据 0600；请求 `{method:"status",version:1}` 或 `{method:"stop",version:1,generation,cancel}`，响应 `{result:"ok",service}` 或 `{result:"error",message}`。建议非 Rust 客户端使用 CLI，避免复制锁和恢复逻辑。Unix socket 路径过长时需缩短 AREAL_HARNESS_SERVICE_HOME。
+内部控制使用 Unix socket 上的单行 JSON，目录 0700、登记与凭据 0600。`home/services/INSTANCE_ID/control.sock` 的编码字节长度小于 104 时保留此地址。更长的地址使用 `/tmp/areal-<effective-uid>/<sha256>.sock`，摘要输入为规范化登记目录的完整路径字节。Host 与客户端使用相同的派生规则，并验证 socket 父目录属于当前用户、不是符号链接且无 group/other 权限。登记、锁、历史与操作回执仍保留在原位置。Host 退出只删除本实例 socket，不删除共享的 UID 目录。socket 消失不证明后台已经停止。
+
+请求为 `{method:"status",version:1}` 或 `{method:"stop",version:1,generation,cancel}`，响应为 `{result:"ok",service}` 或 `{result:"error",message}`。建议非 Rust 客户端使用 CLI，避免复制地址派生、锁和恢复逻辑。
 
 认证 GET `/areal/service` 返回描述中的六个身份字段（protocolVersion/serviceId/generation/workspace/dataDir/configFingerprint），需要 observe 权限，拒绝不匹配的 Origin；无托管身份的已认证 Core 返回 404。业务协议仍见 [Core](core.md) 与[桌面 API](desktop.md)，无需另建 Agent loop。
 

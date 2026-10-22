@@ -269,7 +269,7 @@ impl Engine {
         'restart: loop {
             self.yield_settled_workspace_lease(cell).await;
             self.drain_hook_results(cell, true).await?;
-            if self.task_wait_requested(cell).await {
+            if self.task_wait_requested(cell).await? {
                 return Ok(());
             }
             if let Some(max) = max_rounds.filter(|max| model_rounds >= *max) {
@@ -320,7 +320,7 @@ impl Engine {
             let browser_instructions = tool_definitions.iter()
                 .any(|tool| tool["function"]["name"] == "browser_v1")
                 .then_some("Built-in Browser guidance: Invoke browser_v1 only when the current user task requires browser interaction. For ordinary chat and tasks that do not need a browser, do not call browser_v1 merely because it is available. Every new browser task must start with describe and empty parameters, then a fresh observe for an existing page. Never reuse snapshotId or refs from an earlier turn, even if history says they were fresh. Start with describe even when no page exists or Human previously took control; Core approval can create or reclaim the current page after a new user request. For an existing page, obtain a fresh observe before navigate; only a newly created about:blank page can navigate without an observation. Then navigate using pageId, observe again for current refs, fill the search field and press Enter to perform an approved public search. Do not ask the user to enable Browser manually or use development_service_inspect to create a Browser page. Reads and actions require Core approval. Respect denied, stale and UNKNOWN results without replay.");
-            let task_instructions = self.task_context(cell).await;
+            let task_instructions = self.task_context(cell).await?;
             let goal_instructions = self.goal_instructions(cell).await?;
             let (
                 messages,
@@ -707,9 +707,13 @@ impl Engine {
                     .unwrap()
                     .generation
                     .clone();
+                let mut response_deadline = watchdog::ResponseDeadline::new(
+                    self.limits.model_request_timeout,
+                    self.limits.stream_idle_timeout,
+                );
                 let response = {
-                    let pending_response = tokio::time::timeout(
-                        self.limits.stream_idle_timeout,
+                    let pending_response = tokio::time::timeout_at(
+                        response_deadline.deadline(),
                         model::REQUEST_OWNER
                             .scope((thread_id.clone(), turn_id.clone()), async {
                                 anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
@@ -780,10 +784,10 @@ impl Engine {
                             complete_item(cell, &thread_id, &turn_id, &item_id).await;
                             continue 'restart;
                         },
-                        next = tokio::time::timeout(
-                            self.limits.stream_idle_timeout,
+                        next = tokio::time::timeout_at(
+                            response_deadline.deadline(),
                             stream.next().instrument(model_span.clone()),
-                        ) => match next { Ok(next) => next, Err(_) => Some(Err(watchdog::idle_error("model stream"))) },
+                        ) => match next { Ok(next) => next, Err(_) => Some(Err(response_deadline.idle_error("model"))) },
                     };
                     let Some(delta) = next else {
                         let state = cell.state.lock().await;
@@ -1220,6 +1224,7 @@ impl Engine {
                         response_bytes <= self.limits.max_response_bytes,
                         "model response byte limit exceeded"
                     );
+                    response_deadline.observe_event();
                     operation.observe(&delta);
                     match delta {
                         ModelEvent::Activity => continue,

@@ -18,7 +18,13 @@ await mkdir(workspace);
 await mkdir(join(scratch, 'user', '.areal'), { recursive: true });
 let finish, requests = 0;
 const model = createServer(async (request, response) => {
-  for await (const _ of request) { /* 消费请求后保留流，供断线恢复期间继续执行。 */ }
+  let raw = ''; for await (const chunk of request) raw += chunk;
+  const body = JSON.parse(raw);
+  if (body.messages?.[0]?.content?.startsWith('Generate a concise semantic session title')) {
+    response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    response.end(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: 'Connection recovery' }, finish_reason: null }] })}\n\ndata: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`);
+    return;
+  }
   requests++;
   response.writeHead(200, { 'Content-Type': 'text/event-stream' });
   const chunk = (delta, finish_reason = null) => response.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason }] })}\n\n`);

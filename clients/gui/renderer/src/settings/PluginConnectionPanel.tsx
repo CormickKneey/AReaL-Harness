@@ -4,6 +4,7 @@ import { Button } from "../components/ui/button.js";
 import { Feedback } from "./common.js";
 import { SettingsDisclosure } from "./SettingsDisclosure.js";
 import { PluginAuthConfiguration } from "./PluginAuthConfiguration.js";
+import { supportBlocked } from "./PluginComponentSupport.js";
 import { pluginMcpStateLabel } from "./pluginResources.js";
 import type { PluginDetail } from "./PluginCenter.js";
 import type { Data } from "../services.js";
@@ -92,7 +93,7 @@ export function PluginConnectionPanel({ detail, snapshot, loading, error, disabl
   const configurationBlocked = !servers.length && !connectors.length && snapshot?.diagnostics?.some((item: Data) => item.class === "configuration" || item.class === "policy");
   const mappingRequired = connectors.some(connector => connector.state === "missingMapping" || connector.state === "authRequired");
   const hasConnections = servers.length > 0 || connectors.length > 0;
-  const blocked = disabled || loading || authLoading || !!acting;
+  const blocked = supportBlocked(detail.installedComponentSupport, detail.installedDigest) || disabled || loading || authLoading || !!acting;
   const title = loading || !snapshot ? t("settings.pluginConnectionPanel.loadingConnectionStatus") : cleanupUnknown ? t("settings.pluginConnectionPanel.cleanupResultUnconfirmed")
     : uncertain ? t("settings.pluginConnectionPanel.connectionStatusUnconfirmed") : allDisabled ? t("settings.pluginConnectionPanel.servicesDisabled") : configurationBlocked ? t("settings.pluginConnectionPanel.connectionConfigurationNeedsAttention")
     : partial ? t("settings.pluginConnectionPanel.someServicesAreDisconnected") : authUnknown ? t("settings.pluginConnectionPanel.authenticationResultUnconfirmed") : authPending ? t("settings.pluginConnectionPanel.waitingForAuthentication") : authRequired ? t("settings.pluginConnectionPanel.authenticationRequired") : mappingRequired ? t("settings.pluginConnectionPanel.connectionConfigurationRequired")
@@ -134,7 +135,7 @@ export function PluginConnectionPanel({ detail, snapshot, loading, error, disabl
       {mappingRequired && connectorConfiguration}
       {uncertain && <Button variant="outline" disabled={loading} onClick={onRefresh}>{t("settings.pluginConnectionPanel.checkConnectionStatus")}</Button>}
       {(connected || partial || (!hasConnections && !configurationBlocked)) && <div className="plugin-connection-actions plugin-service-actions">
-        <Button disabled={disabled || draftBusy || !detail.enabled} onClick={onStart}>{t("settings.pluginConnectionPanel.startConversation")}</Button>
+        <Button disabled={disabled || draftBusy || !detail.enabled || supportBlocked(detail.installedComponentSupport, detail.installedDigest)} onClick={onStart}>{t("settings.pluginConnectionPanel.startConversation")}</Button>
         {(connected || partial) && <Button variant="outline" disabled={blocked} onClick={() => {
           setConsent(false); setConsentOpen(false);
           void mutate("pluginConnection", { id: detail.id, expectedDigest: detail.installedDigest, connect: false });

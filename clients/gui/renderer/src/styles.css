@@ -2,6 +2,7 @@
 @import "tailwindcss" source(".");
 @import "tw-animate-css";
 @import "streamdown/styles.css";
+@import "../../../../design/tokens/focus.css";
 
 
 @import "@xterm/xterm/css/xterm.css";
@@ -67,8 +68,6 @@ body,
   --layer-popover: 60;
   --layer-tooltip: 70;
   --border-width-default: 1px;
-  --focus-width: 2px;
-  --focus-offset: 2px;
 }
 
 .ui-control { transition-duration: var(--motion-fast); transition-timing-function: var(--ease-standard); }

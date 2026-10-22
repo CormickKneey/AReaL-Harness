@@ -13,10 +13,10 @@ pub trait ModelConfigurationControl: Send + Sync {
     fn apply(self: Arc<Self>, request: ModelConfigurationApply) -> Response<'static>;
 }
 
-pub const METHODS: &[&str] = &[
-    "areal/server/modelConfiguration/read",
-    "areal/server/modelConfiguration/apply",
-];
+areal_protocol::method_catalog! {
+    "areal/server/modelConfiguration/read" => Read;
+    "areal/server/modelConfiguration/apply" => Mutation;
+}
 
 pub(crate) fn authorized(principal: &Principal) -> bool {
     principal.id == "desktop-owner"

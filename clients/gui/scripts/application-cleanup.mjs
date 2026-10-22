@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { once } from "node:events";
+import { withSmokeDeadline } from "./smoke-deadline.mjs";
 
 export async function assertApplicationStopped(binary, env, metadata) {
   const alive = pid => {
@@ -16,4 +18,20 @@ export async function assertApplicationStopped(binary, env, metadata) {
     await new Promise(resolve => setTimeout(resolve, 100));
   } while (Date.now() < deadline);
   assert.fail("Application quit left a live isolated adapter or Core generation");
+}
+
+// A failed quit must not leave the test runner held open until the CI job timeout.
+// Only the exact child returned by this fixture's Electron launch may be killed.
+export async function closeSmokeApplication(application, timeoutMs = 20000) {
+  try {
+    await withSmokeDeadline("Electron cleanup", () => application.close(), timeoutMs);
+  } catch (error) {
+    const child = application.process();
+    if (child && child.exitCode === null && child.signalCode === null) {
+      const exited = once(child, "exit");
+      child.kill("SIGKILL");
+      await withSmokeDeadline("owned Electron process exit", () => exited, 5000);
+    }
+    throw error;
+  }
 }

@@ -1,9 +1,11 @@
+import { useI18n } from "./i18n/IntlProvider.js";
+import { SettingsDisclosure } from "./settings/SettingsDisclosure.js";
 import { ContextMeter } from "./ContextMeter.js";
 import { isOrdinaryConversation, interruptedConversationTurn } from "./ordinaryConversation.js";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
 import { McpComposerAttachments, useMcpDraft } from "./McpComposerAttachments.js";
 import { readMcpDraft, consumeMcpDraft, clearMcpDraft } from "./mcp-app-draft.js";
-import { useApplicationPreferences } from "./settings/applicationPreferences.js";
+import { setApplicationPreferences, useApplicationPreferences } from "./settings/applicationPreferences.js";
 import { shouldSteer } from "./settings/applicationSettings.js";
 
 import { ComposerPermissionMenu } from "./ComposerPermissionMenu.js";
@@ -11,7 +13,6 @@ import { canExecutePlan, permissionMode, permissionOptions, planModeOptions } fr
 import { ComposerPlanMode } from "./ComposerPlanMode.js";
 import { ControlHintTooltip } from "./ControlHintTooltip.js";
 import { Button } from "./components/ui/button.js";
-import { BACKEND_STATUS_ID } from "./BackendStatusNotice.js";
 import { ComposerQueue } from "./ComposerQueue.js";
 import { useComposerQueueEdit } from "./useComposerQueueEdit.js";
 import { ComposerQueueAttachment } from "./ComposerQueueAttachment.js";
@@ -35,6 +36,7 @@ import { ReviewCommentAttachment } from "./ReviewCommentViews.js";
 import { attachedReviewComments, consumeReviewComments, detachReviewComments, recordUnknownReviewSubmission, reconcileReviewSubmission, readReviewComments, reviewCommentKey, reviewCommentText, useReviewComments } from "./reviewComments.js";
 import type { LexicalChatInputHandle } from "./LexicalChatInput.js";
 import type { Data, Action } from "./services.js";
+import { recoveredOutcome, recoveryMessage, type RecoveryFailure, type RecoveryOperation } from "./recoveryPresentation.js";
 // Draft attachments and in-flight UI admission survive task navigation. These are
 // unsent client inputs only; Core remains authoritative for acceptance/outcomes.
 export const attachmentDrafts = new Map<string, ComposerDraftAttachment[]>();
@@ -63,6 +65,7 @@ export function Composer({
   onOpenTask,
   onSide,
   onMcpMention,
+  appEntries = [],
   onAnnotate,
   surfaceLayout = "default",
 }: {
@@ -77,8 +80,10 @@ export function Composer({
   onOpenTask?: (target: { projectId: string; taskId: string; runId: string }) => void;
   onSide?: (draft: string) => void;
   onMcpMention?: () => void;
+  appEntries?: readonly ComposerCatalogEntry[];
   onAnnotate?: (target: ImageAnnotationTarget) => void;
 }) {
+  const { t } = useI18n();
   const prefs = useApplicationPreferences();
   const key = `areal-gui:draft:${project.id}:${thread.id}`;
   const mcpDraft = useMcpDraft(key);
@@ -132,11 +137,12 @@ export function Composer({
     if (hadQuestion.current && !questions.length) api.current?.focus();
     hadQuestion.current = questions.length > 0;
   }, [questions.length]);
-  const baseDisabled = !project.state?.connected || archived || busy || pending || !!unknown || !!reviewDraft.error;
+  const baseDisabled = !project.state?.connected || !!project.observationErrors?.[thread.id] || archived || busy || pending || !!unknown || !!reviewDraft.error;
   const queueEditor = useComposerQueueEdit({ project, threadId: thread.id, draftKey: key, action, readAction, api, draftFiles: attachmentDrafts,
     setText, setFiles, setGoalMode, annotationBlocked: annotationEditing || invalidAnnotation, inFlight: busy, setInFlight: active => markSending(key, active), uploadFiles: selected => uploadComposerFiles(action, project.id, thread.id, selected) });
   const editorDisabled = baseDisabled || queueEditor.busy || queueEditor.locked;
   const disabled = editorDisabled || executionBlocked;
+  const compatibilityDescription = useId();
   const desktopUnsupported = project.desktopCapabilities?.currentCommands === false;
   const stop = () => {
     if (executionBlocked) return;
@@ -199,18 +205,27 @@ export function Composer({
     return () => window.removeEventListener("areal-draft-change", refreshDraft);
   }, [key]);
   useEffect(() => {
-    if (!unknown || pending) return;
-    const outcome = project.outcomes?.[unknown];
+    if (!unknown) return;
+    const pendingOperation = project.pending.find((entry: Data) => entry.params?.requestId === unknown)?.operation;
+    if (pendingOperation) localStorage.setItem(`${key}:pending-operation`, JSON.stringify(pendingOperation));
+    if (pending) return;
+    let operation: RecoveryOperation | undefined;
+    try { operation = JSON.parse(localStorage.getItem(`${key}:pending-operation`) ?? "null") ?? undefined; } catch {}
+    const outcome = recoveredOutcome(project, unknown, thread.id, operation);
     if (!outcome) return;
     localStorage.removeItem(`${key}:pending`);
+    localStorage.removeItem(`${key}:pending-operation`);
     setUnknown(null);
     reconcileReviewSubmission(reviewKey, unknown, outcome.accepted !== false);
     const wasGoal = localStorage.getItem(`${key}:pending-goal`) === unknown;
     localStorage.removeItem(`${key}:pending-goal`);
     const wasContinue = localStorage.getItem(`${key}:pending-continue`) === unknown;
     localStorage.removeItem(`${key}:pending-continue`);
-    if (outcome.accepted === false) setDeliveryError(outcome.message || "原轮次已结束，内容已保留，请检查后发送。");
-    else if (wasContinue) setDeliveryError("");
+    const wasConfigure = localStorage.getItem(`${key}:pending-configure`) === unknown;
+    localStorage.removeItem(`${key}:pending-configure`);
+    if (outcome.status === "failed") setDeliveryError(outcome.message || "消息已受理，但执行失败，请检查对话结果。");
+    else if (outcome.accepted === false) setDeliveryError(outcome.message || "原轮次已结束，内容已保留，请检查后发送。");
+    else if (wasContinue || wasConfigure) setDeliveryError("");
     else if (wasGoal) {
       clearText(); changeGoalMode(false);
     } else clear();
@@ -241,6 +256,7 @@ export function Composer({
     markSending(key, true);
     setGoalError("");
     setDeliveryError("");
+    let configurationRequestId: string | undefined;
     try {
       if (creatingGoal) {
         await action("manage", { projectId: project.id, threadId: thread.id, operation: "goalCreate",
@@ -249,7 +265,11 @@ export function Composer({
         changeGoalMode(false);
         return;
       }
-      if (approvePlan) await action("configure", { projectId: project.id, threadId: thread.id, expectedRevision: config?.revision, options: permissionOptions("auto", config?.options) });
+      if (approvePlan) {
+        configurationRequestId = crypto.randomUUID();
+        await action("configure", { projectId: project.id, threadId: thread.id, requestId: configurationRequestId, expectedRevision: config?.revision, options: planModeOptions(false, config?.options) });
+        configurationRequestId = undefined;
+      }
       await submitMessage(action, project.id, thread.id, value, files, {
         steer: !taskManagement && !!running && shouldSteer(prefs.followUp, invert),
         expectedTurnId: running?.id,
@@ -266,10 +286,13 @@ export function Composer({
       else if (!(error.submissionUnknown && error.requestId)) {
         // 附件失败留在所属 Composer，切换任务后仍能看到；没有附件的未受理发送/steer 单独显示投递原因。
         if (files.length > 0) setAdmissionError(error.message);
-        else if (!error.submissionUnknown) setDeliveryError(error.message || "发送未受理，输入已保留。");
+        else if (!error.submissionUnknown) setDeliveryError(recoveryMessage(error));
         else setAdmissionError(error.message);
       }
       if (error.submissionUnknown && error.requestId) {
+        const failure = error as RecoveryFailure;
+        if (failure.outcome && "operation" in failure.outcome) localStorage.setItem(`${key}:pending-operation`, JSON.stringify(failure.outcome.operation));
+        if (configurationRequestId) localStorage.setItem(`${key}:pending-configure`, error.requestId);
         if (creatingGoal) localStorage.setItem(`${key}:pending-goal`, error.requestId);
         setUnknown(error.requestId);
         localStorage.setItem(`${key}:pending`, error.requestId);
@@ -285,7 +308,7 @@ export function Composer({
       await action("continue", { projectId: project.id, threadId: thread.id, expectedTurnId: interrupted.id, expectedConfigRevision: config?.revision });
     } catch (cause) {
       const error = cause as Error & { submissionUnknown?: boolean; requestId?: string };
-      setDeliveryError(error.message);
+      if (!error.submissionUnknown) setDeliveryError(recoveryMessage(error));
       if (error.submissionUnknown && error.requestId) {
         localStorage.setItem(`${key}:pending`, error.requestId);
         localStorage.setItem(`${key}:pending-continue`, error.requestId);
@@ -297,9 +320,20 @@ export function Composer({
     if (queueEditor.edit) return;
     if (disabled || running || sending.has(key)) return;
     markSending(key, true);
+    const requestId = crypto.randomUUID();
     try {
-      await action("configure", { projectId: project.id, threadId: thread.id, expectedRevision: config?.revision, ...values });
-    } catch (cause) { setAdmissionError((cause as Error).message); } finally { markSending(key, false); }
+      await action("configure", { projectId: project.id, threadId: thread.id, requestId, expectedRevision: config?.revision, ...values });
+    } catch (cause) {
+      const failure = cause as Error & { submissionUnknown?: boolean; requestId?: string };
+      if (failure.submissionUnknown) {
+        const originalId = failure.requestId ?? requestId;
+        setUnknown(originalId);
+        localStorage.setItem(`${key}:pending`, originalId);
+        localStorage.setItem(`${key}:pending-configure`, originalId);
+        const outcome = (failure as RecoveryFailure).outcome;
+        if (outcome && "operation" in outcome) localStorage.setItem(`${key}:pending-operation`, JSON.stringify(outcome.operation));
+      } else setAdmissionError(recoveryMessage(failure));
+    } finally { markSending(key, false); }
   };
   const catalogActions: ComposerCatalogEntry[] = [
     ...(onMcpMention ? [{value:"app-mention",label:"@ 应用引用",description:"搜索应用中的文件、工单或其他资源",icon:<ComposerMcpIcon/>,group:"功能" as const,run:onMcpMention}] : []),
@@ -328,6 +362,7 @@ export function Composer({
   if (thread.source === "nativeTaskAgent" && thread.goalOwner) return <div className="composer-dock" data-v4-composer-dock="true"><p role="status" className="px-3 pt-3 text-ui-sm text-foreground-subtle">此 worker 由原 TaskRun 管理。打开历史不会重新执行已结束的工作。</p>{returnError && <p role="alert" className="px-3 text-ui-sm">{returnError}</p>}<div className="px-3 py-3"><Button size="sm" variant="outline" disabled={returning} onClick={() => void returnToRun()}>{returning ? "正在返回…" : "返回原运行"}</Button></div></div>;
   return (
     <div className="composer-dock" data-v4-composer-dock="true">
+      {desktopUnsupported && <span id={compatibilityDescription} className="sr-only">{t("backend.updateRequired")}</span>}
       <GoalCard project={project} thread={thread} action={action} onEdit={() => onPanel("编辑目标")} />
       <input
         ref={upload}
@@ -342,18 +377,21 @@ export function Composer({
       />
       {deliveryError && <p role="alert" className="notice">{deliveryError}</p>}
       {unknown && (
-        <div role="status" className="notice">
-          提交结果尚未确认。草稿已保留，等待 Core 对账；不会自动重发。
+        <div role="status" className="notice" data-composer-recovery-request-id={unknown}>
+          {t("recovery.sendUnconfirmed")}
+          <SettingsDisclosure title={t("recovery.details")}>
+            <small className="break-all text-foreground-subtle">{t("recovery.requestId", { id: unknown })}</small>
+          </SettingsDisclosure>
           <button
-            onClick={() => void action("reconcile", { projectId: project.id }).catch(() => {})}
+            onClick={() => void readAction("reconcile", { projectId: project.id }).catch(() => {})}
           >
-            刷新受理状态
+            {t("recovery.checkOriginal")}
           </button>
         </div>
       )}
       {planReady && !queueEditor.edit && <section className="flex items-center justify-between gap-3 px-3 py-2 text-ui-sm" aria-label="计划确认">
         <span className="text-foreground-subtle">计划已完成。批准后将以自动编辑模式执行。</span>
-        <Button size="sm" disabled={disabled || desktopUnsupported || !!input.text.trim() || !!input.files.length || !!comments.length} aria-describedby={desktopUnsupported ? BACKEND_STATUS_ID : undefined} onClick={() => void submit("按上方已确认的计划执行。", false, true)}>批准并执行</Button>
+        <Button size="sm" disabled={disabled || desktopUnsupported || !!input.text.trim() || !!input.files.length || !!comments.length} aria-describedby={desktopUnsupported ? compatibilityDescription : undefined} title={desktopUnsupported ? t("backend.updateRequired") : undefined} onClick={() => void submit("按上方已确认的计划执行。", false, true)}>批准并执行</Button>
       </section>}
       <div className="composer-input-stack">
       <div ref={setMenuAnchor} className="composer-menu-anchor" />
@@ -387,7 +425,6 @@ export function Composer({
         modelConfig={config}
         modelDisabled={disabled || !!queueEditor.edit || !!running || !config}
         onConfigureModel={values => { void configure(values); }}
-        onModelSettings={() => onPanel("设置")}
         triggerPanelContainer={menuAnchor}
         className={!queueEditor.edit ? approvals.length ? "hidden" : questions.length ? "interaction-composer-compact" : undefined : undefined}
         shellClassName="@container/composer"
@@ -400,11 +437,12 @@ export function Composer({
         placeholder={archived ? "已归档任务只读" : creatingGoal ? "描述目标，明确可衡量的结果" : planActive ? "描述任务，生成计划…" : "随心输入"}
         disabled={editorDisabled}
         submitDisabled={disabled || (desktopUnsupported && !queueEditor.edit && !creatingGoal) || (taskManagement && !!running) || annotationEditing || invalidAnnotation || (queueEditor.edit ? queueEditor.saveDisabled || (!input.text.trim() && !input.files.length && !queueEditor.edit.attachments.length) : creatingGoal ? !input.text.trim() || !!running : !canContinue && emptyDraft)}
+        submitDisabledReason={desktopUnsupported && !queueEditor.edit && !creatingGoal ? t("backend.updateRequired") : undefined}
         submitting={busy}
         submitLabel={queueEditor.edit ? "保存排队消息" : creatingGoal ? "开始目标" : canContinue ? "继续执行" : "发送"}
         enterSubmits={prefs.sendShortcut === "enter"}
         enableMentionPanel={false}
-        composerCatalog={{ ...skills.catalog, entries: [...catalogActions, ...skills.catalog.entries].map(entry => ({ ...entry, disabled: entry.disabled || (!!queueEditor.edit && !["upload", "files", "mcp"].includes(entry.value)) })) }}
+        composerCatalog={{ ...skills.catalog, entries: [...catalogActions, ...appEntries, ...skills.catalog.entries].map(entry => ({ ...entry, disabled: entry.disabled || (!!queueEditor.edit && !["upload", "files", "mcp"].includes(entry.value)) })) }}
         onChange={(value) => {
           setText(value);
           if(onMcpMention&&/(^|\s)@$/.test(value)&&!/(^|\s)@$/.test(text))onMcpMention();
@@ -462,9 +500,12 @@ export function Composer({
         )}
         leadingActions={
           <><ComposerPermissionMenu value={executionPermission}
-            disabled={disabled || !!queueEditor.edit || !!running || !config} lockedReadOnly={taskManagement || config?.profile?.readOnly === true}
+            configuration={config}
+            permissionsSupported={project.core?.features?.permissionPresets === true}
+            fullAccessAvailable={project.core?.features?.permissionFullAccess === true}
+            disabled={disabled || !!queueEditor.edit || !!running || !config} lockedReadOnly={taskManagement || executionPermission === "readOnly"}
             onClose={() => api.current?.focus()}
-            onChange={mode => configure({ options: planModeOptions(planActive, permissionOptions(mode, config?.options)) })} />
+            onChange={mode => { setApplicationPreferences({ defaultPermissionPreset: mode }); void configure({ options: planModeOptions(planActive, permissionOptions(mode, config?.options)) }); }} />
           {planActive && <ComposerPlanMode disabled={disabled || !!queueEditor.edit || !!running || config?.profile?.readOnly === true}
             onExit={() => { void configure({ options: planModeOptions(false, config?.options) }); }} />}
           {creatingGoal && <div className="flex shrink-0 items-center gap-1">
@@ -487,18 +528,18 @@ export function Composer({
             </Button>
           </ControlHintTooltip>
         ) : running ? (
-          <ControlHintTooltip title="发送" shortcut={prefs.sendShortcut === "enter" ? "Enter" : "⌘/Ctrl+Enter"}>
+          <ControlHintTooltip title={desktopUnsupported ? t("backend.updateRequired") : "发送"} shortcut={prefs.sendShortcut === "enter" ? "Enter" : "⌘/Ctrl+Enter"}>
             <Button type="button" variant="composer" size="icon-md" aria-label="发送" data-testid="chat-send-button"
-              aria-describedby={desktopUnsupported ? BACKEND_STATUS_ID : undefined}
+              aria-describedby={desktopUnsupported ? compatibilityDescription : undefined} title={desktopUnsupported ? t("backend.updateRequired") : undefined}
               disabled={disabled || desktopUnsupported || taskManagement || (!input.text.trim() && !input.files.length && !comments.length && !skills.selected.length && !mcpDraft.length)}
               onClick={event => void submit(api.current?.getMarkdown() ?? text, event.metaKey || event.ctrlKey)}>
               <SendMessageIcon className="size-5" />
             </Button>
           </ControlHintTooltip>
         ) : canContinue ? (
-          <ControlHintTooltip title="继续执行">
+          <ControlHintTooltip title={desktopUnsupported ? t("backend.updateRequired") : "继续执行"}>
             <Button type="button" variant="composer" size="icon-md" aria-label="继续执行" data-testid="chat-continue-button"
-              aria-describedby={desktopUnsupported ? BACKEND_STATUS_ID : undefined}
+              aria-describedby={desktopUnsupported ? compatibilityDescription : undefined} title={desktopUnsupported ? t("backend.updateRequired") : undefined}
               disabled={disabled || desktopUnsupported} className="composer-primary-action" onClick={() => void continueExecution()}>
               <ContinueExecutionIcon className="size-5" />
             </Button>

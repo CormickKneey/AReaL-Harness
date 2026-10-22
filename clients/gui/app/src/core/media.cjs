@@ -25,7 +25,7 @@ async function mediaCommand(project, request, backend) {
     if (thread.desktop?.archived) throw new Error('归档会话只读，不能释放附件');
     if (!/^areal:\/\/blob\/[A-Za-z0-9_-]+$/.test(request.uri)) throw new Error('无效附件引用');
     try {
-      return await backend.submit(project, 'areal/blob/release', { threadId: request.threadId, uri: request.uri });
+      return await backend.submit(project, 'areal/blob/release', { threadId: request.threadId, uri: request.uri }, { requestId: request.requestId });
     } catch (error) {
       if (error.submissionUnknown) {
         error.message = `附件释放结果待核对；请检查发送状态并刷新上传记录，不会自动重发。${error.message}`;

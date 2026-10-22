@@ -1,6 +1,7 @@
 import type { ComponentProps, ReactNode } from "react";
 import { ChatPromptEditor } from "./prompt-editor/ChatPromptEditor.js";
 import { ComposerModelMenu, composerModelOption } from "./ComposerModelMenu.js";
+import { resolveModelEffort } from "@areal/workbench/model-selection";
 import type { Data } from "./services.js";
 
 type ConversationComposerProps = Omit<ComponentProps<typeof ChatPromptEditor>, "betweenCancelAndSubmitAction"> & {
@@ -10,19 +11,22 @@ type ConversationComposerProps = Omit<ComponentProps<typeof ChatPromptEditor>, "
   modelDisabled?: boolean;
   allowModelInheritance?: boolean;
   onConfigureModel: (values: Data) => void;
-  onModelSettings: () => void;
 };
 
 /** Main and Side share the editor, toolbar and Core model catalog; callers own submission and drafts. */
-export function ConversationComposer({ project, modelConfig: config, modelDisabled, onConfigureModel, onModelSettings, allowModelInheritance, contextControl, ...editor }: ConversationComposerProps) {
+export function ConversationComposer({ project, modelConfig: config, modelDisabled, onConfigureModel, allowModelInheritance, contextControl, ...editor }: ConversationComposerProps) {
   const value = allowModelInheritance && config?.model === undefined ? "__inherit" : config?.model ? `${config.model.providerId}/${config.model.modelId}` : "";
   const options = project.models.filter((item: Data) => item.providerId || !project.models.some((candidate: Data) => candidate.providerId && candidate.isDefault)).map(composerModelOption);
   if (config?.model && !options.some((option: { value: string }) => option.value === value)) {
-    options.push({ value, label: config.model.modelId });
+    options.push({ value, label: config.model.modelId, unavailableReason: "模型不可用" });
   } else if (config?.model === null) {
     const implicit = options.find((option: { value: string }) => option.value === "");
-    const implicitEfforts = project.models.find((item: Data) => !item.providerId)?.reasoningEffortOptions;
-    const historical = { value: "", label: config.modelName || "历史默认模型未知", efforts: implicitEfforts };
+    const implicitModel = project.models.find((item: Data) => !item.providerId);
+    const currentImplicit = !!implicitModel && implicitModel.modelId === config.modelName;
+    const historical = {
+      ...(currentImplicit ? composerModelOption(implicitModel) : { efforts: implicitModel?.reasoningEffortOptions }),
+      value: "", label: config.modelName || "历史默认模型未知", historical: !implicit || !currentImplicit,
+    };
     if (implicit) options.splice(options.indexOf(implicit), 1, historical);
     else options.unshift(historical);
   }
@@ -31,14 +35,16 @@ export function ConversationComposer({ project, modelConfig: config, modelDisabl
     effort={config?.resolvedParameters?.reasoningEffort ?? config?.parameters?.reasoningEffort}
     value={value}
     options={[...(allowModelInheritance ? [{ value: "__inherit", label: "继承锚点模型" }] : []), ...options]}
-    onEffortChange={value => onConfigureModel({ parameters: { ...config?.parameters, reasoningEffort: value || null } })}
-    onChange={value => {
-      if (value === "__inherit") { onConfigureModel({ model: undefined }); return; }
-      if (!value) { onConfigureModel({ model: null }); return; }
-      const model = project.models.find((item: Data) => `${item.providerId}/${item.modelId}` === value);
-      if (model) onConfigureModel({ model: { providerId: model.providerId, modelId: model.modelId } });
+    onEffortChange={value => onConfigureModel({ parameters: { ...config?.parameters, reasoningEffort: value } })}
+    onChange={nextValue => {
+      if (nextValue === value) return;
+      if (nextValue === "__inherit") { onConfigureModel({ model: undefined }); return; }
+      const model = project.models.find((item: Data) => nextValue ? `${item.providerId}/${item.modelId}` === nextValue : !item.providerId);
+      if (model) onConfigureModel({
+        model: model.providerId ? { providerId: model.providerId, modelId: model.modelId } : null,
+        parameters: { reasoningEffort: resolveModelEffort(model) ?? null },
+      });
     }}
     onClose={() => editor.inputApiRef?.current?.focus()}
-    onConfigure={onModelSettings}
   /></>} />;
 }

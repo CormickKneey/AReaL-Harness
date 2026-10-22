@@ -1,0 +1,2 @@
+# 构建身份还读取 Git 状态与全仓源码列表，保留 build.rs 的正常执行判定。
+build_script_execution = false

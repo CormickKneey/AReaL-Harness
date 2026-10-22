@@ -98,6 +98,7 @@ impl Fixture {
             .engine
             .mcp_app_open(
                 "owner".into(),
+                None,
                 thread.id.clone(),
                 self.server.clone(),
                 self.generation,
@@ -292,6 +293,18 @@ async fn revoked_generation_cannot_deliver_or_release_new_generation_subscriptio
         .plugin_connection("subscriptions@local".into(), f.digest.clone(), false)
         .await
         .unwrap();
+    let closed = tokio::time::timeout(Duration::from_secs(2), old_events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(closed["method"], "areal/mcp/app/notification");
+    assert_eq!(closed["params"]["threadId"], old.0);
+    assert_eq!(closed["params"]["instanceId"], old.1);
+    assert_eq!(closed["params"]["generation"], old_generation);
+    assert_eq!(
+        closed["params"]["notification"],
+        json!({"jsonrpc":"2.0","method":"ui/notifications/closed"})
+    );
     f.engine
         .plugin_connection("subscriptions@local".into(), f.digest.clone(), true)
         .await
@@ -305,10 +318,13 @@ async fn revoked_generation_cannot_deliver_or_release_new_generation_subscriptio
         .await
         .unwrap();
     notices(&mut new_events).await;
-    f.engine
-        .mcp_app_close("owner".into(), old.0.clone(), old.1, old_generation)
-        .await
-        .unwrap();
+    assert_eq!(
+        f.engine
+            .mcp_app_close("owner".into(), old.0.clone(), old.1, old_generation)
+            .await
+            .unwrap(),
+        json!({"closed": true})
+    );
     assert_eq!(
         f.count("resources/unsubscribe", "watch://shared"),
         0,

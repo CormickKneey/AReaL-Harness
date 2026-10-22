@@ -363,6 +363,7 @@ impl Engine {
                 };
             data.push(json!({"providerId":null,"providerRevision":null,"modelId":model.name(),"parameters":parameters,"isDefault":default_model.is_none(),"available":model.check_work().is_ok(),"transport":model.provider(),"capabilities":declared,"reasoningEffortOptions":reasoning_efforts,"input":model.capabilities().input,"output":model.capabilities().output,"contextWindowTokens":model.capabilities().context_window_tokens,"effectiveContextWindowTokens":model.capabilities().context_window_tokens.unwrap_or(self.limits.context_window_tokens)}));
         }
+        let mut factory = model::HttpModelFactory::default();
         for p in self.desktop.catalog.read().unwrap().providers.values() {
             for name in &p.models {
                 let reference = ModelRef {
@@ -370,7 +371,8 @@ impl Engine {
                     model_id: name.clone(),
                 };
                 let parameters = self.model_parameters(&reference, p);
-                let result = self.provider_model(p, name, &parameters, None);
+                let result =
+                    self.provider_model_with_factory(p, name, &parameters, None, &mut factory);
                 let mut capabilities = match p.protocol.as_str() {
                     "responses" => model::ModelProtocol::Responses.capabilities(),
                     _ => model::ModelProtocol::ChatCompletions.capabilities(),

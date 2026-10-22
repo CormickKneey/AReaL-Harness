@@ -11,7 +11,7 @@
 .model-settings .provider-catalog { min-height: 0; border: 0; border-radius: 0; background: transparent; }
 .model-settings .provider-catalog-row { flex-wrap: wrap; column-gap: var(--spacing-inline); border-radius: var(--radius-control); padding-block: var(--spacing-inline); }
 .model-settings .provider-catalog-row > span:not(.provider-catalog-dot) { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.model-settings .provider-catalog-row small { flex-basis: 100%; max-width: 100%; margin-left: 14px; text-align: left; overflow-wrap: anywhere; }
+.model-settings .provider-catalog > section + section { margin-top: var(--spacing-field); padding-top: var(--spacing-field); border-top: 1px solid var(--color-border); }
 .model-settings .provider-catalog-add { align-self: stretch; margin-top: var(--spacing-inline); }
 .model-settings .provider-detail { border-left: 1px solid var(--color-border); padding-left: var(--spacing-panel); }
 .model-settings .provider-file-status { min-height: 0; font-size: var(--text-ui-sm); color: var(--color-foreground-subtle); }
@@ -54,7 +54,6 @@
   .model-settings .provider-settings { grid-template-columns: minmax(0, 1fr); }
   .model-settings .provider-navigation { position: static; max-height: 240px; }
   .model-settings .provider-detail { border-left: 0; padding-left: 0; border-top: 1px solid var(--color-border); padding-top: var(--spacing-field); }
-  .model-settings .provider-catalog-row small { flex-basis: auto; max-width: 55%; margin-left: auto; text-align: right; }
 }
 
 .model-settings .provider-discovered-models { display: grid; gap: var(--spacing-inline); margin-block: var(--spacing-field); }

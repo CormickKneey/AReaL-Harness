@@ -37,7 +37,7 @@ export function SharedWorkspacePreview({ dark }: { dark: boolean }) {
       <div className="work-surface"><div className="workspace-content"><div className="conversation-column"><div className="conversation-pane">
         <Messages project={project} thread={thread} action={action} dark={dark} onLink={() => {}} onFile={() => {}} onReview={() => {}} readTurnReview={async () => ({})} />
         <div className="active-composer"><div className="composer-dock">
-          <ConversationComposer project={project} modelConfig={project.configurations.shared} onConfigureModel={() => {}} onModelSettings={() => setSettings(true)}
+          <ConversationComposer project={project} modelConfig={project.configurations.shared} onConfigureModel={() => {}}
             surfaceLayout={mode === "panel" ? "compact" : "default"} workspacePath="/preview" taskId="shared" initialValue={draft} onChange={setDraft}
             inputTestId="shared-main-input" submitLabel="发送" enterSubmits enableMentionPanel={false} onSubmit={() => false} />
         </div></div>

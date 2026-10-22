@@ -88,6 +88,27 @@ The GUI uses a separate pnpm 11.7.0 workspace. Run `make gui-install`, `make gui
 
 `make setup-node` installs only locked Node development dependencies for native CI that does not run formatting checks; use `make setup` for full local development.
 
+## Local shared Rust cache
+
+Optionally use a pinned [mr-boxington](https://github.com/jdx/mr-boxington) version to reuse compiler outputs across worktrees. Keep the Rust version in `rust-toolchain.toml`. The project's `.mbx.toml` disables caching build-script execution results, preserving normal generation and verification of Git revisions, source hashes and other build identity. Plain Cargo and CI do not require mbx.
+
+```sh
+cargo install mbx --version 1.26.0 --locked
+mbx settings set build_script_execution false
+mbx settings set target.views false
+mbx settings set gc.max_total_size 40GiB
+mbx settings set gc.min_free_size 30GiB
+mbx settings set display plain
+mbx settings set savings plain
+mbx setup
+```
+
+These settings belong to the local user configuration, not the project's `.mbx.toml`. Disabling build-script execution caching locally also covers older worktrees without the project configuration. Put the official Cargo shim directory printed by `mbx setup` first on `PATH`; terminals, Codex and Python/Node subprocesses must inherit it. Check `command -v cargo`, `mbx setup --status` and `mbx doctor`, then keep using existing commands such as `make build`, `make check` and `make test`. Installing mbx alone does not wrap existing Cargo calls. Do not point all worktrees at one shared `CARGO_TARGET_DIR`.
+
+`target.views=false` keeps each worktree's real `target` directory in place, without automatic migration, collection of fixed Core/Runtime paths, or a separate check/clippy lane. The 40 GiB setting is a logical-size collection target for mbx-managed data and 30 GiB is its free-space collection threshold; neither is a hard quota. Ordinary targets, Electron applications and complete release bundles still use the retention rules below. Inspect usage with `mbx cache stats`, preview collection with `mbx gc --dry-run`, and inspect the current worktree's reuse with `mbx explain --last`.
+
+Do not recursively run `mbx adopt` over long-running Core processes, fixed-path acceptance artifacts or release outputs. Managed-target leases do not protect binaries launched directly from target or children that survive the mbx process. Rust 1.94 supports shared compiler outputs, but not cross-checkout private incremental seeding requiring rustc 1.98 or target unit seeding requiring Cargo 1.100. Remove the shim's PATH activation to return to plain Cargo; this does not delete outputs or the shared cache.
+
 ## Validation artifact retention
 
 Run `make artifact-cleanup` to preview AReaL artifacts under `~/Documents/Codex` and this repository's registered worktrees. The default is read-only. GUI packaging evidence identifies rounds, with executable/Core completeness checks; matching app/ZIP copies belong to the same round. For standalone Core, the command retains the newest five complete, manifest-verified bundle versions, deduplicated by build identity and file hashes. Cargo profile directories are mutable build outputs and are never counted as historical rounds. Loose profile outputs are removed only when all three binaries match a known complete bundle and at least five verified bundle versions remain; unidentified outputs remain.

@@ -9,6 +9,7 @@ pub(super) struct Invocation<'a> {
     pub cancel: &'a CancellationToken,
     pub call: &'a ToolCall,
     pub scope: &'a str,
+    pub granted_scope: Option<String>,
     pub operation: &'a str,
     pub item_id: &'a str,
     pub thread_id: &'a str,
@@ -47,7 +48,7 @@ fn uncertain(error: &rt::Error) -> bool {
 }
 
 impl Invocation<'_> {
-    pub async fn run(&self, post_hook_failed: &mut bool) -> rt::Result<(bool, Value)> {
+    pub async fn run(mut self, post_hook_failed: &mut bool) -> rt::Result<(bool, Value)> {
         let mut arguments: Value = serde_json::from_str(&self.call.arguments).map_err(invalid)?;
         self.validate(&arguments)?;
         {
@@ -92,7 +93,11 @@ impl Invocation<'_> {
                 .is_some_and(|c| c.read_only)
                 && matches!(
                     self.entry.backend,
-                    Backend::Client | Backend::Mcp(_) | Backend::Plugin(_) | Backend::Coordination
+                    Backend::Client
+                        | Backend::Page(_)
+                        | Backend::Mcp(_)
+                        | Backend::Plugin(_)
+                        | Backend::Coordination
                 )
                 && !crate::agents::read_only_tool(&self.call.name, &self.entry.backend)
             {
@@ -138,6 +143,12 @@ impl Invocation<'_> {
                     self.cancel,
                 )
                 .await?;
+            if self.cancel.is_cancelled() {
+                return Err(rt::Error::new(
+                    rt::ErrorCode::ScopeClosed,
+                    "cancelled before dispatch",
+                ));
+            }
             let (success, value) = self.invoke(&arguments, None).await?;
             return self.codex_post(&arguments, success, value).await;
         }
@@ -179,21 +190,41 @@ impl Invocation<'_> {
                 .await?;
             }
         }
+        let requested_permissions = self
+            .engine
+            .requested_permissions(self.cell, &self.call.name, &mut arguments)
+            .await?;
+        if requested_permissions.is_some() {
+            self.edit(|execution, _| execution.effective_arguments = Some(arguments.clone()))
+                .await?;
+        }
+        let explicit_preset = self
+            .cell
+            .state
+            .lock()
+            .await
+            .thread
+            .turns
+            .last()
+            .and_then(|turn| turn.configuration.as_ref())
+            .and_then(|c| c.options.permission_preset)
+            .is_some();
         let browser_plan = if self.call.name == "browser_v1"
             && matches!(self.entry.backend, Backend::Client)
-            && matches!(
-                arguments["operation"].as_str(),
-                Some(
-                    "act"
-                        | "wait"
-                        | "navigate"
-                        | "newPage"
-                        | "runBatch"
-                        | "observe"
-                        | "capture"
-                        | "diagnostics"
-                )
-            ) {
+            && ((explicit_preset && arguments["operation"] == "describe")
+                || matches!(
+                    arguments["operation"].as_str(),
+                    Some(
+                        "act"
+                            | "wait"
+                            | "navigate"
+                            | "newPage"
+                            | "runBatch"
+                            | "observe"
+                            | "capture"
+                            | "diagnostics"
+                    )
+                )) {
             let host = self
                 .host
                 .as_ref()
@@ -210,7 +241,8 @@ impl Invocation<'_> {
             if prepared["preparedActionId"]
                 .as_str()
                 .is_none_or(str::is_empty)
-                || prepared["pageId"] != arguments["parameters"]["pageId"]
+                || (arguments["operation"] != "describe"
+                    && prepared["pageId"] != arguments["parameters"]["pageId"])
                 || prepared["operation"] != arguments["operation"]
                 || prepared["origin"].as_str().is_none()
                 || prepared["fingerprint"].as_str().is_none()
@@ -239,6 +271,40 @@ impl Invocation<'_> {
                 self.cancel,
             )
             .await?;
+        if self.cancel.is_cancelled() {
+            return Err(rt::Error::new(
+                rt::ErrorCode::ScopeClosed,
+                "cancelled after approval",
+            ));
+        }
+        if let Some(permissions) = requested_permissions {
+            self.granted_scope = Some(
+                self.engine
+                    .approved_operation_scope(self.cell, &self.call.id, permissions)
+                    .await?,
+            );
+        } else if matches!(
+            self.call.name.as_str(),
+            "read_process" | "write_process" | "terminate_process"
+        ) {
+            self.granted_scope = self
+                .cell
+                .state
+                .lock()
+                .await
+                .active
+                .as_ref()
+                .and_then(|active| {
+                    arguments["processId"]
+                        .as_str()
+                        .and_then(|id| active.handles.process_scopes.get(id))
+                })
+                .cloned();
+            if let Some(scope) = &self.granted_scope {
+                self.edit(|execution, _| execution.scope_id = scope.clone())
+                    .await?;
+            }
+        }
         if browser_plan.is_some() {
             let current = self.cell.bindings.read().await.host.clone();
             if self
@@ -252,7 +318,16 @@ impl Invocation<'_> {
                 ));
             }
         }
-        let result = if matches!(self.entry.backend, Backend::Mcp(_) | Backend::Plugin(_)) {
+        if self.cancel.is_cancelled() && !matches!(self.entry.backend, Backend::Page(_)) {
+            return Err(rt::Error::new(
+                rt::ErrorCode::ScopeClosed,
+                "cancelled before dispatch",
+            ));
+        }
+        let result = if matches!(
+            self.entry.backend,
+            Backend::Mcp(_) | Backend::Plugin(_) | Backend::Page(_)
+        ) {
             // These backends own cancellation and cleanup; do not drop their futures first.
             self.invoke(&arguments, browser_plan.as_ref()).await
         } else if matches!(self.entry.backend, Backend::Builtin)
@@ -278,7 +353,7 @@ impl Invocation<'_> {
                 biased;
                 result = &mut invocation => result,
                 _ = self.cancel.cancelled() => {
-                    let cleanup = runtime.client.close_scope(self.scope).await;
+                    let cleanup = runtime.client.close_scope(self.execution_scope()).await;
                     let result = invocation.await;
                     match cleanup {
                         Ok(_) => result,
@@ -313,13 +388,20 @@ impl Invocation<'_> {
             Ok(result) => result,
             Err(error) => (false, self.failure(&arguments, error)),
         };
+        if matches!(self.entry.backend, Backend::Page(_))
+            && (self.cancel.is_cancelled()
+                || value["status"] == "unknown"
+                || value["status"] == "noEffect")
+        {
+            return Ok((success, value));
+        }
         let event = if success {
             HookEvent::PostToolUse
         } else {
             HookEvent::PostToolUseFailure
         };
         let hooks = self.hooks(event);
-        if !hooks.is_empty() {
+        if !hooks.is_empty() && !matches!(self.entry.backend, Backend::Page(_)) {
             // Commit the actual tool outcome before invoking potentially effectful hooks.
             // A hook failure must never turn a successful write into a retryable failure.
             let prepared = self
@@ -353,6 +435,18 @@ impl Invocation<'_> {
                 break;
             }
         }
+        if matches!(self.entry.backend, Backend::Page(_)) {
+            return match self
+                .codex_post(&hook_arguments, success, value.clone())
+                .await
+            {
+                Ok(result) => Ok(result),
+                Err(_) => {
+                    *post_hook_failed = true;
+                    Ok((success, value))
+                }
+            };
+        }
         self.codex_post(&hook_arguments, success, value).await
     }
 
@@ -364,26 +458,41 @@ impl Invocation<'_> {
     ) -> rt::Result<(bool, Value)> {
         // Persist actual outcome before effectful post handlers; feedback cannot roll back
         // a write or make it replayable. The model projection may be replaced separately.
-        let prepared = self
-            .engine
-            .prepare_tool_result(self.cell, self.item_id, &self.call.name, &value, None)
-            .await
-            .map_err(unknown)?;
-        self.edit(|execution, content| {
-            execution.outcome = if success {
-                ToolOutcome::Succeeded
-            } else {
-                ToolOutcome::Failed
-            };
-            execution.result_snapshot = prepared.snapshot;
-            execution.output_projection = Some(prepared.metrics);
-            *content = Some(content_items(&value));
-        })
-        .await?;
+        if !matches!(self.entry.backend, Backend::Page(_)) {
+            let prepared = self
+                .engine
+                .prepare_tool_result(self.cell, self.item_id, &self.call.name, &value, None)
+                .await
+                .map_err(unknown)?;
+            self.edit(|execution, content| {
+                execution.outcome = if success {
+                    ToolOutcome::Succeeded
+                } else {
+                    ToolOutcome::Failed
+                };
+                execution.result_snapshot = prepared.snapshot;
+                execution.output_projection = Some(prepared.metrics);
+                *content = Some(content_items(&value));
+            })
+            .await?;
+        }
         let (name, input) = crate::plugin_hooks::tool_input(&self.call.name, args);
         let effects=self.engine.plugin_hook_event(self.cell,areal_plugins::hooks::HookEvent::PostToolUse,
             json!({"tool_name":name,"tool_input":input,"tool_response":value,"tool_use_id":self.call.id,"__areal_caller_admitted":!matches!(self.entry.backend,Backend::Agent|Backend::Coordination|Backend::Core)}),self.cancel).await.map_err(unknown)?;
         if let Some(reason) = effects.block.or(effects.stop) {
+            if matches!(self.entry.backend, Backend::Page(_)) {
+                self.edit(|execution, _| {
+                    execution.hooks.push(HookExecution {
+                        name: "page-post-feedback".into(),
+                        event: "PostToolUse".into(),
+                        operation_id: self.operation.into(),
+                        outcome: ToolOutcome::Succeeded,
+                        result: Some(json!({"hookFeedback":reason})),
+                    })
+                })
+                .await?;
+                return Ok((success, value));
+            }
             return Ok((
                 success,
                 json!({"hookFeedback":reason,"toolOutcomeRetained":true}),
@@ -410,6 +519,27 @@ impl Invocation<'_> {
         if serde_json::to_vec(args).map_err(invalid)?.len() > registry::MAX_ARGUMENT_BYTES {
             return Err(invalid("tool arguments exceed 64 KiB"));
         }
+        if matches!(self.entry.backend, Backend::Page(_)) {
+            if serde_json::to_vec(args).map_err(invalid)?.len()
+                > areal_protocol::plugin_runtime::PAGE_BYTES
+            {
+                return Err(invalid("page arguments exceed 32 KiB"));
+            }
+            if let Backend::Page(tool) = &self.entry.backend
+                && tool.binding.kind == areal_protocol::plugin_runtime::PageToolKind::ApplyPatch
+            {
+                let patch: areal_protocol::plugin_runtime::PagePatch =
+                    serde_json::from_value(args.clone()).map_err(invalid)?;
+                if patch.patch.insert.encode_utf16().count()
+                    > areal_protocol::plugin_runtime::PAGE_TEXT_UNITS
+                    || patch.patch.insert.contains('\r')
+                {
+                    return Err(invalid(
+                        "page replacement exceeds UTF-16 bound or contains CR",
+                    ));
+                }
+            }
+        }
         self.entry.validate_input(args).map_err(invalid)
     }
     fn hooks(&self, event: HookEvent) -> Vec<&HookDefinition> {
@@ -423,6 +553,10 @@ impl Invocation<'_> {
             .filter(|h| h.event == event && (h.matcher == "*" || h.matcher == self.call.name))
             .collect()
     }
+    fn execution_scope(&self) -> &str {
+        self.granted_scope.as_deref().unwrap_or(self.scope)
+    }
+
     async fn invoke(
         &self,
         args: &Value,
@@ -434,6 +568,7 @@ impl Invocation<'_> {
             args,
         );
         let mut response = match &self.entry.backend {
+            Backend::Page(tool) => return self.invoke_page(tool, args).await,
             Backend::Agent => {
                 return super::agents::invoke(self.engine, self.cell, &self.call.name, args)
                     .await
@@ -527,7 +662,7 @@ impl Invocation<'_> {
                     drop(state);
                     return navigation::invoke(
                         runtime,
-                        self.scope,
+                        self.execution_scope(),
                         self.operation,
                         &call.name,
                         &effective,
@@ -536,7 +671,8 @@ impl Invocation<'_> {
                 }
                 if call.name == "image_read" {
                     drop(state);
-                    return images::read(self.engine, runtime, self.scope, &effective).await;
+                    return images::read(self.engine, runtime, self.execution_scope(), &effective)
+                        .await;
                 }
                 let mut request = request_with_policy(
                     &call,
@@ -565,7 +701,7 @@ impl Invocation<'_> {
                     }
                     let scope: rt::ScopeInfo = runtime
                         .client
-                        .call("scope.get", json!({"scopeId":self.scope}))
+                        .call("scope.get", json!({"scopeId":self.execution_scope()}))
                         .await?;
                     command.timeout_ms = command.timeout_ms.min(scope.limits.wall_time_ms);
                     if call.name == "verify_command" {
@@ -637,7 +773,7 @@ impl Invocation<'_> {
                 let invocation = execute(
                     &runtime.client,
                     request,
-                    self.scope,
+                    self.execution_scope(),
                     self.operation,
                     &self.engine.extensions.policy,
                     command_argv.as_deref(),
@@ -657,6 +793,9 @@ impl Invocation<'_> {
                     let receipt = {
                         let mut state = self.cell.state.lock().await;
                         let handles = &mut state.active.as_mut().unwrap().handles;
+                        handles
+                            .process_scopes
+                            .insert(process.clone(), self.execution_scope().to_owned());
                         if self.call.name == "run_command"
                             && let Some(argv) = &command_argv
                         {
@@ -677,8 +816,13 @@ impl Invocation<'_> {
                         handles.verification.get(&process).cloned()
                     };
                     if let Some(receipt) = receipt {
-                        verification::attach(&runtime.client, self.scope, &receipt, &mut result)
-                            .await;
+                        verification::attach(
+                            &runtime.client,
+                            self.execution_scope(),
+                            &receipt,
+                            &mut result,
+                        )
+                        .await;
                     }
                 }
                 return Ok((success, result));
@@ -734,6 +878,11 @@ impl Invocation<'_> {
                     .active
                     .as_ref()
                     .and_then(|a| a.tool_meta.clone());
+                let cwd = self.cell.state.lock().await.thread.cwd.clone();
+                let source = self
+                    .engine
+                    .mcp_result_source(tool, self.thread_id, &cwd)
+                    .await;
                 let raw = tool
                     .call_raw_owned(args.clone(), meta, call_cancel, Some(&context))
                     .await;
@@ -777,7 +926,7 @@ impl Invocation<'_> {
                 }
                 let mut value = serde_json::to_value(&response).map_err(unknown)?;
                 value["mcpResult"] = serde_json::to_value(&raw).map_err(unknown)?;
-                value["mcpServer"] = json!({"serverId":tool.server_name(),"generation":tool.generation(),"toolMetadata":tool.metadata()});
+                value["mcpServer"] = json!({"serverId":tool.server_name(),"generation":tool.generation(),"toolMetadata":tool.metadata(),"source":source});
                 if serde_json::to_vec(&value).map_err(unknown)?.len()
                     > areal_protocol::MAX_TOOL_RESULT_BYTES
                 {
@@ -812,10 +961,31 @@ impl Invocation<'_> {
                 content["code"] == "outcome_unknown" && content["dispatch"] == "unknown"
             })
         {
+            self.cell.browser_permits.lock().await.clear();
             let mut error =
                 unknown("browser batch step outcome is UNKNOWN; inspect the confirmed prefix");
             error.details = response.structured_content;
             return Err(error);
+        }
+        if self.call.name == "browser_v1" && browser_plan.is_some() && response.success {
+            let mut contents: Vec<Value> = response.structured_content.iter().cloned().collect();
+            for content in &response.content_items {
+                if let areal_protocol::ToolContent::InputText { text } = content
+                    && let Ok(value) = serde_json::from_str::<Value>(text)
+                {
+                    contents.push(value);
+                }
+            }
+            for content in contents {
+                self.engine
+                    .remember_browser_permit(self.cell, &content["controlPermit"])
+                    .await;
+                if let Some(permits) = content["controlPermits"].as_array() {
+                    for permit in permits {
+                        self.engine.remember_browser_permit(self.cell, permit).await;
+                    }
+                }
+            }
         }
         self.engine
             .materialize_tool_media(self.cell, &mut response.content_items)
@@ -961,7 +1131,8 @@ impl Invocation<'_> {
             if matches!(
                 execution.outcome,
                 ToolOutcome::Succeeded | ToolOutcome::Failed
-            ) {
+            ) || execution.page.as_ref().is_some_and(|p| p.is_terminal())
+            {
                 let succeeded = execution.outcome == ToolOutcome::Succeeded;
                 *success = Some(succeeded);
                 *status = if succeeded {

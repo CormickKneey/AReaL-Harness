@@ -21,6 +21,8 @@ function validWait(parameters) {
   if (!condition || typeof condition !== 'object' || Array.isArray(condition)) return false;
   if (condition.kind === 'documentReady') return Object.keys(condition).every(key => ['kind', 'state'].includes(key))
     && ['interactive', 'complete'].includes(condition.state);
+  if (['checked', 'enabled'].includes(condition.kind)) return Object.keys(condition).every(key => ['kind', 'ref', 'value'].includes(key))
+    && typeof condition.ref === 'string' && /^r[1-9]\d*$/.test(condition.ref) && typeof condition.value === 'boolean';
   return condition.kind === 'accessibleName'
     && Object.keys(condition).every(key => ['kind', 'ref', 'name'].includes(key))
     && typeof condition.ref === 'string' && /^r[1-9]\d*$/.test(condition.ref)
@@ -89,8 +91,15 @@ function validToolInput(value) {
       && Number.isSafeInteger(action.steps) && action.steps >= 1 && action.steps <= 20;
     if (action.kind === 'pressAt') return Object.keys(action).every(key => ['kind', 'x', 'y', 'key'].includes(key))
       && coordinate('x') && coordinate('y') && key();
+    if (action.kind === 'scroll') return Object.keys(action).every(key => ['kind', 'target', 'deltaX', 'deltaY'].includes(key))
+      && action.target === 'viewport' && ['deltaX', 'deltaY'].every(key => Number.isSafeInteger(action[key]) && Math.abs(action[key]) <= 4096)
+      && (action.deltaX !== 0 || action.deltaY !== 0);
     if (typeof action.ref !== 'string' || !/^r[1-9]\d*$/.test(action.ref)) return false;
-    if (action.kind === 'click') return Object.keys(action).every(key => ['kind', 'ref'].includes(key));
+    if (action.kind === 'selectOption') return Object.keys(action).every(key => ['kind', 'ref', 'value'].includes(key))
+      && typeof action.value === 'string' && action.value.length <= 256;
+    if (action.kind === 'setChecked') return Object.keys(action).every(key => ['kind', 'ref', 'checked'].includes(key))
+      && typeof action.checked === 'boolean';
+    if (['click', 'hover'].includes(action.kind)) return Object.keys(action).every(key => ['kind', 'ref'].includes(key));
     if (action.kind === 'fill') return Object.keys(action).every(key => ['kind', 'ref', 'value'].includes(key))
       && typeof action.value === 'string' && action.value.length <= 4096;
     if (action.kind === 'press') return Object.keys(action).every(key => ['kind', 'ref', 'key'].includes(key))

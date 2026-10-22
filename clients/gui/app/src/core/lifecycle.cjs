@@ -4,8 +4,10 @@ const labels = { activeTurn: '活动轮次', resource: '未清理终端', uninsp
   compaction: '上下文压缩', workgroup: '未结算工作组', activeGoal: '活动目标', queuedMessage: '待发消息', activeTask: '活动任务' };
 const unknown = () => ({ allowed: false, reasons: [{ code: 'unknown', count: 1 }] });
 const recoveryReads = new Set(['server', 'inspect', 'context', 'plan', 'processes', 'process', 'processOutput', 'goal', 'task', 'tasks', 'interactions', 'executions', 'execution', 'inheritedHistory']);
+const recoveryHistoryReads = new Set(['acquire', 'loadOlder', 'loadItem', 'release']);
 const isRecoveryCommand = (name, request) => name === 'manage'
-  && (recoveryReads.has(request?.operation) || request?.operation === 'toolAcknowledge');
+  && (recoveryReads.has(request?.operation) || request?.operation === 'toolAcknowledge')
+  || name === 'history' && recoveryHistoryReads.has(request?.operation);
 function decision(value) {
   if (typeof value?.allowed !== 'boolean' || !Array.isArray(value.reasons)
     || value.reasons.some(r => !Object.hasOwn(labels, r.code) || !Number.isSafeInteger(r.count) || r.count <= 0)

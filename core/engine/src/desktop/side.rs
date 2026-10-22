@@ -396,6 +396,7 @@ impl Engine {
             )?;
             config.profile = None;
             config.read_only = true;
+            engine.project_permissions(&mut config);
             config.tool_allowlist = Some(
                 std::iter::once("side_context_read".to_owned())
                     .chain(
@@ -535,6 +536,7 @@ impl Engine {
                         .side_only(request.workspace_access == "readOnly"),
                     host: None,
                 },
+                None,
             );
             let _creation = engine.reserve_side_creation(&source.id).await?;
             if engine.threads.read().await.len() >= engine.limits.max_threads {

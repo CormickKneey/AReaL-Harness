@@ -63,7 +63,9 @@ async function workspaceCommand(backend, request) {
     case 'turnReview': {
       if (typeof request.threadId !== 'string' || typeof request.turnId !== 'string') throw new Error('请选择已完成的任务轮次');
       const live = await backend.start(project.id);
-      const result = await live.client.request('thread/read', { threadId: request.threadId, includeTurns: true });
+      const result = backend.supportsBoundedHistory(live.client)
+        ? { thread: live.model.state.threads[request.threadId] }
+        : await live.client.request('thread/read', { threadId: request.threadId, includeTurns: true });
       let turn = result.thread?.turns.find(turn => turn.id === request.turnId);
       if (!turn && result.thread?.conversation?.kind === 'fork') {
         // Read only the target-owned frozen prefix; never substitute the source's live history.
@@ -96,6 +98,9 @@ async function workspaceCommand(backend, request) {
         } while (cursor);
       }
       if (!turn) throw new Error('轮次不属于当前任务');
+      if (turn.items?.some(item => (request.itemId === undefined || item.id === request.itemId)
+        && item.type === 'historyDeferred' && item.originalType === 'dynamicToolCall'))
+        throw new Error('请先加载本轮的完整工具内容，再查看文件变更。');
       const fileBefores = new Map();
       for (const item of turn.items ?? []) {
         if (request.itemId !== undefined && item.id !== request.itemId) continue;

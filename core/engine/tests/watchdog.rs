@@ -280,6 +280,7 @@ async fn request_and_stream_idle_timeouts_retry_and_release_model_permits() {
             pool.clone(),
             Limits {
                 stream_idle_timeout: Duration::from_millis(40),
+                model_request_timeout: Duration::from_millis(40),
                 ..Limits::default()
             },
         )
@@ -574,6 +575,7 @@ async fn goal_unknown_usage_stops_before_network_backoff_and_keeps_reservations(
             pool.clone(),
             Limits {
                 stream_idle_timeout: Duration::from_millis(500),
+                model_request_timeout: Duration::from_millis(500),
                 max_completion_retries: 2,
                 ..Limits::default()
             },

@@ -8,6 +8,7 @@ import {createServer} from 'node:http';
 import {execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {captureSmokeFailure,createProjectConversation,selectConversation} from './smoke-navigation.mjs';
+import {assertApplicationStopped} from './application-cleanup.mjs';
 const gui=resolve(dirname(fileURLToPath(import.meta.url)),'..'),require=createRequire(join(gui,'app/package.json'));
 const {_electron:electron}=require('playwright-core');
 const scratch=await mkdtemp('/private/tmp/areal-plugin-extensions-'),workspace=join(scratch,'workspace'),userHome=join(scratch,'user');
@@ -58,8 +59,8 @@ const sourceFiles={};
 for(const path of new Set(execFileSync('git',['ls-files','--modified','--others','--exclude-standard','-z'],{cwd:sourceRoot}).toString().split('\0').filter(Boolean))){
 if(/^(core\/|clients\/|scripts\/|schemas\/|Cargo\.|upstream\/)/.test(path))sourceFiles[path]=createHash('sha256').update(await readFile(join(sourceRoot,path))).digest('hex');}
 const sourceDiffSha256=createHash('sha256').update(execFileSync('git',['diff','--binary','HEAD'],{cwd:sourceRoot})).digest('hex');
-const requests=[],checks=[],errors=[];
-const model=createServer(async(req,res)=>{let body='';for await(const p of req)body+=p;requests.push(JSON.parse(body));res.writeHead(200,{'Content-Type':'text/event-stream'});
+const requests=[],titleRequests=[],checks=[],errors=[];
+const model=createServer(async(req,res)=>{let body='';for await(const p of req)body+=p;const request=JSON.parse(body);const system=request.messages?.find(message=>message.role==='system')?.content;if(typeof system==='string'&&system.startsWith("Generate a concise semantic session title in the user's language from the conversation data.")&&!request.tools?.length)titleRequests.push(request);else requests.push(request);res.writeHead(200,{'Content-Type':'text/event-stream'});
 res.end('data: '+JSON.stringify({choices:[{index:0,delta:{content:'GUI_PLUGIN_SETUP_OK'},finish_reason:null}]})+'\n\n'+'data: '+JSON.stringify({choices:[{index:0,delta:{},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n');});
 await new Promise(r=>model.listen(0,'127.0.0.1',r));
 await writeFile(join(userHome,'.areal','config.toml'),'schema_version=1\n[model]\nname="fixture"\n[model.providers.default]\nprotocol="chat-completions"\nendpoint="http://127.0.0.1:'+model.address().port+'"\n');
@@ -67,30 +68,38 @@ const env={...process.env,AREAL_GUI_USER_DATA:join(scratch,'electron'),AREAL_COR
 AREAL_HARNESS_SERVICE_HOME:join(scratch,'registry'),AREAL_CORE_BIN:process.env.AREAL_CORE_BIN??resolve(gui,'../../target/debug/areal')};
 for(const k of ['AREAL_CORE_WORKSPACE','AREAL_CORE_CONFIG','AREAL_HARNESS_HOME','AREAL_HARNESS_CONFIG','AREAL_CORE_DESKTOP_CONFIG'])delete env[k];
 const coreBinary=env.AREAL_CORE_BIN,coreSha256=createHash('sha256').update(await readFile(coreBinary)).digest('hex');
-let app,page,failure,passed=false;
+const fixtureApp=join(scratch,'app'),mainErrorsPath=join(scratch,'main-errors.jsonl');
+await mkdir(fixtureApp);
+await writeFile(mainErrorsPath,'');
+await writeFile(join(fixtureApp,'package.json'),JSON.stringify({name:'plugin-extensions-fixture',main:'bootstrap.cjs'}));
+await writeFile(join(fixtureApp,'bootstrap.cjs'),`
+process.on('uncaughtExceptionMonitor',(error,origin)=>require('node:fs').appendFileSync(${JSON.stringify(mainErrorsPath)},JSON.stringify({pid:process.pid,origin,name:error.name,message:error.message,stack:error.stack})+'\\n'));
+require(${JSON.stringify(join(gui,'app/src/main.cjs'))});
+`);
+let app,page,appProcess,failure,passed=false;
+const cleanup={};
 const button=n=>page.getByRole('button',{name:n,exact:true});
 const state=()=>page.evaluate(()=>window.arealDesktop.snapshot());
 async function until(fn,label){const end=Date.now()+30_000;while(Date.now()<end){const s=await state();if(fn(s))return s;await new Promise(r=>setTimeout(r,75));}throw Error('timeout: '+label);}
 async function waitEvents(predicate,label){const end=Date.now()+30_000;while(Date.now()<end){const events=await transportEvents();if(predicate(events))return events;await new Promise(resolve=>setTimeout(resolve,100));}throw Error('timeout: '+label);}
-async function appFrame(){const end=Date.now()+30_000;while(Date.now()<end){const frame=page.frames().find(frame=>/^areal-mcp:\/\/[^/]+\/view$/.test(frame.url()));if(frame){await frame.locator('#ready').filter({hasText:'initialized'}).waitFor();return frame;}await new Promise(resolve=>setTimeout(resolve,100));}throw Error('sandbox app frame missing');}
-async function settings(){await button('设置').click();await page.getByLabel('集成',{exact:true}).getByRole('button',{name:'插件',exact:true}).click();await page.getByRole('heading',{name:'插件',exact:true}).waitFor();await page.getByRole('button',{name:'查看插件 hello@gui-p0',exact:true}).click();}
+async function appFrame(){const end=Date.now()+30_000;while(Date.now()<end){const active=page.getByRole('region',{name:'MCP 应用',exact:true}).locator('iframe');const source=await active.count()?await active.getAttribute('src'):null;const token=source?new URL(source).hostname:null;const frame=page.frames().find(frame=>frame.url()===`areal-mcp://${token}/view`);if(frame){await frame.locator('#ready').filter({hasText:'initialized'}).waitFor();return frame;}await new Promise(resolve=>setTimeout(resolve,100));}throw Error('sandbox app frame missing');}
+async function settings(){await page.getByRole('navigation',{name:'应用导航',exact:true}).getByRole('button',{name:'插件',exact:true}).click();const installed=page.getByRole('complementary',{name:'插件导航',exact:true}).getByRole('button',{name:'Extensions Fixture',exact:true});if(await installed.isVisible()){await installed.click();return;}if(await button('返回插件列表').isVisible())await button('返回插件列表').click();await page.getByRole('tablist',{name:'市场范围',exact:true}).getByRole('tab',{name:'个人',exact:true}).click();await button('查看插件 hello@gui-p0').click();}
 try{
-app=await electron.launch({executablePath:require('electron'),args:[join(gui,'app')],env,timeout:120_000});
+app=await electron.launch({executablePath:require('electron'),args:[fixtureApp],env,timeout:120_000});
+appProcess=app.process();await writeFile(join(scratch,'run.json'),JSON.stringify({pid:appProcess.pid,scratch,coreBinary}));console.log('Electron '+appProcess.pid+' '+scratch);
 page=await app.firstWindow();page.setDefaultTimeout(20_000);page.on('pageerror',e=>errors.push(e.message));
 await page.getByTestId('areal-workbench').waitFor({timeout:120_000});await until(s=>s.connection?.state==='ready','desktop ready');
 await app.evaluate(({dialog,BrowserWindow},path)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[path]});dialog.showMessageBox=async()=>({response:1});BrowserWindow.getAllWindows()[0].setSize(1440,960);},workspace);
 await page.evaluate(()=>window.arealDesktop.chooseProject());await until(s=>s.projects[0]?.state?.connected,'chosen project connected');
 if(await button('返回应用').isVisible())await button('返回应用').click();await page.getByTestId('chat-input').waitFor();
 const ready=await until(s=>s.projects[0]?.state?.connected,'project connected'),projectId=ready.projects[0].id;
-await settings();await button('解析并预览来源').click();await page.getByText('我已核对以上来源、版本和内容摘要',{exact:true}).click();await button('安装到用户').click();await button('卸载插件').waitFor();
-await page.getByText('我信任此已安装快照并允许启动其 MCP 服务器',{exact:true}).click();await button('信任并连接').click();
+await settings();await button('核对来源并安装').click();await page.getByRole('checkbox',{name:'我已核对以上来源、版本和内容摘要',exact:true}).check();await button('安装到用户').click();await button('审阅并连接').waitFor();
+await button('审阅并连接').click();await page.getByRole('checkbox',{name:'我信任当前安装快照，并允许启动其 MCP 服务。',exact:true}).check();await button('信任并连接').click();
 await waitEvents(events=>events.some(event=>event.method==='tools/list'),'real MCP transport started');
-await page.getByRole('dialog').getByRole('button',{name:/关闭/}).first().click();await page.getByRole('tab',{name:'应用',exact:true}).click();
 await button('刷新应用').click();await button('Extension App').first().click();
 let inner=await appFrame();const ownerThread=await page.getByTestId('areal-workbench').getAttribute('data-thread-id');assert(ownerThread);
 // Settings through product controls, with transport observation only.
-await button('设置').click();await page.getByLabel('集成',{exact:true}).getByRole('button',{name:'插件',exact:true}).click();await page.getByRole('tab',{name:'应用',exact:true}).click();
-await page.getByRole('region',{name:'插件应用',exact:true}).getByRole('combobox').selectOption({index:1});await page.getByLabel('Enabled',{exact:true}).waitFor();assert.equal(await page.getByLabel('Enabled',{exact:true}).isChecked(),true);
+await settings();await button('打开应用设置').click();await page.getByLabel('Enabled',{exact:true}).waitFor();assert.equal(await page.getByLabel('Enabled',{exact:true}).isChecked(),true);
 await page.getByLabel('Enabled',{exact:true}).uncheck();await button('保存设置').click();
 await waitEvents(events=>events.some(event=>event.method==='tools/call'&&event.params.name==='fixture.settings.update'),'settings update');
 await button('保存设置').waitFor();assert.equal(await page.getByLabel('Enabled',{exact:true}).isChecked(),false);assert.equal(await page.getByLabel('Unchanged label',{exact:true}).inputValue(),'KEEP_LABEL');
@@ -102,7 +111,7 @@ const input=page.getByTestId('chat-input');await input.fill('HUMAN_PREFIX @');aw
 assert((await input.innerText()).includes('HUMAN_PREFIX'));await page.getByText('Extension issue 42',{exact:true}).waitFor();assert.equal(requests.length,0);
 const mentionEvents=await waitEvents(events=>events.some(event=>event.method==='tools/call'&&event.params.name==='fixture.mentions'&&event.params.arguments.query==='42'),'mention query');
 assert(mentionEvents.some(event=>event.params?.arguments?.query==='42'));
-checks.push('@ search uses declared mention tool and preserves resource identity without sending inference');
+checks.push('@ search uses declared mention tool and preserves resource identity without sending conversational inference');
 // A server reverse request is created only by the visible app button.
 await inner.locator('#form-accept').click();const acceptForm=page.locator('form').filter({has:page.getByText('Fixture legacy accept',{exact:true})});await acceptForm.waitFor();await acceptForm.getByLabel('Fixture answer',{exact:true}).fill('ACCEPT_VALUE');
 await page.screenshot({path:join(scratch,'legacy-form-owned.png'),animations:'disabled'});
@@ -124,17 +133,35 @@ await page.screenshot({path:join(scratch,'opaque-file-entrypoint.png'),animation
 assert.deepEqual(errors,[]);passed=true;
 }catch(e){failure={message:e.message,stack:e.stack};process.exitCode=1;if(page)await captureSmokeFailure(page,scratch,e);}
 finally{
+let metadata;
+try{metadata=JSON.parse(await readFile(join(scratch,'core/service.json'),'utf8'));}catch(error){if(error.code!=='ENOENT')errors.push('read cleanup identity: '+error.message);}
 if(app){
-await app.close().catch(e=>errors.push('close GUI: '+e.message));
-try{const {ServiceConnection}=require('../app/src/core/service-client.cjs');const connection=new ServiceConnection();
-try{const metadata=JSON.parse(await readFile(join(scratch,'core/service.json'),'utf8'));await connection.connect(metadata);await connection.request('stopService',{protocol:metadata.protocol},true);}
-finally{connection.close();}}
-catch(e){errors.push('stop service: '+e.message);}
+let quitTimer;
+try{
+await Promise.race([app.close(),new Promise((_resolve,reject)=>{quitTimer=setTimeout(()=>reject(Error('owned Electron quit timed out')),15000);})]);
+if(appProcess.exitCode===null&&appProcess.signalCode===null)await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('owned Electron did not exit')),15000);appProcess.once('exit',()=>{clearTimeout(timer);resolve();});});
+assert.equal(appProcess.exitCode,0,'owned Electron quit exit code');assert.equal(appProcess.signalCode,null,'owned Electron quit signal');cleanup.electronExited=true;
+}catch(error){errors.push('close GUI: '+error.message);}finally{clearTimeout(quitTimer);}
 }
-await new Promise(r=>model.close(r));
+if(metadata){
+try{await assertApplicationStopped(coreBinary,env,metadata);cleanup.applicationStopped=true;}
+catch(error){errors.push('verify application cleanup: '+error.message);}
+}
+if(errors.length&&metadata){
+const {ServiceConnection}=require('../app/src/core/service-client.cjs');const connection=new ServiceConnection();
+try{await connection.connect(metadata);const packet=await connection.request('hello',{protocol:metadata.protocol,identity:metadata.identity});await connection.request('stopService',{protocol:metadata.protocol,cancel:true,expectedDesktopGeneration:metadata.desktopGeneration,expectedTargets:packet.service.targets},true);}
+catch(error){if(error.code!=='ENOENT'&&error.code!=='ECONNREFUSED'&&error.code!=='ESRCH')errors.push('fallback stop service: '+error.message);}
+finally{connection.close();}
+}
+if(appProcess&&appProcess.exitCode===null&&appProcess.signalCode===null){appProcess.kill('SIGKILL');await new Promise(resolve=>appProcess.once('exit',resolve));cleanup.forcedElectronExit=true;}
+const mainErrors=(await readFile(mainErrorsPath,'utf8')).trim().split('\n').filter(Boolean).map(line=>JSON.parse(line));
+for(const error of mainErrors)errors.push('uncaught Main '+error.origin+': '+error.message);
+model.closeAllConnections();await new Promise(r=>model.close(r));
+try{const instances=JSON.parse(execFileSync(coreBinary,['service','list','--json'],{env,encoding:'utf8'}));cleanup.instances=instances.map(instance=>({serviceId:instance.serviceId,hostPid:instance.hostPid,corePid:instance.corePid,state:instance.state}));assert(instances.every(instance=>instance.state==='stopped'),'owned Core remains live');}catch(error){errors.push('verify Core cleanup: '+error.message);}
+await writeFile(join(scratch,'model-requests.json'),JSON.stringify({conversation:requests,sessionNames:titleRequests},null,2));
 if(errors.length){passed=false;process.exitCode=1;}
-const manifest={passed,checks,errors,failure,scratch,source:execFileSync('git',['rev-parse','HEAD'],{cwd:gui,encoding:'utf8'}).trim(),
+const manifest={passed,checks,errors,mainErrors,failure,scratch,cleanup,source:execFileSync('git',['rev-parse','HEAD'],{cwd:gui,encoding:'utf8'}).trim(),
 sourceFiles,sourceDiffSha256,core:{binary:coreBinary,sha256:coreSha256,unchanged:createHash('sha256').update(await readFile(coreBinary)).digest('hex')===coreSha256},
-modelRequests:requests.length,transportEvents:await transportEvents(), gaps:['file writes/CAS and native Runtime ancestor-race acceptance are outside this read-only journey','native form file/directory uploads and modern MRTR are unsupported','no real provider/GitHub/OAuth or packaged acceptance'], scope:'actual source Electron/Core desktop settings, mentions, legacy forms and opaque file read; self-owned stdio MCP server; deterministic unused inference endpoint'};
+modelRequests:requests.length+titleRequests.length,conversationModelRequests:requests.length,sessionNameModelRequests:titleRequests.length,transportEvents:await transportEvents(), gaps:['file writes/CAS and native Runtime ancestor-race acceptance are outside this read-only journey','native form file/directory uploads and modern MRTR are unsupported','no real provider/GitHub/OAuth or packaged acceptance'], scope:'actual source Electron/Core desktop settings, mentions, legacy forms and opaque file read; self-owned stdio MCP server; deterministic local inference endpoint; known session-name requests recorded separately'};
 await writeFile(join(scratch,'manifest.json'),JSON.stringify(manifest,null,2));console.log(JSON.stringify(manifest,null,2));
 }

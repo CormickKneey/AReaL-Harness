@@ -138,6 +138,7 @@ impl Engine {
             approval_tools.dedup();
             // 遗留模型入口同样固化父 Turn 边界；隐藏工具不允许绕过配置式委派约束。
             let frozen = super::TaskConfiguration {
+                permission_preset: inherited.options.permission_preset,
                 agent_profile: inherited.profile.as_ref().map(|profile| {
                     areal_protocol::desktop::VersionRef {
                         id: profile.id.clone(),

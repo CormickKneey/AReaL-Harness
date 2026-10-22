@@ -22,7 +22,7 @@ impl Engine {
             let hash=digest(&request)?;
             let cwd=crate::tools::workspace_uri(&request.cwd,&runtime.workspace).map_err(invalid)?;
             if request.timeout_ms.is_some_and(|v|v==0||v>86400000)||request.argv.iter().map(|s|s.len()).sum::<usize>()>64*1024{return Err(invalid("invalid process budget"));}
-            let (record, permissions)={
+            let record={
                 let mut state=cell.state.lock().await;
                 let mut candidate=state.thread.clone();let data=candidate.desktop.get_or_insert_with(Default::default);
                 if let Some(result)=receipt(data,&identity,&request.request_id,"areal/process/start",&hash)?{return Ok(result);}
@@ -37,13 +37,14 @@ impl Engine {
                 let record=ManagedProcess{cleanup_attestation:None,id:id(),runtime_epoch:runtime.client.info().runtime_epoch.clone(),scope_operation_id:runtime.client.operation_id(),scope_id:None,operation_id:runtime.client.operation_id(),process_id:None,lifetime:request.lifetime.clone(),turn_id:if request.lifetime=="turn"{turn}else{None},owner:identity.clone(),argv:request.argv.clone(),state:"accepted".into(),cleanup_confirmed:false,error:None,inputs:Vec::new()};
                 data.processes.push(record.clone());
                 remember(data,&identity,&request.request_id,"areal/process/start",hash,json!({"id":record.id,"runtimeEpoch":record.runtime_epoch}));
-                let permissions=rt::PermissionRequest{write_roots:config.read_only.then(Vec::new),network:if config.read_only {rt::NetworkRequest::Deny}else{rt::NetworkRequest::Inherit},..Default::default()};
                 engine.persist(&candidate).await?;state.thread=candidate;
-                (record,permissions)
+                record
             };
+            let permissions=engine.active_permissions(&cell).await.map_err(invalid)?;
+            let parent=engine.runtime_task_parent(&cell).await.map_err(invalid)?;
             drop(admission);
             let result=async{
-                let scope=runtime.client.create_scope(rt::CreateScope{operation_id:record.scope_operation_id.clone(),parent_scope_id:runtime.client.info().root_scope_id.clone(),owner:rt::Owner{task_id:request.thread_id.clone(),plugin_instance_id:None},permissions,limits:rt::LimitRequest::default()}).await;
+                let scope=runtime.client.create_scope(rt::CreateScope{operation_id:record.scope_operation_id.clone(),parent_scope_id:parent,owner:rt::Owner{task_id:request.thread_id.clone(),plugin_instance_id:None},permissions,limits:rt::LimitRequest::default()}).await;
                 let scope=match scope {Ok(scope)=>scope,Err(error)=>{
                     if !matches!(error.code,rt::ErrorCode::Unavailable|rt::ErrorCode::CleanupFailed) {engine.edit_process(&cell,&record.id,|p|{p.cleanup_confirmed=true;p.state="failed".into();}).await?;}
                     return Err(invalid(error));

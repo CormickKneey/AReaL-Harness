@@ -5,8 +5,8 @@ use crate::{
 };
 use anyhow::{Context, Result, bail, ensure};
 use areal_protocol::service::{
-    Capabilities, Identity, Request, Response, Service, State, StopOperation, StopOperationState,
-    VERSION,
+    Capabilities, Identity, RecoveryInfo, RecoveryStatus, Request, Response, Service, State,
+    StopOperation, StopOperationState, VERSION,
 };
 use fs2::FileExt;
 use futures_util::{SinkExt, StreamExt};
@@ -87,7 +87,6 @@ async fn ensure_inner(
             "service was explicitly stopped; open a new client or run areal service ensure to restart it"
         );
     }
-    let deadline = Instant::now() + Duration::from_secs(65);
     let data = spec.args.data_dir.as_ref().unwrap();
     std::fs::create_dir_all(data)?;
     let host_lock = data.join("service.lock");
@@ -169,6 +168,15 @@ async fn ensure_inner(
             bound.display()
         );
     }
+    launch_unlocked(spec, lifetime, &directory).await
+}
+
+async fn launch_unlocked(
+    spec: &LaunchSpec,
+    lifetime: Option<&GuiLifetime>,
+    directory: &Path,
+) -> Result<Service> {
+    let deadline = Instant::now() + Duration::from_secs(65);
     let log = storage::open_private(&directory.join("host.log"), true)?;
     log.set_len(0)?;
     // 宿主定期截断日志时，继承描述符必须 append，避免旧偏移产生稀疏大文件。
@@ -234,7 +242,7 @@ async fn ensure_inner(
             && service.state == State::Ready
             && probe(&service).await.is_ok()
         {
-            check_compatible(spec, &service, &directory)?;
+            check_compatible(spec, &service, directory)?;
             // 后台 wait 回收同进程内退出的子进程；客户端退出不会发送终止信号。
             tokio::spawn(async move {
                 let _ = child.wait().await;
@@ -248,6 +256,164 @@ async fn ensure_inner(
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+}
+
+fn recovery_proof(directory: &Path, service: &Service) -> Result<storage::CrashReceipt> {
+    ensure!(
+        !storage::has_admitted_stop_receipt(directory, &service.identity)?,
+        "explicitStopIntent"
+    );
+    ensure!(
+        service.state != State::Ready && service.state != State::Stopping,
+        "serviceStillRunning"
+    );
+    ensure!(service.owner.is_some(), "applicationOwnerRequired");
+    ensure!(
+        storage::available(&service.identity.data_dir.join("service.lock"))?
+            && storage::store_available(&service.identity.data_dir)?,
+        "cleanupUnconfirmed"
+    );
+    let proof: storage::CrashReceipt =
+        storage::read(&directory.join("crash.json")).context("cleanupUnconfirmed")?;
+    ensure!(
+        proof.version == VERSION
+            && proof.unexpected_core_exit
+            && proof.identity == service.identity
+            && proof.owner == service.owner
+            && proof.cleanup_confirmed,
+        "cleanupUnconfirmed"
+    );
+    Ok(proof)
+}
+
+pub async fn status_with_recovery(root: &Path, id: &str) -> Result<RecoveryStatus> {
+    let directory = storage::registry(root, id)?;
+    let _startup = startup_lock(&directory).await?;
+    let service = status_unlocked(root, id).await?;
+    let check = recovery_proof(&directory, &service).and_then(|_| {
+        if let Some(replacement) = storage::read_optional::<storage::ReplacementReceipt>(
+            &directory.join("replacement.json"),
+        )? {
+            ensure!(
+                replacement.original != service.identity,
+                "replacementAlreadyAttempted"
+            );
+        }
+        Ok(())
+    });
+    let recovery = RecoveryInfo {
+        version: VERSION,
+        generation: service.identity.generation.clone(),
+        eligible: check.is_ok(),
+        reason: check
+            .err()
+            .map_or_else(|| "confirmedCoreCrash".into(), |e| e.to_string()),
+    };
+    Ok(RecoveryStatus { service, recovery })
+}
+
+fn check_recovery_spec(
+    spec: &LaunchSpec,
+    identity: &Identity,
+    owner: Option<&areal_protocol::service::Owner>,
+    components: &std::collections::BTreeMap<String, String>,
+) -> Result<()> {
+    gui_owner::check(spec.owner.as_ref(), owner)?;
+    ensure!(
+        identity.protocol_version == VERSION
+            && identity.service_id == spec.service_id
+            && Some(&identity.workspace) == spec.args.workspace.as_ref()
+            && Some(&identity.data_dir) == spec.args.data_dir.as_ref()
+            && identity.config_fingerprint == spec.fingerprint
+            && components == &spec.components,
+        "crash recovery configuration or identity changed"
+    );
+    Ok(())
+}
+
+/// 仅恢复同一存活 GUI 的已证明清理完成的 Core 崩溃；不能替代 ensure/restart。
+pub async fn recover_crashed(
+    spec: &LaunchSpec,
+    expected_generation: &str,
+    lifetime: &GuiLifetime,
+) -> Result<Service> {
+    ensure!(spec.owner.is_some(), "crash recovery requires a GUI owner");
+    lifetime.check_open()?;
+    let directory = spec.directory()?;
+    let _startup = startup_lock(&directory).await?;
+    lifetime.check_open()?;
+    let mut fresh = LaunchSpec::in_bin(&spec.args, spec.bin_dir.clone())?;
+    fresh.owner = spec.owner.clone();
+    ensure!(
+        fresh.service_id == spec.service_id
+            && fresh.fingerprint == spec.fingerprint
+            && fresh.components == spec.components,
+        "crash recovery configuration changed"
+    );
+    if let Some(receipt) =
+        storage::read_optional::<storage::ReplacementReceipt>(&directory.join("replacement.json"))?
+        && receipt.original.generation == expected_generation
+    {
+        check_recovery_spec(
+            &fresh,
+            &receipt.original,
+            receipt.owner.as_ref(),
+            &receipt.components,
+        )?;
+        ensure!(
+            !storage::has_admitted_stop_receipt(&directory, &receipt.original)?,
+            "original generation has explicit stop intent"
+        );
+        let successor = match receipt.successor {
+            storage::ReplacementPublication::Published(identity) => identity,
+            storage::ReplacementPublication::Unconfirmed => {
+                bail!("replacement launch is unknown; automatic retry is forbidden")
+            }
+        };
+        let service = status_unlocked(&fresh.home, &fresh.service_id).await?;
+        ensure!(
+            service.identity == successor && service.state == State::Ready,
+            "recorded replacement is not ready; original generation cannot start another successor"
+        );
+        ensure!(
+            !storage::has_admitted_stop_receipt(&directory, &successor)?,
+            "successor has explicit stop intent"
+        );
+        check_compatible(&fresh, &service, &directory)?;
+        lifetime.check_open()?;
+        return Ok(service);
+    }
+    let service = status_unlocked(&fresh.home, &fresh.service_id).await?;
+    ensure!(
+        service.identity.generation == expected_generation,
+        "crash recovery generation mismatch"
+    );
+    let proof = recovery_proof(&directory, &service)?;
+    check_recovery_spec(
+        &fresh,
+        &proof.identity,
+        proof.owner.as_ref(),
+        &proof.components,
+    )?;
+    let latest = LaunchSpec::in_bin(&fresh.args, fresh.bin_dir.clone())?;
+    ensure!(
+        latest.fingerprint == fresh.fingerprint
+            && latest.components == fresh.components
+            && latest.service_id == fresh.service_id,
+        "crash recovery configuration changed before launch"
+    );
+    lifetime.check_open()?;
+    storage::write(
+        &directory.join("replacement.json"),
+        &storage::ReplacementReceipt {
+            original: service.identity.clone(),
+            owner: fresh.owner.clone(),
+            components: fresh.components.clone(),
+            successor: storage::ReplacementPublication::Unconfirmed,
+        },
+    )?;
+    fresh.recovery_origin = Some(service.identity);
+    launch_unlocked(&fresh, Some(lifetime), &directory).await
 }
 
 fn check_model_restart(state: &Value) -> Result<()> {
@@ -357,12 +523,11 @@ async fn control_request(root: &Path, id: &str, request: Request) -> Result<Resp
     let directory = storage::registry(root, id)?;
     ensure!(directory.is_dir(), "unknown service instance: {id}");
     storage::private_dir(&directory)?;
-    let connection = timeout(
-        Duration::from_secs(2),
-        UnixStream::connect(directory.join("control.sock")),
-    )
-    .await?
-    .map_err(ControlTransportError)?;
+    let socket = storage::control_socket(&directory)?;
+    storage::private_dir(socket.parent().context("missing socket parent")?)?;
+    let connection = timeout(Duration::from_secs(2), UnixStream::connect(socket))
+        .await?
+        .map_err(ControlTransportError)?;
     let (read, mut write) = connection.into_split();
     let mut bytes = serde_json::to_vec(&request)?;
     bytes.push(b'\n');

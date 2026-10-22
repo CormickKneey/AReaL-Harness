@@ -41,11 +41,24 @@ pub enum ServiceCommand {
         #[arg(long)]
         json: bool,
     },
+    /// 仅恢复同一 GUI 拥有且已确认资源清理的崩溃代际。
+    Recover {
+        #[command(flatten)]
+        local: Box<LocalArgs>,
+        #[arg(long)]
+        instance: String,
+        #[arg(long)]
+        expected_generation: String,
+        #[arg(long)]
+        json: bool,
+    },
     List {
         #[arg(long)]
         json: bool,
     },
     Status {
+        #[arg(long)]
+        recovery: bool,
         #[command(flatten)]
         target: ServiceTarget,
         #[arg(long)]
@@ -135,8 +148,44 @@ pub async fn execute(command: ServiceCommand) -> Result<()> {
                 areal_local_service::ensure(&spec).await?
             })?
         }
+        ServiceCommand::Recover {
+            local,
+            instance,
+            expected_generation,
+            ..
+        } => {
+            let mut spec = LaunchSpec::resolve(&local)?;
+            spec.owner = owner.clone();
+            ensure!(
+                spec.service_id == instance,
+                "recovery instance does not match local data directory"
+            );
+            serde_json::to_value(
+                areal_local_service::recover_crashed(
+                    &spec,
+                    &expected_generation,
+                    lifetime.as_ref().ok_or_else(|| {
+                        anyhow::anyhow!("GUI recovery requires an inherited lifetime descriptor")
+                    })?,
+                )
+                .await?,
+            )?
+        }
         ServiceCommand::List { .. } => {
             serde_json::to_value(areal_local_service::list(&root).await?)?
+        }
+        ServiceCommand::Status {
+            target,
+            recovery: true,
+            ..
+        } => {
+            let status =
+                areal_local_service::status_with_recovery(&root, &target.resolve(&root).await?)
+                    .await?;
+            if let Some(owner) = &owner {
+                gui_owner::check(Some(owner), status.service.owner.as_ref())?;
+            }
+            serde_json::to_value(status)?
         }
         ServiceCommand::Status { target, .. } => {
             let service = areal_local_service::status(&root, &target.resolve(&root).await?).await?;

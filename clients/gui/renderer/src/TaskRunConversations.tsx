@@ -1,9 +1,13 @@
+import { useI18n } from "./i18n/IntlProvider.js";
 import { useEffect, useRef, useState } from "react";
 import { ApprovalRequest } from "./ApprovalRequest.js";
 import { AskUserQuestion } from "./AskUserQuestion.js";
 import { Button } from "./components/ui/button.js";
 import type { Action, CommandName, Data } from "./services.js";
 import type { TaskConversationRenderer } from "./TaskDraft.js";
+
+export const scheduleZone = (task: Data) => task.scheduleV2?.rule?.timeZone ?? task.schedule?.timeZone;
+export const runZone = (run: Data, task: Data) => run.acceptedSchedule ? run.acceptedSchedule.scheduleV2?.rule?.timeZone ?? run.acceptedSchedule.schedule?.timeZone ?? "UTC" : scheduleZone(task);
 
 const statuses: Record<string, string> = {
   queued: "已受理，等待开始", running: "运行中", waitingForInput: "等待回答", waitingForAgents: "等待 worker",
@@ -14,6 +18,7 @@ type ReadState = { status: "loading" | "ready" | "error"; error?: string };
 export function TaskRunConversations({ project, task, action, disabled, renderConversation }: {
   project: Data; task: Data; action: Action; disabled: boolean; renderConversation: TaskConversationRenderer;
 }) {
+  const { t } = useI18n();
   // Core 的 runs 已按运行顺序排列；只去重，不重排或修改来源历史。
   const runs = [...new Map<string, Data>((task.runs ?? []).map((run: Data) => [run.id, run])).values()];
   const threadIds = [...new Set<string>(runs.flatMap(run => run.threadId ? [run.threadId] : []))];
@@ -75,7 +80,7 @@ export function TaskRunConversations({ project, task, action, disabled, renderCo
       };
       return <article key={run.id} data-task-run-id={run.id} className="grid min-w-0 gap-2 border-t border-border pt-4">
         <header className="flex flex-wrap justify-between gap-2"><h4>运行 {run.id}</h4><span role="status">{statuses[run.status] ?? run.status}</span></header>
-        <p className="text-foreground-subtle">计划：{run.scheduledAt == null ? "—" : new Date(run.scheduledAt * 1000).toLocaleString(undefined, { timeZone: task.schedule?.timeZone })}</p>
+        <p className="text-foreground-subtle">{run.trigger === "manual" ? t("operations.manual") : t("operations.scheduled")}：{run.scheduledAt == null ? "—" : new Date(run.scheduledAt * 1000).toLocaleString(undefined, { timeZone: runZone(run, task) })}</p>
         {run.reason && <p className="whitespace-pre-wrap">运行原因：{run.reason}</p>}
         {!run.threadId ? <p>本次运行没有执行会话。</p> : <>
           {!connected && <p role="status">连接中断，显示上次读取的执行记录；恢复连接后会重新读取。</p>}

@@ -1,31 +1,37 @@
 //! Narrow desktop routes for package-bound MCP connections and App instances.
 use super::*;
-pub(crate) const METHODS: &[&str] = &[
-    "areal/plugin/mcp/list",
-    "areal/plugin/hooks/list",
-    "areal/plugin/hooks/configure",
-    "areal/hook/acknowledge",
-    "areal/plugin/connection",
-    "areal/plugin/auth",
-    "areal/plugin/auth/configure",
-    "areal/plugin/connector/configure",
-    "areal/mcp/tool/result",
-    "areal/mcp/apps/list",
-    "areal/mcp/app/open",
-    "areal/mcp/app/request",
-    "areal/mcp/app/close",
-    "areal/mcp/extension/call",
-    "areal/mcp/forms/list",
-    "areal/mcp/form/respond",
-    "areal/mcp/form/preview",
-    "areal/mcp/form/resource/prepare",
-    "areal/mcp/form/resource/stage",
-    "areal/mcp/form/resource/release",
-];
+areal_protocol::method_catalog! {
+    "areal/plugin/mcp/list" => Read;
+    "areal/plugin/hooks/list" => Read;
+    "areal/plugin/hooks/configure" => Mutation, Management;
+    "areal/hook/acknowledge" => Mutation, Management;
+    "areal/plugin/connection" => Mutation, Management;
+    "areal/plugin/auth" => Mutation;
+    "areal/plugin/auth/configure" => Mutation, Management;
+    "areal/plugin/connector/configure" => Mutation, Management;
+    "areal/mcp/tool/result" => Read;
+    "areal/mcp/apps/list" => Read;
+    "areal/mcp/app/open" => Mutation;
+    "areal/mcp/app/openFromResult" => Mutation;
+    "areal/mcp/app/request" => Mutation;
+    "areal/mcp/app/close" => Mutation;
+    "areal/mcp/app/tools/register" => Mutation;
+    "areal/mcp/app/tools/revoke" => Mutation;
+    "areal/mcp/app/tools/claim" => Mutation;
+    "areal/mcp/app/tools/resolve" => Mutation;
+    "areal/mcp/extension/call" => Mutation;
+    "areal/mcp/forms/list" => Read;
+    "areal/mcp/form/respond" => Mutation;
+    "areal/mcp/form/preview" => Mutation;
+    "areal/mcp/form/resource/prepare" => Mutation;
+    "areal/mcp/form/resource/stage" => Mutation, Management;
+    "areal/mcp/form/resource/release" => Mutation;
+}
 use areal_protocol::plugin_runtime::*;
 pub(crate) async fn dispatch(
     engine: &Arc<Engine>,
     identity: &str,
+    host: Arc<dyn areal_engine::tools::DynamicToolHost>,
     method: &str,
     params: Value,
 ) -> Result<Value, RpcError> {
@@ -53,7 +59,7 @@ pub(crate) async fn dispatch(
                 method.clone(),
                 snapshot,
                 move |engine| async move {
-                    match dispatch_inner(&engine, &owned, &method, params).await {
+                    match dispatch_inner(&engine, &owned, host, &method, params).await {
                         Ok(v) => json!({"result":v}),
                         Err(e) => json!({"error":e}),
                     }
@@ -73,15 +79,33 @@ pub(crate) async fn dispatch(
         };
         return Ok(reply["result"].clone());
     }
-    dispatch_inner(engine, identity, method, params).await
+    dispatch_inner(engine, identity, host, method, params).await
 }
 async fn dispatch_inner(
     engine: &Arc<Engine>,
     identity: &str,
+    host: Arc<dyn areal_engine::tools::DynamicToolHost>,
     method: &str,
     params: Value,
 ) -> Result<Value, RpcError> {
+    if method.starts_with("areal/mcp/app/tools/")
+        && serde_json::to_vec(&params)
+            .map_err(|e| RpcError::invalid(e.to_string()))?
+            .len()
+            > areal_protocol::plugin_runtime::PAGE_BYTES + 2048
+    {
+        return Err(rejected(
+            RpcError::invalid("page-tool request exceeds byte budget"),
+            "INVALID_REQUEST",
+        ));
+    }
     let result = match method {
+        "areal/mcp/app/tools/register" => {
+            engine.mcp_page_tools_register(host, parse(params)?).await
+        }
+        "areal/mcp/app/tools/revoke" => engine.mcp_page_tools_revoke(host, parse(params)?).await,
+        "areal/mcp/app/tools/claim" => engine.mcp_page_tools_claim(host, parse(params)?).await,
+        "areal/mcp/app/tools/resolve" => engine.mcp_page_tools_resolve(host, parse(params)?).await,
         "areal/mcp/tool/result" => {
             let p: ToolResult = parse(params)?;
             engine.mcp_tool_result(p.thread_id, p.call_id).await
@@ -132,11 +156,18 @@ async fn dispatch_inner(
             let p: Apps = parse(params)?;
             engine.mcp_apps_list(p.thread_id).await
         }
+        "areal/mcp/app/openFromResult" => {
+            let p: OpenFromResult = parse(params)?;
+            engine
+                .mcp_app_open_from_result(identity.into(), Some(host), p)
+                .await
+        }
         "areal/mcp/app/open" => {
             let p: Open = parse(params)?;
             engine
                 .mcp_app_open(
                     identity.into(),
+                    Some(host),
                     p.thread_id,
                     p.server_id,
                     p.expected_generation,

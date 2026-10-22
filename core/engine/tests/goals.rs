@@ -890,6 +890,7 @@ async fn drain_wait_stops_continuation_but_allows_current_turn_to_finish() {
 async fn ordinary_turn_model_and_capacity_waits_have_no_aggregate_deadline() {
     let (_dir, e, mut rx) = controlled(Limits {
         model_concurrency: 1,
+        model_request_timeout: Duration::from_secs(600),
         stream_idle_timeout: Duration::from_secs(600),
         ..Limits::default()
     });

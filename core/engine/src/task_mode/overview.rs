@@ -233,7 +233,7 @@ impl Engine {
             .collect();
         for task_id in task_ids {
             let projections = {
-                let state = self.task_modes.state.lock().await;
+                let state = self.task_modes.state.lock().await.clone();
                 let Some(task) = state.tasks.get(&task_id) else {
                     continue;
                 };
@@ -311,6 +311,50 @@ impl Engine {
                             .collect::<Vec<_>>(),
                     ));
                 }
+                state.visit_history(&task.id, |segment| {
+                    for run in &segment.runs {
+                        if run.thread_id.as_deref().is_some_and(|id| !sees(id)) {
+                            continue;
+                        }
+                        for id in run
+                            .thread_id
+                            .iter()
+                            .chain(run.workers.iter().map(|w| &w.thread_id))
+                        {
+                            owned.insert((id.clone(), run.goal_id.clone()));
+                        }
+                        let mut row = empty_row("taskRun", &task.objective);
+                        row.task_id = Some(task.id.clone());
+                        row.run_id = Some(run.id.clone());
+                        row.thread_id = run.thread_id.clone();
+                        row.execution.run_status = Some(run.status);
+                        row.execution.state = serde_json::to_value(run.status)
+                            .unwrap()
+                            .as_str()
+                            .unwrap()
+                            .into();
+                        row.source_updated_at = run.completed_at;
+                        row.result_available = run.status.terminal();
+                        let workers: Vec<_> =
+                            run.workers.iter().filter(|w| sees(&w.thread_id)).collect();
+                        row.worker_count = workers.len();
+                        row.workers_complete = workers.len() <= SUMMARY_REFS;
+                        row.workers = workers
+                            .iter()
+                            .take(SUMMARY_REFS)
+                            .map(|w| (*w).clone())
+                            .collect();
+                        row.summary_truncated = !row.workers_complete;
+                        consider(
+                            &mut rows,
+                            format!("taskRun:{}:{}", task.id, run.id),
+                            row,
+                            &request,
+                            limit + 1,
+                        );
+                    }
+                    Ok(())
+                })?;
                 projections
             };
             for (mut row, goal, workers) in projections {

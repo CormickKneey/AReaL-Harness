@@ -49,7 +49,13 @@ Skill 发现由 `core/config` 根据可信启动参数执行，只返回元信�
 
 Codex 兼容包由 `core/plugins` 持有本地安装与范围选择；Engine 登记不可变插件 Skill 根，并在 Turn 提交时固定引用、读取时检查当前撤权。普通会话可以发现新安装，显式 Profile、Side 和隔离 worker 不自动扩权。onboarding 使用已有普通 Turn 入口；客户端通过现有管理收据恢复 UNKNOWN。独立 Skills 保持动态描述符读取契约。当前支持及限制见[插件指南](../guides/plugins.md)，后续完整兼容任务见[实施计划](../development/codex-plugins-plan.md)。
 
-插件来源解析仍归 `core/plugins`，Git/npm 不执行安装脚本。`core/mcp` 持有认证、资源与连接版本，Engine 固定 Turn 的 schema/调用对象并拥有撤权、受理和清理。Apps 绑定 Core 进程 epoch、Thread 与包摘要；Electron 的独立沙箱只持窄能力。文件实际读写复用 Runtime 的目录描述符助手，模型投影剔除 `_meta`。原始 Connector ID 通过明确映射接到 GitHub；客户端凭据仅由可信启动环境注入。
+组件支持报告归同一包解析器，候选与安装报告分别绑定 sourceDigest 与 installedDigest。Store 将当前启用意图与准确包摘要的静态兼容组合为有效选择；历史 Skill 以自身不可变包检查，Engine 按精确 id/revision 投影准入。Hook 声明和 Apps 文档复用原解析所有者，报告读取不执行包代码，认证、连接与信任仍归现有运行所有者。
+
+插件来源解析仍归 `core/plugins`，Git/npm 不执行安装脚本。`core/mcp` 持有认证、资源与连接版本，Engine 固定 Turn 的 schema/调用对象并拥有撤权、受理和清理。Apps 绑定 Core 进程 epoch、Thread 与包摘要；Electron 的独立沙箱只持窄能力。Main 为每个 App 实例记录原窗口 owner，普通导航保留活 iframe；销毁和撤权按实例归属回收，不依赖原生窗口仍然存活。异步打开返回时复核 owner 与 epoch，旧 token 不随活动窗口转移。文件实际读写复用 Runtime 的目录描述符助手，模型投影剔除 `_meta`。原始 Connector ID 通过明确映射接到 GitHub；客户端凭据仅由可信启动环境注入。
+
+成功 MCP 结果的交互入口只提交原 Thread、Turn、Core item 和打开请求身份。Core 校验原始快照的完整性及调用时保存的来源，再用原连接准备资源；挂载不重新执行业务工具。结果打开操作与 App 实例由同一 Manager 原子保存，关闭事实独立于活页面保留，旧进程 epoch 请求不能重开。Main 按原窗口和 Core instance 复用 token，Workspace 保留 iframe。缺来源、摘要改变、撤权或页面失败时保留普通可读结果。
+
+有限页面工具沿用普通 Core 工具目录、审批和 ToolCall 历史。注册只声明固定的选区读取与 revision 条件修改。Core 固定原始 ToolHost、App epoch、包摘要和登记版本；Desktop 服务固定打开实例的 Main socket，Main 固定窗口、token 与已初始化的 bridge。通知仅唤醒原执行端，持久 claim 才授予一次执行。单次调用拥有 claim 与结算写入，已确认终态不能被后续 hook 或通用 finalizer 覆盖。断线撤销工具执行，保留未保存页面；UNKNOWN 不自动重放。协议和预算见[桌面 API](../api/desktop.md#有限页面工具)。
 
 插件下载与准备不持有 Engine 目录刷新锁；Store 的跨进程锁和 revision CAS 负责提交，随后从同一安装状态快照在刷新锁内发布目录，连接排空在锁外执行。MCP 清理未确认以类型化错误进入 `cleanupUnknown`，不能按普通失败重连；没有清理凭据的后续断开操作也不能清除此状态。跨实例共享启用状态与本实例受审阅定义分开：hook 调用前读取当前启用状态，后台协调取消已停用包的在途 hooks（包括升级后新版已删除定义的旧调用）；固定 Turn 版本不会固定启用权限。显式 Profile 默认排除插件，仅部署定义的 `allowPluginSkills` 可选择加入，且子任务继续受父任务插件范围约束；hook 角色与 matcher 使用已受理 Profile 身份，压缩保留子任务归属。状态轮询只读安装状态，不枚举包。组件解析按包身份、摘要和政策缓存，每次使用通过 NOFOLLOW 描述符检查文件/目录身份、权限、大小、mtime/ctime；变化后重新校验完整摘要。MCP 调用只验证所属包。该缓存不增加对任意同 UID 并发目录替换的隔离承诺。
 
@@ -63,7 +69,11 @@ Core 的生命周期判定区分普通停止准入与取消后的执行结算。
 
 Task Mode 由 `core/engine/src/task_mode` 管理 Task/TaskRun、定时触发、独立 Channel 和 worker。它复用 Goal 账本与 Thread 准入，通信状态由 Core 持有；Inbox 是授权问题的查询投影。TaskRun worker 可跨协调 Turn，在独立 Session 中执行，仍由 Core 负责取消和结算。接口见 [Task 契约](../api/tasks.md)。
 
-定时任务管理界面复用普通 Messages 与 Composer，直接复用普通会话的 TaskResourcesPopover；ConversationStatusCard 增加任务描述与状态概要，不建立固定右栏。宿主 task-draft 在同一管理 Thread 中解释 Agent 回复并校验保存；Core 历史保持原样，界面只读取解码后的显示投影。创建收据和逐轮修改收据阻止重复处理；执行限制不由 Renderer 的权限菜单解除。新建先明确选择项目与工作目录，再建立管理 Thread；项目内子目录由宿主和 Core 校验，独立任务目录仍归 ProjectlessWorkspaces 分配。管理 Thread 与执行 Thread 分离，执行锚点继承管理 Thread 的 cwd。提案摘要基于稳定解析结果；重复时间仅在提交边界推进至未来，修改省略频率时继承原值。安排与控制消息的成功状态仅来自匹配宿主收据。定时 Task 的根 Thread 只定位执行环境；每个 Run 新建会话并冻结配置。Core 持有触发、离线补执行和忙碌跳过，经认证桌面 Host 通过 prepare/ready 提供配置及工具。暂停安排只影响后续触发，停止或恢复通过 Run 控制，审批超时保留受阻执行。
+手动 Run Now 复用 Task 的原子提交、总预算与 queued Run 执行链。Core 持久保存 Run、目标快照和收据后才调用 Host 准备；客户端通过原请求的只读收据核对恢复，不改写计划或重放未知提交。
+
+Task 持久化的唯一提交点为版本 5 的 `desktop/task-mode.json`。紧凑根引用不可变热 Task、按 Task 链接的历史与固定桶头的压缩 radix 收据/归属索引，索引深度受 256 位键宽限制，终止叶最多 64 行、普通打包 128 KiB，合法大单条仍受 256 MiB 硬上限约束。控制不触发历史扫描，只发布变更 Task、原始收据与根；普通保留检查有界，无法确认的历史继续留热。冷 Run 用量与计数同根提交，旧 Goal 身份不因归档变成普通 Goal。读取在短锁内捕获 Snapshot，再在锁外以同一快照完成授权和投影。文件先同步，根最后原子替换并同步目录；结果不明时冻结写入，重启校验、同步全部可达引用后再恢复。版本 1 至 4 的原字节先备份，原根引用的不可变文件保留；版本 5 阻止旧二进制忽略新规则，迁移不依赖孤儿扫描。
+
+定时任务管理界面复用普通 Messages 与 Composer，直接复用普通会话的 TaskResourcesPopover；ConversationStatusCard 增加任务描述与状态概要，不建立固定右栏。宿主 task-draft 在同一管理 Thread 中解释 Agent 回复并校验保存；Core 历史保持原样，界面只读取解码后的显示投影。创建收据和逐轮修改收据阻止重复处理；执行限制不由 Renderer 的权限菜单解除。新建自动准备独立工作目录和管理 Thread，目录归 ProjectlessWorkspaces 分配；已有任务保留原归属，宿主和 Core 校验目录边界。管理 Thread 与执行 Thread 分离，执行锚点继承管理 Thread 的 cwd。提案摘要绑定原始结构化时间意图；Core 先重放原收据，再按一次捕获的时钟解析新提交。日历规则与固定间隔由同一 Core 计算器验证、预览和推进，宿主只格式化展示。旧固定间隔保持秒数和原游标，日历按保存时区处理缺日和夏令时。最近触发决定与游标原子提交；新 Run 保存已受理规则，后续修改不改写其规则、目标或准备事实。安排与控制消息的成功状态仅来自匹配宿主收据。定时 Task 的根 Thread 只定位执行环境；每个 Run 新建会话并冻结配置。Core 持有触发、离线补执行和忙碌跳过，经认证桌面 Host 通过 prepare/ready 提供配置及工具。暂停安排只影响后续触发，停止或恢复通过 Run 控制，审批超时保留受阻执行。
 
 ![Task Mode](diagrams/task-mode-mailbox-architecture.svg)
 
@@ -75,7 +85,9 @@ macOS Runtime 还随包提供独立 Bash，作为受限命令的私有 shell 资
 
 ## 状态与执行
 
-GUI 的 Desktop 服务和 Main 使用 `workbench/client/state-projection` 编码可重建状态。每条连接先发送完整基线，之后按 Project、Thread、Turn、Item 身份发送变化和顺序；未变化的历史正文不重复传输。Main 只编码筛选后的桌面状态，Renderer 在 contextBridge 之后重组完整快照。缺失基线或序号不连续时重新读取完整状态，不重发执行请求。初次加载和显式快照仍传输全量状态，正在变化的单个 Item 仍整体替换。
+GUI 首次展示与后台就绪分别判定。Renderer 在主题和图标加载页可绘制后，通过现有窄 IPC 通知 Main；Main 结合原生绘制事件，只消费一次自动展示机会。关闭窗口取消尚未发生的自动展示，后续恢复不能重新打开或抢焦点。后台、项目及原会话沿现有观察链恢复。初始恢复成功前只显示图标与加载状态，不挂载首页、侧栏、新会话或 Projectless 准备入口；成功后一次性挂载完整工作台。失败留在加载页，通过现有所有者恢复。执行入口继续受连接、会话恢复及 Core 准入约束。恢复失败保留原选择和草稿，并使用现有重试、后台详情及退出路径。
+
+GUI 的 Desktop 服务和 Main 使用 `workbench/client/state-projection` 编码可重建状态。每条连接先发送当前显示窗口的基线，之后按 Project、Thread、Turn、Item 身份发送变化和顺序；未变化的正文不重复传输。Main 只编码筛选后的桌面状态，Renderer 在 contextBridge 之后重组显示快照。缺失基线或序号不连续时重新读取状态，不重发执行请求。支持有界历史的 Core 通过 `areal/thread/observe` 提供近期窗口，较早历史和超大条目由显式分页与分片读取；显示窗口不包含另一份完整权威历史。正在变化的单个 Item 通知仍整体替换，单条记录解析与活动条目增长的限制见 [Core 历史契约](../api/core.md)。
 
 同一 Thread 的变更串行，不同 Thread 可并发。模型请求、工具等待及子任务等待不跨等待持有会话锁。模型许可不跨工具执行持有，活动 Turn、模型请求和 OS 进程是独立限额。
 
@@ -99,11 +111,29 @@ Fork 与 Side 的开发预览复用上述 Core/Runtime 所有权：Engine 创建
 
 客户端设计规则与页面模式归 [`clients/gui/design-system/`](../../clients/gui/design-system/README.md)，数值、公共组件和开发预览沿用现有 renderer 所有者；规则目录不承载业务执行或另一份 Token 数值源。 [设计系统架构草案](../../clients/gui/design-system/architecture.md)明确架构、Base、独立题目与反馈的阶段准入；当前目录生成原型不代表 Base 或视觉验收完成。
 
+有限浏览器动作仍由 Main 的原生预览所有者执行。观察持有独立视口及原生 OPTION 身份，准备和执行复核同一目标；状态等待只读原生事实。scroll/hover 后失效观察保留批量确认前缀与调用去重，固定 select 语义不开放任意脚本入口。
+
+## 客户端恢复与用户感知
+
+连接、显示同步、请求受理和执行结果是四个独立事实。连接中断不证明请求未受理；刷新失败不能推翻已知成功；收到受理收据也不代表执行成功。Core 持有方法的读写语义、受理结果和原始请求收据；Desktop 持有复合命令语义、原请求身份与可重建显示缓存；Renderer 持有草稿和提示的展示范围。Host 管理服务代际，Runtime 证明执行资源清理。恢复沿这些所有者进行，不增加通用工作流账本或客户端执行循环。
+
+| 情况 | 系统行为 | 用户感知 |
+|---|---|---|
+| 短暂断连或可重试读取失败 | 有界退避、重新订阅并安装权威基线 | 短暂过程保持安静；持续时显示恢复状态 |
+| 修改请求结果未知 | 保留原 requestId，只查询原收据 | 保留草稿，说明正在核对；不自动重复提交 |
+| 原操作成功、列表或视图刷新失败 | 返回已知身份或结果，单独重试读取 | 原操作保持成功，提示仅归属未恢复的视图 |
+| 权限、凭据或配置需要修改 | 保留结构化原因与操作范围 | 显示可执行的中文提示和对应入口 |
+| 自动恢复耗尽或执行结果仍未知 | 停止自动尝试，保留原请求与诊断 | 显示受影响操作、当前事实和下一步；技术详情按需展开 |
+
+错误的 `outcome` 与 `recovery` 表达可证明的事实；仅明确拒绝或 `noMutation` 才能说明未执行。未知收据、普通异常文本或断开的 socket 都不能据此重发修改。新的 Desktop 命令契约通过版本协商启用可对账的创建、配置和 Task 操作。提示绑定原 Project、Thread、requestId 和发生实例，只有匹配的权威结果才能结算对应提示，其他操作成功不会清除它。协议与兼容边界见 [Core API](../api/core.md) 和 [Desktop API](../api/desktop.md)。
+
+服务崩溃后的自动换代必须经过现有本地服务所有者：原 Host 对意外 Core 退出和 Runtime 清理发布正向证明，在启动锁内复核原代际、同一 GUI owner、存活期、部署配置和二进制，并排除已受理或结算未知的显式停止。恢复预留与原代际到后继代际的回执只允许一个后继，丢失回复也不能启动第二个。缺少证明、Host 丢失、配置变化或明确停止均不自动换代。换代后只恢复观察和原请求核查，Core 的启动恢复负责将未完成执行标为 UNKNOWN，不重放未完成任务的模型请求、工具或外部效果；已授权且尚未开始的定时安排沿用其原有规则。详细保证见 [本地服务契约](../api/local-service.md)。
+
 ## 仓库目录
 
 桌面客户端归属见[迁移决策](../adr/0001-desktop-client-module.md)。`clients/gui` 的独立 Electron 适配器保留系统凭据与订阅转发，通过共享服务公共入口连接 Core；退出 GUI 不终止 Core 任务。macOS 安装包中，前台与后台适配器使用不同的应用身份，后台共享主包资源与原有数据目录，避免 Finder 将重开前台的请求交给无窗口后台。GUI 构建、数据隔离与本地包见 [GUI 指南](../../clients/gui/README.md)。移动端源码后续迁移。
 
-桌面适配器的项目连接所有者管理退避、连接身份和快照重订；被动恢复只连接兼容的运行中服务，不启动或重启 Core、不重放未知提交。Main 初始化只连接原后台，部署变化展示显式更新入口，不自动换代。Desktop 生命周期 owner 在副作用前持久化绑定目标代际的意图，逐项目通过 Host 回执结算；Main 只保存引用与连接投影并核验原 Desktop 退出。受理未确认只核查原请求，已完成目标不重做；Core 的配置与权限重启边界继续生效。Workbench 共享桌面能力契约，Main 和服务入口校验各自允许的能力并保留结构化错误；Core 仍拥有配置和执行的最终校验。原生预览归 Electron Main，按项目/Thread 释放并有界缓存页面；界面从 Main 的权威快照投影每页一个顶层标签，与文件和终端共用标签栏；页面列表订阅归当前项目/Thread 的窗口投影，标签使用 `pageId` 定位，不建立另一套 Browser 生命周期或执行权限。具体恢复、类型覆盖及页面状态丢失边界见 GUI 指南的生命周期章节。
+桌面适配器的项目连接所有者管理退避、连接身份和快照重订；先连接兼容的运行中服务，仅对满足上述正向证明与代际约束的 Core 崩溃请求受控恢复，不重放未知提交。Main 初始化只连接原后台，部署变化展示显式更新入口，不自动换代。Desktop 生命周期 owner 在副作用前持久化绑定目标代际的意图，逐项目通过 Host 回执结算；Main 只保存引用与连接投影并核验原 Desktop 退出。受理未确认只核查原请求，已完成目标不重做；Core 的配置与权限重启边界继续生效。Workbench 共享桌面能力契约，Main 和服务入口校验各自允许的能力并保留结构化错误；Core 仍拥有配置和执行的最终校验。原生预览归 Electron Main，按项目/Thread 释放并有界缓存页面；界面从 Main 的权威快照投影每页一个顶层标签，与文件和终端共用标签栏；页面列表订阅归当前项目/Thread 的窗口投影，标签使用 `pageId` 定位，不建立另一套 Browser 生命周期或执行权限。具体恢复、类型覆盖及页面状态丢失边界见 GUI 指南的生命周期章节。
 
 [Remote v2](remote-control.md) 的 Gateway 归现有桌面后台适配器，浏览器只持有受限投影；Core 与 Runtime 继续拥有执行和历史。Direct 与 Relay 共用 RemoteControl 拥有的 session acceptor、观察器和授权预算，传输适配器只提供字节/存活/背压。Direct 使用独立低权限入口，Relay 仅拥有连接路由与登记元数据；两者都不转发高权限本地接口。契约与实施状态见 [Remote API](../api/remote-control.md)，决策见 [Host 所有权](../adr/0008-remote-host-ownership.md)。
 
@@ -135,7 +165,7 @@ Core server 负责配置监听与模型装配，Engine 在提交时固定模型�
 
 Core `permissions` 负责审批模式、规则优先级与精确请求记忆；Clients 展示并回答请求。Runtime 独立执行部署上限及 Scope 收窄，本地 full-access 由可信 launcher 选择。见[权限配置](../guides/configuration.md#permissions)。
 
-[权限架构提案](permissions.md)建议在上述分工下引入受限自动执行预设和 Core 授权代理：命令规则只决定是否询问，附加能力只授予具体操作，并继续受部署、Profile 与父任务上限约束。该提案待评审，尚未改变当前默认值或执行契约。
+[权限架构](permissions.md)定义聊天的请求审批、帮我审批和完全访问预设。Core 将审批方式与执行范围分别解析，在 Turn 受理时固定结果；额外能力只授予具体操作，并继续受部署、Profile 与父任务上限约束。旧聊天未选择预设时保留原契约。
 
 外部评测平台通过公开契约消费原生 CLI 和标准发布包。输入适配、终态结果投影、产物收集和平台部署由消费平台维护；Core、Runtime、SDK 和独立发行包不依赖平台适配器，见 [CLI 契约](../api/claude-cli.md)。
 

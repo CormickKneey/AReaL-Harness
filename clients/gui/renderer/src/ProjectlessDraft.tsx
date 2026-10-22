@@ -1,6 +1,6 @@
 import type { ImageAnnotationTarget } from "./imageAnnotations.js";
 import { useEffect, useState } from "react";
-import { Button } from "./components/ui/button.js";
+import { WorkspacePreparationStatus, type WorkspacePreparationState } from "./WorkspacePreparationStatus.js";
 import { DraftComposer } from "./DraftComposer.js";
 import type { Action, Data, PlatformServices, Snapshot } from "./services.js";
 import { call } from "./services.js";
@@ -26,7 +26,7 @@ export function ProjectlessDraft({ snapshot, services, action, readAction, onOpe
     setPrepared(project); return project;
   };
   useEffect(() => {
-    if (ownerId && ready && !owner?.state?.connected) void action("connect", { projectId: ownerId }).catch(cause => setError(cause.message));
+    if (ownerId && ready && !owner?.state?.connected) void (readAction ?? action)("connect", { projectId: ownerId }).catch(() => {});
   }, [ownerId, ready]);
   useEffect(() => {
     if (!ready || ownerId) return;
@@ -35,10 +35,21 @@ export function ProjectlessDraft({ snapshot, services, action, readAction, onOpe
     return () => { active = false; };
   }, [ready, ownerId]);
   const draftOwner = owner ?? { id: "projectless", root: "", profiles: [], models: [], pending: [], state: { connected: false }, outcomes: {} };
+  const preparation: WorkspacePreparationState = ready && owner?.state?.connected
+    ? { kind: "ready" }
+    : ready && (error || owner?.error || owner?.state?.error)
+      ? { kind: "unavailable", detail: error || owner?.error || owner?.state?.error }
+      : { kind: "preparing" };
+  const retry = async () => {
+    setError("");
+    try {
+      if (ownerId) await (readAction ?? action)("connect", { projectId: ownerId });
+      else await prepare();
+    } catch (cause) { setError((cause as Error).message); }
+  };
   return <>
-    {error && <p className="projectless-draft-notice text-destructive" role="alert">{error}<Button size="sm" variant="ghost" onClick={() => { setError(""); void prepare().catch(cause => setError(cause.message)); }}>重试准备</Button></p>}
-    {!owner && !error && <p className="projectless-draft-notice text-foreground-subtle" role="status">正在准备新会话模型…</p>}
-    <DraftComposer onAnnotate={onAnnotate} project={draftOwner} draftKey={key} prepareProject={prepare} action={action} readAction={readAction} onPanel={onPanel} onOpen={async (pid, tid) => {
+    <DraftComposer onAnnotate={onAnnotate} project={draftOwner} backendReady={ready} preparationStatus={<WorkspacePreparationStatus state={preparation} scope={ownerId ? "connection" : "workspace"}
+      onRetry={preparation.kind === "unavailable" ? retry : undefined} />} draftKey={key} prepareProject={prepare} action={action} readAction={readAction} onPanel={onPanel} onOpen={async (pid, tid) => {
       localStorage.removeItem(`${key}:project`); localStorage.removeItem(`${key}:workspace-request`);
       await onOpen(pid, tid);
     }} />

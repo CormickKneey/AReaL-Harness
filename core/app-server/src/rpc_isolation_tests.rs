@@ -138,13 +138,37 @@ async fn slow_derivation_does_not_starve_same_connection_control() {
         ))
         .await
         .unwrap();
-    let replies = tokio::time::timeout(std::time::Duration::from_millis(300), async {
+    for (id, method, params) in [
+        (202, "areal/mcp/app/tools/resolve", json!({})),
+        (
+            203,
+            "areal/mcp/app/tools/revoke",
+            json!({"threadId":source.id,"instanceId":"missing","generation":1,"registrationId":"missing","ownerId":"missing"}),
+        ),
+        (
+            204,
+            "areal/mcp/app/close",
+            json!({"threadId":source.id,"instanceId":"missing","generation":1}),
+        ),
+        (205, "areal/mcp/app/tools/register", json!({})),
+        (206, "areal/mcp/app/tools/claim", json!({})),
+    ] {
+        socket
+            .send(Wire::Text(
+                json!({"id":id,"method":method,"params":params})
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+    }
+    let replies = tokio::time::timeout(std::time::Duration::from_secs(2), async {
         let mut replies = std::collections::BTreeMap::new();
-        while replies.len() < 2 {
+        while replies.len() < 7 {
             let frame = socket.next().await.unwrap().unwrap();
             if frame.is_text() {
                 let value: Value = serde_json::from_str(frame.to_text().unwrap()).unwrap();
-                if let Some(id @ (200 | 201)) = value["id"].as_u64() {
+                if let Some(id @ 200..=206) = value["id"].as_u64() {
                     replies.insert(id, value);
                 }
             }
@@ -156,6 +180,29 @@ async fn slow_derivation_does_not_starve_same_connection_control() {
     let replies = replies.expect("reserved MCP control was starved by derivation saturation");
     assert!(replies[&200]["error"].is_object());
     assert!(replies[&201]["result"].is_object());
+    for id in 202..=204 {
+        assert!(
+            !replies[&id]["error"]["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("capacity")
+                && !replies[&id]["error"]["message"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("in-flight"),
+            "page terminal control was rejected by ordinary saturation: {}",
+            replies[&id]
+        );
+    }
+    assert_eq!(replies[&203]["result"], json!({"revoked":true}));
+    for id in 205..=206 {
+        assert!(
+            replies[&id]["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("control slots are reserved")
+        );
+    }
     *BARRIER.write().unwrap() = None;
     socket.close(None).await.unwrap();
     stop.cancel();

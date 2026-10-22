@@ -99,6 +99,14 @@ try {
     page=await app.firstWindow();page.setDefaultTimeout(20000);page.on('pageerror',e=>errors.push(e.message));
     await page.getByTestId('areal-workbench').waitFor({timeout:120000});
   };
+  const openBackendSettings = async () => {
+    const startupSettings = page.getByRole('button',{name:'检查设置',exact:true});
+    if (await startupSettings.isVisible()) await startupSettings.click();
+    else {
+      await page.getByRole('button',{name:'设置',exact:true}).click();
+      await page.getByRole('button',{name:'后台服务',exact:true}).click();
+    }
+  };
   await launchCurrent();
   // Arrange the existing user's remembered navigation; recovery itself uses UI.
   await page.evaluate(({projectId,threadId})=>{localStorage.setItem('areal-gui:project',projectId);localStorage.setItem(`areal-gui:thread:${projectId}`,threadId);},{projectId,threadId});
@@ -107,7 +115,8 @@ try {
   await until(async()=>(await state()).lifecycle?.error,'unsettled legacy stop keeps GUI open');
   assert.equal(app.process().exitCode,null);assert.equal(alive(old.pid),true);assert.equal(requests.length,1);
   checks.push('stop-and-quit refuses an unresolved legacy operation and keeps the GUI open');
-  await page.getByRole('button',{name:'检查后台',exact:true}).click();
+  await openBackendSettings();
+  await page.getByTestId('backend-service-status').getByRole('button',{name:'检查后台',exact:true}).click();
   await page.getByRole('button',{name:'恢复后台…',exact:true}).waitFor();
   assert.equal(alive(old.pid),true);assert.equal(requests.length,1,'inspection must not replay any turn');
   checks.push('legacy partial-stop inspection is read-only and offers recovery');
@@ -116,13 +125,13 @@ try {
     const t=oldPacket.service.stopReport.projects.find(p=>p.phase==='unknown');
     const file=join(registry,'services',t.serviceId,'service.json'),clean=JSON.parse(await readFile(file,'utf8'));
     await writeFile(file,JSON.stringify({...clean,state:'ready'}),{mode:0o600});
-    await page.getByRole('button',{name:'检查后台',exact:true}).click();
+    await page.getByTestId('backend-service-status').getByRole('button',{name:'检查后台',exact:true}).click();
     assert.equal((await state()).lifecycle.recovery.canRecover,false,'lock freedom without a clean Host marker is unknown');
     await writeFile(file,JSON.stringify({...clean,generation:'00000000-0000-4000-8000-000000000001'}),{mode:0o600});
-    await page.getByRole('button',{name:'检查后台',exact:true}).click();
+    await page.getByTestId('backend-service-status').getByRole('button',{name:'检查后台',exact:true}).click();
     assert.equal((await state()).lifecycle.recovery.canRecover,false,'replacement generation cannot settle the old request');
     await writeFile(file,JSON.stringify(clean),{mode:0o600});
-    await page.getByRole('button',{name:'检查后台',exact:true}).click();
+    await page.getByTestId('backend-service-status').getByRole('button',{name:'检查后台',exact:true}).click();
     checks.push('unclean Host exit and generation change both block recovery');
   }
   await page.getByRole('button',{name:'恢复后台…',exact:true}).click();
@@ -138,6 +147,7 @@ try {
     assert.equal(alive(old.pid),true);
     assert.equal(JSON.parse(await readFile(join(userData,'service-control.json'),'utf8')).legacyRecovery.phase,'retiring');
     await app.close();app=null;await launchCurrent();
+    await openBackendSettings();
     checks.push('declining manager exit preserves the journal across GUI restart');
   }
   await app.evaluate(()=>{globalThis.__recoveryConfirm=true;});

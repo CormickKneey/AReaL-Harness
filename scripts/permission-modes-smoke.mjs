@@ -87,7 +87,7 @@ async function start(mode) {
       "-S",
       join(repo, "scripts/launch.py"),
       "--bin-dir",
-      join(repo, "target/debug"),
+      process.env.AREAL_TEST_BIN_DIR || join(repo, "target/debug"),
       "--workspace",
       workspace,
       "--data-dir",

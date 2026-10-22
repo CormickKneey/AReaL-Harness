@@ -1,9 +1,10 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import type { AppSlashCommand } from "../slashCommandHelpers.js";
 import { SearchIcon } from "../interfaceIcons.js";
+import { useI18n } from "../i18n/IntlProvider.js";
 
 export interface ComposerCatalogEntry extends AppSlashCommand {
-    group: "功能" | "Skills";
+    group: "功能" | "应用" | "Skills";
     source?: string;
     disabled?: boolean;
     attached?: boolean;
@@ -45,6 +46,7 @@ export function ComposerCatalog({
     onIndex: (index: number) => void;
     onChoose: (entry: ComposerCatalogEntry) => void;
 }) {
+    const { t } = useI18n();
     const root = useRef<HTMLDivElement>(null);
     const search = useRef<HTMLInputElement>(null);
     const [height, setHeight] = useState(360);
@@ -98,11 +100,11 @@ export function ComposerCatalog({
                 aria-label="功能与 Skills"
                 className="composer-catalog-scroll"
             >
-                {(["功能", "Skills"] as const).map((group) => (
-                    <div key={group} role="group" aria-label={group}>
+                {(["功能", "应用", "Skills"] as const).map((group) => (
+                    <div key={group} role="group" aria-label={group === "应用" ? t("chat.composer.appsGroup") : group}>
                         {rows.some((row) => row.group === group) && (
                             <div className="composer-catalog-group">
-                                {group}
+                                {group === "应用" ? t("chat.composer.appsGroup") : group}
                                 {group === "Skills" && <span>添加到当前消息</span>}
                             </div>
                         )}

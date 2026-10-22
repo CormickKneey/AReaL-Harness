@@ -1,7 +1,11 @@
 //! 权限模式和记忆由 Core 统一判定，客户端只提交已展示请求的回答。
+mod reviewer;
+pub(crate) use reviewer::ReviewDecision;
+mod scopes;
 use crate::*;
 use areal_config::{ConfigSource, PermissionConfig, PermissionMode};
 use areal_protocol::desktop::PermissionGrant;
+pub(crate) use scopes::additional_schema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -18,6 +22,130 @@ pub(crate) struct Permissions {
 }
 
 impl Engine {
+    async fn browser_restrictions(&self, cell: &Cell) -> String {
+        let state = cell.state.lock().await;
+        restrictions(
+            state
+                .thread
+                .turns
+                .last()
+                .and_then(|turn| turn.configuration.as_ref()),
+        )
+        .to_string()
+    }
+
+    pub(crate) async fn browser_permitted(&self, cell: &Cell, arguments: &Value) -> bool {
+        let plan = &arguments["plan"];
+        let Some(mut key) = browser_permit_key(plan) else {
+            return false;
+        };
+        key.push_str(&self.browser_restrictions(cell).await);
+        if !cell.browser_permits.lock().await.contains(&key) {
+            return false;
+        }
+        browser_safe_plan(plan)
+    }
+
+    pub(crate) async fn remember_browser_permit(&self, cell: &Cell, permit: &Value) {
+        if let Some(mut key) = browser_permit_key(permit) {
+            key.push_str(&self.browser_restrictions(cell).await);
+            let mut permits = cell.browser_permits.lock().await;
+            if permits.len() < 64 {
+                permits.insert(key);
+            }
+        }
+    }
+
+    pub fn permission_presets_available(&self) -> bool {
+        self.runtime.as_ref().is_some_and(|runtime| {
+            !runtime.client.is_closed()
+                && runtime.client.info().capabilities["restrictedScopeIsolation"] == true
+        })
+    }
+
+    pub fn permission_full_access_available(&self) -> bool {
+        self.permission_presets_available()
+            && self
+                .runtime
+                .as_ref()
+                .is_some_and(|runtime| runtime.client.info().capabilities["fullAccess"] == true)
+    }
+
+    pub(crate) fn apply_client_permissions(
+        &self,
+        configuration: &mut areal_protocol::desktop::EffectiveConfig,
+    ) -> Result<()> {
+        use areal_protocol::desktop::PermissionPreset;
+        let options = &configuration.options;
+        if options
+            .system_prompt
+            .as_ref()
+            .is_some_and(|s| s.len() > 32768)
+            || options.append_instructions.len() > 32768
+            || options.max_model_rounds.is_some_and(|n| n == 0 || n > 1024)
+            || options.approval_tools.len() > 128
+            || options.preapproved_tools.len() > 128
+        {
+            return Err(Error::Invalid("invalid client option budget".into()));
+        }
+        configuration.read_only |= options.read_only;
+        if let Some(names) = &options.tool_allowlist {
+            if names.len() > 128
+                || configuration
+                    .tool_allowlist
+                    .as_ref()
+                    .is_some_and(|allowed| names.iter().any(|n| !allowed.contains(n)))
+            {
+                return Err(Error::Invalid(
+                    "client tools exceed profile boundary".into(),
+                ));
+            }
+            configuration.tool_allowlist = Some(names.clone());
+        }
+        if options.permission_preset.is_some() && !self.permission_presets_available() {
+            return Err(Error::Invalid(
+                "PERMISSION_PRESETS_UNAVAILABLE: Runtime cannot enforce restricted scopes".into(),
+            ));
+        }
+        if options.permission_preset == Some(PermissionPreset::FullAccess)
+            && !self.permission_full_access_available()
+        {
+            return Err(Error::Invalid(
+                "FULL_ACCESS_UNAVAILABLE: Runtime deployment does not permit full access".into(),
+            ));
+        }
+        self.project_permissions(configuration);
+        Ok(())
+    }
+
+    pub(crate) fn project_permissions(
+        &self,
+        configuration: &mut areal_protocol::desktop::EffectiveConfig,
+    ) {
+        use areal_protocol::desktop::{
+            ApprovalReviewer, EffectivePermissions, PermissionPreset, ResourcePolicy,
+        };
+        configuration.permissions =
+            configuration
+                .options
+                .permission_preset
+                .map(|preset| EffectivePermissions {
+                    resources: if preset == PermissionPreset::FullAccess && !configuration.read_only
+                    {
+                        ResourcePolicy::Deployment
+                    } else {
+                        ResourcePolicy::Workspace
+                    },
+                    reviewer: match preset {
+                        PermissionPreset::Ask => ApprovalReviewer::Human,
+                        PermissionPreset::AutoReview => ApprovalReviewer::Model,
+                        PermissionPreset::FullAccess => ApprovalReviewer::None,
+                    },
+                    full_access_available: self.permission_full_access_available()
+                        && !configuration.read_only,
+                });
+    }
+
     pub fn set_permissions(
         &self,
         config: PermissionConfig,
@@ -131,7 +259,17 @@ impl Engine {
                 return action;
             }
         }
-        if config.mode == PermissionMode::Yolo {
+        let explicit_preset = cell
+            .state
+            .lock()
+            .await
+            .thread
+            .turns
+            .last()
+            .and_then(|turn| turn.configuration.as_ref())
+            .and_then(|c| c.options.permission_preset)
+            .is_some();
+        if config.mode == PermissionMode::Yolo && !explicit_preset {
             return "allow";
         }
         let bindings = cell.bindings.read().await;
@@ -255,7 +393,7 @@ pub(crate) fn restrictions(config: Option<&areal_protocol::desktop::EffectiveCon
     let default = areal_protocol::desktop::EffectiveConfig::default();
     let c = config.unwrap_or(&default);
     json!({
-        "readOnly":c.read_only, "toolAllowlist":c.tool_allowlist,
+        "permissionPreset":c.options.permission_preset,"readOnly":c.read_only, "toolAllowlist":c.tool_allowlist,
         "profile":c.profile.as_ref().map(|p| (&p.id, &p.revision)),
         "approvalTools":c.options.approval_tools,"preapprovedTools":c.options.preapproved_tools,
     })
@@ -305,6 +443,67 @@ pub(crate) fn matches_tool(pattern: &str, tool: &str) -> bool {
         p += 1;
     }
     p == pattern.len()
+}
+
+fn browser_permit_key(plan: &Value) -> Option<String> {
+    let page = plan["pageId"].as_str()?;
+    let host = plan["browserHostId"].as_str()?;
+    let host_generation = plan.get("hostGeneration")?;
+    let page_generation = plan.get("pageGeneration")?;
+    let control = plan.get("controlEpoch")?;
+    let origin = plan["origin"].as_str()?;
+    if page.is_empty()
+        || host.is_empty()
+        || host_generation.is_null()
+        || page_generation.is_null()
+        || control.is_null()
+    {
+        return None;
+    }
+    Some(
+        json!([
+            page,
+            host,
+            host_generation,
+            page_generation,
+            control,
+            origin
+        ])
+        .to_string(),
+    )
+}
+
+fn browser_safe_plan(plan: &Value) -> bool {
+    match plan["operation"].as_str() {
+        Some("observe" | "capture" | "diagnostics" | "wait" | "describe") => true,
+        Some("navigate" | "newPage") => plan["targetUrl"].as_str().is_some_and(|target| {
+            url::Url::parse(target).is_ok_and(|url| matches!(url.scheme(), "http" | "https"))
+        }),
+        Some("act") => {
+            (plan["localDevelopment"] == true
+                && matches!(
+                    plan["action"]["kind"].as_str(),
+                    Some("click" | "fill" | "press" | "scroll" | "drag")
+                ))
+                || matches!(
+                    plan["target"]["semantics"]["kind"].as_str(),
+                    Some(
+                        "edit_field"
+                            | "field_key"
+                            | "focus_field"
+                            | "link_navigation"
+                            | "public_search"
+                    )
+                )
+        }
+        Some("runBatch") => plan["steps"].as_array().is_some_and(|steps| {
+            !steps.is_empty()
+                && steps.iter().all(|step| {
+                    browser_safe_plan(step) && browser_permit_key(step) == browser_permit_key(plan)
+                })
+        }),
+        _ => false,
+    }
 }
 
 #[cfg(test)]

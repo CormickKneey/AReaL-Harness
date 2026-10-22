@@ -274,7 +274,7 @@ impl Engine {
             .as_ref()?
             .command_scratch
             .as_ref()
-            .map(|root| root.join(format!("agent-{}", cell.id)))
+            .map(|root| root.join(&cell.scratch_path))
     }
     pub(crate) fn scratch_uri(&self, cell: &Cell) -> String {
         self.command_scratch(cell)
@@ -283,7 +283,7 @@ impl Engine {
                     .as_ref()
                     .and_then(|runtime| resource_uri(&path.to_string_lossy(), runtime).ok())
             })
-            .unwrap_or_else(|| format!("workspace://scratch/agent-{}", cell.id))
+            .unwrap_or_else(|| format!("workspace://scratch/{}", cell.scratch_path.display()))
     }
     pub(crate) fn scope_permissions(&self, cell: &Cell) -> rt::PermissionRequest {
         if cell.research {

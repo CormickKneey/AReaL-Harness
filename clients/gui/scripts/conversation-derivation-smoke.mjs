@@ -10,6 +10,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { captureSmokeFailure, selectConversation } from "./smoke-navigation.mjs";
 import { withSmokeDeadline } from "./smoke-deadline.mjs";
+import { closeSmokeApplication } from "./application-cleanup.mjs";
 
 const sharedWorkspace = process.argv.includes("--shared-workspace");
 const baselineLayout = process.argv.includes("--baseline");
@@ -72,37 +73,41 @@ const toolSse = (name, args) => [
   { id: "scf-tool", object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 } },
 ].map(value => `data: ${JSON.stringify(value)}\n\n`).join("") + "data: [DONE]\n\n";
 
-// 只剔除与草稿动作无关的精确只读轮询，保留原始 RPC 证据与全部变更命令。
-const isBackgroundStatusRead = entry => ["trajectory", "feedback"].includes(entry.command)
-  && entry.parameters?.operation === "status" && Object.keys(entry.parameters).length === 1;
-const isBackgroundMcpFormsRead = (entry, owner) => entry.command === "manage"
-  && typeof owner?.projectId === "string" && owner.projectId.length > 0
-  && typeof owner?.threadId === "string" && owner.threadId.length > 0
-  && entry.parameters?.operation === "mcpForms"
-  && Object.keys(entry.parameters).sort().join(",") === "operation,projectId,threadId"
-  && entry.parameters.projectId === owner.projectId && entry.parameters.threadId === owner.threadId;
-for (const command of ["trajectory", "feedback"])
-  assert.ok(isBackgroundStatusRead({ command, parameters: { operation: "status" } }));
+// Use the production effect catalog instead of a second, drifting read whitelist.
+const { commandSemantics, validateCommand } = require("@areal/workbench/desktop-contract");
+const isNonMutatingObservation = (entry, owner) => {
+  if (![owner?.projectId, owner?.sourceThreadId, owner?.sideThreadId].every(id => typeof id === "string" && id.length > 0)) return false;
+  try {
+    validateCommand(entry.command, entry.parameters);
+    if (commandSemantics(entry.command, entry.parameters).effect !== "read" || entry.mutation === true) return false;
+    if (entry.parameters.projectId !== undefined && entry.parameters.projectId !== owner.projectId) return false;
+    return [entry.parameters.threadId, entry.parameters.sourceThreadId].every(id =>
+      id === undefined || [owner.sourceThreadId, owner.sideThreadId].includes(id));
+  } catch { return false; }
+};
+const observationOwner = { projectId: "project", sourceThreadId: "source", sideThreadId: "side" };
+const observationHistory = { command: "history", parameters: { projectId: "project", threadId: "side", viewId: "view", operation: "acquire" } };
+assert.ok(isNonMutatingObservation(observationHistory, observationOwner), "history view ownership is observation, not a business mutation");
 for (const entry of [
-  ...["trajectory", "feedback"].flatMap(command => ["retry", "preference", "prepare", "draft", "refine", "submit", "close", "configure", "send", "queue", "steer"].map(operation => ({ command, parameters: { operation } }))),
-  ...["side", "configure", "send", "queue", "steer", "unknown"].map(command => ({ command, parameters: { operation: "status" } })),
-  { command: "trajectory", parameters: { operation: "status", retry: true } },
-  { command: "feedback", parameters: { operation: "status", enabled: true } },
-  { command: "trajectory", parameters: {} },
-]) assert.equal(isBackgroundStatusRead(entry), false, "only exact background trajectory and feedback status reads may be excluded");
-const classifierOwner = { projectId: "classifier-project", threadId: "classifier-source" };
-const classifierForms = { command: "manage", parameters: { operation: "mcpForms", ...classifierOwner } };
-assert.ok(isBackgroundMcpFormsRead(classifierForms, classifierOwner));
-for (const entry of [
-  ...["mcpApps", "mcpFormRespond", "mcpFormPreview", "mcpFormResourceStage", "mcpFormResourceSubmission", "mcpFormResourcePrepare", "mcpFormResourceRelease", "mcpExtensionCall", "mcpSave", "mcpConnect", "mcpDisconnect"].map(operation => ({ command: "manage", parameters: { operation, ...classifierOwner } })),
-  { ...classifierForms, command: "side" },
-  { command: "manage", parameters: { operation: "mcpForms", projectId: "other-project", threadId: classifierOwner.threadId } },
-  { command: "manage", parameters: { operation: "mcpForms", projectId: classifierOwner.projectId, threadId: "other-thread" } },
-  { command: "manage", parameters: { operation: "mcpForms", projectId: classifierOwner.projectId } },
-  ...["requestId", "response", "selectionToken", "retry"].map(key => ({ ...classifierForms, parameters: { ...classifierForms.parameters, [key]: true } })),
-]) assert.equal(isBackgroundMcpFormsRead(entry, classifierOwner), false, "only the exact source-owned MCP forms query may be excluded");
-for (const owner of [undefined, {}, { projectId: "", threadId: classifierOwner.threadId }, { projectId: classifierOwner.projectId, threadId: "" }])
-  assert.equal(isBackgroundMcpFormsRead(classifierForms, owner), false, "background MCP forms queries require a complete owner");
+  ...["send", "configure", "queueEdit", "steer", "fork"].map(command => ({ command, parameters: { projectId: "project", threadId: "source", requestId: "00000000-0000-4000-8000-000000000001" } })),
+  ...["start", "send"].map(operation => ({ command: "side", parameters: { projectId: "project", threadId: "side", sourceThreadId: "source", operation, text: "mutation" } })),
+  ...["mcpFormRespond", "mcpExtensionCall", "mcpConnect", "contextCompact", "processStart"].map(operation => ({ command: "manage", parameters: { projectId: "project", threadId: "source", operation } })),
+  { command: "feedback", parameters: { operation: "preference", enabled: true } },
+  { command: "trajectory", parameters: { operation: "retry" } },
+  { command: "unknown", parameters: {} },
+  { ...observationHistory, parameters: { ...observationHistory.parameters, projectId: "other" } },
+  { ...observationHistory, parameters: { ...observationHistory.parameters, threadId: "other" } },
+  { ...observationHistory, parameters: { ...observationHistory.parameters, requestId: "mutation" } },
+  { command: "manage", parameters: { projectId: "project", threadId: "other", operation: "context", offset: 0, limit: 1 } },
+]) assert.equal(isNonMutatingObservation(entry, observationOwner), false, JSON.stringify(entry));
+
+// Effective snapshots also contain resolved provider/plugin metadata; model ownership
+// is the durable configuration revision and the user's selected configuration.
+const modelConfiguration = config => {
+  assert.ok(config && Number.isSafeInteger(config.revision), "Core configuration is required");
+  const { revision, model, defaultModelRevision, parameters, profile, options, selectedSkills } = config;
+  return structuredClone({ revision, model, defaultModelRevision, parameters, profile, options, selectedSkills });
+};
 
 async function state() { return page.evaluate(() => window.arealDesktop.snapshot()); }
 const project = (snapshot) =>
@@ -345,7 +350,14 @@ try {
           res.write(`data: ${JSON.stringify({ id: "scf-held", object: "chat.completion.chunk", choices: [{ index: 0,
             delta: { content: streamExcerpt }, finish_reason: null }] })}\n\n`);
         }
-        heldResponses.set(lastUser.content, () => res.end(sse(answer)));
+        // This fixture holds capacity, not an idle transport. UI/evidence work
+        // may outlast the real stream idle deadline; comments add no model text.
+        const heartbeat = setInterval(() => res.write(": fixture awaiting explicit release\n\n"), 1000);
+        res.once("close", () => clearInterval(heartbeat));
+        heldResponses.set(lastUser.content, () => {
+          clearInterval(heartbeat);
+          res.end(sse(answer));
+        });
         return;
       }
       if (lastUser?.content === sideFileQuestion && !body.messages.some(message => message.role === "tool")) {
@@ -448,7 +460,7 @@ try {
         parameters = { ...parameters, request: { ...parameters.request, workspaceAccess: "readOnly" } };
         globalThis.__scfRejectNext = null;
       }
-      const entry = { command: parameters.name, parameters: parameters.request, accepted: false };
+      const entry = { command: parameters.name, parameters: parameters.request, mutation: mutation === true, accepted: false };
       if (fixture && !globalThis.__scfRejectNext) entry.fixture = fixture;
       globalThis.__scfMutations.push(entry);
       try {
@@ -611,7 +623,7 @@ try {
     return configuration?.model?.providerId === "fixture" && configuration.model.modelId === "fixture"
       || configuration?.model === null && typeof configuration.defaultModelRevision === "string" && configuration.defaultModelRevision.length > 0;
   }, "source configured fixture model restored after navigation");
-  const mainConfigBefore = JSON.stringify(project(refreshedSource).configurations[sourceThreadId]);
+  const mainConfigBefore = modelConfiguration(project(refreshedSource).configurations[sourceThreadId]);
   await selectSideExcerpt();
   checks.push("AC55: Side selection uses a separate Turn action button, never floats, and switching the source Thread invalidates its owner");
   await sideTrigger.evaluate(element => { window.__scfSideTrigger = element; });
@@ -628,7 +640,7 @@ try {
   const sideInput = sidePane.getByRole("textbox", { name: "随心输入" });
   assert.equal(await sideInput.getAttribute("contenteditable"), "true", "Side must use the shared Lexical editor");
   assert.ok(await sidePane.locator(".composer-surface").isVisible());
-  const sourceConfigBeforeSideModel = JSON.stringify(project(await state()).configurations[sourceThreadId]);
+  const sourceConfigBeforeSideModel = modelConfiguration(project(await state()).configurations[sourceThreadId]);
   await sidePane.getByRole("button", { name: "模型", exact: true }).click();
   const modelPage = page.getByRole("button", { name: "选择模型", exact: true });
   if (await modelPage.isVisible()) await modelPage.click();
@@ -671,7 +683,7 @@ try {
   assert.ok(await page.locator(`#areal-sidebar [data-thread-id="${targetThreadId}"]`).count(),
     "main navigation must retain independent Fork conversations");
   assert.equal(project(sideStarted).configurations[sideThreadId].model.modelId, "fixture-alternate");
-  assert.equal(JSON.stringify(project(sideStarted).configurations[sourceThreadId]), sourceConfigBeforeSideModel);
+  assert.deepEqual(modelConfiguration(project(sideStarted).configurations[sourceThreadId]), sourceConfigBeforeSideModel);
   assert.ok(requests.slice(sideStartRequests).some(request => request.body.model === "fixture-alternate"), "first Side question uses the selected real Core model");
   checks.push("shared Lexical composer and Core model menu: alternate model applies to Side first question without configuring the source");
   assert.equal(side.conversation.policy?.workspaceAccess, "none", "frozen evidence journey uses session-only Side policy");
@@ -690,7 +702,7 @@ try {
   await page.keyboard.press("Escape");
   await sidePane.getByRole("textbox", { name: "随心输入" }).click();
   await until(s => project(s).configurations[sideThreadId]?.revision > firstSideRevision && project(s).configurations[sideThreadId]?.model?.modelId === "fixture", "Side model update through Core configure");
-  assert.equal(JSON.stringify(project(await state()).configurations[sourceThreadId]), sourceConfigBeforeSideModel);
+  assert.deepEqual(modelConfiguration(project(await state()).configurations[sourceThreadId]), sourceConfigBeforeSideModel);
   assert.equal(project(await state()).state.threads[sideThreadId].conversation.policy.workspaceAccess, "none");
   checks.push("shared model menu configures only an idle Side and preserves its Core read-only policy");
   await openSideContext(sidePane);
@@ -698,11 +710,11 @@ try {
   await sidePane.getByRole("region", { name: "冻结证据" }).locator("pre").filter({ hasText: unicodeExcerpt }).first().waitFor();
   await shot("05-side-answered-frozen.png");
   checks.push("AC30/39: Side answers during a live source Runtime command; Unicode source selection is verified and frozen evidence is visible");
-  const bringBackOwner = { projectId, threadId: sourceThreadId };
+  const bringBackContextOwner = { projectId, sourceThreadId, sideThreadId };
   if (sharedWorkspace) {
     const currentModels = project(await state()).configurations;
     const modelOwners = Object.fromEntries([sourceThreadId, sideThreadId].map(id =>
-      [id, JSON.stringify(currentModels[id])]));
+      [id, modelConfiguration(currentModels[id])]));
     const sample = async name => {
       await page.waitForFunction(() => !document.querySelector('.work-surface')?.hasAttribute('data-panel-transition'));
       await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -734,7 +746,7 @@ try {
     await page.waitForFunction(el => el === document.activeElement, await settingsButton.elementHandle());
     await showSideConversation();assert.equal(await sidePane.getByTestId('side-chat-input').innerText(),'共享Side草稿：暂不发送');
     const returned = project(await state());
-    for (const id of [sourceThreadId, sideThreadId]) assert.equal(JSON.stringify(returned.configurations[id]), modelOwners[id],
+    for (const id of [sourceThreadId, sideThreadId]) assert.deepEqual(modelConfiguration(returned.configurations[id]), modelOwners[id],
       'navigation preserves each Core model configuration');
     await sample('shared-04-settings-return');
     await writeFile(toolRelease,'release\n');await until(s=>project(s)?.state?.threads?.[sourceThreadId]?.turns?.at(-1)?.status==='completed','source command completes after shared UI inspection');
@@ -780,18 +792,18 @@ try {
   assert.equal(requests.length, beforeBring.requests, "bring-back must not send or steer");
   const bringCommands = await app.evaluate(() => globalThis.__scfMutations);
   const insertCommands = bringCommands.slice(commandsBeforeInsert);
-  assert.ok(insertCommands.some(entry => entry.command === "trajectory" && isBackgroundStatusRead(entry) && entry.accepted),
+  assert.ok(insertCommands.some(entry => entry.command === "trajectory" && entry.parameters.operation === "status" && isNonMutatingObservation(entry, bringBackContextOwner) && entry.accepted),
     "the raw RPC evidence must retain the successful injected trajectory status request");
-  assert.ok(insertCommands.some(entry => entry.command === "feedback" && isBackgroundStatusRead(entry) && entry.accepted),
+  assert.ok(insertCommands.some(entry => entry.command === "feedback" && entry.parameters.operation === "status" && isNonMutatingObservation(entry, bringBackContextOwner) && entry.accepted),
     "the raw RPC evidence must retain the successful injected feedback status request");
-  assert.deepEqual(insertCommands.filter(entry => !isBackgroundStatusRead(entry) && !isBackgroundMcpFormsRead(entry, bringBackOwner)), [],
-    "confirming bring-back may only overlap independent trajectory/feedback status and exact source-owned MCP forms reads, never queue or steer");
-  assert.ok(bringCommands.slice(beforeBring.commands).every(entry =>
-    isBackgroundStatusRead(entry) || isBackgroundMcpFormsRead(entry, bringBackOwner) || (entry.command === "side" && entry.parameters.operation === "list")),
-  "switching related discussions may only refresh the read-only list alongside independent status and exact source-owned MCP forms reads");
-  events.push({ bringBackCommandWindow: { owner: bringBackOwner, from: beforeBring.commands, insertionFrom: commandsBeforeInsert,
-    to: bringCommands.length, injectedStatusAccepted: true, injectedFeedbackStatusAccepted: true } });
-  checks.push("bring-back retains raw RPC evidence and tolerates exact background trajectory/status, feedback/status and source-owned MCP forms reads without allowing MCP or feedback mutation, retry, send, configure, queue or steer");
+  assert.deepEqual(insertCommands.filter(entry => !isNonMutatingObservation(entry, bringBackContextOwner)), [],
+    "confirming bring-back may overlap validated owner-scoped observations, never business mutations");
+  assert.deepEqual(bringCommands.slice(beforeBring.commands).filter(entry => !isNonMutatingObservation(entry, bringBackContextOwner)), [],
+    "related discussion navigation may observe its owners and manage history views without any business mutation");
+  events.push({ bringBackCommandWindow: { contextOwner: bringBackContextOwner, from: beforeBring.commands, insertionFrom: commandsBeforeInsert,
+    to: bringCommands.length, injectedStatusAccepted: true, injectedFeedbackStatusAccepted: true,
+    effectContract: "@areal/workbench/desktop-contract" } });
+  checks.push("bring-back retains all raw commands and validates their production read semantics and owner scope; no mutation, retry, send, configure, queue or steer occurs");
   assert.equal(project(await state()).state.threads[sourceThreadId].turns.length, beforeBring.sourceTurns);
   assert.equal(project(await state()).state.threads[sideThreadId].turns.length, beforeBring.sideTurns);
   assert.equal(await hash(fixturePath), beforeBring.workspaceSha256);
@@ -800,7 +812,7 @@ try {
   await page.getByTestId("composer-attachments").getByText("main-attachment.txt").waitFor();
   await composeText(page.getByTestId("chat-input"), " 输入法确认🌊汉字", "main IME", true);
   assert.ok((await page.getByTestId("chat-input").innerText()).includes(brought));
-  assert.equal(JSON.stringify(project(await state()).configurations?.[sourceThreadId] ?? null), mainConfigBefore,
+  assert.deepEqual(modelConfiguration(project(await state()).configurations?.[sourceThreadId]), mainConfigBefore,
     "main model configuration must survive Side and bring-back");
   // 关闭面板会记住当前任务的 lastPanel；主窗口的展开按钮恢复同一 Side 标签。
   await page.getByRole("button", { name: "展开侧边面板", exact: true }).click();
@@ -846,7 +858,8 @@ try {
   await page.waitForFunction(id => document.querySelector('[data-testid="areal-workbench"]')?.dataset.threadId !== id, sourceThreadId);
   rawThreadId = await page.getByTestId("areal-workbench").getAttribute("data-thread-id");
   const rawHistory = page.locator(".messages .message-column");
-  await rawHistory.getByRole("button", { name: /^用时 / }).last().click();
+  const rawProgress = rawHistory.locator(`[data-turn-id="${activeTurnId}"]`).getByTestId("turn-elapsed").getByRole("button");
+  if (await rawProgress.getAttribute("aria-expanded") === "false") await rawProgress.click();
   await rawHistory.locator(`[data-turn-id="${activeTurnId}"]`).getByRole("button", { name: "执行过程", exact: true }).click();
   await rawHistory.locator(`[data-tool-id="${completedTool.id}"]`).getByRole("button").first().click();
   const rawDownload = rawHistory.getByRole("button", { name: "下载附件 原始结果", exact: true });
@@ -1070,13 +1083,16 @@ try {
       "GUI-to-Core transport disconnect and disconnected project projection");
     await openSideContext(sidePane);
     await sidePane.getByText(/^来源：.*来源当前状态未知/).waitFor();
-    await page.getByRole("button", { name: "重新连接后台" }).click();
+    await page.getByRole("button", { name: "设置", exact: true }).click();
+    await page.getByRole("button", { name: "后台服务", exact: true }).click();
+    await page.getByRole("button", { name: "重新连接后台", exact: true }).click();
     const reconnected = await until(s => s.connection?.state === "ready" && project(s)?.state?.connected &&
       project(s)?.state?.threads?.[sourceThreadId]?.turns?.length === beforeDisconnect.state.threads[sourceThreadId].turns.length &&
       project(s)?.state?.threads?.[sideThreadId]?.turns?.length === beforeDisconnect.state.threads[sideThreadId].turns.length,
     "GUI-to-Core manual reconnection and authoritative source/Side snapshot");
     assert.equal(project(reconnected).state.threads[sideThreadId].conversation.origin.sourceThreadId, sourceThreadId);
     assert.equal(project(reconnected).state.threads[sourceThreadId].conversation?.kind ?? "main", "main");
+    await page.getByRole("button", { name: "返回应用", exact: true }).click();
   } finally {
     await app.evaluate(() => { globalThis.__scfRestoreReconnect?.(); delete globalThis.__scfRestoreReconnect; });
   }
@@ -1090,7 +1106,8 @@ try {
   assert.ok(forkResults.every(entry => typeof entry.requestId === "string" && entry.requestId.length > 0));
   assert.equal(new Set(forkResults.map(entry => entry.requestId)).size, 4);
   videoPath = await page.video()?.path();
-  await app.close();
+  await closeSmokeApplication(app);
+  app = null;
   await stopService(env);
   // 复用持久状态故障接缝：只在隔离 Core 安全停止后标记既有来源工具为 UNKNOWN。
   const sourceRecordPath = join(scratch, "core", projectId, "state", `${sourceThreadId}.json`);
@@ -1209,15 +1226,20 @@ try {
   if (app) {
     if (!firstMutations.length) try { firstMutations = await withSmokeDeadline("mutation evidence", () => app.evaluate(() => globalThis.__scfMutations ?? [])); } catch (error) { events.push({ requestCaptureError: error.message }); }
     try {
-      await withSmokeDeadline("Electron cleanup", async () => {
-        await app.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 1 }); });
-        if (videoPath) restartVideoPath = await page?.video()?.path();
-        else videoPath = await page?.video()?.path();
-        await app.close();
-      }, 20000);
+      await closeSmokeApplication({
+        process: () => app.process(),
+        close: async () => {
+          await app.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 1 }); });
+          if (videoPath) restartVideoPath = await page?.video()?.path();
+          else videoPath = await page?.video()?.path();
+          await app.close();
+        },
+      });
     } catch (error) {
-      events.push({ electronCloseError: error.message }); process.exitCode = 1;
-      try { app.process()?.kill("SIGTERM"); } catch {}
+      events.push({ electronCloseError: error.message });
+      failure ??= error.stack ?? String(error);
+      passed = false;
+      process.exitCode = 1;
     }
   }
   try {
@@ -1259,7 +1281,7 @@ try {
       "04-source-tool-running.png": "Core/Runtime command marker exists and source Turn remains inProgress",
       "04a-stale-selection.png": "real Core stale-selection rejection retains the Side question without creating a Side",
       "05-side-answered-frozen.png": "Side first answer completed while source tool remains active; Unicode selection verified",
-      "06-bring-back-draft.png": "preview confirmed; local main draft includes Side text and insertion issues no command beyond independent trajectory/status, feedback/status and exact source-owned MCP forms reads",
+      "06-bring-back-draft.png": "preview confirmed; local main draft includes Side text and all overlapping commands are validated owner-scoped observations with no business mutation",
       "07-before-active.png": "before-active Fork has idle bounded inherited history",
       "07a-main-error-isolated.png": "Core refuses unsupported main attachment without sending or losing its draft; Side has no main Composer error",
       "07b-inherited-raw-result.png": "target-owned inherited raw result is displayed and downloaded with no source controls or local execution",

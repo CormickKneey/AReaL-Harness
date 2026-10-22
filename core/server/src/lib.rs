@@ -32,6 +32,7 @@ fn engine_limits(config: &ResolvedCoreConfig) -> Limits {
         max_side_turn_seconds: config.max_side_turn_seconds,
         max_children_per_turn: config.max_children_per_turn,
         max_agent_depth: config.max_agent_depth,
+        model_request_timeout: std::time::Duration::from_secs(config.model_request_timeout_seconds),
         stream_idle_timeout: std::time::Duration::from_secs(config.stream_idle_timeout_seconds),
         max_history_bytes: config.max_history_bytes,
         max_output_bytes: config.max_output_bytes,

@@ -53,7 +53,7 @@ async fn trusted_launch_inherits_only_granted_network_and_child_scopes_can_deny_
                         "-I".into(),
                         "-B".into(),
                         "-c".into(),
-                        "import socket,sys\ns=socket.socket()\ntry: s.bind(('127.0.0.1',0))\nexcept PermissionError: sys.exit(42)\ns.close()".into(),
+                        "import socket,sys\ntry:\n with socket.socket() as s: s.bind(('127.0.0.1',0))\nexcept PermissionError: sys.exit(42)".into(),
                     ],
                     cwd: "workspace://repo".into(),
                     env: Default::default(),
@@ -65,7 +65,11 @@ async fn trusted_launch_inherits_only_granted_network_and_child_scopes_can_deny_
                 .unwrap();
             let result = client.wait(&process.process_id).await.unwrap();
             let allowed = network == NetworkRequest::Inherit && !narrowed;
-            assert_eq!(result.exit_code, Some(if allowed { 0 } else { 42 }));
+            assert_eq!(
+                result.exit_code,
+                Some(if allowed { 0 } else { 42 }),
+                "network={network:?}, narrowed={narrowed}, result={result:?}"
+            );
         }
         client.shutdown().await.unwrap();
     }

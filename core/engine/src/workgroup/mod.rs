@@ -36,6 +36,8 @@ use tree::{Tree, compose, digest, materialize};
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TaskConfiguration {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_preset: Option<areal_protocol::desktop::PermissionPreset>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub approval_tools: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

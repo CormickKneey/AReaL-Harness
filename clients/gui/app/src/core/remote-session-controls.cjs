@@ -20,7 +20,8 @@ function validateControl(p){
     if(v.model!==undefined&&v.model!==null&&(!exact(v.model,['providerId','modelId'])||!id(v.model.providerId)||!id(v.model.modelId)))invalid();
     if(v.parameters!==undefined&&(!exact(v.parameters,['reasoningEffort'])||!['none','minimal','low','medium','high','xhigh','max','ultra'].includes(v.parameters.reasoningEffort)))invalid();
     if(v.options!==undefined){
-      if(!exact(v.options,['readOnly','appendInstructions','approvalTools','preapprovedTools']))invalid();
+      if(!exact(v.options,['permissionPreset','readOnly','appendInstructions','approvalTools','preapprovedTools']))invalid();
+      if(v.options.permissionPreset!==undefined&&!['ask','autoReview','fullAccess'].includes(v.options.permissionPreset))invalid();
       if(v.options.readOnly!==undefined&&typeof v.options.readOnly!=='boolean')invalid();
       if(v.options.appendInstructions!==undefined&&(typeof v.options.appendInstructions!=='string'||Buffer.byteLength(v.options.appendInstructions)>8192))invalid();
       for(const key of ['approvalTools','preapprovedTools'])if(v.options[key]!==undefined&&(!Array.isArray(v.options[key])||v.options[key].length>128||v.options[key].some(x=>!id(x))))invalid();

@@ -744,6 +744,7 @@ async fn task_run_inspection_rejects_unavailable_scope_before_registering_a_work
                 thread_id: None,
                 interaction_mode: None,
                 schedule: None,
+                schedule_v2: None,
                 token_budget: Some(100000),
                 max_turns: Some(2),
                 max_active_seconds: Some(30),
@@ -810,6 +811,7 @@ async fn task_run_inherited_inspection_runs_without_narrowing_the_scope() {
                 thread_id: None,
                 interaction_mode: None,
                 schedule: None,
+                schedule_v2: None,
                 token_budget: Some(100000),
                 max_turns: Some(2),
                 max_active_seconds: Some(30),
@@ -1040,8 +1042,17 @@ async fn model_uses_one_execution_identity_and_rejected_spawn_is_not_reported_as
             .collect();
         if unavailable {
             assert_eq!(outcomes, [ToolOutcome::Failed]);
+            let parent_scratch = scratch.join(format!("agent-{}", parent.id));
             assert_eq!(
-                std::fs::read_dir(&scratch).unwrap().count(),
+                std::fs::read_dir(&scratch)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path())
+                    .collect::<Vec<_>>(),
+                std::slice::from_ref(&parent_scratch),
+                "只允许父会话自己的 scratch，不能遗留子会话目录"
+            );
+            assert_eq!(
+                std::fs::read_dir(parent_scratch).unwrap().count(),
                 0,
                 "未准入子任务不能遗留空 scratch"
             );

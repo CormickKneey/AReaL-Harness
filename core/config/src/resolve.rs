@@ -113,6 +113,11 @@ const ENV: &[(&str, &str, &str)] = &[
         "limits.watchdog_disable",
     ),
     (
+        "AREAL_HARNESS_MODEL_REQUEST_TIMEOUT_SECONDS",
+        "",
+        "limits.model_request_timeout_seconds",
+    ),
+    (
         "AREAL_HARNESS_STREAM_IDLE_TIMEOUT_SECONDS",
         "",
         "limits.stream_idle_timeout_seconds",
@@ -477,7 +482,7 @@ pub(crate) fn valid(field: &str, entry: &Entry) -> Result<()> {
                 return Err(reject("goal limit is out of range"));
             }
         }
-        "stream_idle_timeout_seconds" => {
+        "model_request_timeout_seconds" | "stream_idle_timeout_seconds" => {
             if !value.bytes().all(|b| b.is_ascii_digit())
                 || value
                     .parse::<u64>()
@@ -651,6 +656,7 @@ pub(crate) fn load_mode(
         ("limits.max_side_turn_seconds", "300"),
         ("limits.max_children_per_turn", "64"),
         ("limits.max_agent_depth", "8"),
+        ("limits.model_request_timeout_seconds", "300"),
         ("limits.stream_idle_timeout_seconds", "30"),
         ("limits.max_history_bytes", "0"),
         ("limits.max_output_bytes", "0"),
@@ -1052,6 +1058,10 @@ pub(crate) fn load_mode(
             .parse()
             .unwrap(),
         max_agent_depth: values["limits.max_agent_depth"].value.parse().unwrap(),
+        model_request_timeout_seconds: values["limits.model_request_timeout_seconds"]
+            .value
+            .parse()
+            .unwrap(),
         stream_idle_timeout_seconds: values["limits.stream_idle_timeout_seconds"]
             .value
             .parse()

@@ -2,6 +2,7 @@ import { imageAnnotationText, sentImageAnnotations, serializeImageAnnotations, s
 import { useRef, useState, useEffect } from "react";
 import type { RefObject } from "react";
 import type { Action, Data } from "./services.js";
+import { recoveredOutcome } from "./recoveryPresentation.js";
 import type { LexicalChatInputHandle } from "./LexicalChatInput.js";
 import { composerInput, type ComposerDraftAttachment } from "./ComposerAttachments.js";
 
@@ -262,7 +263,9 @@ export function useComposerQueueEdit({
     setBusy(true);
     try {
       const result = await action("reconcile", { projectId: project.id });
-      const known = result.outcomes?.[edit.unknown.requestId];
+      const known = recoveredOutcome({ outcomes: result.outcomes }, edit.unknown.requestId, threadId,
+        result.outcomes?.[edit.unknown.requestId]?.operation ? { requestId: edit.unknown.requestId,
+          method: `areal/queue/${edit.unknown.operation}`, target: { kind: "thread", threadId } } : undefined);
       const observed =
         known ??
         (await readAction("queue", {
@@ -277,11 +280,11 @@ export function useComposerQueueEdit({
         return;
       }
       const record = { ...edit, unknown: undefined };
-      if (!outcome.accepted) {
+      if (outcome.status === "failed" || outcome.accepted === false) {
         if (edit.unknown.operation === "resume") restoreLocal(record, outcome.message);
         else {
           saveRecord(record);
-          setError(outcome.message ?? "原请求被拒绝，输入已保留。");
+          setError(outcome.message ?? "队列操作执行失败，编辑内容已保留。");
         }
       } else if (edit.unknown.operation === "pause") {
         const latest = await readAction("queue", { projectId: project.id, threadId });

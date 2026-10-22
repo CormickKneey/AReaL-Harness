@@ -43,9 +43,11 @@ class MarkdownBoundary extends Component<{
     static getDerivedStateFromError() { return { failed: true }; }
     render() { return this.state.failed ? <div className="whitespace-pre-wrap break-words">{this.props.text}</div> : this.props.children; }
 }
-export const MessageResponse = memo(function MessageResponse({ children, streaming = false, theme = 'light', onOpenExternalUrl, onOpenFileLink, onRenderImage, webPreviews = false, className, fileLinks = false, preserveLineBreaks = false }: {
+export const MessageResponse = memo(function MessageResponse({ children, streaming = false, theme = 'light', onOpenExternalUrl, onOpenFileLink, onRenderImage, webPreviews = false, className, fileLinks = false, fileLinkBase, preserveLineBreaks = false }: {
     children: string;
     fileLinks?: boolean;
+    // 文档读取器以当前资源地址解析相对链接，再由 Streamdown 规范化路径。
+    fileLinkBase?: string;
     preserveLineBreaks?: boolean;
     streaming?: boolean;
     theme?: 'light' | 'dark';
@@ -62,14 +64,15 @@ export const MessageResponse = memo(function MessageResponse({ children, streami
     callbacks.current = { onOpenExternalUrl, onOpenFileLink, onRenderImage };
     // Preserve the host's authorized media references through sanitization.
     // The caller still validates the exact blob URI and reads it through Core.
-    const rehypePlugins = useMemo(() => onRenderImage ? Object.entries(defaultRehypePlugins).map(([name, plugin]): (typeof defaultRehypePlugins)[string] => {
-        if (name !== 'sanitize' || !Array.isArray(plugin)) return plugin;
+    const rehypePlugins = useMemo(() => onRenderImage || fileLinkBase ? Object.entries(defaultRehypePlugins).map(([name, plugin]): (typeof defaultRehypePlugins)[string] => {
+        if (name === 'harden' && fileLinkBase && Array.isArray(plugin)) return [plugin[0], { ...plugin[1], defaultOrigin: fileLinkBase }];
+        if (name !== 'sanitize' || !onRenderImage || !Array.isArray(plugin)) return plugin;
         const schema = plugin[1] ?? {};
         return [plugin[0], { ...schema, protocols: { ...schema.protocols, src: [...(schema.protocols?.src ?? []), 'areal'] } }];
-    }) : undefined, [Boolean(onRenderImage)]);
+    }) : undefined, [Boolean(onRenderImage), fileLinkBase]);
     const remarkPlugins = useMemo(() => preserveLineBreaks
         ? [...Object.values(defaultRemarkPlugins), ...(fileLinks ? [relativeFileLinks] : []), remarkBreaks]
-        : fileLinks ? [relativeFileLinks] : undefined, [fileLinks, preserveLineBreaks]);
+        : fileLinks ? [...Object.values(defaultRemarkPlugins), relativeFileLinks] : undefined, [fileLinks, preserveLineBreaks]);
     const components = useMemo(() => ({
         a: ({ children, href, node: _node, ...props }: ComponentProps<'a'> & {
             node?: unknown;

@@ -2,7 +2,7 @@
 
 # Task Mode 与独立通信
 
-本契约属于 `areal.core.v1`，面向 TUI、GUI、WebUI 和其他客户端。Rust 类型位于 [tasks.rs](../../core/protocol/src/tasks.rs)，请求、响应和通知的机器契约位于 [areal-core-v1.json](../../schemas/areal-core-v1.json)。先完成 [连接与认证](desktop.md)，再检查 `features.taskModes/taskChannels/asyncQuestions/headlessInteractions`。
+本契约属于 `areal.core.v1`，面向 TUI、GUI、WebUI 和其他客户端。Rust 类型位于 [tasks.rs](../../core/protocol/src/tasks.rs)，请求、响应和通知的机器契约位于 [areal-core-v1.json](../../schemas/areal-core-v1.json)。先完成 [连接与认证](desktop.md)，再检查 `features.taskModes/taskChannels/asyncQuestions/headlessInteractions`；完整 Run 历史另检查 `features.taskRunHistory`。
 
 ## 所有权与模式
 
@@ -49,10 +49,15 @@ async 默认期限 86400 秒，允许 1–604800 秒；同步问题允许 1–36
 
 | 方法 | 参数 | 响应 |
 |---|---|---|
-| task/create | `requestId, mode, objective, threadId?, interactionMode?, schedule?, tokenBudget?, maxTurns?, maxActiveSeconds?` | Task 投影 |
+| task/create | `requestId, mode, objective, threadId?, interactionMode?, schedule?, scheduleV2?, tokenBudget?, maxTurns?, maxActiveSeconds?` | Task 投影 |
+| task/schedule/context | `timeZone` | `{coreNow,timeZone,localDate,localTime}` |
+| task/schedule/preview | `schedule: ScheduleIntent, from?, count: 1..10` | `{coreNow,from,schedule,timeZone,occurrences,warnings}` |
 | task/list | `after?, limit?` | `{data: Task[], nextCursor}` |
 | task/read | `taskId` | Task 投影 |
-| task/update | `requestId, taskId, expectedRevision, objective?, schedule?` | 更新后的 Task 投影 |
+| task/runs/list | `taskId, cursor?, limit?` | `{data: TaskRun[], nextCursor, hasMore, runCount}` |
+| task/run/read | `taskId, runId` | 完整单条 TaskRun |
+| task/update | `requestId, taskId, expectedRevision, objective?, schedule?, scheduleV2?` | 更新后的 Task 投影 |
+| task/runNow | `requestId, taskId, expectedRevision` | `{taskId, runId, revision, accepted:true}` |
 | task/pause, task/resume, task/cancel | `requestId, taskId, expectedRevision` | 已持久受理控制意图的 Task 投影 |
 | task/stopRun, task/resumeRun | `requestId, taskId, expectedRevision, expectedRunId` | 当前 Run 的停止／明确恢复意图，重复安排不变 |
 | task/host/ready | `{}`；需要 unrestricted manage + tools | `{ready:true}`；登记当前连接作为桌面 Host |
@@ -64,7 +69,7 @@ async 默认期限 86400 秒，允许 1–604800 秒；同步问题允许 1–36
 
 `task/pause` 还接受可选 `expectedRunId`，由 `features.taskPauseRunGuard` 声明。Core 查询收据后，在同一 Task 锁内将其与最新 Run 比较，并同时检查 `expectedRevision`；Run 缺失或变化返回冲突。resume/cancel 不接受此字段。同参数已受理请求即使在版本/Run 改变或重启后仍返回原收据；同键更换 Run 返回冲突。省略字段保持旧调用与收据摘要兼容。对于 scheduled，pause 只暂停之后的触发；stopRun 才停止当前执行。执行停止仍以 Run 和 worker 结算为准。
 
-Task 投影包括 `id, revision, channelSequence, owner, mode, interactionMode, objective, threadId, schedule, nextRunAt, paused, cancelled, tokenBudget, maxTurns, maxActiveSeconds, runs, skippedRuns, lastSkippedAt, pendingQuestions`；不内嵌 messages。每个 Run 包含 `id, threadId, goalId, status, reason, objective?, scheduledAt, startedAt, completedAt, usage, waitRequested, workers`。worker 包含 `threadId, turnId, status, settled`；status 为 running/completed/cancelled/failed。
+Task 投影包括 `id, revision, channelSequence, owner, mode, interactionMode, objective, threadId, schedule, nextRunAt, paused, cancelled, tokenBudget, maxTurns, maxActiveSeconds, runs, runCount, archivedRunCount, runsComplete, skippedRuns, lastSkippedAt, pendingQuestions`；不内嵌 messages。每个 Run 包含 `id, threadId, goalId, status, reason, objective?, trigger, scheduledAt, startedAt, completedAt, usage, waitRequested, workers`。worker 包含 `threadId, turnId, status, settled`；status 为 running/completed/cancelled/failed。
 
 Run status 为 `queued/running/waitingForInput/waitingForAgents/paused/blocked/completed/failed/cancelled`；后三项是终态。paused/cancelled 为 Task 控制意图，清理期间 Run 可能仍为 running。以 Run 终态及 worker.settled 判断执行结算，不以控制请求返回或协调 Turn completed 代替。
 
@@ -84,15 +89,47 @@ ChannelMessage 包含 `id, sequence, runId, author, kind, status, createdAt, exp
 
 limit 为 1–100，Task/Inbox 默认 30，Channel 默认 50；Task/Inbox 使用返回的 nextCursor，频道使用 nextSequence/hasMore。页面还有约 128 KiB 的字节上限，Task 单条投影可超过此值；不要假设一页必然达到 limit。Inbox 按需刷新 inbox/list；目前没有全局 Inbox 订阅。
 
+## 立即运行已保存任务
+
+`areal/task/runNow` 为定时 Task 受理一次真实手动执行。调用方需要 interact 权限、不受 Thread 范围限制的身份、仍受理工作的 Core，以及通过 `task/host/ready` 注册的在线桌面 Host。工作区继续共享，调用方不必是 Task 创建者。
+
+Core 在同一次原子提交中保存 queued Run、冻结 objective 和原请求收据，之后才准备 Host。`accepted:true` 只确认持久受理；准备、凭据、模型和执行仍可能失败。准备失败将同一 Run 标为 blocked。`task/resumeRun` 使用原身份和预算继续这次执行。
+
+手动执行不改变 `schedule`、`scheduleV2`、`lastTriggerDecision`、`nextRunAt`、`paused` 或 `skippedRuns`。暂停计划和自然完成的一次性计划允许手动执行，cancelled Task 拒绝。任意非终态 Run 都阻止新受理。重放收据和检查 Task 资格后，重叠请求先于普通 revision 检查返回 `-32009`，其 data 为 `{reason:"activeRun",taskId,runId,revision,outcome:{kind:"rejected"},recovery:{kind:"none"}}`。没有重叠时必须匹配当前 `expectedRevision`。修改和到期触发共用同一准入锁；到期触发输给 manual Run 时仍按原忙碌跳过策略推进。
+
+`TaskRun.trigger` 为 `schedule` 或 `manual`，旧数据默认 `schedule`。manual 的 `scheduledAt` 是逻辑受理时间，客户端显示“手动触发”。Task 总用量包含热记录、已归档 Run 和预留 Token。总预算耗尽时仍可能受理 Run，但随后在 Goal 执行前 blocked。立即运行不增加额度或权限。
+
+丢失响应后，使用完整原请求 `{requestId,taskId,expectedRevision}` 调用 `areal/request/read`。Task selector 不接受 `threadId` 或其他字段。Core 先检查当前 Task 可见性，再按原身份和摘要查询冷热收据。响应为 `{data:[{identity,requestId,method:"areal/task/runNow",digest,result}],retention:"taskLifetime"}`，result 是原始紧凑受理结果。没有收据时 data 为空，不能据此判断拒绝。同一身份和 requestId 改变参数会冲突。客户端在查到原收据前保留 UNKNOWN pending，不重放写请求，也不按 Run 数量猜测受理。既有 Thread 和部署请求查询保持原行为。
+
 ## 修改定时任务
 
-`areal/task/update` 接收 `{requestId, taskId, expectedRevision, objective?, schedule?}`，至少提供一个修改字段。仅可修改未取消的 scheduled Task；schedule 必须为未来 UTC 时间，间隔范围同创建。省略字段保持原值。接口沿用任务授权、持久幂等收据和版本冲突语义，返回完整任务投影并发出 `areal/task/updated`。
+`areal/task/update` 接收 `{requestId, taskId, expectedRevision, objective?, schedule?, scheduleV2?}`，至少提供一个修改字段。仅可修改未取消的 scheduled Task；旧 schedule 必须为未来 UTC 时间，间隔范围同创建。scheduleV2 的后续游标严格晚于本次 Core 时间；interval 保留原 anchorAt 并计算下一次未来时点。省略字段保持原值。接口沿用任务授权、持久幂等收据和版本冲突语义，返回完整任务投影并发出 `areal/task/updated`。
 
 修改保留 Task、Thread、Run 历史、暂停状态与预算；新的时间替换后续 `nextRunAt`。已受理 Goal 继续使用原目标，其控制不会覆盖 Task 的新目标。新 Run 在受理时保存 objective 快照；等待 Host 准备期间也可修改安排，已受理内容不变。已结束的一次性任务可通过新的未来 schedule 再次安排。修改不立即执行任务，也不迁移工作区。客户端先检查 methods 是否包含 `areal/task/update`。
 
+## 日历规则与预览
+
+新计划使用 `scheduleV2`，与旧 `schedule` 互斥。输入、预览与创建/更新共用 `{version:1,rule,misfire,overlap:"skip"}`。misfire 为 `{kind:"coalesce"}` 或 `{kind:"skip",maxLatenessSeconds:0..86400}`。桌面默认显式保存 skip 300，并显示允许延迟。
+
+rule 支持以下形状。
+
+- `once` 为 `{kind:"once",at}`，UTC Unix 整数秒。
+- `interval` 为 `{kind:"interval",anchorAt,intervalSeconds}`，间隔 1..31536000 秒。
+- `calendar` 为 `{kind:"calendar",timeZone,frequency,interval,localTime,anchorDate,weekdays?,monthDays?}`。frequency 为 daily、weekly 或 monthly，interval 为 1..366。daily 不带选择数组；weekly 必须带互异 ISO 星期 1..7；monthly 必须带互异的 1..31 或 `"last"`。其他频率的字段会被拒绝。
+
+日期严格为 1970..9999 年的 YYYY-MM-DD，localTime 为 HH:mm，时间戳范围为 0..253402300799。时区来自固定 chrono-tz 0.10.4 内置 IANA 数据，不读取宿主 zoneinfo。周规则以 anchorDate 所在周的周一对齐，月规则以其所在月对齐，并排除 anchorDate 之前的日期。不存在的月日期和 DST 跳时跳过；DST 重复当地时间只取较早 UTC 一次。31 与 last 落在同一天时仅运行一次。单次查找及一次到期范围最多检查 146097 个候选日或触发点，超限返回 SCHEDULE_EVALUATION_LIMIT，不提交部分游标。
+
+管理会话可提交 `onceLocal` 或 `intervalLocal`，携带 `timeZone,localTime,date`，intervalLocal 另带 intervalSeconds。date 为 `{kind:"date",date:"YYYY-MM-DD"}`、`{kind:"relative",days:0..366}` 或 `{kind:"next"}`。calendar 输入可省略 anchorDate，Core 使用当地今天。next 最多寻找 370 个当地日，不取重复时段的第二次实例；明确日期的不存在当地时间返回错误。已有带偏移 ISO 消费者可用 `onceIso {atIso}` 或 `intervalIso {atIso,intervalSeconds}`，只接受带偏移、无小数的 RFC3339 秒精度时间。输出只保存 canonical once、interval 或完整 calendar。
+
+context 和 preview 为 observe 操作。from 包含边界，省略时使用同一次捕获的 Core now。预览最多返回 count 个 `{at,localTime}`，同时返回 canonical schedule、时区与缺日期/DST 提示。预览仅用于展示；保存对原意图重新捕获 Core 时间，先按原意图摘要查询收据，再解析 relative/next，所以重试不会改变已受理计划。新 once/interval 创建保留给定时点或锚点，允许已到期；calendar 创建从 Core now 起选择首点。更新后的游标必须严格在未来。读取及重启不重新选择游标。
+
+忙碌 Run，包括 blocked，优先记为 skippedOverlap；空闲且 Host 不在时不推进。coalesce 受理最早待执行点的一次 Run。skip 延迟不超过窗口时受理最早点；超过窗口则跳过截至 now 的全部到期点，后续游标严格晚于 now。窗口 300 时，300 秒受理，301 秒跳过。错过一次性计划不伪造 Run。
+
+Task 保存固定大小的 `lastTriggerDecision`，包含 sequence、decidedAt、planRevision、originalScheduledAt、dueThrough、dueCount、nextRunAt 和 outcome。outcome 为 admitted（带 runId）、skippedOverlap 或 missedWindow。skippedRuns 只累计重叠次数。新 Run 的 `acceptedSchedule` 保存受理时的规则、策略和 Task revision；自动 Run 另保存真实受理决策，manual 快照省略 decision；后续修改不会重写。客户端按该快照的时区显示历史。旧 Run 不补造快照。
+
 ## 定时、预算与恢复
 
-schedule 为 `{at: UTC Unix秒, intervalSeconds?: 1..31536000, timeZone?: IANA 时区名}`；仅 scheduled 可指定。timeZone 保存客户端解释日期时的时区，不改变 UTC／固定间隔语义。省略 intervalSeconds 表示一次性；重复调度以 at 为锚点，服务恢复后错过的触发点合并为一次，已有未结束 Run 时跳过本次触发，不创建重叠 Run。不支持 cron、日历时区规则或操作系统关机唤醒。Core 服务和已登记桌面 Host 必须保持在线。Host 离线时不受理新执行，恢复后合并一次补执行；运行中断则保留原 Run／Thread，等待用户明确恢复。
+schedule 为 `{at: UTC Unix秒, intervalSeconds?: 1..31536000, timeZone?: IANA 时区名}`；仅 scheduled 可指定。timeZone 保存客户端解释日期时的时区，不改变 UTC／固定间隔语义。省略 intervalSeconds 表示一次性；重复调度以 at 为锚点，服务恢复后错过的触发点合并为一次，已有未结束 Run 时跳过本次触发，不创建重叠 Run。该旧字段始终表示固定秒数，不会因升级变为日历规则。不支持 cron、RRULE 或操作系统关机唤醒。Core 服务和已登记桌面 Host 必须保持在线。空闲且 Host 离线时保留最早待执行时间，恢复后按计划的漏执行策略处理；运行中断则保留原 Run／Thread，等待用户明确恢复。
 
 Task tokenBudget 覆盖所有 Run 的已确认和预留消费；maxTurns/maxActiveSeconds 分别限制每个 Run。沿用 Goal 的保守准入与未知消费处理。协调 Turn 和 detached worker 的活动时间取并集，重叠不重复计时；释放所有执行后等待用户的时间不计入。每个 worker 继承冻结配置、权限和同一 Goal 预算；最多使用部署 maxChildrenPerTurn 个 worker（按 Run 累计），maxModelRounds 默认取 16 与父上限的较小值，显式值不能超过父配置。交互式协调者的 worker 使用 asynchronous；headless 保持 headless。worker 不再递归创建 Task worker，也不能修改根 Goal；共享工作区写入仍须明确文件归属。
 
@@ -102,7 +139,9 @@ scheduled 的 pause/resume 只影响后续触发，不改变本次执行或 work
 
 周期Task有Token总上限时，更新或恢复关联Goal还会扣除其他Run的已确认及预留消费，校验本轮额度不超过余额；不能将本轮额度改为无限。超限返回`TASK_TOKEN_BUDGET`（参数错误），不保存修改或恢复执行。当前没有修改周期Task总上限的公开接口；需要更多总额度时应明确创建新任务。
 
-状态保存在 `desktop/task-mode.json`，含 Task、Channel 和幂等收据。每部署最多 1024 Task、8192 收据、32 MiB；每 Task 最多 128 Run、1024 消息，满后拒绝或暂停，不自动删除历史。活动或挂起等待的 Run 在 Core 重启后暂停，显式 resumeRun（scheduled）或 resume 后才继续；尚未触发的 schedule 保留。恢复不自动重放未知工具副作用。`server/drain` 停止当前执行并关闭准入，但保留 scheduled 的启用状态；`server/status.activeTasks` 计入待执行时间点，ifIdle 不把它们视为空闲。
+`desktop/task-mode.json` 是版本 5 的唯一提交根，引用 `desktop/task-ledger/` 中不可变的热 Task、历史分段与收据/归属索引。每部署仍最多 1024 Task，普通热状态总预算为 32 MiB；单个不可变文件的硬读取上限为 256 MiB。128 Run 和 1024 消息是热保留目标，完整历史和原始幂等响应保留在冷存储中，不因历史数量暂停周期任务。终态、用量已确认、无未知请求、worker 已结算且无待处理问题的 Run 才可归档；未知工具效果、审批或无法在有界检查中确认的 Thread 历史保留热态。常规保留每次最多检查 16 个 Thread 快照；引用超过 16 个 Thread 的 Run 会保持热态，直到启动时完整检查，因此仍可能占用普通热状态预算，默认 worker 上限为 64。普通增长满额时返回 `taskHotStateCapacity`，已受理工作的控制和有界终态结算可使用预留容量。物理写入或提交结果不明返回存储错误，并冻结 Task 写入与新派发；重启校验且同步已提交根与全部引用文件后才恢复。活动或挂起等待的 Run 在 Core 重启后暂停，显式 resumeRun（scheduled）或 resume 后才继续；尚未触发的 schedule 保留。恢复不自动重放未知工具副作用。`server/drain` 停止当前执行并关闭准入，但保留 scheduled 的启用状态；`server/status.activeTasks` 计入待执行时间点，ifIdle 不把它们视为空闲。
+
+私有收据与归属索引使用 256 个桶头和完整 SHA-256 键的压缩 radix。单次查找最多访问 64 个节点，并在最多 64 行的有序终端叶中查找。分支文件读取前限制为 2 KiB，普通打包叶的序列化上限为 128 KiB；单个更大的历史响应可使用 256 MiB 文件上限。更新只重写终端叶与祖先路径。catalog 的 index_version 3 使用节点版本 2。未发布的实验性 index_version 2 会被拒绝，原根不会被替换；已部署的 Task store v1–4 保留完整原根字节与不可变引用文件后迁移。旧收据摘要、响应、nextRunAt 和旧 Run 事实不重算。旧二进制拒绝 v5 根；降级需要恢复完整升级前状态，不提供在线转换。
 
 Thread 快照版本为 13，API 保持 areal.core.v1；旧 Thread/Goal 可读取，旧 Goal 在首次 resume 时补登记 Task。旧二进制不能读取新版本快照。嵌入式宿主在完成模型、工具装配后调用 `Engine::start_task_scheduler()`；app-server 自动调用。
 
@@ -142,4 +181,12 @@ Inbox 获取的是原频道问题，回复引用其 runId 和 id：
 
 Task worker 在调用方和父配置均未给出轮数时默认无限；显式限制仍继承并执行。部署 Goal 上限为 0 表示无限，不表示零调用额度。Task/Channel 记录容量仍属于独立服务资源限制。
 
-Task 存储写入版本 3，兼容读取版本 1／2，新增持久准备配置；旧二进制拒绝读取版本 3。TaskWorker 保留旧 threadId/turnId，新增可选 execution/executionId，统一投影共享与隔离 worker。新模型入口为 agent_spawn；旧 task_spawn 兼容但不再展示。候选待交付不能完成 Run；没有活跃 Turn 时唤醒原协调者，不重复执行。
+Task 存储写入版本 5，迁移读取版本 1／2／3／4；原始旧文件字节备份保存在 `desktop/task-legacy/`。迁移先同步不可变文件，再原子替换原路径的版本 5 根，旧二进制拒绝读取。备份、复制与恢复必须包含根及其可达文件；孤儿文件不代表已受理操作，本阶段不自动回收。准备配置在 Goal 身份已持久绑定或 Run 终结后退出热状态。TaskWorker 保留旧 threadId/turnId，新增可选 execution/executionId，统一投影共享与隔离 worker。新模型入口为 agent_spawn；旧 task_spawn 兼容但不再展示。候选待交付不能完成 Run；没有活跃 Turn 时唤醒原协调者，不重复执行。
+
+## 完整 Run 历史与容量诊断
+
+Task 投影中的 `runs` 是热窗口。`runCount` 包含冷热 Run，`archivedRunCount` 表示已归档数量，`runsComplete=false` 要求客户端通过历史接口读取。`task/runs/list` 默认 30 条，允许 1–100 条，按 `(scheduledAt,id)` 从新到旧返回。游标绑定 Task、第一页的排序上界与最后一行，归档位置和重启不改变游标含义。`task/run/read` 返回原始 TaskRun；超过 128 KiB 响应预算的单条记录明确报容量错误。历史读取、Channel、列表和订阅使用同一捕获快照进行权限判断与投影，归档不扩大受限客户端的 Thread 权限。
+
+Channel 只返回消息的最终状态，按 sequence 升序且每个 ID 一次。`nextSequence` 是最后实际返回的 sequence；状态更新留下的序号空洞不表示仍有下一页。单条消息超过响应预算时明确报错，不返回永远 `hasMore=true` 的空页。
+
+容量错误使用现有 RPC 错误边界。`-32001` 的 `data` 为 `{reason:"taskHotStateCapacity",resource:"taskHotState",recovery:"settleOrCancelExistingWork",retryable:false}`。Task 写入失败及冻结后的 `-32603` 使用 `{reason:"taskStorageRecoveryRequired",resource:"taskStorage",recovery:"restartCore",retryable:false}`。存储失败后不伪造已持久化的磁盘故障状态。停止意图受理、worker 结算和 Run 终态仍是不同的观察结果。

@@ -380,7 +380,13 @@ pub(crate) fn parse(files: &Files, id: &str, source: &Path, cache: &Path) -> Res
     let manifest = if portable {
         root.as_ref().unwrap()
     } else {
-        legacy.as_ref().context("no supported plugin manifest")?
+        legacy.as_ref().with_context(|| {
+            if files.contains_key(".zcode-plugin/plugin.json") {
+                "unsupported .zcode-plugin manifest; use portable, Codex, Claude or Cursor format; see docs/guides/plugins.en.md"
+            } else {
+                "no supported plugin manifest"
+            }
+        })?
     };
     let overlay = if portable {
         inline.or(legacy.as_ref()).unwrap_or(&Value::Null)
@@ -421,6 +427,8 @@ pub(crate) fn parse(files: &Files, id: &str, source: &Path, cache: &Path) -> Res
         installed_version: None,
         installed_digest: None,
         installed_skills: vec![],
+        component_support: None,
+        installed_component_support: None,
         installed_onboarding_skill: None,
         enabled: false,
         source: source.into(),
@@ -647,5 +655,36 @@ pub(crate) fn parse(files: &Files, id: &str, source: &Path, cache: &Path) -> Res
         d.diagnostics
             .push("legacy commands migration not yet supported".into());
     }
+    let manifest_path = if portable {
+        "plugin.json"
+    } else {
+        legacy_path.unwrap()
+    };
+    let format = if portable {
+        crate::ManifestFormat::Portable1
+    } else {
+        match manifest_path {
+            ".codex-plugin/plugin.json" => crate::ManifestFormat::Codex,
+            ".claude-plugin/plugin.json" => crate::ManifestFormat::Claude,
+            _ => crate::ManifestFormat::Cursor,
+        }
+    };
+    let overlay_path = if portable && inline.is_some() {
+        "plugin.json#/extensions/com.openai".into()
+    } else {
+        legacy_path.unwrap_or(manifest_path).into()
+    };
+    d.component_support = Some(crate::support::parse(
+        files,
+        crate::support::ManifestSelection {
+            portable,
+            format,
+            manifest_path,
+            manifest,
+            overlay_path,
+            overlay,
+        },
+        &d.skills,
+    )?);
     Ok(d)
 }

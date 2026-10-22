@@ -19,17 +19,17 @@ pub(super) struct ToolHost {
     id: String,
     identity: String,
     next: AtomicU64,
-    tx: mpsc::Sender<Value>,
+    tx: mpsc::Sender<Outbound>,
     stop: CancellationToken,
     pending: StdMutex<HashMap<String, PendingReply>>,
 }
 impl ToolHost {
     #[cfg(test)]
-    pub fn new(tx: mpsc::Sender<Value>, stop: CancellationToken) -> Arc<Self> {
+    pub fn new(tx: mpsc::Sender<Outbound>, stop: CancellationToken) -> Arc<Self> {
         Self::authenticated(tx, stop, "trusted-embedded-host".into())
     }
     pub fn authenticated(
-        tx: mpsc::Sender<Value>,
+        tx: mpsc::Sender<Outbound>,
         stop: CancellationToken,
         identity: String,
     ) -> Arc<Self> {
@@ -77,10 +77,13 @@ impl Drop for Pending<'_> {
     fn drop(&mut self) {
         if self.host.pending.lock().unwrap().remove(&self.id).is_some() {
             // Best effort only: a remote client may already have committed a side effect.
-            let _ = self.host.tx.try_send(areal_protocol::notification(
-                "areal/tool/cancelled",
-                json!({"requestId":self.id}),
-            ));
+            let _ = self
+                .host
+                .tx
+                .try_send(Outbound::Message(areal_protocol::notification(
+                    "areal/tool/cancelled",
+                    json!({"requestId":self.id}),
+                )));
         }
     }
 }
@@ -124,6 +127,18 @@ impl DynamicToolHost for ToolHost {
             })??,
         ))
     }
+    async fn page_tool_notice(
+        &self,
+        notice: areal_protocol::plugin_runtime::PageToolNotice,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(!self.is_closed(), "page-tool Host disconnected");
+        self.tx
+            .try_send(Outbound::Message(notice.into_notification()))
+            .map_err(|_| anyhow::anyhow!("page-tool notice delivery failed"))
+    }
+    async fn wait_closed(&self) {
+        self.stop.cancelled().await;
+    }
     async fn call(
         &self,
         params: Value,
@@ -161,7 +176,9 @@ impl ToolHost {
         };
         if self
             .tx
-            .try_send(json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}))
+            .try_send(Outbound::Message(
+                json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}),
+            ))
             .is_err()
         {
             self.stop.cancel();

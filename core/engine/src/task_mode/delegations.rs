@@ -13,6 +13,9 @@ impl Engine {
             return Ok(false);
         };
         let tasks = self.task_modes.state.lock().await;
+        if tasks.cold_run(Some(goal_id), Some(run_id))?.is_some() {
+            return Ok(false);
+        }
         Ok(tasks.tasks.get(task_id).is_some_and(|task| {
             !(task.cancelled || task.paused && task.mode != TaskMode::Scheduled)
                 && task.runs.iter().any(|run| {
@@ -41,6 +44,9 @@ impl Engine {
             ));
         }
         let tasks = self.task_modes.state.lock().await;
+        if tasks.cold_run(Some(&goal.id), None)?.is_some() {
+            return Err(Error::Conflict);
+        }
         let Some((task, run)) = tasks.tasks.values().find_map(|task| {
             task.runs
                 .last()
@@ -136,7 +142,7 @@ impl Engine {
             });
         }
         task.revision += 1;
-        self.save_tasks(&mut state, candidate, task_id).await
+        self.save_tasks(&mut state, candidate, task_id, true).await
     }
 }
 

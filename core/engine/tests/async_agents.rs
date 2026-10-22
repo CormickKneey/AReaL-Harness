@@ -162,7 +162,7 @@ async fn runtime() -> (Arc<Client>, tokio::task::JoinHandle<()>) {
                     json!({"protocolVersion":"areal.runtime.v0","runtimeEpoch":epoch,"connectionId":"fixture","rootScopeId":root,"capabilities":{"methods":["scope.check","fs.execute"]}})
                 }
                 "scope.check" => json!({"available":true}),
-                "scope.create" | "scope.revoke" | "scope.waitClosed" => {
+                "scope.create" | "scope.get" | "scope.revoke" | "scope.waitClosed" => {
                     json!({"scopeId":root,"parentScopeId":null,"state":if method=="scope.waitClosed" {"closed"}else{"active"},"owner":{"taskId":"fixture"},"readRoots":["workspace://repo"],"writeRoots":["workspace://repo"],"network":"deny","limits":{"wallTimeMs":10000,"outputBytes":8388608,"maxProcesses":4},"activeProcesses":0,"outputBytes":0,"cleanupError":null})
                 }
                 "connection.close" => json!({"closed":true}),
@@ -261,12 +261,20 @@ async fn parent_progresses_during_child_inference_and_can_read_or_cancel_owned_w
                 .unwrap()
                 .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
                 .collect::<std::collections::BTreeSet<_>>(),
-            [
-                format!("agent-{}", parent.id),
-                format!("agent-{}", child.id)
-            ]
-            .into(),
-            "only admitted parent and child tasks may have private scratch directories"
+            [format!("agent-{}", parent.id)].into(),
+            "only the parent owns a top-level scratch directory"
+        );
+        assert_eq!(
+            std::fs::read_dir(
+                temp.path()
+                    .join("scratch")
+                    .join(format!("agent-{}", parent.id))
+            )
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect::<std::collections::BTreeSet<_>>(),
+            [format!("agent-{}", child.id)].into(),
+            "only the admitted child may have a nested private scratch directory"
         );
         assert!(
             done.turns[0]

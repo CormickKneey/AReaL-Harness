@@ -1,19 +1,19 @@
 use super::*;
 use areal_protocol::desktop::ProcessStart;
 
-pub(crate) const METHODS: &[&str] = &[
-    "areal/process/acknowledgeCleanup",
-    "areal/process/start",
-    "areal/process/list",
-    "areal/process/get",
-    "areal/process/read",
-    "areal/process/write",
-    "areal/process/resize",
-    "areal/process/closeStdin",
-    "areal/process/terminate",
-    "areal/process/wait",
-    "areal/thread/closeResources",
-];
+areal_protocol::method_catalog! {
+    "areal/process/acknowledgeCleanup" => Mutation;
+    "areal/process/start" => Mutation, Thread;
+    "areal/process/list" => Read;
+    "areal/process/get" => Read;
+    "areal/process/read" => Read;
+    "areal/process/write" => Mutation;
+    "areal/process/resize" => Mutation;
+    "areal/process/closeStdin" => Mutation;
+    "areal/process/terminate" => Mutation;
+    "areal/process/wait" => Read;
+    "areal/thread/closeResources" => Mutation;
+}
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Target {

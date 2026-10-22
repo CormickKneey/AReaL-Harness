@@ -27,7 +27,7 @@ test("historical anchor A with current source C: renderer default intent reaches
     [{ model: { providerId: "p", modelId: "C" } }, { model: { providerId: "p", modelId: "C" } }],
   ]) {
     let sent;
-    const backend = {
+    const backend = Object.assign(Object.create(CoreBackend.prototype), {
       closing: false,
       start: async () => project,
       submit: async (_project, method, params) => {
@@ -37,7 +37,7 @@ test("historical anchor A with current source C: renderer default intent reaches
       },
       openThread: async () => {},
       listThreads: async () => {},
-    };
+    });
     await CoreBackend.prototype.executeCommand.call(backend, "side", {
       projectId: "p",
       operation: "start",

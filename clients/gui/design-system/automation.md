@@ -17,17 +17,6 @@
 
 AReaL 采纳唯一来源、生成检查与职责分离。本次保留现有 CSS/主题/偏好作为数值源；未引入 Terrazzo，也未复制其 Token、登录几何或 CI 工作流。
 
-## Raft Flutter 的机制
-
-| 机制 | 源码依据 | 作用与限制 |
-| --- | --- | --- |
-| 固定来源及可重复 Token 转换 | [design-tokens](https://github.com/kevinzhow/raft-flutter/blob/22d51f32c3276c5d67ed454e12d4aa3225074541/docs/design-tokens.md)、[source manifest](https://github.com/kevinzhow/raft-flutter/blob/22d51f32c3276c5d67ed454e12d4aa3225074541/tool/design-source/manifest.json) | Web CSS/主题输入被固定，产物可查来源；跨渲染器转换不等于用户路径通过 |
-| 组件 recipe 解析后再生成 | [recipes/run](https://github.com/kevinzhow/raft-flutter/blob/22d51f32c3276c5d67ed454e12d4aa3225074541/tool/recipes/run)、[component-recipes](https://github.com/kevinzhow/raft-flutter/blob/22d51f32c3276c5d67ed454e12d4aa3225074541/docs/component-recipes.md) | 抽取真实变体组合，经 Tailwind 编译、层叠和变量解析，再生成 Dart recipe 和文档；不是只从图片估计 padding |
-| 页面共享组合 | [page_recipes.dart](https://github.com/kevinzhow/raft-flutter/blob/22d51f32c3276c5d67ed454e12d4aa3225074541/packages/raft_ui/lib/src/page_recipes.dart)、[dimension contract](https://github.com/kevinzhow/raft-flutter/blob/22d51f32c3276c5d67ed454e12d4aa3225074541/docs/design-dimensions.md) | 页面复用布局与状态角色；实际挂载覆盖与库默认分开，绘制/布局/命中范围分开 |
-| AST 漂移审计与棘轮 | [ds-audit](https://github.com/kevinzhow/raft-flutter/blob/22d51f32c3276c5d67ed454e12d4aa3225074541/tool/ds-audit)、[AST scanner](https://github.com/kevinzhow/raft-flutter/blob/22d51f32c3276c5d67ed454e12d4aa3225074541/tool/ds_audit/lib/ds_audit.dart) | 按文件/类别比较存量基线，限制新增漂移；平台例外有理由且单独计数，扫描不代替布局验收 |
-
-AReaL 采纳可重复目录和有限模式，沿用现有设置组合与生产预览。跨平台 Token/recipe 转译、AST 全仓棘轮暂未接入；不写一个正则就声称达到 Raft 的 AST 覆盖。
-
 ## Product Design Skills 的方法
 
 方法来源为已安装的 `product-design@0.1.56`：`get-context`、`image-to-code`、`design-qa`、`references/existing-codebase-edits.md`。此处借鉴其步骤，不执行整站原型、模板生成或发布流程。

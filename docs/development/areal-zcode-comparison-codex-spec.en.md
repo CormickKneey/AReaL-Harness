@@ -86,31 +86,40 @@ The long-term part of AUTO-01 targets sustainable recurring tasks. Its stop-cont
 
 ## Phases and parallel execution
 
-Use this order for the first round. Detailed acceptance remains in each domain specification. Do not edit files from this table alone.
+GUI user paths are the primary delivery surface. CLI checks may validate Core or browser adapter contracts first, but they do not replace GUI entry points or real desktop acceptance. A headless Chromium process, noninteractive Core execution, and execution after GUI exit are separate capabilities.
 
-1. AUTO-01A covers control at capacity, minimal cold receipt storage, v3 migration, and structured reasons. First establish a real page-switch reproduction for UI-01.
+### Confirmed delivery order
 
-2. AUTO-01B adds Run/Channel archives and history UI. Implement UI-01. These write sets are independent and can proceed in parallel.
+| Phase | Scope | Observable completion condition |
+| --- | --- | --- |
+| One | AUTO-01 and UI-01 | Receipt and history capacity do not block durable stop; hot and cold history preserve execution ownership and budgets; ordinary navigation retains live pages and unsaved edits. |
+| Two | AUTO-03, B1, PLG-01 | Run Now preserves the schedule; browser actions have observable targets; component reports identify the exact package version. |
+| Three | AUTO-02 and UI-02 | Core calendar previews match actual triggers; mounting selects the exact original result without executing the tool again. |
+| Four | UI-03B | A fixed real editor supports bounded selection reads, revision-checked page edits, authorization, cancellation, and UNKNOWN. This remains part of the full plan; CLI, UI-02, PLG-01, and UI-03A are not mandatory prerequisites. |
+| Demand-driven extensions | AUTO-04, B2, B3, PLG-02 | Background execution, terminal browsing, account login, and a fixed target plugin respectively justify these slices. They are not all enabled by default for this round. |
 
-3. AUTO-03, B1, and PLG-01 can proceed in parallel with independent write sets. One integrator serializes public protocol and generated-type changes.
+### Phase-one delivery units
 
-4. AUTO-02 and UI-02 each depend on their corresponding foundations. B2 is a separate provider workflow that delivers CLI support before AUTO-04 integration.
+1. Establish failing capacity-stop and page-navigation cases against isolated Core state and a real Electron page respectively.
+2. AUTO-01A delivers v3 migration, committed cold receipt lookup, and control at capacity. Return accepted only after durable commit. Preserve each original request identity, digest, and response.
+3. AUTO-01B archives safely settled Runs and closed Channel records, and retires their preparations. Resume, ensure, budget, prompt limits, approval classification, and history authorization retain the same Run/Goal provenance across hot and cold records. Channel pagination merges records by their original sequence.
+4. UI-01 reuses the existing window apps descriptors. Stable token-keyed iframe hosts live outside the conditional SidePane and Thread key. Hidden pages route to their original project and Thread without stealing focus. Source revocation reaches every retained page.
+5. Integrate GUI history entry points, capacity reasons, and public contracts. Verify Core recovery and real GUI paths separately, inspect the owned diff, and create local commits.
 
-5. Start AUTO-04, PLG-02, UI-03, and B3 only for real use cases. Their presence in this document is not authorization to implement them.
+Core remains the sole Task ledger and execution owner. This round prefers JSON hot snapshots and immutable cold segments. Sync cold segments before committing snapshot references. Existing Thread archives provide a commit-protocol precedent, not a reusable Task data model. Archiving must neither grant old Goals new execution eligibility nor retain cumulative usage while losing original ownership.
 
-```mermaid
-flowchart TD
-    A["AUTO-01 control and ledger"] --> B["AUTO-03 manual runs"]
-    A --> C["AUTO-02 calendar rules"]
-    D["UI-01 live pages"] --> E["UI-02 result mounting"]
-    E --> F["UI-03 page tools"]
-    G["PLG-01 support matrix"] --> H["PLG-02 component adapters"]
-    I["B2 headless Host"] --> J["AUTO-04 browser integration"]
-    B --> J
-    I --> K["B3 dedicated account state"]
-```
+### Contract corrections for later slices
 
-AUTO-04 can deliver shell/files first. Only browser task integration depends on B2. B3 persistent Profiles can be validated in CLI first, with recurring-task binding dependent on AUTO-04. B1 can proceed independently. B2 must use the same browser contracts to accept implemented actions, without implying that every B1 extension is present. UI-01, UI-02, and UI-03 change the same page/bridge boundary and should merge in sequence. AUTO-01, AUTO-02, AUTO-03, and AUTO-04 share `core/protocol/src/tasks.rs` and `task_mode`. Do not have several workers edit those files concurrently and rely on automatic merging.
+- UI-02 selects a tool record by threadId, turnId, and Core itemId. Upstream callId values can repeat across Turns and are not sufficient historical identities. New snapshots carry source bindings; insufficient old evidence falls back to ordinary records. Old requests cannot revive closed pages.
+- B1 supplies observable option facts and controlled option identities. State waits do not reuse action checks that reject disabled elements. When scroll or hover invalidates observations, batches stop with their confirmed prefix preserved.
+- If B2 starts, the same CLI Core connection handles prepare/call/cancel and forwards through private IPC to the browser child. The child holds no Core credential. Reuse bidirectional stream-json approvals. A browser without a window does not authorize noninteractive execution.
+- AUTO-03 extends `areal/request/read` with a strict Task selector carrying the original TaskRunNow parameters. It checks identity, digest and the original acceptance. A missing receipt stays UNKNOWN without replay. An active Run conflict returns its runId. Exhausted total budget blocks the same accepted Run.
+- Native B1 selection uses a fixed Host operation bound to complete ordered OPTION identities and dispatches untrusted input/change events. Input confirmation remains separate from business verification. Observation invalidation preserves the batch call deduplication record and confirmed prefix.
+- PLG-01 distinguishes candidate sourceDigest from actual installedDigest and reuses installation, connection, and trust projections. Static required components are declared only by portable `extensions.org.areal.componentRequirements={version:1,requiredKinds:[...]}`. Dynamic connection and trust do not affect static compatibility. Historical Skills are checked against their own immutable package digest. A compatible replacement cannot admit incompatible old content.
+- AUTO-04 local shell/files first reuse Core server-owned execution where suitable. Background browsing depends on the necessary service adapter and scoped authorization, without requiring CLI B2 first.
+- UI-03A starts only when a real page reaches the request budget. UI-03B needs stable pages and the Core tool boundary. Existing MCP tools remain preferred for durable documents; page tools address real selection, undo, or unsaved state.
+
+AUTO-01 and UI-01 can proceed in isolated worktrees. One integrator serializes public protocol, generated schema, integration builds, and desktop focus. Each phase reports source, Core/CLI, real GUI, real-provider, and packaged-install evidence separately. This section takes precedence over conflicting candidate interfaces or older dependencies below. Unexecuted checks are not passes.
 
 ## Shared handoff requirements
 
@@ -578,7 +587,7 @@ Z9. [Independent history deletion and pruning](https://github.com/zai-org/ZCode/
 
 **Split into two mergeable PRs.**
 
-1. **AUTO-01A control, cold receipts, and diagnostics.** Add structured Task `suspensionReason`/`storageHealth`, with names defined in the same protocol. This PR must include minimal immutable cold receipt segments, queries through the committed root, and v3 migration. Archive committed receipts to release hot capacity before allowing new stopRun/cancel requests to be durably accepted. Keep each Task's control state bounded. Complete historical receipts retain identity/method/requestId/digest/original response. Overwrite a control slot only after its receipt enters the queryable committed cold chain. One slot cannot replace historical request records. Migrate valid v3 snapshots already close to 32MiB, not only reserve capacity for new schedules. Reject new work when capacity for growth is insufficient. Never return accepted before persistence. UI shows structured reasons and recovery conditions while retaining execution-settlement state.
+1. **AUTO-01A control, cold receipts, and diagnostics.** Reuse existing Task control fields and structured Core errors to expose capacity resources and recovery conditions. This slice includes immutable receipt indexes, committed-root queries, and v3 migration so new stopRun/cancel requests can still be durably accepted at capacity. Keep each Task's control state bounded. Complete historical receipts retain identity, method, requestId, digest, and the original response. One overwritable control slot cannot replace them. Migrate valid v3 snapshots already close to 32 MiB, rather than reserving capacity only for new schedules. Reject new work when capacity for growth is insufficient. Never return accepted before persistence. UI shows structured reasons and recovery conditions while retaining execution-settlement state. Report disk write failures through the current error and frozen state, rather than requiring another allegedly successful storageHealth write.
 
 2. **AUTO-01B Run/Channel history and query UI.** Archive only terminal Runs whose workers have settled, usage accounting is complete, and no pending issue or unknown tool result needs inspection. The hot-record limit becomes a retention window rather than a schedule lifetime. Persist cold segments before committing their references in hot snapshots. Authorize paginated history by task/run. After migration, cumulative confirmed/reserved usage, total Run count, and thread/goal relationships remain auditable. Reuse A's cold-receipt queries. Compression must not reaccept old side effects. Keep deletion policy separate from archiving.
 
@@ -586,7 +595,7 @@ Z9. [Independent history deletion and pruning](https://github.com/zai-org/ZCode/
 
 - `core/engine/src/task_mode/mod.rs`, `desktop_schedules.rs`, and `overview.rs`.
 
-- `core/engine/src/store.rs` and new `core/engine/src/store/task_archive.rs`. Reuse persistence operations from `store/archive.rs`, not Thread-specific models.
+- `core/engine/src/store.rs` and new `core/engine/src/task_mode/ledger.rs`. Reuse persistence operations from `store/archive.rs`, not Thread-specific models.
 
 - `core/protocol/src/tasks.rs` and `core/app-server/src/task_mode.rs`.
 
@@ -594,7 +603,7 @@ Z9. [Independent history deletion and pruning](https://github.com/zai-org/ZCode/
 
 - `docs/api/tasks.md/.en.md`, `docs/features.md/.en.md`, and `docs/development/testing.md/.en.md`.
 
-**Proposed interfaces, not existing APIs.** Add `areal/task/runs/list {taskId,cursor?,limit?}` returning `{data,nextCursor?,hasMore}`, and `areal/task/run/read {taskId,runId}`. Task summaries expose `runCount`, `archivedRunCount`, and state reasons. Reuse the current limit of 1-100 and byte bounds. Existing clients detect methods before pagination.
+**Phase-one interface contract.** `areal/task/runs/list {taskId,cursor?,limit?}` returns `{data:TaskRun[],nextCursor:string|null,hasMore:boolean,runCount:number}`. `areal/task/run/read {taskId,runId}` returns the original `TaskRun`. Task summaries expose `runCount`, `archivedRunCount`, and `runsComplete`. Limits are 1–100 with the existing response byte bound. Lists sort newest first by `(scheduledAt,id)`. Cursors retain the first read’s upper bound and do not depend on hot or cold storage location. GUI clients detect Core methods before using narrow management operations. Older Core versions expose only the inline window.
 
 **Acceptance.**
 
@@ -710,7 +719,7 @@ New `skip` rules must persist `maxLatenessSeconds`. The proposed product default
 
 ### AUTO-01 persistence decision and database trade-off
 
-**P0 decision. Keep Core Store JSON hot snapshots and immutable cold segments. Do not introduce SQLite.** Put cold segments in separate `task-history/` and `task-receipts/` namespaces, or explicitly add their references to Store GC. Do not put them directly in a directory where current traversal only follows Thread history roots. TaskMode snapshots retain committed cold-chain heads, cumulative totals, the most recent 128 Runs per Task, and every record not yet safe to archive. The 128 limit becomes a hot window rather than a schedule lifetime.
+**P0 decision. Keep Core Store JSON and immutable files. Do not introduce SQLite.** The compact v4 catalog at `desktop/task-mode.json` is the sole commit root. It references full Task payloads, history segments, receipts, and provenance indexes in `desktop/task-ledger/`. Keep the existing in-memory `Task` and control fields without a separate control overlay. Retain the latest 128 Runs per Task and every record not yet safe to archive. The 128 limit becomes a retention window rather than a schedule lifetime. Keep Task files outside GC that only recognizes Thread history roots.
 
 Commit protocol:
 
@@ -722,15 +731,19 @@ Commit protocol:
 
 4. Restart restores committed snapshot roots. Only explicit GC removes orphan segments. Do not infer execution facts from filenames.
 
-5. Cold receipt segments retain full identity/method/requestId/digest/original response. New receipts and Task changes still take effect in the same snapshot commit. Hot/cold lookups use only committed roots. A payload written early does not prove acceptance. A fixed number of hash-bucket chain heads may accelerate lookup. Do not grow a global index without bounds in the hot snapshot.
+5. Receipts retain the full identity, method, requestId, digest, and original response. Receipts and Task changes take effect in the same catalog commit. Queries use only committed roots. Fixed sets of 256 bucket heads reference immutable compressed radix indexes. Receipt keys and cold Run/Goal provenance keys use full SHA-256 values, with lookup depth at most 64. Terminal leaves sort full keys and hold at most 64 rows, with a 128 KiB ordinary packing limit. A single existing large result may exceed that packing target while remaining within the original 256 MiB file limit. Split along the radix when either bound is exceeded; never turn a bucket into an unbounded list. Leaves still verify original identity and reject hash collisions. History segments may remain chains, but the stop path must not traverse them.
 
-6. Reserve control capacity before adding ordinary history. Derive the reserve from MAX_TASKS and strictly bounded control-record sizes. stop/cancel intent uses fixed-size state. Full responses enter immutable cold receipt chains, still committed only through the snapshot. Archive old receipts into a committed cold chain before overwriting corresponding hot records. AUTO-01A includes this minimal receipt implementation and migration of old full snapshots. It does not wait for B. Archiving must not hold stop-control locks across unbounded I/O. If the disk truly cannot be written, report non-persistence rather than success.
+6. Ordinary growth is subject to a 32 MiB hot-state budget. Already admitted work has a bounded settlement reserve derived from its existing Runs, workers, and settlement record sizes. This reserve covers stop/cancel and subsequent reports and usage settlement. It cannot admit new Runs, workers, or arbitrary configuration growth. Migrate old full v3 snapshots with this protection. Stop commits skip archiving, and unchanged Task files are not rewritten. Historical reads capture one immutable snapshot, then authorize and project outside the global Task lock. If disk writes fail, report unconfirmed persistence rather than success.
 
 7. Total Task token usage equals settled cold totals plus hot confirmed/reserved usage. Count each archive once. In a failure window where records exist in both places, account according to the committed boundary. Do not reset Channel sequence.
 
-8. Distinguish pause reasons user, historyCapacity, receiptCapacity, and storageFailure. UI reads Core fields rather than guessing from 128 Runs. Capacity failures provide resource and remedy.
+8. Logical capacity failures provide a structured resource and recovery condition. GUI uses Core’s reason rather than guessing from a count of 128. A directory sync failure after atomic replacement leaves the commit outcome unconfirmed. Freeze Task writes and dispatch until restart validates and synchronizes referenced files and directories. Rereading the root alone does not prove durability. Do not pretend that storageHealth was persisted when disk writes failed.
 
 Archiving must also preserve Task/Run provenance and authorization for old Threads/Goals. Existing app-server Task access checks Thread scope for associated Runs. Checking only hot Runs after archiving would expand historical visibility. Both pagination and individual reads go through Core authorization. Do not expose cold-segment file paths to clients.
+
+**Further correction to the original design.** A fixed number of hash-bucket chains bounds the hot root, but not lookup work. As history grows, receipt lookup and provenance checks before a stop can hold the global lock for longer. Use bounded indexes and move read-only history scans outside that lock. Increasing bucket counts or capacity constants does not remove this failure mode. Real GUI cold migration also exposed the single-receipt file cost. The single-row leaf implementation required more than ten thousand index files for a valid snapshot with 8192 receipts and was terminated by the ordinary launcher deadline before root publication. Terminal leaves must therefore be packed within fixed bounds. Acceptance covers both cold v3 migration and subsequent v4 reopen, without offline warmup or relying solely on a longer startup deadline.
+
+The private index uses `index_version=3` and node version 2, while the Task root remains v4. Unreleased experimental index version 2 is not a supported production migration source. New Core rejects it explicitly and preserves its bytes rather than silently interpreting the changed leaf shape. Deployed v1–3 snapshots remain fully backed up and migrated.
 
 **Why not Task-only SQLite.** SQLite transactions, receipt uniqueness, and pagination have value. Introducing it for P0 also requires JSON migration, cross-store transactions with Thread persistence, backup/recovery, and dual-write handling. Store already provides cold segments and atomic snapshots, so reuse changes less. Only after demonstrating that cold lookup or global Task hot snapshots remain a bottleneck should a separate ADR migrate once to a single Task store. GUI must not store its own Task facts. Do not maintain two authoritative stores through dual writes.
 
@@ -976,7 +989,7 @@ ZCode UI Apps can provide page tools to the Agent and perform sampling within an
 
 1. Build a RED fixture with unsaved text, a random bootId, initialization count, subscription count, and a slow tool callId inside the page. Check it after switching tabs, hiding and showing the page, and switching away from and back to a session.
 
-2. Provide a stable page host and a single bridge. Display references change only the layout. Hidden pages do not take focus, and click-through behavior remains correct.
+2. Provide a stable page host and a single bridge. Display references change only the layout. Hidden pages do not take focus, and click-through behavior remains correct. Each instance records the window owner from open. Disposal and revocation use that recorded owner rather than reading a destroyed BrowserWindow during will-quit. Recheck owner and epoch after asynchronous open, and compensate stale results through the existing close path. Main IPC continues to validate the current window, sender, main frame, and application URL. An old token cannot transfer to a new owner.
 
 3. Bound the page count and provide explicit capacity feedback. Commit the initial limit as explicit product configuration. Reject new pages when capacity is exhausted, without silently evicting editor pages. Choose the default through real Electron measurements with multiple pages, not by copying ZCode's 64.
 
@@ -1207,7 +1220,7 @@ Before admitting a side effect, durably bind `(transportEpoch, guestRequestId, f
 
 **First fixture.** `getSelection()` returns the page document's revision and selection range. `applyPatch({expectedDocumentRevision, patch})` modifies only that page's document. A stale revision returns a conflict. Do not guess a new target location. Pages may declare tools only within the specified schema, size, and count limits. This must not provide arbitrary JS, shell execution, network proxies, or tool name overrides.
 
-**Proposed new contract.** Core manages `register → claim → resolve/reject` and reuses the existing tool-call permissions, cancellation, and result persistence. `core/protocol` defines the RPC names centrally. The following data is required, but it is not an existing API:
+**Implementation contract.** Use exactly `areal/mcp/app/tools/register`, `revoke`, `claim`, and `resolve`. Resolve accepts completion, definite no-effect, or UNKNOWN. One settlement interface avoids a separate reject route and an outer tool reply. The [desktop contract](../api/desktop.en.md#finite-page-tools) owns types and budgets. Core reuses ordinary inventory, approval, and the ToolCall journal, without a page execution ledger. Admission freezes the following identity:
 
 ```ts
 type AppToolBinding = {
@@ -1216,7 +1229,12 @@ type AppToolBinding = {
   threadId: string;
   pluginId: string;
   pluginDigest: string;
-  toolId: string;
+  appsEpoch: string;
+  toolHostId: string;
+  ownerId: string;
+  registrationId: string;
+  documentId: string;
+  kind: "getSelection" | "applyPatch";
   schemaDigest: string;
 };
 // Core generates callId and durably admits the call. The page cannot specify another Thread or bypass ToolCall.
@@ -1225,9 +1243,9 @@ type AppToolBinding = {
 
 **State and boundaries.**
 
-- A page may register only after initialize. Core decides whether to expose its tools to the model based on the owning Thread, plugin state, and existing authorization. A hidden page that remains valid may execute calls. A closed or revoked generation may not.
+- Trusted Main may register only after the original source-bound bridge completes initialize. Core decides whether to expose its tools to the model based on the owning Thread, plugin state, and existing authorization. A hidden page that remains valid may execute calls. A closed or revoked generation may not.
 
-- Each callId may be held by only one valid claim from the correct instance. The claim binds to the current Host connection and generation. Repeated resolve submissions with identical content are idempotent. Different content is a conflict. An old connection cannot submit results for a new instance.
+- Only the original opening ToolHost and Main socket may claim a callId once. Core persists claim before returning execution permission. ownerId cannot replace original connection authorization. Repeated resolve submissions with identical content are idempotent. Different content is a conflict. An old connection cannot submit results for a new instance.
 
 - The Agent's tool schema freezes when the Turn is admitted. Temporary page schema changes or plugin upgrades must not change the meaning of in-flight calls. Tool names must use a controlled namespace.
 
@@ -1251,7 +1269,9 @@ type AppToolBinding = {
 
 5. Selection and document state persist while the page is hidden. After closure, its tools disappear from the set visible to subsequent calls. Previously accepted calls retain accurate terminal states.
 
-6. Verify UI-03A's in-flight, byte, and history budgets. Reject unbounded registration and unlimited results. Existing MCP Apps file, CAS, and revocation cases must not regress.
+6. Verify UI-03B registration, in-flight, byte, and deadline limits. Existing request budgets remain. MCP Apps file, CAS, and revocation cases must not regress.
+
+**Implementation choices.** Use the CodeMirror version already pinned in the lockfile. UTF-16 ranges permit a synchronous revision comparison, transaction, and undo. Directed notices wake an executor without granting permission. One invocation writes claim and terminal state. Accepted terminal evidence must survive post hooks and generic finalization. Losing either original connection retains the page but revokes tools. Automatic ownership transfer and execution recovery are outside this slice.
 
 **Dependencies and rollback.** UI-03A depends on UI-01. UI-03B depends on UI-01, UI-02, and support diagnostics PLG-01. The two capabilities negotiate independently and have separate switches. To disable a capability, first stop new registrations and dispatches, then drain or explicitly cancel in-flight calls. Preserve existing results and page content. Do not delete user business data. Remote UI, cross-device pages, sampling, and restoration of arbitrary DOM after a crash are outside this round's scope.
 

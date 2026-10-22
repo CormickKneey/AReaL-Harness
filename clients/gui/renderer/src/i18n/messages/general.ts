@@ -1,4 +1,80 @@
 export const generalMessages = {
+  "chat.permissions.ask": {
+    "zh-CN": "请求审批",
+    "en": "Ask for approval"
+  },
+  "chat.permissions.askDescription": {
+    "zh-CN": "在工作区内读写和运行命令；需要额外权限时询问你。",
+    "en": "Read, write, and run commands in the workspace. Ask you when extra permissions are needed."
+  },
+  "chat.permissions.autoReview": {
+    "zh-CN": "帮我审批",
+    "en": "Review for me"
+  },
+  "chat.permissions.autoReviewDescription": {
+    "zh-CN": "保持工作区权限，由审批模型审核额外请求，必要时询问你。",
+    "en": "Keep workspace permissions. An approval model reviews extra requests and asks you when needed."
+  },
+  "chat.permissions.fullAccess": {
+    "zh-CN": "完全访问",
+    "en": "Full access"
+  },
+  "chat.permissions.fullAccessDescription": {
+    "zh-CN": "允许访问工作区外文件和网络，常规操作不再请求审批。",
+    "en": "Allow access to files outside the workspace and the network. Routine operations do not require approval."
+  },
+  "chat.permissions.readOnly": {
+    "zh-CN": "只读（受限）",
+    "en": "Read-only (restricted)"
+  },
+  "chat.permissions.plan": {
+    "zh-CN": "计划",
+    "en": "Plan"
+  },
+  "chat.permissions.auto": {
+    "zh-CN": "自动执行",
+    "en": "Automatic execution"
+  },
+  "chat.permissions.restricted": {
+    "zh-CN": "权限受限",
+    "en": "Permissions restricted"
+  },
+  "chat.permissions.unsupported": {
+    "zh-CN": "权限模式不受支持",
+    "en": "Permission mode unsupported"
+  },
+  "chat.permissions.custom": {
+    "zh-CN": "自定义权限",
+    "en": "Custom permissions"
+  },
+  "chat.permissions.change": {
+    "zh-CN": "更改权限",
+    "en": "Change permissions"
+  },
+  "chat.permissions.choose": {
+    "zh-CN": "选择权限",
+    "en": "Choose permissions"
+  },
+  "chat.permissions.fullAccessUnavailable": {
+    "zh-CN": "当前部署不支持完全访问。",
+    "en": "Full access is unavailable in this deployment."
+  },
+  "chat.permissions.readOnlySession": {
+    "zh-CN": "当前会话限制为只读。",
+    "en": "This session is restricted to read-only access."
+  },
+  "chat.permissions.unsupportedBackend": {
+    "zh-CN": "当前后台不支持权限模式，请更新后使用。",
+    "en": "This backend does not support permission modes. Update it to use them."
+  },
+  "chat.permissions.humanFallback": {
+    "zh-CN": "当前由你审批；部署与 Agent 预设的限制仍生效。已入队消息保留原权限。",
+    "en": "You currently review approvals. Deployment and agent preset limits still apply. Queued messages keep their original permissions."
+  },
+  "chat.permissions.limitsNotice": {
+    "zh-CN": "部署与 Agent 预设的限制始终生效；已入队消息保留原权限。",
+    "en": "Deployment and agent preset limits always apply. Queued messages keep their original permissions."
+  },
   "settings.browserSettings.inApp": {
     "zh-CN": "应用内",
     "en": "In app"

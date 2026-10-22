@@ -390,8 +390,9 @@ fn successful_tool(messages: &[Message], result: &Message) -> Option<Value> {
     if output.get("error").is_some_and(|v| !v.is_null()) {
         return None;
     }
-    // 准入余量每轮递减，不代表工具结果或源码进展，不能影响重复成功的判定。
+    // 准入余量和 Turn 时钟不代表工具结果或源码进展。
     output.as_object_mut()?.remove("remainingToolCalls");
+    output.as_object_mut()?.remove("turnElapsedSeconds");
     match signature["name"].as_str()? {
         "run_command" => {
             if output.get("state") != Some(&Value::from("exited"))
@@ -578,7 +579,7 @@ impl Model for ProgressModel {
         limits: ToolCallLimits,
         cap: Option<u64>,
     ) -> Result<ModelStream> {
-        if purpose == crate::model::RequestPurpose::Summary {
+        if purpose != crate::model::RequestPurpose::Solve {
             self.inner
                 .chat_with_limits(messages, tools, purpose, limits, cap)
                 .await
@@ -1246,6 +1247,7 @@ mod progress_tests {
                 json!({
                     "exitCode":0,"processId":index,"stdout":"same result","stderr":"",
                     "stopReason":null,"truncated":false,"state":"exited","outputClosed":true,"gap":false,
+                    "turnElapsedSeconds":index,
                     "nextCursor":format!("{index}/11"),
                     "remainingToolCalls":128 - index
                 })

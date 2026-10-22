@@ -1,15 +1,17 @@
 import {useEffect, useRef, useState} from 'react';
 import {WorkspaceLocalIcon} from './homeChromeIcons.js';
+import {useI18n} from './i18n/IntlProvider.js';
+import {WorkspacePreparationStatus, type WorkspacePreparationState} from './WorkspacePreparationStatus.js';
 import type {Action, Data} from './services.js';
 
-// Read-only projection of the public Desktop workspace owner. This does not
-// select a branch, create a worktree or infer execution facts from UI state.
-export function ComposerWorkspaceContext({project,action}:{project:Data;action:Action}) {
-  const owner=JSON.stringify([project.id,project.root,!!project.state?.connected]);
+export function ComposerWorkspaceContext({project,action,backendReady=false}:{project:Data;action:Action;backendReady?:boolean}) {
+  const {t}=useI18n();
+  const connected=backendReady&&!!project.state?.connected;
+  const owner=JSON.stringify([project.id,project.root,connected]);
   const request=useRef(action);request.current=action;
   const [result,setResult]=useState<{owner:string;info?:Data;error?:string}>();
   useEffect(()=>{
-    if(!project.state?.connected)return;
+    if(!connected)return;
     let active=true;
     void request.current('workspace',{projectId:project.id,operation:'info'}).then(
       info=>{if(active)setResult({owner,info});},
@@ -18,13 +20,17 @@ export function ComposerWorkspaceContext({project,action}:{project:Data;action:A
     return ()=>{active=false;};
   },[owner]);
   const current=result?.owner===owner?result:undefined;
-  return <div className="composer-workspace-context" role="group" aria-label="工作区上下文">
-    {!project.state?.connected?<span>{project.error || project.state?.error ? '未连接' : '正在连接…'}</span>:
-      current?.error?<span title={current.error}>工作区信息不可用</span>:
-      !current?.info?<span>读取工作区…</span>:<>
-        <span className="composer-workspace-location"><WorkspaceLocalIcon/>{current.info.target?'工作树':'本地'}</span>
-        {current.info.git!==false&&current.info.branch&&<span className="composer-workspace-branch" aria-label="当前分支" title={current.info.branch}>
-          <span>{current.info.branch==='(detached)'?'分离的 HEAD':current.info.branch}</span>
+  const error=project.error||project.state?.error;
+  const preparation:WorkspacePreparationState=connected?{kind:'ready'}:
+    backendReady&&error?{kind:'unavailable',detail:error}:{kind:'preparing'};
+  return <div className="composer-workspace-context" role="group" aria-label={t('workspace.context')}>
+    {!connected?<WorkspacePreparationStatus key={owner} state={preparation}
+      onRetry={preparation.kind==='unavailable'?()=>request.current('connect',{projectId:project.id}):undefined}/>:
+      current?.error?<WorkspacePreparationStatus state={{kind:'unavailable',detail:current.error}} scope="info"/>:
+      !current?.info?<span>{t('workspace.readingInfo')}</span>:<>
+        <span className="composer-workspace-location"><WorkspaceLocalIcon/>{t(current.info.target?'workspace.worktree':'workspace.local')}</span>
+        {current.info.git!==false&&current.info.branch&&<span className="composer-workspace-branch" aria-label={t('workspace.currentBranch')} title={current.info.branch}>
+          <span>{current.info.branch==='(detached)'?t('workspace.detachedHead'):current.info.branch}</span>
         </span>}
       </>}
   </div>;

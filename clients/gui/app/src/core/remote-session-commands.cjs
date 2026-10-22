@@ -346,6 +346,9 @@ async function sessionCommand(
                     !project.client.capabilities?.methods?.includes(nativeMethod)
                 )
                     throw failure("CORE_INCOMPATIBLE", "Core 不支持安全提交，请在桌面升级");
+                if ((request.method === "session.create" || control && request.params.values.options?.permissionPreset !== undefined)
+                    && project.client.capabilities?.features?.permissionPresets !== true)
+                    throw failure("CORE_INCOMPATIBLE", "Core 不支持权限模式，请在桌面升级");
                 if (request.method === "session.send" || control) {
                     if (project.configurationChanges?.has(request.params.threadId))
                         throw failure("TARGET_CHANGED", "会话配置正在变化");
@@ -430,6 +433,7 @@ async function sessionCommand(
                       : request.method === "session.create"
                         ? {
                               cwd: project.root,
+                              options: { permissionPreset: "ask" },
                               ...(profile ? { agentProfile: profile } : {}),
                               admissionGuard: { ordinarySession: true },
                           }

@@ -964,6 +964,294 @@ fn known_context_capacities_preserve_explicit_overrides_and_unknown_models() {
 }
 
 #[tokio::test]
+async fn model_catalog_preserves_per_model_validation_without_upstream_requests() {
+    use areal_engine::desktop::ConfiguredModels;
+    use areal_protocol::desktop::Provider;
+    let requests = Arc::new(AtomicUsize::new(0));
+    let recorded = requests.clone();
+    let app = Router::new().route(
+        "/",
+        post(move || {
+            recorded.fetch_add(1, Ordering::SeqCst);
+            async { axum::http::StatusCode::INTERNAL_SERVER_ERROR }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}/", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    for protocol in ["chatCompletions", "responses"] {
+        let data = tempfile::tempdir().unwrap();
+        let engine = Engine::open(
+            data.path(),
+            Arc::new(HttpModel::new(endpoint.clone(), "default".into(), None).unwrap()),
+            Limits {
+                watchdog_disable: true,
+                ..Limits::default()
+            },
+        )
+        .unwrap();
+        let declared = json!({"tools":true,"vision":false,"reasoning":true,"reasoningEffortOptions":["low","high"]});
+        let mut provider = json!({
+            "id":"valid", "revision":0, "endpoint":endpoint, "protocol":protocol,
+            "models":["primary","sibling","temperature","effort","output","summary","capabilities","context"],
+            "parameters":{"temperature":0.0,"maxOutputTokens":512,"reasoningEffort":"low"},
+            "modelCapabilities":{"primary":declared},
+            "modelParameters":{
+                "temperature":{"temperature":3.0},
+                "effort":{"reasoningEffort":"invalid"},
+                "output":{"maxOutputTokens":0},
+                "summary":{"reasoningSummary":"invalid"}
+            }
+        });
+        provider["modelCapabilities"]["capabilities"] = json!({"tools":true,"vision":true,"reasoning":true,"reasoningEffortOptions":["low","low"]});
+        let providers: Vec<Provider> = [
+            provider,
+            json!({"id":"z-missing", "revision":0, "endpoint":endpoint, "protocol":protocol,"models":["primary"],"credentialRef":"absent"}),
+            json!({"id":"z-endpoint", "revision":0, "endpoint":"file:///tmp/model", "protocol":protocol,"models":["primary"]}),
+            json!({"id":"z-empty", "revision":0, "endpoint":endpoint, "protocol":protocol,"models":[""]}),
+            json!({"id":"summary", "revision":0, "endpoint":endpoint, "protocol":protocol,"models":["primary"],"parameters":{"reasoningSummary":"concise"}}),
+        ].into_iter().map(|provider| serde_json::from_value(provider).unwrap()).collect();
+        let mut configured = ConfiguredModels {
+            provider_ids: providers
+                .iter()
+                .map(|provider| provider.id.clone())
+                .collect(),
+            providers,
+            ..Default::default()
+        };
+        configured.parameters.insert(
+            ("valid".into(), "context".into()),
+            serde_json::from_value(json!({"contextWindowTokens":0})).unwrap(),
+        );
+        engine.install_configured_models(configured).unwrap();
+        let catalog = engine.model_catalog().await;
+        let rows = catalog["data"].as_array().unwrap();
+        let row = |provider: &str, model: &str| {
+            rows.iter()
+                .find(|row| row["providerId"] == provider && row["modelId"] == model)
+                .unwrap()
+        };
+        assert_eq!(rows.len(), 13);
+        for model in ["primary", "sibling"] {
+            let row = row("valid", model);
+            assert_eq!(row["available"], true, "{protocol}/{model}");
+            assert_eq!(row["credentialState"], "notRequired");
+            assert_eq!(row["providerRevision"], 1);
+            assert_eq!(row["transport"], protocol);
+            assert_eq!(row["connectionState"], "unchecked");
+            assert_eq!(
+                row["parameters"],
+                json!({"temperature":0.0,"maxOutputTokens":512,"reasoningEffort":"low"})
+            );
+        }
+        assert_eq!(row("valid", "primary")["capabilities"], declared);
+        assert_eq!(
+            row("valid", "primary")["reasoningEffortOptions"],
+            json!(["low", "high"])
+        );
+        assert_eq!(
+            row("valid", "primary")["input"],
+            if protocol == "responses" {
+                json!(["text", "audio", "file"])
+            } else {
+                json!(["text", "audio"])
+            }
+        );
+        assert_eq!(
+            row("valid", "primary")["output"],
+            if protocol == "responses" {
+                json!(["text", "image", "audio"])
+            } else {
+                json!(["text"])
+            }
+        );
+        assert_eq!(
+            row("valid", "primary")["parameterCapabilities"],
+            if protocol == "responses" {
+                json!([
+                    "temperature",
+                    "maxOutputTokens",
+                    "contextWindowTokens",
+                    "reasoningEffort",
+                    "reasoningSummary"
+                ])
+            } else {
+                json!([
+                    "temperature",
+                    "maxOutputTokens",
+                    "contextWindowTokens",
+                    "reasoningEffort"
+                ])
+            }
+        );
+        for model in [
+            "temperature",
+            "effort",
+            "output",
+            "summary",
+            "capabilities",
+            "context",
+        ] {
+            assert_eq!(
+                row("valid", model)["available"],
+                false,
+                "{protocol}/{model}"
+            );
+        }
+        assert_eq!(row("z-missing", "primary")["available"], false);
+        assert_eq!(
+            row("z-missing", "primary")["credentialState"],
+            "unavailable"
+        );
+        assert_eq!(row("z-endpoint", "primary")["available"], false);
+        assert_eq!(row("z-empty", "")["available"], false);
+        assert_eq!(
+            row("summary", "primary")["available"],
+            protocol == "responses"
+        );
+        assert_eq!(requests.load(Ordering::SeqCst), 0);
+        engine.shutdown().await;
+    }
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn model_catalog_refreshes_credentials_and_provider_revisions_before_local_turns() {
+    use areal_engine::desktop::ConfiguredModels;
+    use areal_protocol::desktop::Provider;
+    use axum::http::HeaderMap;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let app = Router::new().route("/", post(move |headers: HeaderMap, Json(request): Json<Value>| {
+        let tx = tx.clone();
+        async move {
+            tx.send((headers,request.clone())).unwrap();
+            let response = if request.get("input").is_some() {
+                "data: {\"type\":\"response.output_text.delta\",\"delta\":\"done\"}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"
+            } else {
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+            };
+            ([("content-type","text/event-stream")],response)
+        }
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}/", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    for protocol in ["chatCompletions", "responses"] {
+        let data = tempfile::tempdir().unwrap();
+        let engine = Engine::open(
+            data.path(),
+            Arc::new(HttpModel::new(endpoint.clone(), "default".into(), None).unwrap()),
+            Limits {
+                watchdog_disable: true,
+                ..Limits::default()
+            },
+        )
+        .unwrap();
+        for revision in 1..=2 {
+            let reference = format!("credential-{revision}");
+            let provider: Provider = serde_json::from_value(json!({"id":"local","revision":0,"endpoint":endpoint,"protocol":protocol,"models":["primary","sibling"],"credentialRef":reference,"parameters":{"temperature":0.0,"maxOutputTokens":512,"reasoningEffort":if revision == 1 {"low"} else {"high"}}})).unwrap();
+            engine
+                .install_configured_models(ConfiguredModels {
+                    providers: vec![provider],
+                    provider_ids: ["local".into()].into_iter().collect(),
+                    ..Default::default()
+                })
+                .unwrap();
+            let missing = engine.model_catalog().await;
+            for row in missing["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|row| row["providerId"] == "local")
+            {
+                assert_eq!(row["providerRevision"], revision);
+                assert_eq!(row["available"], false);
+                assert_eq!(row["credentialState"], "unavailable");
+            }
+            let secret = format!("fixture-secret-{revision}");
+            engine
+                .register_credential(reference, secret.clone())
+                .unwrap();
+            let catalog = engine.model_catalog().await;
+            for row in catalog["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|row| row["providerId"] == "local")
+            {
+                assert_eq!(row["providerRevision"], revision);
+                assert_eq!(row["available"], true);
+                assert_eq!(row["credentialState"], "available");
+                assert_eq!(
+                    row["parameters"]["reasoningEffort"],
+                    if revision == 1 { "low" } else { "high" }
+                );
+            }
+            let thread = engine
+                .create(data.path().to_string_lossy().into_owned())
+                .await
+                .unwrap();
+            engine.configure_thread(serde_json::from_value(json!({"threadId":thread.id,"expectedRevision":1,"model":{"providerId":"local","modelId":"primary"}})).unwrap()).await.unwrap();
+            let prompt = format!("fixture {protocol} revision {revision}");
+            engine
+                .start(&thread.id, vec![Input::text(&prompt)])
+                .await
+                .unwrap();
+            let done = engine.wait(&thread.id).await.unwrap();
+            assert_eq!(done.turns[0].status, TurnStatus::Completed);
+            let (headers, request) =
+                tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                    loop {
+                        let (headers, request) = rx.recv().await.unwrap();
+                        let messages = request
+                            .get("messages")
+                            .or_else(|| request.get("input"))
+                            .and_then(Value::as_array)
+                            .unwrap();
+                        if messages.iter().any(|message| {
+                            message["role"] == "user"
+                                && (message["content"] == prompt
+                                    || message["content"].as_array().is_some_and(|parts| {
+                                        parts.iter().any(|part| part["text"] == prompt)
+                                    }))
+                        }) {
+                            break (headers, request);
+                        }
+                    }
+                })
+                .await
+                .unwrap();
+            assert_eq!(
+                headers["authorization"].to_str().unwrap(),
+                format!("Bearer {secret}")
+            );
+            assert_eq!(request["model"], "primary");
+            assert_eq!(request["temperature"], 0.0);
+            assert_eq!(
+                if protocol == "responses" {
+                    &request["reasoning"]["effort"]
+                } else {
+                    &request["reasoning_effort"]
+                },
+                if revision == 1 { "low" } else { "high" }
+            );
+            assert_eq!(
+                if protocol == "responses" {
+                    &request["max_output_tokens"]
+                } else {
+                    &request["max_completion_tokens"]
+                },
+                512
+            );
+        }
+        engine.shutdown().await;
+    }
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
 async fn explicit_model_capabilities_control_catalog_admission_and_wire() {
     async fn request_for(
         rx: &mut tokio::sync::mpsc::UnboundedReceiver<Value>,

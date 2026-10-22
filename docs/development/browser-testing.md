@@ -14,6 +14,10 @@ B-21–B-23 须通过公开 Core/GUI 路径，使用两个 Workspace 和合成�
 
 同一验收层使用 `node clients/gui/scripts/browser-evidence-smoke.mjs` 检查 B-07/B-08/B-09：部分观察后仍有效的 Ref、重复同名元素替换与 Frame 导航后的旧 Ref、iframe/Shadow 覆盖、语义状态和父节点关联、预算截断。脚本单独验证根页面/Frame/Shadow/明文敏感信息/跨源 Frame 的截图拒绝，检查截图期间视口变化与超大原生 PNG，并记录实际请求了哪种原生观察表面；随后验证模型图像输入、GUI 中的 Core 媒体回取及跨 Thread Blob 拒绝。仅脚本实际通过且保存运行清单时才能认定对应场景通过。
 
+B1 原生控件验收入口为 `node clients/gui/scripts/browser-actions-smoke.mjs b1`。它通过公开 Core 工具调用、真实审批 UI、原生页面和独立站点事件计数验证滚动加载 sentinel 与新观察、hover、有序不透明选项身份、同值替换、重排/类型/视口失效、disabled/重复值/多选控件、checkbox true/no-op/false、disabled 状态等待、已确认批量前缀和去重，以及接管期间 select ACK 丢失。选定成功场景保留审批面板 PNG 与独立原生 WebContents PNG，并绑定原 Core call、Page、Ref 和准备计划。Main 未捕获错误从 bootstrap 记录到自然退出。runner 保留私有服务身份，核对自有 Electron、adapter 和 Core 清理。相同命令加 `AREAL_BROWSER_B1_PUBLIC=1` 使用合成公网主机名，证明未声明的 scroll、hover、select 和 checkbox 仍要求人工接管。fixture 对话框响应和解析映射是明确替代边界。源码测试不证明真实供应商、物理输入、签名安装包或其他 OS。运行前通过 `AREAL_CORE_BIN` 指定已核对且不可变的候选产物。
+
+相同 B1 命令加 `AREAL_BROWSER_B1_PRIVACY=1` 聚焦验证动作回执隐私。页面 change handler 将合成私密字段值写入选中 OPTION 的 value/label。直接选择和批量选择必须保留 confirmed 输入与 `stateMatched:false`，而动作回执、Core 历史、模型收到结果和保留的批量回执不能包含该值。独立原生读数和站点计数确认一次选择、一组 input/change；普通 Notes 字段回显还经公开 observe 验证既有选项隐私过滤。
+
 ## 测试层级
 
 1. **行为单测**只穷尽Ref身份、预算、去重、代次和状态转换；不要断言内部Map/类名。

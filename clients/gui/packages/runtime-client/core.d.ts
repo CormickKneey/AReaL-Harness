@@ -1,9 +1,18 @@
+export type OperationTarget = { kind: 'project' } | { kind: 'thread'; threadId: string } | { kind: 'task'; taskId: string };
+export type OperationRef = { method: string; requestId?: string; target: OperationTarget };
+export type FailureOutcome = { kind: 'noMutation' | 'rejected' } | { kind: 'admitted' | 'unconfirmed'; operation: OperationRef };
+export type Recovery = { kind: 'retryRead' | 'queryOriginal' | 'needsUser' | 'none' };
+export type MethodSemantics = { effect: 'read' | 'subscription' | 'mutation'; receipt?: 'thread' | 'task' | 'management' };
+export const MAX_RESPONSE_BYTES: number;
 export class CoreRpcError extends Error {
   code?: string | number;
   method?: string;
-  data?: { reason?: string; requestId?: string; retryable?: boolean; [key: string]: unknown };
+  outcome?: FailureOutcome;
+  recovery?: Recovery;
+  data?: { outcome?: FailureOutcome; recovery?: Recovery; reason?: string; requestId?: string; retryable?: boolean; delivery?: 'resultUnavailable'; [key: string]: unknown };
   reason?: string;
   requestId?: string;
+  delivery?: 'resultUnavailable';
   submissionUnknown: boolean;
 }
 export interface CoreSocket {
@@ -15,11 +24,11 @@ export interface CoreSocket {
 export class CoreClient {
   constructor(options: { createSocket: () => CoreSocket; timeoutMs?: number; onServerRequest?: (method: string, params: unknown, context: { requestId: string; signal: AbortSignal }) => Promise<unknown> });
   ready: boolean;
-  capabilities: { apiVersion?: string; methods: string[]; [key: string]: unknown };
+  capabilities: { apiVersion?: string; methods: string[]; methodSemantics?: Record<string, MethodSemantics>; [key: string]: unknown };
   connect(): Promise<CoreClient['capabilities']>;
-  request<T = unknown>(method: string, params?: object, options?: { onResult?: (result: T) => void; timeoutMs?: number }): Promise<T>;
+  request<T = unknown>(method: string, params?: object, options?: { onResult?: (result: T) => void; timeoutMs?: number; maxResponseBytes?: number }): Promise<T>;
   onNotification(listener: (method: string, params: any) => void): () => void;
-  onClose(listener: () => void): () => void;
+  onClose(listener: (failure: CoreRpcError) => void): () => void;
   close(): void;
 }
 

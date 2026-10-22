@@ -144,7 +144,7 @@ export function ConversationTimelinePreview({ dark }: { dark: boolean }) {
           onReview={() => openPanel("review", "src/conversation.tsx")} onAgent={id => openPanel("agent", id)} readTurnReview={readReview} />
         <div className="composer-dock">
           <ConversationComposer project={project} modelConfig={{ model: { providerId: "preview", modelId: "fixture" } }}
-            modelDisabled onConfigureModel={() => {}} onModelSettings={() => {}}
+            modelDisabled onConfigureModel={() => {}}
             taskId={thread.id} workspacePath={project.root} initialValue={draft} onChange={setDraft} inputTestId="timeline-composer"
             placeholder="可输入未发送草稿；用上方按钮切换演示状态" submitLabel="发送"
             enableMentionPanel={false} enterSubmits submitDisabled onSubmit={() => false}

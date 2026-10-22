@@ -1,3 +1,5 @@
+import { runProductCandidate } from "./design-system-product-candidate.mjs";
+import { runDesignDocuments } from "./design-system-documents.mjs";
 import { runSharedWorkspace } from "./design-system-shared-workspace.mjs";
 import { runConversationExercise } from "./design-system-conversation-exercise.mjs";
 import { runConversationDemo } from "./design-system-conversation-demo.mjs";
@@ -26,7 +28,9 @@ const decisionExercise = process.argv.includes("--decision-exercise");
 const settingsContrast = process.argv.includes("--settings-contrast");
 const settingsExercise = process.argv.includes("--settings-exercise") || settingsContrast;
 const sharedWorkspace = process.argv.includes("--shared-workspace");
-const namedExercise = sharedWorkspace || conversationExercise || conversationDemo || decisionExercise || settingsExercise;
+const documents = process.argv.includes("--documents");
+const productCandidate = process.argv.includes("--product-candidate");
+const namedExercise = productCandidate || documents || sharedWorkspace || conversationExercise || conversationDemo || decisionExercise || settingsExercise;
 const exercise = { steps: [], checks: [] };
 const settingsOnly = process.argv.includes("--settings-only");
 const html = await readFile(join(dist, "design-system.html"), "utf8");
@@ -253,11 +257,13 @@ try {
       }
     };
   });
-  await page.goto(`${origin}/design-system.html${sharedWorkspace ? "?shared-workspace" : conversationExercise ? "?conversation-exercise" : conversationDemo ? "?conversation" : decisionExercise ? "?decision-exercise" : settingsExercise ? "?settings-exercise" : settingsOnly ? "?settings" : ""}`);
-  await page.getByRole("heading", { name: "客户端设计系统", exact: true }).waitFor();
+  await page.goto(`${origin}/design-system.html${productCandidate ? "?product-candidate" : sharedWorkspace ? "?shared-workspace" : conversationExercise ? "?conversation-exercise" : conversationDemo ? "?conversation" : decisionExercise ? "?decision-exercise" : settingsExercise ? "?settings-exercise" : settingsOnly ? "?settings" : ""}`);
+  await page.getByRole("heading", { name: productCandidate ? "快速开始指南" : "客户端设计系统", exact: true }).waitFor();
   assert.equal(await page.evaluate(() => typeof window.arealDesktop), "undefined");
   if (namedExercise) {
-    if (sharedWorkspace) await runSharedWorkspace(page, scratch, exercise, baseline);
+    if (productCandidate) await runProductCandidate(page, scratch, exercise);
+    else if (documents) await runDesignDocuments(page, origin, scratch, checks, samples);
+    else if (sharedWorkspace) await runSharedWorkspace(page, scratch, exercise, baseline);
     else if (conversationExercise) await runConversationExercise(page, scratch, gui, exercise);
     else if (conversationDemo) await runConversationDemo(page, scratch, exercise.checks);
     else if (decisionExercise) await runDecisionExercise(page, scratch, gui, exercise);
@@ -693,6 +699,6 @@ try {
   process.exitCode = 1;
 } finally {
   await browser?.close(); await new Promise(resolve => server.close(resolve));
-  await writeFile(join(scratch, "manifest.json"), JSON.stringify({ passed, baseline, settingsOnly, exercise, commit, buildSha256, checks, errors, external, samples, scope: "production renderer components with local fixture actions; no Electron/Core acceptance" }, null, 2));
+  await writeFile(join(scratch, "manifest.json"), JSON.stringify({ passed, baseline, settingsOnly, documents, productCandidate, exercise, commit, buildSha256, checks, errors, external, samples, scope: "production renderer components with local fixture actions; no Electron/Core acceptance" }, null, 2));
   console.log(JSON.stringify({ passed, scratch, checks, errors }));
 }

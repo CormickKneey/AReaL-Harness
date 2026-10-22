@@ -453,6 +453,17 @@ impl Engine {
         parameters: &ModelParameters,
         context_window: Option<&areal_protocol::context::ContextWindow>,
     ) -> Result<Arc<dyn Model>> {
+        let mut factory = model::HttpModelFactory::default();
+        self.provider_model_with_factory(provider, name, parameters, context_window, &mut factory)
+    }
+    pub(super) fn provider_model_with_factory(
+        &self,
+        provider: &Provider,
+        name: &str,
+        parameters: &ModelParameters,
+        context_window: Option<&areal_protocol::context::ContextWindow>,
+        factory: &mut model::HttpModelFactory,
+    ) -> Result<Arc<dyn Model>> {
         let protocol = match provider.protocol.as_str() {
             "chatCompletions" => model::ModelProtocol::ChatCompletions,
             "responses" => model::ModelProtocol::Responses,
@@ -490,29 +501,25 @@ impl Engine {
                 })
             })
             .transpose()?;
-        let model = model::HttpModel::with_protocol(
-            provider.endpoint.clone(),
-            name.into(),
-            credential,
-            protocol,
-        )
-        .map_err(invalid)?
-        .with_audit_directory(self.store.root().join("model-requests"))
-        .with_options(model::ModelOptions {
-            capabilities: provider.model_capabilities.get(name).cloned(),
-            context_window: Some(context_window.cloned().unwrap_or_else(|| {
-                self.provider_context_window(provider, name, parameters.context_window_tokens)
-            })),
-            context_window_tokens: parameters.context_window_tokens,
-            reasoning_effort: parameters.reasoning_effort.clone(),
-            reasoning_summary: parameters.reasoning_summary.clone(),
-            max_output_tokens: parameters.max_output_tokens,
-            max_retries: 0,
-            ..Default::default()
-        })
-        .map_err(invalid)?
-        .with_temperature(parameters.temperature)
-        .map_err(invalid)?;
+        let model = factory
+            .build(provider.endpoint.clone(), name.into(), credential, protocol)
+            .map_err(invalid)?
+            .with_audit_directory(self.store.root().join("model-requests"))
+            .with_options(model::ModelOptions {
+                capabilities: provider.model_capabilities.get(name).cloned(),
+                context_window: Some(context_window.cloned().unwrap_or_else(|| {
+                    self.provider_context_window(provider, name, parameters.context_window_tokens)
+                })),
+                context_window_tokens: parameters.context_window_tokens,
+                reasoning_effort: parameters.reasoning_effort.clone(),
+                reasoning_summary: parameters.reasoning_summary.clone(),
+                max_output_tokens: parameters.max_output_tokens,
+                max_retries: 0,
+                ..Default::default()
+            })
+            .map_err(invalid)?
+            .with_temperature(parameters.temperature)
+            .map_err(invalid)?;
         Ok(self.model.share_capacity(Arc::new(model)))
     }
     pub(crate) fn configured_model(
@@ -579,6 +586,7 @@ impl Engine {
         };
         let parameters = merge_model_parameters(parameters, defaults);
         let mut configuration = EffectiveConfig {
+            permissions: None,
             context_window: match (&model, &provider) {
                 (Some(model), Some(provider)) => Some(self.provider_context_window(
                     provider,
@@ -1072,7 +1080,9 @@ impl Engine {
                 continue;
             };
             if let Some(plugin) = &skill.plugin
-                && (!manager.enabled_plugin_ids.contains(&plugin.plugin_id)
+                && (!manager
+                    .eligible_skill_refs
+                    .contains(&(r.id.clone(), r.revision.clone()))
                     || (model
                         && !plugin.allow_implicit_invocation
                         && config.selected_skills.is_none()))

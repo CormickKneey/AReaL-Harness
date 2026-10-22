@@ -2,53 +2,26 @@
 use super::*;
 use areal_protocol::tasks::*;
 
-pub(crate) const METHODS: &[&str] = &[
-    "areal/task/create",
-    "areal/task/update",
-    "areal/task/list",
-    "areal/task/read",
-    "areal/task/pause",
-    "areal/task/resume",
-    "areal/task/cancel",
-    "areal/task/stopRun",
-    "areal/task/resumeRun",
-    "areal/task/subscribe",
-    "areal/task/unsubscribe",
-    "areal/channel/read",
-    "areal/channel/reply",
-    "areal/inbox/list",
-];
-
-pub(crate) fn visible(principal: &auth::Principal, task: &Task) -> bool {
-    principal.thread_ids.is_none()
-        || (task.thread_id.as_ref().is_some_and(|id| principal.sees(id))
-            && task
-                .runs
-                .iter()
-                .all(|r| r.thread_id.as_ref().is_none_or(|id| principal.sees(id))))
-}
-
-pub(crate) fn visible_projection(principal: &auth::Principal, task: &Value) -> bool {
-    principal.thread_ids.is_none()
-        || (task["threadId"]
-            .as_str()
-            .is_some_and(|id| principal.sees(id))
-            && task["runs"].as_array().is_some_and(|runs| {
-                runs.iter()
-                    .all(|r| r["threadId"].as_str().is_none_or(|id| principal.sees(id)))
-            }))
-}
-
-pub(crate) fn projection(task: Task) -> Value {
-    let pending = task
-        .messages
-        .iter()
-        .filter(|m| m.kind == "question" && m.status == "pending")
-        .count();
-    let mut value = json!(task);
-    value.as_object_mut().unwrap().remove("messages");
-    value["pendingQuestions"] = json!(pending);
-    value
+areal_protocol::method_catalog! {
+    "areal/task/create" => Mutation, Task;
+    "areal/task/schedule/preview" => Read;
+    "areal/task/schedule/context" => Read;
+    "areal/task/update" => Mutation, Task;
+    "areal/task/runNow" => Mutation, Task;
+    "areal/task/list" => Read;
+    "areal/task/read" => Read;
+    "areal/task/runs/list" => Read;
+    "areal/task/run/read" => Read;
+    "areal/task/pause" => Mutation, Task;
+    "areal/task/resume" => Mutation, Task;
+    "areal/task/cancel" => Mutation, Task;
+    "areal/task/stopRun" => Mutation, Task;
+    "areal/task/resumeRun" => Mutation, Task;
+    "areal/task/subscribe" => Subscription;
+    "areal/task/unsubscribe" => Subscription;
+    "areal/channel/read" => Read;
+    "areal/channel/reply" => Mutation, Task;
+    "areal/inbox/list" => Read;
 }
 
 pub(crate) async fn authorize(
@@ -56,15 +29,10 @@ pub(crate) async fn authorize(
     principal: &auth::Principal,
     id: &str,
 ) -> Result<Task, RpcError> {
-    let task = engine.task_read(id).await.map_err(map_error)?;
-    if !visible(principal, &task) {
-        return Err(RpcError {
-            code: -32003,
-            message: "task permission denied".into(),
-            data: None,
-        });
-    }
-    Ok(task)
+    engine
+        .task_read_for_threads(id, principal.thread_ids.as_ref())
+        .await
+        .map_err(map_error)
 }
 
 pub(crate) async fn dispatch(
@@ -79,6 +47,14 @@ pub(crate) async fn dispatch(
         None
     };
     match method {
+        "areal/task/schedule/preview" => engine
+            .task_schedule_preview(parse(params)?)
+            .map(|v| json!(v))
+            .map_err(map_error),
+        "areal/task/schedule/context" => engine
+            .task_schedule_context(parse(params)?)
+            .map(|v| json!(v))
+            .map_err(map_error),
         "areal/task/create" => {
             let request: TaskCreate = parse(params)?;
             if (request.mode == TaskMode::Scheduled && principal.thread_ids.is_some())
@@ -91,24 +67,71 @@ pub(crate) async fn dispatch(
                 return Err(RpcError {
                     code: -32003,
                     message: "task binding permission denied".into(),
-                    data: None,
+                    data: Some(
+                        json!({"reason":"PERMISSION_DENIED","outcome":{"kind":"rejected"},"recovery":{"kind":"none"}}),
+                    ),
                 });
             }
             engine
                 .task_create(principal.id.clone(), request)
                 .await
+                .map_err(atomic_mutation_error)
                 .map_err(map_error)
         }
         "areal/task/update" => engine
-            .task_update(principal.id.clone(), parse(params)?)
+            .task_update_for_threads(
+                principal.id.clone(),
+                parse(params)?,
+                principal.thread_ids.as_ref(),
+            )
             .await
+            .map_err(atomic_mutation_error)
             .map_err(map_error),
+        "areal/task/runNow" => {
+            let result = engine
+                .task_run_now_for_threads(
+                    principal.id.clone(),
+                    parse(params)?,
+                    principal.thread_ids.as_ref(),
+                )
+                .await
+                .map_err(atomic_mutation_error)
+                .map_err(map_error)?;
+            match result {
+                areal_engine::TaskRunNowAdmission::Accepted(value) => Ok(json!(value)),
+                areal_engine::TaskRunNowAdmission::ActiveRun {
+                    task_id,
+                    run_id,
+                    revision,
+                } => Err(RpcError {
+                    code: -32009,
+                    message: "task already has an active Run".into(),
+                    data: Some(
+                        json!({"reason":"activeRun","taskId":task_id,"runId":run_id,"revision":revision,"outcome":{"kind":"rejected"},"recovery":{"kind":"none"}}),
+                    ),
+                }),
+            }
+        }
         "areal/task/read" => {
             let _: TaskTarget = parse(params)?;
-            Ok(projection(
-                authorized.ok_or_else(|| RpcError::invalid("taskId required"))?,
-            ))
+            let task = authorized.ok_or_else(|| RpcError::invalid("taskId required"))?;
+            engine
+                .task_summary_for_threads(&task.id, principal.thread_ids.as_ref())
+                .await
+                .map_err(map_error)
         }
+        "areal/task/runs/list" => Ok(json!(
+            engine
+                .task_runs_list_for_threads(parse(params)?, principal.thread_ids.as_ref())
+                .await
+                .map_err(map_error)?
+        )),
+        "areal/task/run/read" => Ok(json!(
+            engine
+                .task_run_read_for_threads(parse(params)?, principal.thread_ids.as_ref())
+                .await
+                .map_err(map_error)?
+        )),
         "areal/task/list" | "areal/inbox/list" => {
             let p: TaskList = parse(params)?;
             let limit = p.limit.unwrap_or(30);
@@ -117,14 +140,14 @@ pub(crate) async fn dispatch(
             }
             let mut rows = Vec::new();
             for task in engine
-                .task_list()
+                .task_list_for_threads(principal.thread_ids.as_ref())
                 .await
+                .map_err(map_error)?
                 .into_iter()
-                .filter(|t| visible(principal, t))
             {
                 if method == "areal/task/list" {
                     if p.after.as_ref().is_none_or(|id| task.id > *id) {
-                        rows.push((task.id.clone(), projection(task)));
+                        rows.push((task.id.clone(), Engine::task_projection(&task)));
                     }
                 } else {
                     for message in &task.messages {
@@ -169,24 +192,30 @@ pub(crate) async fn dispatch(
         | "areal/task/cancel"
         | "areal/task/stopRun"
         | "areal/task/resumeRun" => engine
-            .task_control(
+            .task_control_for_threads(
                 principal.id.clone(),
                 method.rsplit('/').next().unwrap().into(),
                 parse(params)?,
+                principal.thread_ids.as_ref(),
             )
             .await
+            .map_err(atomic_mutation_error)
             .map_err(map_error),
         "areal/channel/read" => {
             let request: ChannelRead = parse(params)?;
             let result = engine
-                .channel_read(request.clone())
+                .channel_read_for_threads(request.clone(), principal.thread_ids.as_ref())
                 .await
                 .map_err(map_error)?;
             authorize(engine, principal, &request.task_id).await?;
             Ok(result)
         }
         "areal/channel/reply" => engine
-            .channel_reply(principal.id.clone(), parse(params)?)
+            .channel_reply_for_threads(
+                principal.id.clone(),
+                parse(params)?,
+                principal.thread_ids.as_ref(),
+            )
             .await
             .map_err(map_error),
         _ => Err(RpcError::method()),
@@ -251,6 +280,18 @@ mod tests {
         assert_eq!(updated["nextRunAt"], at + 3600);
         assert_eq!(updated["paused"], true);
         assert_eq!(updated["runs"], json!([]));
+        let scoped = auth::Principal {
+            thread_ids: Some([thread.id.clone()].into()),
+            ..(*owner).clone()
+        };
+        assert_eq!(
+            dispatch(&engine, &scoped, "areal/task/update", request.clone())
+                .await
+                .unwrap(),
+            updated
+        );
+        assert_eq!(dispatch(&engine,&scoped,"areal/task/pause",json!({"requestId":"pause-edit-test","taskId":created["id"],"expectedRevision":created["revision"]})).await.unwrap(),paused);
+
         assert_eq!(
             dispatch(&engine, &owner, "areal/task/update", request.clone())
                 .await
@@ -420,6 +461,9 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+        let Outbound::Event { value: event, .. } = event else {
+            panic!("subscription must deliver an event");
+        };
         assert_eq!(event["params"]["taskId"], ids[0]);
         validate("notifications", "areal/task/updated", &event["params"]);
         let page = conn
@@ -464,3 +508,12 @@ mod tests {
         engine.shutdown().await;
     }
 }
+
+#[cfg(test)]
+mod manual_tests;
+
+#[cfg(test)]
+mod calendar_tests;
+
+#[cfg(test)]
+mod calendar_dispatch_tests;

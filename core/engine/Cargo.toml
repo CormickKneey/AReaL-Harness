@@ -10,6 +10,8 @@ repository.workspace = true
 test-support = []
 
 [dependencies]
+chrono = { version = "=0.4.45", default-features = false, features = ["std"] }
+chrono-tz = "=0.10.4"
 url.workspace = true
 areal-runtime-fs = { path = "../../runtime/fs-helper" }
 areal-plugins.workspace = true
@@ -29,7 +31,7 @@ jsonschema.workspace = true
 reqwest.workspace = true
 rustix.workspace = true
 serde.workspace = true
-serde_json = { workspace = true, features = ["raw_value"] }
+serde_json = { workspace = true, features = ["raw_value", "float_roundtrip"] }
 sha2.workspace = true
 thiserror.workspace = true
 tempfile.workspace = true

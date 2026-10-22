@@ -271,7 +271,7 @@ export function ScopedSkillsSettings({
                 <small title={item.description}>{item.description || item.id}</small>
               </span>
             </div>
-            <SettingsBadge>{item.owner.enabled ? t("settings.scopedSkillsSettings.enabledInCurrentProject") : t("settings.scopedSkillsSettings.disabledInCurrentProject")}</SettingsBadge>
+            <SettingsBadge>{item.owner.compatibilityBlocked ? t("operations.componentIncompatible") : item.owner.enabled ? t("settings.scopedSkillsSettings.enabledInCurrentProject") : t("settings.scopedSkillsSettings.disabledInCurrentProject")}</SettingsBadge>
             <Button variant="outline" onClick={() => onManagePlugin?.(item.owner.pluginId)}>{t("settings.scopedSkillsSettings.managePlugin")}</Button>
           </article>
         ))}

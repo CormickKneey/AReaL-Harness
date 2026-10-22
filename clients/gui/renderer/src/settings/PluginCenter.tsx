@@ -11,6 +11,7 @@ import { McpSettings } from "./ResourceSettings.js";
 import { SettingsPluginIcon } from "./settingsNavIcons.js";
 import { PluginSkillsPage, type CenterSkill, type ResourceDraftSeed } from "./PluginSkillsPage.js";
 import "./PluginCenter.css";
+import { PluginComponentSupport, supportBlocked, type PackageComponentSupport } from "./PluginComponentSupport.js";
 import { PluginConnectionPanel } from "./PluginConnectionPanel.js";
 import { Button } from "../components/ui/button.js";
 import { Input } from "../components/ui/input.js";
@@ -40,6 +41,8 @@ export type PluginDetail = {
   installedVersion: string | null;
   installedDigest: string | null;
   installedSkills: PluginSkill[];
+  componentSupport?: PackageComponentSupport | null;
+  installedComponentSupport?: PackageComponentSupport | null;
   installedOnboardingSkill: string | null;
   enabled: boolean;
   source: string;
@@ -87,6 +90,7 @@ type PluginReceipt =
   | {
       confirmed: true;
       accepted: boolean;
+      status?: "completed" | "failed";
       result?: Partial<PluginDetail> & {
         thread?: { id: string };
         turn?: { id: string };
@@ -567,7 +571,7 @@ export function PluginCenter({ project: selectedProject, projects, thread, actio
         return;
       }
       setSubmission(null);
-      if (!receipt.accepted) {
+      if (receipt.status === "failed" || !receipt.accepted) {
         setError({
           message: receipt.error?.message ?? { id: "settings.pluginCenter.theOriginalPluginOperationIsConfirmedFailed" },
           code: receipt.error?.code,
@@ -717,13 +721,13 @@ export function PluginCenter({ project: selectedProject, projects, thread, actio
   const closeDetail = () => navigateRoute(listRoute);
   const installed = (catalog?.data ?? []).filter(item => item.installed);
   const packageSkills: CenterSkill[] = installed.flatMap(item => item.installedSkills.map(skill => ({
-    ...skill, key: `${item.id}:${item.installedDigest}:${skill.id}`, enabled: item.enabled,
+    ...skill, key: `${item.id}:${item.installedDigest}:${skill.id}`, enabled: item.enabled && !supportBlocked(item.installedComponentSupport, item.installedDigest),
     sourceLabel: { id: "settings.pluginCenter.pluginsValue", values: { value0: item.displayName || item.name } }, pluginId: item.id, projectId, scope: "plugin",
   })));
   const pluginServers = allConnections.flatMap(row => {
     const owner = installed.find(item => item.id === row.pluginId && item.installedDigest === row.installedDigest);
     return owner ? (row.servers ?? []).map((server: Data) => ({ key: `${row.pluginId}:${row.installedDigest}:${server.serverId}`, serverId: server.serverId,
-      state: server.state ?? row.state, owner: { pluginId: owner.id, pluginName: owner.displayName || owner.name, installedDigest: owner.installedDigest!, enabled: owner.enabled } })) : [];
+      state: server.state ?? row.state, owner: { pluginId: owner.id, pluginName: owner.displayName || owner.name, installedDigest: owner.installedDigest!, enabled: owner.enabled, compatibilityBlocked: supportBlocked(owner.installedComponentSupport, owner.installedDigest) } })) : [];
   });
   const audience = listRoute.kind === "market" ? listRoute.audience : "personal";
   const markets = catalog?.marketplaces ?? [];
@@ -977,6 +981,8 @@ export function PluginCenter({ project: selectedProject, projects, thread, actio
                   <Button variant="outline" disabled={disabled || credentialBusy || !connectorId || !connectorToken || connections.some(row => row.state === "connected" || row.state === "partial")} onClick={() => void saveConnectorCredential()}>{t("settings.pluginCenter.saveSecurelyAndConfigureGitHub")}</Button>
                   {credentialRef && <p role="status">{t("settings.pluginCenter.protectedCredentialsConfigured")}</p>}
                 </SettingsDisclosure>} />}
+            <PluginComponentSupport report={detail.installed ? detail.installedComponentSupport : detail.componentSupport} digest={detail.installed ? detail.installedDigest : detail.sourceDigest} installed={detail.installed} />
+            {detail.installed && detail.sourceDigest !== detail.installedDigest && <PluginComponentSupport report={detail.componentSupport} digest={detail.sourceDigest} installed={false} />}
             {operationMessage && pendingKind !== "unknown" && !busy && <Feedback message={operationMessage} />}
             {setupThreadId && onOpenThread && <Button onClick={() => onOpenThread(projectId, setupThreadId)}>{t("settings.pluginCenter.openSetupConversation")}</Button>}
             {detail.installed && <div className="plugin-detail-setting-row" id="plugin-management">
@@ -1011,10 +1017,10 @@ export function PluginCenter({ project: selectedProject, projects, thread, actio
               </SettingsDisclosure>
               {detail.installed && detail.skills.length > 0 && (detail.installedDigest !== detail.sourceDigest) && <SettingsDisclosure title={t("settings.pluginCenter.catalogPackageSkills")}><ul>{detail.skills.map(skill => <li key={skill.id}><strong>{skill.name}</strong><p>{skill.description}</p></li>)}</ul></SettingsDisclosure>}
             </div>}
-            {(detail.installed ? detail.installedSkills : detail.skills).length > 0 && <section aria-label={detail.installed ? t("settings.pluginCenter.installedSkills") : t("settings.pluginCenter.catalogPackageSkills")} className="plugin-detail-resources"><h3>{detail.installed ? t("settings.pluginCenter.installedSkills") : t("settings.pluginCenter.catalogPackageSkills")}</h3><ul>{(detail.installed ? detail.installedSkills : detail.skills).map(skill => <li key={skill.id}><button disabled={!detail.installed || !detail.enabled} className="plugin-skill-link" onClick={() => openSkill({ ...skill, key: `${detail.id}:${skill.id}`, sourceLabel: { id: "settings.pluginCenter.pluginsValue", values: { value0: detail.displayName || detail.name } }, scope: "plugin", pluginId: detail.id, projectId, enabled: detail.enabled })}>{skill.name}</button><p>{skill.description}</p></li>)}</ul></section>}
+            {(detail.installed ? detail.installedSkills : detail.skills).length > 0 && <section aria-label={detail.installed ? t("settings.pluginCenter.installedSkills") : t("settings.pluginCenter.catalogPackageSkills")} className="plugin-detail-resources"><h3>{detail.installed ? t("settings.pluginCenter.installedSkills") : t("settings.pluginCenter.catalogPackageSkills")}</h3><ul>{(detail.installed ? detail.installedSkills : detail.skills).map(skill => <li key={skill.id}><button disabled={!detail.installed || !detail.enabled || supportBlocked(detail.installedComponentSupport, detail.installedDigest)} className="plugin-skill-link" onClick={() => openSkill({ ...skill, key: `${detail.id}:${skill.id}`, sourceLabel: { id: "settings.pluginCenter.pluginsValue", values: { value0: detail.displayName || detail.name } }, scope: "plugin", pluginId: detail.id, projectId, enabled: detail.enabled && !supportBlocked(detail.installedComponentSupport, detail.installedDigest) })}>{skill.name}</button><p>{skill.description}</p></li>)}</ul></section>}
             {detail.installed && detail.installedDigest && <PluginHookSettings id={detail.id} installedDigest={detail.installedDigest} disabled={disabled || detailLoading} api={api} onConfigure={async parameters => { await mutate("pluginHooksConfigure", parameters); }} refreshKey={catalog?.revision} />}
             {detail.installed && apps?.(detail.id)}
-            {detail.installed && detail.installedOnboardingSkill && <section className="plugin-detail-resources"><h3>{t("settings.pluginCenter.pluginSettings")}</h3><p>{t("settings.pluginCenter.runTheSetupSkillInARegular")}</p><Button disabled={disabled || !detail.enabled} onClick={() => void mutate("pluginSetup", { id: detail.id, ...(thread?.id ? { threadId: thread.id } : {}) })}>{t("settings.pluginCenter.runSetup")}</Button></section>}
+            {detail.installed && detail.installedOnboardingSkill && <section className="plugin-detail-resources"><h3>{t("settings.pluginCenter.pluginSettings")}</h3><p>{t("settings.pluginCenter.runTheSetupSkillInARegular")}</p><Button disabled={disabled || !detail.enabled || supportBlocked(detail.installedComponentSupport, detail.installedDigest)} onClick={() => void mutate("pluginSetup", { id: detail.id, ...(thread?.id ? { threadId: thread.id } : {}) })}>{t("settings.pluginCenter.runSetup")}</Button></section>}
           </div>}
         </article>
       )}

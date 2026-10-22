@@ -170,14 +170,14 @@ class UsageAnalytics {
     const task = (async () => {
       try {
         requireCurrent();
-        const { CoreClient } = await import("@areal/runtime-client/core");
+        const { CoreClient, MAX_RESPONSE_BYTES } = await import("@areal/runtime-client/core");
         requireCurrent();
         reader = new CoreClient({
           createSocket: () =>
             new WebSocket(endpoint, {
               headers: { Authorization: `Bearer ${token}` },
               followRedirects: false,
-              maxPayload: 4 * 1024 * 1024,
+              maxPayload: MAX_RESPONSE_BYTES,
             }),
         });
         await reader.connect();

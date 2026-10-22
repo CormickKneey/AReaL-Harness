@@ -1,8 +1,10 @@
-# AReaL 客户端设计系统 v1
+# AReaL GUI 设计系统 v1
 
-内部设计与 Agent 实现合同。目标是让同类任务得到同类页面：先选已有组合与控件，再填入业务内容。适用于桌面 renderer；Remote 复用组件时遵循同一展示合同，原生平台适配仍归各自所有者。
+跨客户端共享知识从 [Design Docs](../../../design/README.md)进入。本目录保留 GUI 设计与 Agent 实现合同。目标是让同类任务得到同类页面：先选已有组合与控件，再填入业务内容。适用于桌面 renderer；Remote 复用组件时遵循同一展示合同，原生平台适配仍归各自所有者。
 
 ## 当前阶段
+
+下一轮整体设计方向见[设计系统建设计划](../../../design/roadmap.md)。该计划基于 AReaL Harness 当前产品任务和生产代码，明确整体候选、产物及迁移顺序，不扩大当前 Base 准入。
 
 先读[设计系统架构](architecture.md)：架构 → Base → 固定题目 → 比较与改进。当前交付包含 v1 规范、可运行目录、Base候选、已运行的设置/决策探索题和对话动态题；尚未冻结 Base，也未完成盲测。下列规则作为现有生产约束与候选模式的入口，具体准入按架构阶段执行。
 
@@ -28,21 +30,23 @@
 
 | 问题 | 唯一规则位置 |
 | --- | --- |
-| 按用户意图选交互类别、必须/默认/可探索规则、处理例外 | [interactions.md](interactions.md)（[English](interactions.en.md)） |
+| 人、Agent、审批与交接的含义是什么 | [人与 Agent](../../../design/people-and-agents/README.md) |
+| 共享的控件选择、阅读与反馈怎样组织 | [组件](../../../design/components/README.md)、[交互模式](../../../design/patterns/README.md) |
+| 按用户意图选 GUI 交互类别、必须/默认/可探索规则、处理例外 | [interactions.md](interactions.md)（[English](interactions.en.md)） |
 | 字体、色彩、层级、尺寸、密度如何选 | [foundations.md](foundations.md) |
 | 设置、资源列表、对话、审批、详情怎么组成 | [patterns.md](patterns.md) |
 | 已有什么、由谁实现、哪些仍未统一 | [inventory.md](inventory.md) |
 | 新变体、例外、截图与验收如何进入 | [governance.md](governance.md) |
 | 自动化如何工作、哪些已接入 | [automation.md](automation.md) |
 | 页面设计、视频分析、关键帧核查与差异筛选的默认顺序 | [structured-flow.md](structured-flow.md) |
-| Cindy / Raft 学到什么、Codex 修正依据是什么 | [references.md](references.md) |
+| 设计依据、参考观察与采纳如何记录 | [references.md](references.md) |
 | Token 名、组件接口与预览命令 | [现有实现指南](../DESIGN_SYSTEM.md) |
 
 ## 权威与冲突
 
 - 本目录规定用途、组合和准入；现有实现指南保留控件语义、长文本及预览操作细节。相同规则只在一个位置维护。
 - 精确值与主题派生以生产 CSS 和外观设置为准；组件参数以实际导出为准。文档描述目标不等于代码已迁移。
-- Codex 是桌面视觉与交互的第一参考；截图只证明所采状态，不授权复制它的产品能力、品牌或平台尺寸。Cindy / Raft 提供治理方法，不能覆盖本仓执行、权限与历史合同。
+- Codex 是桌面视觉与交互的第一参考；截图只证明所采状态，不授权复制它的产品能力、品牌或平台尺寸。参考观察不能覆盖本仓执行、权限与历史合同。
 - 当前用户决定优先。规范与代码不符时，明确指出差异并修正拥有该事实的来源；不能选一个相近数值、复制局部样式后声称已统一。
 
 ## 目录与完成边界

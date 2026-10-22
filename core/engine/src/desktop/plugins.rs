@@ -7,6 +7,7 @@ pub(super) struct Manager {
     pub(super) store: Option<Arc<areal_plugins::Store>>,
     pub(super) enabled: Vec<areal_plugins::InstalledSkill>,
     pub(super) enabled_plugin_ids: BTreeSet<String>,
+    pub(super) eligible_skill_refs: BTreeSet<(String, String)>,
 }
 fn store_error(e: anyhow::Error) -> Error {
     match e.downcast_ref::<areal_plugins::StoreError>() {
@@ -22,6 +23,7 @@ struct Snapshot {
     skills: Vec<Skill>,
     enabled: Vec<areal_plugins::InstalledSkill>,
     enabled_plugin_ids: BTreeSet<String>,
+    eligible_skill_refs: BTreeSet<(String, String)>,
     hooks: Vec<crate::plugin_hooks::BoundHook>,
     hook_enabled: HashSet<String>,
     hook_sources: Vec<areal_plugins::hook_sources::HookSource>,
@@ -74,6 +76,7 @@ fn snapshot(
         skills,
         enabled,
         enabled_plugin_ids,
+        eligible_skill_refs: installed.eligible_skill_refs,
     })
 }
 
@@ -106,6 +109,7 @@ impl Engine {
         let mut manager = self.desktop.plugins.write().unwrap();
         manager.enabled = snapshot.enabled;
         manager.enabled_plugin_ids = snapshot.enabled_plugin_ids;
+        manager.eligible_skill_refs = snapshot.eligible_skill_refs;
     }
     pub(crate) fn plugin_store(&self) -> Result<Arc<areal_plugins::Store>> {
         self.desktop

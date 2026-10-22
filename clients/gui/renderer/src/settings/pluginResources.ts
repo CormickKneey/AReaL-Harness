@@ -1,5 +1,6 @@
 import { useI18n, type UiMessage, type Translate, type MessageId, formatUiMessage } from "../i18n/IntlProvider.js";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { supportBlocked, type PackageComponentSupport } from "./PluginComponentSupport.js";
 import type { Action } from "../services.js";
 
 export type PackageOwner = {
@@ -7,6 +8,7 @@ export type PackageOwner = {
   pluginName: string;
   installedDigest: string;
   enabled: boolean;
+  compatibilityBlocked?: boolean;
 };
 export type PluginSkillResource = {
   key: string;
@@ -28,6 +30,7 @@ type InstalledPackage = {
   installed: boolean;
   installedDigest: string | null;
   enabled: boolean;
+  installedComponentSupport?: PackageComponentSupport | null;
   installedSkills: { id: string; name: string; description: string }[];
 };
 type PluginConnection = {
@@ -130,6 +133,7 @@ export function useInstalledPluginResources(
             pluginName: item.displayName || item.name,
             installedDigest: item.installedDigest,
             enabled: item.enabled,
+            compatibilityBlocked: supportBlocked(item.installedComponentSupport, item.installedDigest),
           };
           owners.set(item.id, owner);
           for (const skill of item.installedSkills) {

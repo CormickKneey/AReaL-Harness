@@ -1,3 +1,4 @@
+import { operationMessages } from "./messages/operations.js";
 import { appMessages } from "./messages/apps.js";
 import { commonMessages } from "./messages/common.js";
 import { generalMessages } from "./messages/general.js";
@@ -7,6 +8,7 @@ import { remoteMessages } from "./messages/remote.js";
 export type AppLocale = "zh-CN" | "en";
 export type MessagePair = Record<AppLocale, string>;
 export const messages = {
+  ...operationMessages,
   ...commonMessages,
   ...appMessages,
   ...generalMessages,

@@ -84,38 +84,20 @@ const reads = {
   workgroupArtifact: ['areal/workgroup/artifact', ['id', 'path', 'offset']],
 };
 const pick = (value, keys) => Object.fromEntries(keys.filter(key => value[key] !== undefined).map(key => [key, value[key]]));
-async function manage(backend, project, request) {
+async function manage(backend, project, request, context = {}) {
   const { operation } = request;
   if (operation === 'mcpFormResourceSubmission') {
     const method = 'areal/mcp/form/resource/stage';
     if (typeof request.requestId !== 'string' || !request.requestId.trim()) throw new Error('Missing upload submission ID');
-    const entry = project.pending.find(item => item.method === method && item.params.requestId === request.requestId);
-    if (entry && backend.awaitingResponses.has(entry)) return { confirmed: false, state: 'accepted' };
-    const client = project.client;
-    const records = await client.request('areal/request/read', { requestId: request.requestId });
-    backend.requireConnection(project, client);
-    const receipt = records.data.find(item => item.method === method && item.requestId === request.requestId);
-    if (receipt?.state !== 'completed' || !receipt.response
-      || (!receipt.response.error && receipt.response.result === undefined)) return { confirmed: false, state: receipt?.state ?? 'unknown' };
-    if (entry) await backend.changePending(project, pending => pending.filter(item => item !== entry));
-    const { result, error } = receipt.response;
-    return { confirmed: true, accepted: !error, result, ...(error ? { error } : {}) };
+    return backend.readSubmission(project, method, { requestId: request.requestId });
   }
   if (operation === 'pluginSubmission') {
     const method = mutations[request.mutation];
     if (!['pluginArchiveImport', 'marketplaceAdd', 'marketplaceAddGit', 'marketplaceRemove', 'marketplaceUpdate', 'pluginResolve', 'pluginConnection', 'pluginHooksConfigure', 'hookAcknowledge', 'pluginAuthConfigure', 'connectorConfigure', 'pluginInstall', 'pluginConfigure', 'pluginUninstall', 'pluginSetup'].includes(request.mutation)
       || typeof request.requestId !== 'string' || !request.requestId.trim()) throw new Error('缺少原插件提交标识');
-    const entry = project.pending.find(item => item.method === method && item.params.requestId === request.requestId);
-    if (entry && backend.awaitingResponses.has(entry)) return { confirmed: false, state: 'accepted' };
-    const client = project.client;
-    const records = await client.request('areal/request/read', { requestId: request.requestId });
-    backend.requireConnection(project, client);
-    const receipt = records.data.find(item => item.method === method && item.requestId === request.requestId);
-    if (receipt?.state !== 'completed' || !receipt.response
-      || (!receipt.response.error && receipt.response.result === undefined)) return { confirmed: false, state: receipt?.state ?? 'unknown' };
-    // 收据确认后仅清理原日志，不重新提交，也不核对其他领域的待定操作。
-    if (entry) await backend.changePending(project, pending => pending.filter(item => item !== entry));
-    const { result, error } = receipt.response;
+    const receipt = await backend.readSubmission(project, method, { requestId: request.requestId, ...(request.threadId ? { threadId: request.threadId } : {}) });
+    if (!receipt.confirmed) return receipt;
+    const { result, error } = receipt;
     let warning;
     if (!error && request.mutation === 'pluginSetup' && result?.thread?.id) {
       try {
@@ -124,7 +106,7 @@ async function manage(backend, project, request) {
       } catch (cause) { warning = `设置已受理，刷新对话失败：${cause.message}`; }
     }
     backend.onChange();
-    return { confirmed: true, accepted: !error, result, ...(warning ? { warning } : {}), ...(error ? { error } : {}) };
+    return { ...receipt, ...(warning ? { warning } : {}) };
   }
   if (operation === 'pluginAuthCredential') return configurePluginAuthentication(backend,project,request);
   if (operation === 'connectorCredential') {
@@ -142,9 +124,10 @@ async function manage(backend, project, request) {
       return {...result, credentialRef};
     } finally { backend.providerUpdating = false; }
   }
-  if (operation === 'pluginAuth' || ['mcpAppOpen','mcpAppRequest','mcpAppClose','mcpExtensionCall','mcpFormRespond','mcpFormPreview'].includes(operation)) {
+  if (operation === 'pluginAuth' || ['mcpAppOpen','mcpAppOpenFromResult','mcpAppRequest','mcpAppClose','mcpExtensionCall','mcpFormRespond','mcpFormPreview'].includes(operation)) {
     const [method, keys] = {
       pluginAuth:['areal/plugin/auth',['id','server','operation']],
+      mcpAppOpenFromResult:['areal/mcp/app/openFromResult',['threadId','turnId','itemId','requestId']],
       mcpAppOpen:['areal/mcp/app/open',['threadId','serverId','expectedGeneration','toolName','arguments','requestId','fileResource','deepLink']],
       mcpAppRequest:['areal/mcp/app/request',['threadId','instanceId','generation','request','requestId']],
       mcpAppClose:['areal/mcp/app/close',['threadId','instanceId','generation']],
@@ -154,7 +137,13 @@ async function manage(backend, project, request) {
     }[operation];
     const params=pick(request,keys);
     if (operation === 'pluginAuth') params.operation=request.authOperation;
-    try { return await project.client.request(method,params,{timeoutMs:120000}); }
+    try {
+      const client = project.client;
+      const result = await client.request(method,params,{timeoutMs:120000});
+      if (operation === 'mcpAppOpen' || operation === 'mcpAppOpenFromResult')
+        context.onMcpAppOpened?.(project, client, request, result);
+      return result;
+    }
     catch (error) { if (typeof error.code !== 'number' || error.code === -32603) {error.submissionUnknown=true;error.message=`操作结果待核对，不会自动重发。${error.message}`;} throw error; }
   }
   if (operation === 'pluginCapabilities') return { enabled: project.client.capabilities?.methods?.includes('areal/plugin/list') === true };
@@ -320,7 +309,7 @@ async function manage(backend, project, request) {
   let result;
   try {
     if (operation === 'goalCreate' || operation === 'goalResume') await backend.providers.refreshGoalTransport(project, request.threadId);
-    result = await backend.submit(project, method, { ...pick(request, fields[operation]), ...(terminal ? { argv: terminal.argv } : {}) }, operation === 'mcpFormResourceStage' || operation === 'processStart' || operation.startsWith('plugin') || operation.startsWith('marketplace') || operation === 'connectorConfigure' ? { requestId: request.requestId } : {});
+    result = await backend.submit(project, method, { ...pick(request, fields[operation]), ...(terminal ? { argv: terminal.argv } : {}) }, { requestId: request.requestId });
   }
   catch (error) {
     if (threadMutationMethods.has(method)) {
@@ -345,7 +334,7 @@ async function manage(backend, project, request) {
     project.model.replace(snapshot.thread);
     await backend.listThreads(project);
   }
-  } catch (error) { project.error = `操作已完成，刷新失败：${error.message}`; }
+  } catch (error) { if (request.threadId) backend.observationFailure(project, request.threadId, error); }
   backend.onChange();
   return terminal ? { ...result, shell: terminal.shell } : result;
 }

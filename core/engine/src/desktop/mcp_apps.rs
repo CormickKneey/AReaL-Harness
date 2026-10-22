@@ -2,11 +2,21 @@
 use super::*;
 #[path = "form_resources.rs"]
 mod form_resources;
+#[path = "page_tools.rs"]
+pub(crate) mod page_tools;
 use crate::model::ToolCall;
-use areal_protocol::ToolOutcome;
+use areal_protocol::{
+    ToolOutcome, ToolStatus,
+    plugin_runtime::{OpenFromResult, ResultUnavailable},
+};
+use sha2::{Digest, Sha256};
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Instance {
+    #[serde(default)]
+    tool_host_id: Option<String>,
+    #[serde(skip)]
+    page_tools_retired: bool,
     #[serde(default)]
     runtime_epoch: String,
     instance_id: String,
@@ -27,6 +37,103 @@ struct Instance {
     #[serde(default)]
     file_resource: Option<Value>,
 }
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ResultProvenance {
+    pub version: u8,
+    pub apps_epoch: String,
+    pub thread_id: String,
+    pub cwd: String,
+    pub plugin_id: String,
+    pub installed_digest: String,
+    pub server_id: String,
+    pub generation: u64,
+    pub original_tool_name: String,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ResultRef {
+    thread_id: String,
+    turn_id: String,
+    item_id: String,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum ResultState {
+    Preparing,
+    Open {
+        instance_id: String,
+    },
+    Closed {
+        instance_id: String,
+        generation: u64,
+    },
+    Unavailable {
+        reason: ResultUnavailable,
+    },
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ResultOperation {
+    identity: String,
+    request_id: String,
+    digest: String,
+    source: ResultRef,
+    source_key: String,
+    plugin_id: String,
+    state: ResultState,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct AppStore {
+    version: u8,
+    result_epoch: String,
+    instances: BTreeMap<String, Instance>,
+    result_operations: BTreeMap<String, ResultOperation>,
+}
+fn result_terminal_reserve(operations: &BTreeMap<String, ResultOperation>) -> Result<usize> {
+    operations.values().try_fold(0, |reserved, record| {
+        let bytes = serde_json::to_vec(record).map_err(invalid)?.len();
+        if bytes > 1024 {
+            return Err(invalid("result receipt budget exceeded"));
+        }
+        Ok(reserved + 1024 - bytes)
+    })
+}
+struct SavedResult {
+    provenance: ResultProvenance,
+    snapshot_sha: String,
+    metadata: Value,
+    arguments: Value,
+    result: Value,
+    tool_name: String,
+    server: areal_mcp::McpServer,
+}
+fn unavailable(reason: ResultUnavailable) -> Value {
+    json!({"status":"unavailable","reason":reason})
+}
+fn app_resource(read: &Value, uri: &str) -> std::result::Result<Value, ResultUnavailable> {
+    let content = read["contents"]
+        .as_array()
+        .and_then(|values| {
+            values.iter().find(|value| {
+                value["uri"] == uri
+                    && matches!(
+                        value["mimeType"].as_str(),
+                        Some("text/html;profile=mcp-app" | "text/html")
+                    )
+            })
+        })
+        .ok_or(ResultUnavailable::ResourceRejected)?;
+    let html = content["text"]
+        .as_str()
+        .ok_or(ResultUnavailable::ResourceRejected)?;
+    if html.len() > 2 * 1024 * 1024 {
+        return Err(ResultUnavailable::ResourceRejected);
+    }
+    Ok(json!({"uri":uri,"mimeType":content["mimeType"],"html":html,"_meta":content["_meta"]}))
+}
+
 #[derive(Clone)]
 pub(crate) enum CallOwnerScope {
     Tool,
@@ -55,9 +162,13 @@ struct Subscription {
     instances: std::collections::BTreeSet<String>,
 }
 pub(crate) struct Manager {
-    runtime_epoch: String,
+    page_tools: page_tools::Pages,
+    pub(super) runtime_epoch: String,
+    result_operations: std::sync::RwLock<BTreeMap<String, ResultOperation>>,
+    result_changed: tokio::sync::Notify,
+    result_failures: std::sync::RwLock<BTreeMap<String, String>>,
     instances: std::sync::RwLock<BTreeMap<String, Instance>>,
-    mutation: Mutex<()>,
+    pub(super) mutation: Mutex<()>,
     subscriptions: std::sync::RwLock<BTreeMap<(String, u64, String), Subscription>>,
     settings: std::sync::RwLock<BTreeMap<(String, String, String, u64), Value>>,
     pub(crate) calls: Mutex<BTreeMap<(String, u64), CallOwner>>,
@@ -77,13 +188,24 @@ impl Manager {
         let instances = if path.exists() {
             let bytes = std::fs::read(path)?;
             anyhow::ensure!(bytes.len() <= 8 * 1024 * 1024, "App state budget exceeded");
-            serde_json::from_slice(&bytes)?
+            let value: Value = serde_json::from_slice(&bytes)?;
+            if value.get("version").is_some() {
+                let saved: AppStore = serde_json::from_value(value)?;
+                anyhow::ensure!(saved.version == 2, "unsupported App state version");
+                saved.instances
+            } else {
+                serde_json::from_value(value)?
+            }
         } else {
             BTreeMap::new()
         };
         Ok(Self {
+            page_tools: Default::default(),
             runtime_epoch: uuid::Uuid::new_v4().to_string(),
             instances: std::sync::RwLock::new(instances),
+            result_operations: Default::default(),
+            result_changed: Default::default(),
+            result_failures: Default::default(),
             mutation: Mutex::new(()),
             subscriptions: Default::default(),
             settings: Default::default(),
@@ -160,7 +282,7 @@ fn declared_entrypoint(metadata: &Value, arguments: &Value, file: Option<&Value>
             _ => false,
         })
 }
-fn tool_uri(metadata: &Value) -> Option<&str> {
+pub(crate) fn tool_uri(metadata: &Value) -> Option<&str> {
     metadata
         .pointer("/_meta/ui/resourceUri")
         .or_else(|| metadata.pointer("/_meta/ui~1resourceUri"))
@@ -324,16 +446,61 @@ fn form_resources_valid(schema: &Value, content: &Value) -> bool {
 }
 
 impl Engine {
-    async fn app_save(&self) -> Result<()> {
-        let records = self.desktop.mcp_apps.instances.read().unwrap().clone();
+    async fn app_save(&self, instances: BTreeMap<String, Instance>) -> Result<()> {
+        let operations = self
+            .desktop
+            .mcp_apps
+            .result_operations
+            .read()
+            .unwrap()
+            .clone();
+        self.app_commit(instances, operations).await
+    }
+    fn app_file_fits(
+        &self,
+        instances: &BTreeMap<String, Instance>,
+        operations: &BTreeMap<String, ResultOperation>,
+    ) -> Result<bool> {
+        let candidate = AppStore {
+            version: 2,
+            result_epoch: self.desktop.mcp_apps.runtime_epoch.clone(),
+            instances: instances.clone(),
+            result_operations: operations.clone(),
+        };
+        Ok(serde_json::to_vec(&candidate).map_err(invalid)?.len()
+            + result_terminal_reserve(operations)?
+            <= 8 * 1024 * 1024)
+    }
+    async fn app_commit(
+        &self,
+        instances: BTreeMap<String, Instance>,
+        result_operations: BTreeMap<String, ResultOperation>,
+    ) -> Result<()> {
+        if result_operations.len() > 1024
+            || result_operations
+                .values()
+                .any(|record| serde_json::to_vec(record).map_or(true, |bytes| bytes.len() > 1024))
+        {
+            return Err(invalid("result receipt budget exceeded"));
+        }
+        let records = AppStore {
+            version: 2,
+            result_epoch: self.desktop.mcp_apps.runtime_epoch.clone(),
+            instances,
+            result_operations,
+        };
         let bytes = serde_json::to_vec(&records).map_err(invalid)?;
-        if bytes.len() > 8 * 1024 * 1024 {
+        if bytes.len() + result_terminal_reserve(&records.result_operations)? > 8 * 1024 * 1024 {
             return Err(invalid("App state budget exceeded"));
         }
         self.store
             .save_metadata("mcp-apps", &records)
             .await
-            .map_err(invalid)
+            .map_err(invalid)?;
+        *self.desktop.mcp_apps.instances.write().unwrap() = records.instances;
+        *self.desktop.mcp_apps.result_operations.write().unwrap() = records.result_operations;
+        self.desktop.mcp_apps.result_changed.notify_waiters();
+        Ok(())
     }
     async fn app_scope(&self, thread: &str) -> Result<Arc<Cell>> {
         let cell = self.cell(thread).await?;
@@ -417,12 +584,13 @@ impl Engine {
                 data.push(json!({"serverId":server.name(),"generation":server.generation(),"protocolVersion":info["protocolVersion"],"pluginId":owner.plugin,"installedDigest":owner.digest,"tools":tools,"capabilities":capabilities,"title":info["serverInfo"]["title"],"icons":info["serverInfo"]["icons"],"instructions":info["instructions"]}));
             }
         }
-        Ok(json!({"data":data}))
+        Ok(json!({"data":data,"requestEpoch":self.desktop.mcp_apps.runtime_epoch}))
     }
     #[allow(clippy::too_many_arguments)]
     pub async fn mcp_app_open(
         self: &Arc<Self>,
         identity: String,
+        host: Option<Arc<dyn crate::tools::DynamicToolHost>>,
         thread_id: String,
         server_id: String,
         expected_generation: u64,
@@ -482,6 +650,9 @@ impl Engine {
                     "App belongs to a previous Core session; open a new instance",
                 ));
             }
+            if existing.tool_host_id.as_deref() != host.as_ref().map(|h| h.id()) {
+                return Err(invalid("App original Host mismatch"));
+            }
             if existing.request_digest != hash {
                 return Err(Error::Conflict);
             }
@@ -507,24 +678,12 @@ impl Engine {
             {
                 return Err(Error::Conflict);
             }
-            let content = read["contents"]
-                .as_array()
-                .and_then(|v| {
-                    v.iter().find(|v| {
-                        v["uri"] == uri
-                            && v["mimeType"].as_str().is_some_and(|m| {
-                                m == "text/html;profile=mcp-app" || m == "text/html"
-                            })
-                    })
-                })
-                .ok_or_else(|| invalid("App HTML resource missing or invalid MIME"))?;
-            let html = content["text"]
-                .as_str()
-                .ok_or_else(|| invalid("App resource must contain HTML text"))?;
-            if html.len() > 2 * 1024 * 1024 {
-                return Err(invalid("App HTML budget exceeded"));
-            }
+            let resource = app_resource(&read, &uri).map_err(|_| {
+                invalid("App HTML resource missing, invalid MIME or budget exceeded")
+            })?;
             let saved = Instance {
+                tool_host_id: host.as_ref().map(|h| h.id().to_owned()),
+                page_tools_retired: false,
                 runtime_epoch: self.desktop.mcp_apps.runtime_epoch.clone(),
                 instance_id: id(),
                 identity: identity.clone(),
@@ -537,19 +696,15 @@ impl Engine {
                 tool_name: tool.definition.name.clone(),
                 request_id: request_id.clone(),
                 request_digest: hash,
-                resource: json!({"uri":uri,"mimeType":content["mimeType"],"html":html,"_meta":content["_meta"]}),
+                resource,
                 metadata: metadata.clone(),
                 arguments: args.clone(),
                 context: Value::Null,
                 file_resource: file_resource.clone(),
             };
-            self.desktop
-                .mcp_apps
-                .instances
-                .write()
-                .unwrap()
-                .insert(saved.instance_id.clone(), saved.clone());
-            self.app_save().await?;
+            let mut instances = self.desktop.mcp_apps.instances.read().unwrap().clone();
+            instances.insert(saved.instance_id.clone(), saved.clone());
+            self.app_save(instances).await?;
             saved
         };
         let initial_result = if arguments.is_some() {
@@ -739,8 +894,8 @@ impl Engine {
                     return Err(invalid("model context must be an object"));
                 }
                 let _guard = self.desktop.mcp_apps.mutation.lock().await;
+                let mut instances = self.desktop.mcp_apps.instances.read().unwrap().clone();
                 {
-                    let mut instances = self.desktop.mcp_apps.instances.write().unwrap();
                     let current = instances.get_mut(&instance_id).ok_or(Error::NotFound)?;
                     if current.identity != identity
                         || current.thread_id != thread_id
@@ -751,7 +906,7 @@ impl Engine {
                     }
                     current.context = context;
                 }
-                self.app_save().await?;
+                self.app_save(instances).await?;
                 json!({})
             }
             "ui/host-file" if params["request"]["method"] == "openai/resources/write" => {
@@ -882,6 +1037,78 @@ impl Engine {
             .await
             .map_err(invalid)?
     }
+    pub(super) async fn revoke_plugin_apps_without_mutation_lock(
+        &self,
+        plugin: &str,
+        generations: &std::collections::BTreeSet<u64>,
+    ) -> Result<()> {
+        let mut instances = self.desktop.mcp_apps.instances.read().unwrap().clone();
+        let closed: Vec<_> = instances
+            .values()
+            .filter(|instance| instance.plugin == plugin)
+            .cloned()
+            .collect();
+        for instance in &closed {
+            self.desktop
+                .mcp_apps
+                .page_tools
+                .revoke_instance(&instance.instance_id);
+        }
+        instances.retain(|_, instance| instance.plugin != plugin);
+        let mut operations = self
+            .desktop
+            .mcp_apps
+            .result_operations
+            .read()
+            .unwrap()
+            .clone();
+        for record in operations
+            .values_mut()
+            .filter(|record| record.plugin_id == plugin)
+        {
+            if matches!(
+                record.state,
+                ResultState::Preparing | ResultState::Open { .. }
+            ) {
+                record.state = ResultState::Unavailable {
+                    reason: ResultUnavailable::SourceDisabled,
+                };
+            }
+        }
+        self.app_commit(instances, operations).await?;
+        self.desktop
+            .mcp_apps
+            .subscriptions
+            .write()
+            .unwrap()
+            .retain(|(_, generation, _), _| !generations.contains(generation));
+        self.desktop
+            .mcp_apps
+            .settings
+            .write()
+            .unwrap()
+            .retain(|(_, _, _, generation), _| !generations.contains(generation));
+        self.desktop
+            .mcp_apps
+            .reads
+            .write()
+            .unwrap()
+            .retain(|_, (generation, cancel)| {
+                if generations.contains(generation) {
+                    cancel.cancel();
+                    false
+                } else {
+                    true
+                }
+            });
+        for instance in closed {
+            if let Ok(cell) = self.raw_cell(&instance.thread_id).await {
+                cell.emit("areal/mcp/app/notification",json!({"threadId":instance.thread_id,"instanceId":instance.instance_id,"generation":instance.generation,"notification":{"jsonrpc":"2.0","method":"ui/notifications/closed"}}));
+            }
+        }
+        Ok(())
+    }
+
     pub async fn mcp_app_close(
         self: &Arc<Self>,
         identity: String,
@@ -898,8 +1125,10 @@ impl Engine {
             .read()
             .unwrap()
             .get(&instance_id)
-            .cloned()
-            .ok_or(Error::NotFound)?;
+            .cloned();
+        let Some(saved) = saved else {
+            return Ok(json!({"closed":true}));
+        };
         if saved.identity != identity
             || saved.thread_id != thread_id
             || saved.generation != generation
@@ -912,12 +1141,29 @@ impl Engine {
             .app_bound(&identity, &thread_id, &instance_id, generation)
             .await
             .is_ok();
+        let mut instances = self.desktop.mcp_apps.instances.read().unwrap().clone();
+        instances.remove(&instance_id);
+        let mut operations = self
+            .desktop
+            .mcp_apps
+            .result_operations
+            .read()
+            .unwrap()
+            .clone();
+        for record in operations.values_mut() {
+            if matches!(&record.state, ResultState::Open { instance_id: current } if current == &instance_id)
+            {
+                record.state = ResultState::Closed {
+                    instance_id: instance_id.clone(),
+                    generation,
+                };
+            }
+        }
         self.desktop
             .mcp_apps
-            .instances
-            .write()
-            .unwrap()
-            .remove(&instance_id);
+            .page_tools
+            .revoke_instance(&instance_id);
+        self.app_commit(instances, operations).await?;
         for owner in self.desktop.mcp_apps.calls.lock().await.values() {
             if owner.identity == identity
                 && owner.thread == thread_id
@@ -944,6 +1190,7 @@ impl Engine {
             });
             releases
         };
+        drop(_guard);
         let mut cleanup_error = None;
         for (uri, server) in releases {
             if !server.is_revoked()
@@ -952,7 +1199,6 @@ impl Engine {
                 cleanup_error.get_or_insert_with(|| invalid(error));
             }
         }
-        self.app_save().await?;
         if let Some(error) = cleanup_error {
             return Err(error);
         }
@@ -1885,5 +2131,456 @@ fn host_file(
         Err(error) => Err(invalid(format!(
             "file write failed; do not automatically replay: {error}"
         ))),
+    }
+}
+
+impl Engine {
+    async fn result_source_server(
+        &self,
+        source: &ResultProvenance,
+    ) -> std::result::Result<(super::plugin_mcp::Generation, areal_mcp::McpServer), ResultUnavailable>
+    {
+        if source.version != 1 || source.apps_epoch != self.desktop.mcp_apps.runtime_epoch {
+            return Err(ResultUnavailable::StaleSourceEpoch);
+        }
+        let component = self
+            .plugin_component(&source.plugin_id)
+            .await
+            .map_err(|_| ResultUnavailable::SourceDisabled)?;
+        if component.digest != source.installed_digest {
+            return Err(ResultUnavailable::PackageChanged);
+        }
+        let (owner, server) = self
+            .plugin_server(&source.server_id, source.generation)
+            .await
+            .map_err(|_| ResultUnavailable::SourceUnavailable)?;
+        if owner.plugin != source.plugin_id || owner.digest != source.installed_digest {
+            return Err(ResultUnavailable::PackageChanged);
+        }
+        Ok((owner, server))
+    }
+    async fn saved_result(
+        &self,
+        input: &OpenFromResult,
+    ) -> std::result::Result<SavedResult, ResultUnavailable> {
+        let thread = self
+            .read(&input.thread_id, true)
+            .await
+            .map_err(|_| ResultUnavailable::SourceUnavailable)?;
+        let item = thread
+            .turns
+            .iter()
+            .find(|turn| turn.id == input.turn_id)
+            .and_then(|turn| turn.items.iter().find(|item| item.id() == input.item_id))
+            .ok_or(ResultUnavailable::NotSuccessful)?;
+        let Item::DynamicToolCall {
+            status: ToolStatus::Completed,
+            success: Some(true),
+            arguments,
+            execution,
+            ..
+        } = item
+        else {
+            return Err(ResultUnavailable::NotSuccessful);
+        };
+        if !matches!(execution.outcome, ToolOutcome::Succeeded)
+            || execution.backend.as_deref() != Some("mcp")
+        {
+            return Err(ResultUnavailable::NotSuccessful);
+        }
+        let snapshot = execution
+            .result_snapshot
+            .as_ref()
+            .ok_or(ResultUnavailable::MissingProvenance)?;
+        let sha = snapshot
+            .uri
+            .strip_prefix("areal://blob/")
+            .ok_or(ResultUnavailable::CorruptSnapshot)?;
+        if snapshot.size_bytes > areal_protocol::MAX_TOOL_RESULT_BYTES as u64 {
+            return Err(ResultUnavailable::CorruptSnapshot);
+        }
+        use tokio::io::AsyncReadExt;
+        let path = self
+            .store
+            .blob_path(sha)
+            .map_err(|_| ResultUnavailable::CorruptSnapshot)?;
+        let file = tokio::fs::File::open(path)
+            .await
+            .map_err(|_| ResultUnavailable::CorruptSnapshot)?;
+        let mut bytes = Vec::new();
+        file.take(snapshot.size_bytes + 1)
+            .read_to_end(&mut bytes)
+            .await
+            .map_err(|_| ResultUnavailable::CorruptSnapshot)?;
+        if bytes.len() as u64 != snapshot.size_bytes
+            || format!("{:x}", Sha256::digest(&bytes)) != sha
+        {
+            return Err(ResultUnavailable::CorruptSnapshot);
+        }
+        let raw: Value =
+            serde_json::from_slice(&bytes).map_err(|_| ResultUnavailable::CorruptSnapshot)?;
+        let source: ResultProvenance = serde_json::from_value(raw["mcpServer"]["source"].clone())
+            .map_err(|_| ResultUnavailable::MissingProvenance)?;
+        if !raw["mcpResult"].is_object() {
+            return Err(ResultUnavailable::MissingProvenance);
+        }
+        if source.thread_id != input.thread_id || source.cwd != thread.cwd {
+            return Err(ResultUnavailable::SourceUnavailable);
+        }
+        self.app_scope(&input.thread_id)
+            .await
+            .map_err(|_| ResultUnavailable::SourceUnavailable)?;
+        let (owner, server) = self.result_source_server(&source).await?;
+        let tool = owner
+            .tools
+            .iter()
+            .find(|tool| {
+                tool.server_name() == source.server_id
+                    && tool.generation() == source.generation
+                    && tool.original_name() == source.original_tool_name
+            })
+            .ok_or(ResultUnavailable::SourceUnavailable)?;
+        let metadata = raw["mcpServer"]["toolMetadata"].clone();
+        if tool_uri(&metadata).is_none() {
+            return Err(ResultUnavailable::ResourceRejected);
+        }
+        Ok(SavedResult {
+            provenance: source,
+            snapshot_sha: sha.into(),
+            metadata,
+            arguments: execution
+                .effective_arguments
+                .clone()
+                .unwrap_or_else(|| arguments.clone()),
+            result: raw["mcpResult"].clone(),
+            tool_name: tool.definition.name.clone(),
+            server,
+        })
+    }
+    pub async fn mcp_app_open_from_result(
+        self: &Arc<Self>,
+        identity: String,
+        host: Option<Arc<dyn crate::tools::DynamicToolHost>>,
+        input: OpenFromResult,
+    ) -> Result<Value> {
+        if identity.is_empty()
+            || identity.len() > 256
+            || ![&input.thread_id, &input.turn_id, &input.item_id]
+                .into_iter()
+                .all(|value| valid_id(value))
+            || input.request_id.len() > 128
+        {
+            return Err(invalid("invalid result identity"));
+        }
+        let parts: Vec<_> = input.request_id.split('.').collect();
+        if parts.len() != 3
+            || parts[0] != "result-v1"
+            || uuid::Uuid::parse_str(parts[1]).is_err()
+            || uuid::Uuid::parse_str(parts[2]).is_err()
+        {
+            return Err(invalid("invalid result requestId"));
+        }
+        if parts[1] != self.desktop.mcp_apps.runtime_epoch {
+            return Ok(unavailable(ResultUnavailable::StaleSourceEpoch));
+        }
+        let source = ResultRef {
+            thread_id: input.thread_id.clone(),
+            turn_id: input.turn_id.clone(),
+            item_id: input.item_id.clone(),
+        };
+        let request_key = digest(&json!([identity, input.request_id]))?;
+        let tool_host_id = host.as_ref().map(|h| h.id().to_owned());
+        let request_digest = digest(&json!([identity, source, tool_host_id]))?;
+        {
+            let _guard = self.desktop.mcp_apps.mutation.lock().await;
+            if let Some(record) = self
+                .desktop
+                .mcp_apps
+                .result_operations
+                .read()
+                .unwrap()
+                .get(&request_key)
+            {
+                if record.digest != request_digest {
+                    return Err(Error::Conflict);
+                }
+                match record.state {
+                    ResultState::Closed { .. } => return Ok(json!({"status":"closed"})),
+                    ResultState::Unavailable { reason } => return Ok(unavailable(reason)),
+                    _ => {}
+                }
+            }
+        }
+        let resolved = self.saved_result(&input).await;
+        let source_key = match &resolved {
+            Ok(saved) => digest(&json!([identity, source, saved.snapshot_sha, tool_host_id]))?,
+            Err(_) => request_key.clone(),
+        };
+        let _guard = self.desktop.mcp_apps.mutation.lock().await;
+        let mut operations = self
+            .desktop
+            .mcp_apps
+            .result_operations
+            .read()
+            .unwrap()
+            .clone();
+        if let Some(record) = operations.get(&request_key) {
+            if record.digest != request_digest {
+                return Err(Error::Conflict);
+            }
+            match record.state {
+                ResultState::Closed { .. } => return Ok(json!({"status":"closed"})),
+                ResultState::Unavailable { reason } => return Ok(unavailable(reason)),
+                _ => {}
+            }
+            if let Err(reason) = resolved {
+                let mut instances = self.desktop.mcp_apps.instances.read().unwrap().clone();
+                let affected = record.source_key.clone();
+                for record in operations
+                    .values_mut()
+                    .filter(|record| record.source_key == affected)
+                {
+                    if let ResultState::Open { instance_id } = &record.state {
+                        instances.remove(instance_id);
+                    }
+                    if matches!(
+                        record.state,
+                        ResultState::Preparing | ResultState::Open { .. }
+                    ) {
+                        record.state = ResultState::Unavailable { reason };
+                    }
+                }
+                self.app_commit(instances, operations).await?;
+                return Ok(unavailable(reason));
+            }
+        } else {
+            if operations.len() >= 1024 {
+                return Ok(unavailable(ResultUnavailable::CapacityReached));
+            }
+            let state = match &resolved {
+                Err(reason) => ResultState::Unavailable { reason: *reason },
+                Ok(_) => operations
+                    .values()
+                    .find(|record| {
+                        record.source_key == source_key
+                            && matches!(
+                                record.state,
+                                ResultState::Preparing | ResultState::Open { .. }
+                            )
+                    })
+                    .map(|record| record.state.clone())
+                    .unwrap_or(ResultState::Preparing),
+            };
+            let launch = matches!(state, ResultState::Preparing)
+                && !operations.values().any(|record| {
+                    record.source_key == source_key
+                        && matches!(record.state, ResultState::Preparing)
+                });
+            let record = ResultOperation {
+                identity: identity.clone(),
+                request_id: input.request_id.clone(),
+                digest: request_digest,
+                source,
+                source_key: source_key.clone(),
+                plugin_id: resolved
+                    .as_ref()
+                    .map(|saved| saved.provenance.plugin_id.clone())
+                    .unwrap_or_default(),
+                state,
+            };
+            let mut terminal_budget = record.clone();
+            terminal_budget.state = ResultState::Closed {
+                instance_id: "x".repeat(64),
+                generation: u64::MAX,
+            };
+            if serde_json::to_vec(&terminal_budget).map_err(invalid)?.len() > 1024 {
+                return Err(invalid("result receipt exceeds budget"));
+            }
+            operations.insert(request_key.clone(), record);
+            let instances = self.desktop.mcp_apps.instances.read().unwrap().clone();
+            if !self.app_file_fits(&instances, &operations)? {
+                return Ok(unavailable(ResultUnavailable::CapacityReached));
+            }
+            self.app_commit(instances, operations).await?;
+            if let Err(reason) = resolved {
+                return Ok(unavailable(reason));
+            }
+            if launch {
+                let saved = resolved.map_err(|_| invalid("result source unavailable"))?;
+                let initial_result = saved.result.clone();
+                let engine = self.clone();
+                let work_key = source_key.clone();
+                tokio::spawn(async move {
+                    if let Err(error) = engine
+                        .prepare_saved_result(
+                            identity,
+                            tool_host_id,
+                            input,
+                            work_key.clone(),
+                            saved,
+                        )
+                        .await
+                    {
+                        engine
+                            .desktop
+                            .mcp_apps
+                            .result_failures
+                            .write()
+                            .unwrap()
+                            .insert(work_key, error.to_string());
+                        engine.desktop.mcp_apps.result_changed.notify_waiters();
+                    }
+                });
+                drop(_guard);
+                return self
+                    .wait_result_operation(&request_key, &initial_result)
+                    .await;
+            }
+        }
+        let saved = resolved.map_err(|_| invalid("result source unavailable"))?;
+        drop(_guard);
+        self.wait_result_operation(&request_key, &saved.result)
+            .await
+    }
+    async fn wait_result_operation(&self, key: &str, initial_result: &Value) -> Result<Value> {
+        loop {
+            let changed = self.desktop.mcp_apps.result_changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            let guard = self.desktop.mcp_apps.mutation.lock().await;
+            let record = self
+                .desktop
+                .mcp_apps
+                .result_operations
+                .read()
+                .unwrap()
+                .get(key)
+                .cloned()
+                .ok_or(Error::NotFound)?;
+            match record.state {
+                ResultState::Closed { .. } => return Ok(json!({"status":"closed"})),
+                ResultState::Unavailable { reason } => return Ok(unavailable(reason)),
+                ResultState::Open { instance_id } => {
+                    let saved = self
+                        .desktop
+                        .mcp_apps
+                        .instances
+                        .read()
+                        .unwrap()
+                        .get(&instance_id)
+                        .cloned()
+                        .ok_or(Error::NotFound)?;
+                    return Ok(
+                        json!({"status":"open","instance":{"instanceId":saved.instance_id,"serverId":saved.server_id,"generation":saved.generation,"toolMetadata":saved.metadata,"resource":saved.resource,"initialArguments":saved.arguments,"initialResult":initial_result,"hostContext":{"threadId":saved.thread_id,"modelContext":saved.context}}}),
+                    );
+                }
+                ResultState::Preparing => {
+                    if let Some(error) = self
+                        .desktop
+                        .mcp_apps
+                        .result_failures
+                        .read()
+                        .unwrap()
+                        .get(&record.source_key)
+                    {
+                        return Err(invalid(format!(
+                            "result preparation unresolved; retain the original requestId: {error}"
+                        )));
+                    }
+                    drop(guard);
+                    changed.await;
+                }
+            }
+        }
+    }
+    async fn prepare_saved_result(
+        self: &Arc<Self>,
+        identity: String,
+        tool_host_id: Option<String>,
+        input: OpenFromResult,
+        source_key: String,
+        saved: SavedResult,
+    ) -> Result<()> {
+        let uri = tool_uri(&saved.metadata)
+            .ok_or_else(|| invalid("missing App resource"))?
+            .to_owned();
+        let resource = self
+            .app_read_resource(&identity, &input.thread_id, None, &saved.server, &uri)
+            .await
+            .map_err(|_| ResultUnavailable::ResourceReadFailed)
+            .and_then(|read| app_resource(&read, &uri));
+        let _guard = self.desktop.mcp_apps.mutation.lock().await;
+        let mut operations = self
+            .desktop
+            .mcp_apps
+            .result_operations
+            .read()
+            .unwrap()
+            .clone();
+        if !operations.values().any(|record| {
+            record.source_key == source_key && matches!(record.state, ResultState::Preparing)
+        }) {
+            return Ok(());
+        }
+        let resource = match resource {
+            Ok(resource) => match self.result_source_server(&saved.provenance).await {
+                Ok(_) => match self.app_scope(&input.thread_id).await {
+                    Ok(cell) if cell.state.lock().await.thread.cwd == saved.provenance.cwd => {
+                        Ok(resource)
+                    }
+                    _ => Err(ResultUnavailable::SourceUnavailable),
+                },
+                Err(reason) => Err(reason),
+            },
+            Err(reason) => Err(reason),
+        };
+        let mut instances = self.desktop.mcp_apps.instances.read().unwrap().clone();
+        let state = match resource {
+            Ok(resource) => {
+                let instance_id = id();
+                let instance = Instance {
+                    tool_host_id,
+                    page_tools_retired: false,
+                    runtime_epoch: self.desktop.mcp_apps.runtime_epoch.clone(),
+                    instance_id: instance_id.clone(),
+                    identity,
+                    thread_id: input.thread_id,
+                    cwd: saved.provenance.cwd,
+                    plugin: saved.provenance.plugin_id,
+                    digest: saved.provenance.installed_digest,
+                    server_id: saved.provenance.server_id,
+                    generation: saved.provenance.generation,
+                    tool_name: saved.tool_name,
+                    request_id: input.request_id,
+                    request_digest: source_key.clone(),
+                    resource,
+                    metadata: saved.metadata,
+                    arguments: saved.arguments,
+                    context: Value::Null,
+                    file_resource: None,
+                };
+                instances.insert(instance_id.clone(), instance);
+                ResultState::Open { instance_id }
+            }
+            Err(reason) => ResultState::Unavailable { reason },
+        };
+        for record in operations.values_mut().filter(|record| {
+            record.source_key == source_key && matches!(record.state, ResultState::Preparing)
+        }) {
+            record.state = state.clone();
+        }
+        if !self.app_file_fits(&instances, &operations)? {
+            if let ResultState::Open { instance_id } = &state {
+                instances.remove(instance_id);
+            }
+            for record in operations.values_mut().filter(|record| {
+                record.source_key == source_key && matches!(record.state, ResultState::Open { .. })
+            }) {
+                record.state = ResultState::Unavailable {
+                    reason: ResultUnavailable::CapacityReached,
+                };
+            }
+        }
+        self.app_commit(instances, operations).await
     }
 }

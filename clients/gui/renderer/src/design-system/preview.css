@@ -49,3 +49,16 @@
 .design-shared-workspace .workspace-content, .design-shared-workspace .conversation-column, .design-shared-workspace .conversation-pane { height: 100%; min-height: 0; }
 .design-shared-workspace .conversation-pane { display: flex; flex-direction: column; }
 .design-shared-workspace .active-composer { flex: none; }
+
+.design-preview-navigation, .design-document-header nav { display: flex; flex-wrap: wrap; gap: var(--spacing-field); }
+.design-preview-navigation a, .design-document a { color: var(--color-foreground); text-decoration: underline; text-underline-offset: 3px; }
+.design-preview-navigation a:focus-visible, .design-document :is(a, button, select):focus-visible { outline: 2px solid var(--color-border); outline-offset: 3px; }
+.design-document { height: 100dvh; overflow: auto; padding: var(--spacing-section); background: var(--color-background); color: var(--color-foreground); font-family: var(--font-sans); font-size: var(--text-ui-base); overflow-wrap: anywhere; }
+.design-document-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--spacing-field); max-width: 900px; margin-inline: auto; }
+.design-document-header label { display: flex; align-items: center; gap: var(--spacing-inline); }
+.design-document-header select { padding: var(--spacing-inline); border: var(--border-width-default) solid var(--color-border); border-radius: var(--radius-control); color: inherit; background: var(--color-background); }
+.design-document-path { color: var(--color-foreground-subtle); font: var(--text-ui-sm)/1.5 var(--font-mono); }
+.design-document > :is(article, p) { max-width: 900px; margin-inline: auto; min-width: 0; }
+.design-document article :is(h1, h2, h3, h4, h5, h6) { scroll-margin-top: var(--spacing-section); }
+.design-document article :is(table, pre) { max-width: 100%; overflow: auto; }
+.design-document .markdown-file-reference { white-space: normal; text-align: left; overflow-wrap: anywhere; }

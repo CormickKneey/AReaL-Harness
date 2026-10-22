@@ -376,7 +376,7 @@ impl Engine {
             {
                 return Err(Error::Conflict);
             }
-            if action == "resume" && !engine.task_goal_can_resume(&request.goal_id).await {
+            if action == "resume" && !engine.task_goal_can_resume(&request.goal_id).await? {
                 return Err(Error::Conflict);
             }
             if action != "pause" {

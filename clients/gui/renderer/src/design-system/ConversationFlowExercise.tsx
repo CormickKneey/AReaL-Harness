@@ -152,7 +152,6 @@ export function ConversationFlowExercise({ dark }: { dark: boolean }) {
                             modelConfig={{ model: { providerId: "preview", modelId: "scenario" } }}
                             modelDisabled
                             onConfigureModel={() => {}}
-                            onModelSettings={() => {}}
                             initialValue={draft}
                             inputApiRef={api}
                             inputTestId="flow-composer"

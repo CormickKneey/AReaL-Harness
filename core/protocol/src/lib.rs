@@ -12,6 +12,7 @@ pub mod desktop;
 
 pub const CODEX_PROTOCOL_VERSION: &str = "0.145.0";
 pub const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
+pub const MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 /// 工具的文本/结构化原文接收上限；模型可见页仍单独限制为 16 KiB。
 pub const MAX_TOOL_RESULT_BYTES: usize = 8 * 1024 * 1024;
 
@@ -325,6 +326,14 @@ pub enum ToolOutcome {
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ToolExecution {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_review: Option<Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub permission_scopes: Vec<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<plugin_runtime::PageExecution>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interactive_result: Option<bool>,
     /// 当前调用准许暴露的原始结果，引用保留在权威历史中以支持恢复与 GC。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result_snapshot: Option<MediaRef>,

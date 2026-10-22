@@ -32,7 +32,20 @@ for (const source of [
 
 const sources = await Promise.all(files.map(file => readFile(join(root, file), "utf8")));
 const owners = await Promise.all(["styles.css", "settings/applicationSettings.ts", "settings/applicationPreferences.ts"].map(file => readFile(join(root, file), "utf8")));
-const definitions = new Set([...(owners.join("\n") + sources.join("\n")).matchAll(/(--[\w-]+)["']?\s*:/g)].map(match => match[1]));
+const sharedFocus = await readFile(new URL("../../../design/tokens/focus.css", import.meta.url), "utf8");
+const webStyle = await readFile(new URL("../../web/style.css", import.meta.url), "utf8");
+const coreServer = await readFile(new URL("../../../core/app-server/src/lib.rs", import.meta.url), "utf8");
+assert.match(owners[0], /@import\s+["']\.\.\/\.\.\/\.\.\/\.\.\/design\/tokens\/focus\.css["'];/, "GUI imports the shared focus source");
+assert.match(coreServer, /concat!\(\s*include_str!\("\.\.\/\.\.\/\.\.\/design\/tokens\/focus\.css"\),\s*"\\n",\s*include_str!\("\.\.\/\.\.\/\.\.\/clients\/web\/style\.css"\)\s*\)/, "Core embeds shared focus CSS before Web CSS");
+for (const token of ["--focus-width", "--focus-offset"]) {
+  assert.equal([...sharedFocus.matchAll(new RegExp(`${token}\\s*:`, "g"))].length, 1, `${token} has one shared default`);
+  assert.match(sharedFocus, new RegExp(`${token}\\s*:\\s*2px\\s*;`), `${token} retains the 2px baseline`);
+  for (const [name, source] of [["GUI", owners[0]], ["Web", webStyle], ...files.map((name, index) => [name, sources[index]])]) {
+    assert.doesNotMatch(source, new RegExp(`${token}\\s*:`), `${name} must not duplicate ${token}`);
+  }
+  assert.ok(webStyle.includes(`var(${token})`), `Web consumes ${token}`);
+}
+const definitions = new Set([...(sharedFocus + owners.join("\n") + sources.join("\n")).matchAll(/(--[\w-]+)["']?\s*:/g)].map(match => match[1]));
 const violations = [];
 sources.forEach((source, index) => {
   violations.push(...(files[index].endsWith(".css") ? cssFindings(source) : tsxFindings(source)).map(value => `${files[index]}: ${value}`));

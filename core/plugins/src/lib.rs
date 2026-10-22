@@ -6,7 +6,14 @@ pub mod hooks;
 mod metadata;
 mod package;
 mod remote;
-pub use components::{ComponentDocument, InstalledComponents, InstalledSnapshot};
+mod support;
+pub use components::{
+    AppDeclaration, ComponentDocument, InstalledComponents, InstalledSnapshot, app_declarations,
+};
+pub use support::{
+    CompatibilityState, ComponentCompatibility, ComponentKind, ComponentSupport, ManifestFormat,
+    PackageComponentSupport, SupportStatus, SupportValidation,
+};
 // Codex 0.162.1 marketplace discovery precedence.
 const CATALOG_PATHS: &[&str] = &[
     ".agents/plugins/marketplace.json",
@@ -74,6 +81,10 @@ pub struct PluginDetail {
     pub installed_digest: Option<String>,
     #[serde(default)]
     pub installed_skills: Vec<InstalledSkill>,
+    #[serde(default)]
+    pub component_support: Option<PackageComponentSupport>,
+    #[serde(default)]
+    pub installed_component_support: Option<PackageComponentSupport>,
     #[serde(default)]
     pub installed_onboarding_skill: Option<String>,
     pub enabled: bool,
@@ -194,12 +205,13 @@ impl Store {
     /// Replacements retain old admitted revisions, while disable/uninstall revoke them.
     pub fn enabled_revisions(&self) -> Result<BTreeMap<String, String>> {
         let state = self.state()?;
-        Ok(state
-            .installed
-            .iter()
-            .filter(|(id, _)| self.enabled(&state, id))
-            .map(|(id, detail)| (id.clone(), detail.source_digest.clone()))
-            .collect())
+        let mut revisions = BTreeMap::new();
+        for (id, detail) in &state.installed {
+            if self.effective(&state, id)? {
+                revisions.insert(id.clone(), detail.source_digest.clone());
+            }
+        }
+        Ok(revisions)
     }
     fn state(&self) -> Result<State> {
         match fs::read(self.root.join("state.json")) {
@@ -248,6 +260,35 @@ impl Store {
             .and_then(|p| p.get(id))
             .copied();
         s.installed.contains_key(id) && project.or(user).unwrap_or(false)
+    }
+    fn effective(&self, state: &State, id: &str) -> Result<bool> {
+        if !self.enabled(state, id) {
+            return Ok(false);
+        }
+        Ok(self
+            .installed_support(
+                state,
+                state.installed.get(id).context("plugin not installed")?,
+            )?
+            .allowed())
+    }
+    fn installed_support(
+        &self,
+        state: &State,
+        detail: &PluginDetail,
+    ) -> Result<PackageComponentSupport> {
+        Ok(self
+            .read_components(
+                &detail.id,
+                &detail.source_digest,
+                self.root.join("cache").join(&detail.source_digest),
+                state
+                    .installed_policies
+                    .get(&detail.id)
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+            )?
+            .support)
     }
     fn choice(&self, s: &mut State, id: &str, scope: &str, enabled: bool) -> Result<()> {
         match scope {
@@ -404,7 +445,13 @@ impl Store {
         for (id, installed) in &s.installed {
             // Never pair installed metadata with a candidate digest: approval
             // covers the complete candidate row. Execution stays on installed_*.
-            let detail = data.entry(id.clone()).or_insert_with(|| installed.clone());
+            let report = self.installed_support(&s, installed)?;
+            let detail = data.entry(id.clone()).or_insert_with(|| {
+                let mut fallback = installed.clone();
+                fallback.component_support = None;
+                fallback
+            });
+            detail.installed_component_support = Some(report);
             detail.installed_version = installed.version.clone();
             detail.installed_digest = Some(installed.source_digest.clone());
             detail.installed_skills = installed.skills.clone();
@@ -607,18 +654,41 @@ impl Store {
         Ok(self.state()?.history)
     }
     pub fn enabled_skills(&self) -> Result<Vec<InstalledSkill>> {
-        let s = self.state()?;
-        Ok(s.installed
-            .values()
-            .filter(|d| self.enabled(&s, &d.id))
-            .flat_map(|d| d.skills.clone())
-            .collect())
+        let state = self.state()?;
+        let mut skills = Vec::new();
+        for detail in state.installed.values() {
+            if self.effective(&state, &detail.id)? {
+                skills.extend(detail.skills.clone());
+            }
+        }
+        Ok(skills)
+    }
+    fn skill_compatible(&self, state: &State, skill: &InstalledSkill) -> Result<bool> {
+        Ok(self
+            .read_components(
+                &skill.plugin_id,
+                &skill.revision,
+                skill.package_root.clone(),
+                state
+                    .installed_policies
+                    .get(&skill.plugin_id)
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null),
+            )?
+            .support
+            .allowed())
     }
     pub fn is_skill_enabled(&self, id: &str, revision: &str) -> Result<bool> {
-        let s = self.state()?;
-        Ok(s.history
+        let state = self.state()?;
+        match state
+            .history
             .iter()
-            .any(|k| k.id == id && k.revision == revision && self.enabled(&s, &k.plugin_id)))
+            .find(|skill| skill.id == id && skill.revision == revision)
+        {
+            Some(skill) => Ok(self.effective(&state, &skill.plugin_id)?
+                && self.skill_compatible(&state, skill)?),
+            None => Ok(false),
+        }
     }
 }
 

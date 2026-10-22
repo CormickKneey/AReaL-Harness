@@ -1,6 +1,6 @@
 // Pinned Codex management contract checks against actual authenticated Core.
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, access } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
@@ -68,11 +68,35 @@ try {
       name: "sample",
       version: "1.0.0",
       description: "wire fixture",
+      extensions: {
+        "com.openai": {
+          commands: { review: { command: "PRIVATE_COMMAND_VALUE" } },
+          agents: { reviewer: { prompt: "PRIVATE_AGENT_VALUE" } },
+          ui: { surfaces: { panel: { token: "PRIVATE_UI_VALUE" } } },
+        },
+      },
     }),
   );
   await writeFile(
     join(workspace, "pkg/skills/example/SKILL.md"),
     "---\nname: example\ndescription: Example skill\n---\nbody",
+  );
+  await mkdir(join(workspace, "pkg/hooks"), { recursive: true });
+  const sentinel = join(scratch, "package-executed");
+  await writeFile(
+    join(workspace, "pkg/mcp.json"),
+    JSON.stringify({
+      $schema: "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+      mcpServers: {
+        sentinel: { type: "stdio", command: "sh", args: ["-c", `touch '${sentinel}'`] },
+      },
+    }),
+  );
+  await writeFile(
+    join(workspace, "pkg/hooks/hooks.json"),
+    JSON.stringify({
+      hooks: { SessionStart: [{ hooks: [{ type: "command", command: `touch '${sentinel}'` }] }] },
+    }),
   );
   service = await cli(["service", "ensure", "--json", "--workspace", workspace]);
   const c = await connect(false);
@@ -110,6 +134,61 @@ try {
       .installed,
   );
   checks.push("wire install shares Core state");
+  const report = await c.request("areal/plugin/read", { id: "sample@wire" });
+  assert.equal(report.componentSupport.digest, report.sourceDigest);
+  assert.equal(report.installedComponentSupport.digest, report.installedDigest);
+  assert.deepEqual(
+    (await cli(["plugin", "--workspace", workspace, "read", "sample@wire"]))
+      .installedComponentSupport,
+    report.installedComponentSupport,
+  );
+  assert.deepEqual(
+    report.installedComponentSupport.components
+      .filter((row) => ["commands", "agents", "uiSurfaces"].includes(row.kind))
+      .map((row) => [row.kind, row.status]),
+    [
+      ["commands", "unsupported"],
+      ["agents", "unsupported"],
+      ["uiSurfaces", "unsupported"],
+    ],
+  );
+  for (const value of ["PRIVATE_COMMAND_VALUE", "PRIVATE_AGENT_VALUE", "PRIVATE_UI_VALUE"])
+    assert(!JSON.stringify(report.installedComponentSupport).includes(value));
+  const mcp = await c.request("areal/plugin/mcp/list", {}),
+    hooks = await c.request("areal/plugin/hooks/list", {});
+  assert.equal(mcp.data[0].installedDigest, report.installedDigest);
+  assert.equal(mcp.data[0].trusted, false);
+  assert.equal(hooks.data[0].installedDigest, report.installedDigest);
+  assert.equal(hooks.data[0].definitions[0].trusted, false);
+  await assert.rejects(access(sentinel), (error) => error.code === "ENOENT");
+  const disabled = await c.request("areal/plugin/configure", {
+    id: "sample@wire",
+    scope: "project",
+    enabled: false,
+    expectedRevision: report.revision,
+    requestId: randomUUID(),
+  });
+  assert.equal((await c.request("areal/plugin/read", { id: "sample@wire" })).enabled, false);
+  await assert.rejects(access(sentinel), (error) => error.code === "ENOENT");
+  await c.request("areal/plugin/configure", {
+    id: "sample@wire",
+    scope: "project",
+    enabled: true,
+    expectedRevision: disabled.revision,
+    requestId: randomUUID(),
+  });
+  assert.equal(
+    (
+      await c.request("plugin/read", {
+        marketplacePath: list.marketplaces[0].path,
+        pluginName: "sample",
+      })
+    ).componentSupport,
+    undefined,
+  );
+  checks.push(
+    "AReaL exact reports match CLI; reading untrusted MCP/hooks and disabled reports causes zero package execution; pinned wire stays unchanged",
+  );
   const first = await c.request("plugin/reconcile", {});
   assert(first.changedPlugins.some((x) => x.id === "sample@wire" && x.hasSkills));
   assert.deepEqual((await c.request("plugin/reconcile", {})).changedPlugins, []);

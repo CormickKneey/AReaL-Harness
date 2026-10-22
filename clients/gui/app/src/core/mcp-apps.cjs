@@ -1,6 +1,7 @@
 "use strict";
 const { randomUUID, randomBytes } = require("node:crypto");
 const { authorizeFile, fileRequest } = require("./mcp-apps-files.cjs");
+const { validateMcpPageDeclaration, validateMcpPageCall, validateMcpPageReply } = require("@areal/workbench/desktop-contract");
 const METHODS = new Set([
     "tools/call",
     "tools/list",
@@ -75,9 +76,10 @@ function parseDeepLink(raw) {
         path,
     };
 }
-function proxyHtml() {
+function proxyHtml(observeErrors = false) {
     return `<!doctype html><html><head><meta charset="utf-8"><style>html,body,iframe{margin:0;border:0;width:100%;height:100%;display:block}</style></head><body><iframe id="view" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer"></iframe><script>
 const view=document.getElementById('view'); let loaded=false;
+${observeErrors ? `view.addEventListener('load',()=>{try{const failed=()=>parent.postMessage({jsonrpc:'2.0',method:'areal/notifications/page-error'},'areal-ui://app');view.contentWindow.addEventListener('error',failed);view.contentWindow.addEventListener('unhandledrejection',failed);}catch{}});` : ''}
 addEventListener('message',event=>{
  const message=event.data;
  if(!message||message.jsonrpc!=='2.0')return;
@@ -99,12 +101,21 @@ class McpAppsHost {
         this.openFile = openFile;
         this.instances = new Map();
         this.epoch = 0;
+        this.pendingOpens = 0;
+        this.resultOpens = new Map();
+        this.instanceTokens = new Map();
+        this.pageToolCalls = new Map();
+    }
+    currentOwner() {
+        try { return typeof this.ownerId === "function" ? this.ownerId() : this.ownerId; }
+        catch { return undefined; }
     }
     get(token, ownerId) {
         const app = this.instances.get(token);
         if (
-            ownerId !== (typeof this.ownerId === "function" ? this.ownerId() : this.ownerId) ||
+            ownerId !== this.currentOwner() ||
             !app ||
+            ownerId !== app.ownerId ||
             app.closed ||
             !this.backend.ownsThread(app.projectId, app.threadId)
         )
@@ -113,54 +124,76 @@ class McpAppsHost {
     }
     async open(params, ownerId) {
         if (
-            ownerId !== (typeof this.ownerId === "function" ? this.ownerId() : this.ownerId) ||
+            ownerId !== this.currentOwner() ||
             !object(params) ||
             !["projectId", "threadId", "serverId", "toolName"].every((k) => text(params[k])) ||
             !["string", "number"].includes(typeof params.expectedGeneration) ||
             !this.backend.ownsThread(params.projectId, params.threadId)
         )
             throw Error("Invalid app owner");
-        const epoch = this.epoch;
-        const file =
-            params.filePath === undefined
-                ? null
-                : await authorizeFile(this.backend, params.projectId, params.filePath);
-        const initialArguments = file
-            ? { file: { name: file.name, resourceUri: file.uri } }
-            : (params.arguments ?? {});
-        if (!object(initialArguments)) throw Error("Invalid app arguments");
-        const result = await this.backend.command("manage", {
-            operation: "mcpAppOpen",
-            projectId: params.projectId,
-            threadId: params.threadId,
-            serverId: params.serverId,
-            expectedGeneration: params.expectedGeneration,
-            toolName: params.toolName,
-            arguments: initialArguments,
-            requestId: randomUUID(),
-            ...(file ? { fileResource: { uri: file.uri, path: file.path } } : {}),
-        });
+        if (this.instances.size + this.pendingOpens >= 8) throw Error("App page limit reached (8)");
+        this.pendingOpens++;
+        try {
+            const epoch = this.epoch;
+            const file =
+                params.filePath === undefined
+                    ? null
+                    : await authorizeFile(this.backend, params.projectId, params.filePath);
+            const initialArguments = file
+                ? { file: { name: file.name, resourceUri: file.uri } }
+                : (params.arguments ?? {});
+            if (!object(initialArguments)) throw Error("Invalid app arguments");
+            const result = await this.backend.command("manage", {
+                operation: "mcpAppOpen",
+                projectId: params.projectId,
+                threadId: params.threadId,
+                serverId: params.serverId,
+                expectedGeneration: params.expectedGeneration,
+                toolName: params.toolName,
+                arguments: initialArguments,
+                requestId: randomUUID(),
+                ...(file ? { fileResource: { uri: file.uri, path: file.path } } : {}),
+            });
+            return await this.adopt(result, params, ownerId, epoch, initialArguments, file, false);
+        } finally { this.pendingOpens--; }
+    }
+    async adopt(result, params, ownerId, epoch, initialArguments, file, fromResult) {
+        const resultSourceKey = fromResult ? JSON.stringify([ownerId, epoch, params.projectId, params.threadId, params.turnId, params.itemId]) : undefined;
         const closeInvalid = async () => {
+            if (fromResult && text(result?.instanceId)) {
+                const instanceKey = JSON.stringify([ownerId, epoch, params.projectId, result.instanceId]);
+                const retained = this.instances.get(this.instanceTokens.get(instanceKey));
+                const token = retained?.token ?? randomBytes(24).toString("hex");
+                if (!retained) {
+                    this.instances.set(token, { token, instanceKey, ownerId, projectId: params.projectId, threadId: params.threadId,
+                        instanceId: result.instanceId, generation: result.generation, closed: true, invalidResource: true,
+                        resultSourceKey });
+                    this.instanceTokens.set(instanceKey, token);
+                }
+                await this.close(token, ownerId).catch(() => {});
+                return;
+            }
             if (result?.instanceId)
                 await this.backend
-                    .command("manage", {
-                        operation: "mcpAppClose",
-                        projectId: params.projectId,
-                        threadId: params.threadId,
-                        instanceId: result.instanceId,
-                        generation: result.generation,
-                    })
-                    .catch(() => {});
+                .command("manage", {
+                    operation: "mcpAppClose",
+                    projectId: params.projectId,
+                    threadId: params.threadId,
+                    instanceId: result.instanceId,
+                    generation: result.generation,
+                })
+                .catch(() => {});
         };
         if (
             epoch !== this.epoch ||
+            ownerId !== this.currentOwner() ||
             !this.backend.ownsThread(params.projectId, params.threadId) ||
             !text(result?.instanceId) ||
-            result.serverId !== params.serverId ||
-            result.generation !== params.expectedGeneration ||
+            (!fromResult && (result.serverId !== params.serverId || result.generation !== params.expectedGeneration)) ||
+            !text(result.serverId) ||
             typeof result.resource?.html !== "string" ||
-            result.resource.html.length > 8 * 1024 * 1024 ||
-            result.resource.mimeType !== "text/html;profile=mcp-app"
+            (fromResult ? Buffer.byteLength(result.resource.html, "utf8") > 2 * 1024 * 1024 : result.resource.html.length > 8 * 1024 * 1024) ||
+            !(fromResult ? ["text/html;profile=mcp-app", "text/html"] : ["text/html;profile=mcp-app"]).includes(result.resource.mimeType)
         ) {
             await closeInvalid();
             throw Error("App resource is invalid or stale");
@@ -172,19 +205,34 @@ class McpAppsHost {
             await closeInvalid();
             throw error;
         }
+        const instanceKey = JSON.stringify([ownerId, epoch, params.projectId, result.instanceId]);
+        const retained = this.instances.get(this.instanceTokens.get(instanceKey));
+        const closedInstances = this.resultOpens.get(resultSourceKey)?.closedInstances;
+        if (fromResult && (closedInstances === null || closedInstances?.has(JSON.stringify([result.instanceId, result.generation]))
+            || (this.instanceTokens.has(instanceKey) && (!retained || retained.closed)))) {
+            await closeInvalid();
+            throw Error("App instance was closed");
+        }
+        if (retained && !retained.closed) return retained.descriptor;
         const token = randomBytes(24).toString("hex");
         const app = {
             ...result,
+            instanceKey,
+            resultSourceKey,
+            ownerId,
             projectId: params.projectId,
             threadId: params.threadId,
             token,
             csp,
             file,
             closed: false,
+            hostEpoch: epoch,
+            pageTools: { state: "uninitialized" },
             requests: new Map(),
             abort: new AbortController(),
         };
         this.instances.set(token, app);
+        this.instanceTokens.set(instanceKey, token);
         const declared = result.resource._meta?.["openai/ui"]?.availableDisplayModes;
         if (
             declared !== undefined &&
@@ -218,7 +266,7 @@ class McpAppsHost {
             }
             hostContext["openai/deepLink"] = { url: params.deepLink };
         }
-        return {
+        app.descriptor = {
             token,
             frameUrl: `areal-mcp://${token}/`,
             instanceId: app.instanceId,
@@ -233,6 +281,192 @@ class McpAppsHost {
             resourceMeta: result.resource._meta ?? {},
             fileResource: !!file,
         };
+        return app.descriptor;
+    }
+    async openFromResult(params, ownerId) {
+        const allowed = ["operation", "projectId", "threadId", "turnId", "itemId", "requestId"];
+        if (ownerId !== this.currentOwner() || !object(params)
+            || Object.keys(params).some(key => !allowed.includes(key))
+            || !["projectId", "threadId", "turnId", "itemId", "requestId"].every(key => text(params[key]) && params[key].length <= 128)
+            || !this.backend.ownsThread(params.projectId, params.threadId)) throw Error("Invalid result app owner or input");
+        const epoch = this.epoch;
+        const sourceKey = JSON.stringify([ownerId, epoch, params.projectId, params.threadId, params.turnId, params.itemId]);
+        const owned = [...this.instances.values()].find(app => app.resultSourceKey === sourceKey);
+        if (owned?.closed) {
+            if (!owned.invalidResource) throw Error("App closing outcome unknown; reconcile the original close first");
+            await this.close(owned.token, ownerId);
+        }
+        const pending = this.resultOpens.get(sourceKey);
+        if (pending) return pending.requestId === params.requestId ? pending.promise : pending.promise.then(() => this.openFromResult(params, ownerId));
+        if (!owned && this.instances.size + this.pendingOpens >= 8) throw Error("App page limit reached (8)");
+        this.pendingOpens++;
+        const promise = (async () => {
+            const response = await this.backend.command("manage", {
+                operation: "mcpAppOpenFromResult", projectId: params.projectId,
+                threadId: params.threadId, turnId: params.turnId, itemId: params.itemId, requestId: params.requestId,
+            });
+            if (response?.status === "closed") return { status: "closed" };
+            if (response?.status === "unavailable") return { status: "unavailable", reason: response.reason };
+            if (response?.status !== "open") throw Error("Invalid result open reply");
+            try {
+                const app = await this.adopt(response.instance, params, ownerId, epoch, undefined, null, true);
+                return { status: "open", app };
+            } catch (error) {
+                return { status: "unavailable", reason: epoch !== this.epoch || ownerId !== this.currentOwner() ? "sourceUnavailable" : "resourceRejected" };
+            }
+        })().finally(() => {
+            this.pendingOpens--;
+            this.resultOpens.delete(sourceKey);
+        });
+        this.resultOpens.set(sourceKey, { requestId: params.requestId, promise, ownerId, epoch,
+            projectId: params.projectId, threadId: params.threadId, closedInstances: new Set() });
+        return promise;
+    }
+    pageToolBinding(app) {
+        return { projectId: app.projectId, threadId: app.threadId, instanceId: app.instanceId, generation: app.generation };
+    }
+    async pageToolsReady(token, mountId, declaration, ownerId) {
+        validateMcpPageDeclaration(declaration);
+        const app = this.get(token, ownerId), tools = app.pageTools;
+        if (!text(mountId) || mountId.length > 128) throw Error("Invalid page tool mount");
+        if (tools.state === "revoked") throw Error("Page tool lease was revoked; reopen the app");
+        const fingerprint = JSON.stringify(declaration);
+        if (tools.mountId && (tools.mountId !== mountId || tools.declaration !== fingerprint)) throw Error("Page tool mount or declaration changed");
+        if (tools.ready) return tools.ready;
+        tools.mountId = mountId;
+        tools.declaration = fingerprint;
+        tools.state = "registering";
+        tools.pendingNotices = [];
+        tools.ready = (async () => {
+            const registration = await this.backend.mcpPageTools({ operation: "register", ...this.pageToolBinding(app), declaration });
+            tools.registration = registration;
+            if (!this.pageToolsCurrent(app, mountId) || tools.state !== "registering") throw Error("Page tool mount was revoked");
+            tools.state = "ready";
+            const notices = tools.pendingNotices;
+            tools.pendingNotices = undefined;
+            for (const notice of notices ?? []) void this.pageToolNotice(notice);
+            return registration;
+        })().catch(error => { this.revokePageTools(app); throw error; });
+        return tools.ready;
+    }
+    pageToolsCurrent(app, mountId) {
+        return this.instances.get(app.token) === app && !app.closed && app.ownerId === this.currentOwner()
+            && app.hostEpoch === this.epoch && app.pageTools.mountId === mountId
+            && app.pageTools.state !== "revoked" && this.backend.ownsThread(app.projectId, app.threadId);
+    }
+    pageToolsUnmount(token, mountId, ownerId) {
+        const app = this.instances.get(token);
+        if (!app || app.ownerId !== ownerId || ownerId !== this.currentOwner()) throw Error("Invalid page tool owner");
+        if (app.pageTools.mountId && app.pageTools.mountId !== mountId) throw Error("Invalid page tool mount");
+        this.revokePageTools(app);
+        return {};
+    }
+    revokePageTools(app) {
+        const tools = app.pageTools;
+        if (!tools) return;
+        tools.state = "revoked";
+        tools.pendingNotices = undefined;
+        for (const call of this.pageToolCalls.values()) if (call.app === app) {
+            call.cancelled = app.closed ? "closed" : "unavailable";
+            if (call.phase === "dispatched") this.cancelPageTool(call);
+        }
+        if (tools.registration) void this.backend.mcpPageTools({ operation: "revoke", ...this.pageToolBinding(app),
+            registrationId: tools.registration.registrationId }).catch(() => {});
+    }
+    pageToolsDisconnected(event) {
+        for (const app of this.instances.values()) {
+            if (event && (event.projectId !== app.projectId || event.instanceId !== app.instanceId || event.generation !== app.generation)) continue;
+            this.revokePageTools(app);
+        }
+    }
+    async pageToolNotice(event) {
+        if (!object(event) || !object(event.params)
+            || !["areal/mcp/app/tools/pending", "areal/mcp/app/tools/cancelled"].includes(event.method)) return;
+        const params = event.params;
+        const coordinateKeys = ["threadId", "turnId", "callId", "registrationId", "ownerId", "schemaDigest"];
+        if (!coordinateKeys.every(key => text(params[key]) && params[key].length <= 256)
+            || Object.keys(params).some(key => !coordinateKeys.includes(key) && key !== "claimId")
+            || params.claimId !== undefined && (!text(params.claimId) || params.claimId.length > 256)) return;
+        const app = [...this.instances.values()].find(candidate => candidate.projectId === event.projectId
+            && candidate.threadId === params.threadId && candidate.instanceId === event.instanceId
+            && candidate.generation === event.generation);
+        if (app?.pageTools.state === "registering" && this.pageToolsCurrent(app, app.pageTools.mountId)) {
+            const notices = app.pageTools.pendingNotices;
+            if (notices.length < 4 && !notices.some(notice => notice.method === event.method
+                && coordinateKeys.every(key => notice.params[key] === params[key]) && notice.params.claimId === params.claimId))
+                notices.push({ projectId: event.projectId, instanceId: event.instanceId, generation: event.generation,
+                    method: event.method, params: { ...params } });
+            return;
+        }
+        const existing = [...this.pageToolCalls.values()].find(call => call.app.projectId === event.projectId
+            && call.app.instanceId === event.instanceId && call.app.generation === event.generation
+            && ["threadId", "turnId", "callId", "registrationId", "ownerId", "schemaDigest"].every(key => call.coordinates[key] === params[key]));
+        if (event.method.endsWith("/cancelled")) {
+            if (existing && (params.claimId === undefined || !existing.claimId || params.claimId === existing.claimId)) {
+                existing.cancelled = "cancelled";
+                if (existing.phase === "dispatched") this.cancelPageTool(existing);
+            }
+            return;
+        }
+        if (!app || existing || app.pageTools.state !== "ready" || !this.pageToolsCurrent(app, app.pageTools.mountId)
+            || app.pageTools.registration.registrationId !== params.registrationId
+            || !app.pageTools.registration.tools.some(tool => tool.schemaDigest === params.schemaDigest)
+            || [...this.pageToolCalls.values()].filter(call => call.app === app).length >= 2) return;
+        const coordinates = Object.fromEntries(coordinateKeys.map(key => [key, params[key]]));
+        const key = JSON.stringify([app.token, params.callId]);
+        if (this.pageToolCalls.has(key)) return;
+        const call = { key, app, coordinates, mountId: app.pageTools.mountId, phase: "claiming" };
+        this.pageToolCalls.set(key, call);
+        try {
+            const grant = await this.backend.mcpPageTools({ operation: "claim", ...this.pageToolBinding(app), ...coordinates });
+            if (grant?.status !== "granted") { this.pageToolCalls.delete(key); return; }
+            call.claimId = grant.claimId;
+            if (call.cancelled || !this.pageToolsCurrent(app, call.mountId)) {
+                await this.settlePageTool(call, { status: "noEffect", reason: call.cancelled ?? "closed" });
+                return;
+            }
+            const request = { callId: coordinates.callId, kind: grant.kind, documentId: grant.documentId, arguments: grant.arguments };
+            validateMcpPageCall(request);
+            if (!text(grant.claimId) || grant.documentId !== app.pageTools.registration.documentId
+                || !app.pageTools.registration.tools.some(tool => tool.kind === grant.kind && tool.schemaDigest === coordinates.schemaDigest)) throw Error("Invalid page tool grant");
+            call.phase = "dispatched";
+            call.timer = setTimeout(() => { void this.settlePageTool(call, { status: "unknown" }).catch(() => {}); }, 32_000);
+            call.timer.unref?.();
+            this.notify({ token: app.token, notification: { jsonrpc: "2.0", method: "areal/notifications/page-tool-call",
+                params: { mountId: call.mountId, ...request } } });
+        } catch {
+            if (call.phase === "dispatched") this.cancelPageTool(call);
+            else if (call.claimId) await this.settlePageTool(call, { status: "noEffect", reason: "unavailable" }).catch(() => {});
+            else this.pageToolCalls.delete(key);
+        }
+    }
+    cancelPageTool(call) {
+        this.notify({ token: call.app.token, notification: { jsonrpc: "2.0", method: "areal/notifications/page-tool-cancelled",
+            params: { mountId: call.mountId, callId: call.coordinates.callId } } });
+        if (call.drain) return;
+        call.drain = setTimeout(() => { void this.settlePageTool(call, { status: "unknown" }).catch(() => {}); }, 1000);
+        call.drain.unref?.();
+    }
+    async pageToolResult(token, mountId, callId, reply, ownerId) {
+        validateMcpPageReply(reply);
+        const call = this.pageToolCalls.get(JSON.stringify([token, callId]));
+        if (!call || call.mountId !== mountId || call.app.ownerId !== ownerId || ownerId !== this.currentOwner()
+            || call.app.hostEpoch !== this.epoch || !["dispatched", "resolving"].includes(call.phase)) throw Error("Page tool result is stale or has another mount");
+        return this.settlePageTool(call, reply);
+    }
+    async settlePageTool(call, reply) {
+        const fingerprint = JSON.stringify(reply);
+        if (call.settlement) {
+            if (call.reply !== fingerprint) throw Error("Conflicting page tool result");
+            return call.settlement;
+        }
+        call.phase = "resolving";
+        call.reply = fingerprint;
+        clearTimeout(call.timer);
+        clearTimeout(call.drain);
+        call.settlement = this.backend.mcpPageTools({ operation: "resolve", ...this.pageToolBinding(call.app), ...call.coordinates,
+            ...(call.claimId ? { claimId: call.claimId } : {}), reply }).finally(() => this.pageToolCalls.delete(call.key));
+        return call.settlement;
     }
     async request(token, request, ownerId) {
         const app = this.get(token, ownerId);
@@ -357,20 +591,25 @@ class McpAppsHost {
     async close(token, ownerId) {
         const app = this.instances.get(token);
         if (!app) return {};
-        if (ownerId !== (typeof this.ownerId === "function" ? this.ownerId() : this.ownerId))
-            throw Error("Invalid app owner");
-        app.closed = true;
-        app.abort.abort();
-        this.instances.delete(token);
-        app.file?.watcher?.close();
-        app.requests.clear();
-        return this.backend.command("manage", {
-            operation: "mcpAppClose",
-            projectId: app.projectId,
-            threadId: app.threadId,
-            instanceId: app.instanceId,
-            generation: app.generation,
-        });
+        if (ownerId !== app.ownerId) throw Error("Invalid app owner");
+        if (app.closePromise) return app.closePromise;
+        if (!app.closed) {
+            app.closed = true;
+            this.revokePageTools(app);
+            app.abort.abort();
+            if (ownerId === this.currentOwner()) this.notify({ token, notification: { jsonrpc: "2.0", method: "ui/notifications/closed" } });
+            app.file?.watcher?.close();
+            app.requests.clear();
+        }
+        app.closePromise = this.backend.command("manage", {
+            operation: "mcpAppClose", projectId: app.projectId, threadId: app.threadId,
+            instanceId: app.instanceId, generation: app.generation,
+        }).then(reply => {
+            this.instances.delete(token);
+            if (!app.resultSourceKey && this.instanceTokens.get(app.instanceKey) === token) this.instanceTokens.delete(app.instanceKey);
+            return reply;
+        }).finally(() => { app.closePromise = undefined; });
+        return app.closePromise;
     }
     notification(event) {
         if (
@@ -383,6 +622,7 @@ class McpAppsHost {
                 "notifications/tools/list_changed",
                 "notifications/resources/list_changed",
                 "ui/notifications/host-context-changed",
+                "ui/notifications/closed",
             ].includes(event.notification.method)
         )
             return false;
@@ -393,29 +633,44 @@ class McpAppsHost {
                 app.instanceId === event.instanceId &&
                 app.generation === event.generation &&
                 !app.closed &&
-                this.backend.ownsThread(app.projectId, app.threadId)
+                (event.notification.method === "ui/notifications/closed" || this.backend.ownsThread(app.projectId, app.threadId))
             ) {
-                this.notify({ token, notification: event.notification });
+                if (event.notification.method === "ui/notifications/closed")
+                    void this.close(token, app.ownerId).catch(() => {});
+                else this.notify({ token, notification: event.notification });
                 return true;
             }
+        }
+        if (event.notification.method === "ui/notifications/closed") {
+            let handled = false;
+            for (const pending of this.resultOpens.values()) {
+                if (pending.ownerId !== this.currentOwner() || pending.epoch !== this.epoch
+                    || pending.projectId !== event.projectId || pending.threadId !== event.threadId) continue;
+                const identity = JSON.stringify([event.instanceId, event.generation]);
+                if (pending.closedInstances && !pending.closedInstances.has(identity)) {
+                    if (pending.closedInstances.size === 8) pending.closedInstances = null;
+                    else pending.closedInstances.add(identity);
+                }
+                handled = true;
+            }
+            return handled;
         }
         return false;
     }
     revokeInvalid() {
-        for (const [token, app] of this.instances)
-            if (!this.backend.ownsThread(app.projectId, app.threadId))
-                void this.close(
-                    token,
-                    typeof this.ownerId === "function" ? this.ownerId() : this.ownerId,
-                ).catch(() => {});
+        const snapshot = this.backend.snapshot();
+        if (snapshot.connection?.state && snapshot.connection.state !== "ready") return;
+        for (const [token, app] of this.instances) {
+            if (this.backend.ownsThread(app.projectId, app.threadId)) continue;
+            const owner = snapshot.projects.find(project => project.id === app.projectId);
+            if (owner && !owner.state?.connected) continue;
+            void this.close(token, app.ownerId).catch(() => {});
+        }
     }
     dispose() {
         this.epoch++;
-        for (const token of this.instances.keys())
-            void this.close(
-                token,
-                typeof this.ownerId === "function" ? this.ownerId() : this.ownerId,
-            ).catch(() => {});
+        for (const [token, app] of this.instances)
+            void this.close(token, app.ownerId).catch(() => {});
     }
     async resource(request) {
         const url = new URL(request.url),
@@ -431,7 +686,7 @@ class McpAppsHost {
         )
             return new Response("Not found", { status: 404 });
         const proxy = url.pathname === "/";
-        return new Response(proxy ? proxyHtml() : app.resource.html, {
+        return new Response(proxy ? proxyHtml(!!app.resultSourceKey) : app.resource.html, {
             headers: {
                 "Content-Type": "text/html; charset=utf-8",
                 "Cache-Control": "no-store",

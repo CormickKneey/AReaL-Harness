@@ -1,6 +1,7 @@
 """门禁、路径映射和独立审计的离线故障注入。"""
 
 import importlib.util
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -23,6 +24,19 @@ audit = load("dependency-audit")
 
 
 class CiContracts(unittest.TestCase):
+    def test_web_compile_time_assets_are_copied_into_container_and_trigger_checks(self):
+        source = ROOT / "core/app-server/src/lib.rs"
+        dockerfile = (ROOT / "tests/e2e/docker/Dockerfile").read_text()
+        copied = re.findall(r"^COPY (\S+) ", dockerfile, re.MULTILINE)
+        for relative in re.findall(r'include_str!\("([^"]+)"\)', source.read_text()):
+            asset = (source.parent / relative).resolve().relative_to(ROOT).as_posix()
+            with self.subTest(asset=asset):
+                self.assertTrue(
+                    any(asset == path or asset.startswith(path + "/") for path in copied)
+                )
+                self.assertTrue(scope.applicable("gui", [asset]))
+                self.assertTrue(scope.applicable("release", [asset]))
+
     def test_release_inputs_and_actual_workflow_scripts_are_mapped(self):
         paths = [
             "core/engine/src/lib.rs",

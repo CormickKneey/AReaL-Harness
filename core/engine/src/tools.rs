@@ -92,6 +92,7 @@ pub(crate) fn side_file_tool(name: &str, backend: &registry::Backend) -> bool {
 #[derive(Default)]
 pub(crate) struct Handles {
     processes: BTreeMap<String, String>,
+    process_scopes: BTreeMap<String, String>,
     process_commands: BTreeMap<String, Vec<String>>,
     cursors: BTreeMap<String, (String, String)>,
     versions: BTreeMap<String, (String, String)>,
@@ -294,6 +295,7 @@ mod file_before;
 mod images;
 mod navigation;
 mod output;
+mod page;
 mod plugin_execution;
 pub mod plugins;
 pub(crate) mod registry;
@@ -434,6 +436,13 @@ fn definitions_with_policy(policy: &ToolPolicy) -> Vec<Value> {
     for definition in &mut definitions {
         let f = &mut definition["function"];
         if f["name"] == "run_command" {
+            f["parameters"]["properties"]["permissionRequest"] =
+                crate::permissions::additional_schema();
+            if let Some(description) = f["description"].as_str() {
+                f["description"] = json!(format!(
+                    "{description} With an explicit permission preset, permissionRequest asks for only the additional readRoots, writeRoots or network needed by this operation, with a justification. It never retries a previously failed command automatically."
+                ));
+            }
             // Core 的执行契约分别排除另一种入口；注册表单独投影模型可接受的描述。
             let branches: Vec<_> = [("command", "argv"), ("argv", "command")]
                 .into_iter()
@@ -617,6 +626,7 @@ fn request_with_policy(
                 json!(["/bin/bash", "-o", "pipefail", "-c", command]),
             );
         }
+        fields.remove("permissionRequest");
         fields.entry("cwd").or_insert(json!("workspace://repo"));
         fields.entry("timeoutMs").or_insert(json!(600_000));
         let command: Command = serde_json::from_value(args)?;
@@ -1077,7 +1087,7 @@ impl Engine {
         } else {
             self.runtime.as_ref()
         };
-        let (thread_id, turn_id, existing_scope) = {
+        let (thread_id, turn_id) = {
             let state = cell.state.lock().await;
             let active = state.active.as_ref().unwrap();
             anyhow::ensure!(
@@ -1086,53 +1096,9 @@ impl Engine {
                 ),
                 "duplicate tool call ID; refusing replay"
             );
-            (
-                state.thread.id.clone(),
-                active.id.clone(),
-                active.scope.clone(),
-            )
+            (state.thread.id.clone(), active.id.clone())
         };
-        let scope = match (runtime, if coordination { None } else { existing_scope }) {
-            (_, Some(scope)) => scope,
-            (Some(config), None) => {
-                let client = &config.client;
-                let created = client
-                    .create_scope(rt::CreateScope {
-                        operation_id: client.operation_id(),
-                        parent_scope_id: self.runtime_task_parent(cell).await?,
-                        owner: rt::Owner {
-                            task_id: format!("{thread_id}/{turn_id}"),
-                            plugin_instance_id: None,
-                        },
-                        permissions: self.active_permissions(cell).await?,
-                        limits: rt::LimitRequest::default(),
-                    })
-                    .await;
-                match created {
-                    Ok(scope) => {
-                        cell.state.lock().await.active.as_mut().unwrap().scope =
-                            Some(scope.scope_id.clone());
-                        scope.scope_id
-                    }
-                    Err(error)
-                        if matches!(
-                            error.code,
-                            rt::ErrorCode::Unsupported
-                                | rt::ErrorCode::PermissionDenied
-                                | rt::ErrorCode::InvalidArgument
-                                | rt::ErrorCode::ResourceExhausted
-                        ) =>
-                    {
-                        // Scope 尚未创建，任务动作确定未派发；记录普通工具失败供模型调整。
-                        rejection = Some(error);
-                        runtime = None;
-                        String::new()
-                    }
-                    Err(error) => return Err(error.into()),
-                }
-            }
-            (None, None) => String::new(),
-        };
+        let mut scope = String::new();
         anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
         let started = std::time::Instant::now();
         let item_id = id();
@@ -1153,6 +1119,18 @@ impl Engine {
             content_items: None,
             call_id: call.id.clone(),
             execution: Box::new(ToolExecution {
+                permission_review: None,
+                permission_scopes: Vec::new(),
+                page: entry.as_ref().ok().and_then(|t| match &t.backend {
+                    Backend::Page(p) => Some(areal_protocol::plugin_runtime::PageExecution {
+                        binding: p.binding.clone(),
+                        dispatch: areal_protocol::plugin_runtime::PageDispatch::Pending {
+                            arguments_digest: None,
+                        },
+                    }),
+                    _ => None,
+                }),
+                interactive_result: None,
                 result_snapshot: None,
                 file_before: None,
                 output_projection: None,
@@ -1167,6 +1145,7 @@ impl Engine {
                             Backend::Core => "core",
                             Backend::Command(_) => "command",
                             Backend::Client => "client",
+                            Backend::Page(_) => "page",
                             Backend::Mcp(_) => "mcp",
                             Backend::Plugin(_) => "plugin",
                         }
@@ -1201,6 +1180,24 @@ impl Engine {
                 .insert(item_id.clone());
             emit_item(cell, "item/started", &thread_id, &turn_id, &item);
         }
+        if runtime.is_some() {
+            match self.ensure_turn_scope(cell, &call.id).await {
+                Ok(created) => scope = created,
+                Err(error)
+                    if matches!(
+                        error.code,
+                        rt::ErrorCode::Unsupported
+                            | rt::ErrorCode::PermissionDenied
+                            | rt::ErrorCode::InvalidArgument
+                            | rt::ErrorCode::ResourceExhausted
+                    ) =>
+                {
+                    rejection = Some(error);
+                    runtime = None;
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
         if let Some(ready) = ready {
             let _ = ready.send(());
         }
@@ -1223,6 +1220,7 @@ impl Engine {
                 cancel,
                 call: &call,
                 scope: &scope,
+                granted_scope: None,
                 operation: &operation_id,
                 item_id: &item_id,
                 thread_id: &thread_id,
@@ -1240,7 +1238,7 @@ impl Engine {
         };
         let invocation_ms = invocation_started.elapsed().as_secs_f64() * 1000.0;
         let projection_started = std::time::Instant::now();
-        let (outcome, success, mut result) = match result {
+        let (mut outcome, mut success, mut result) = match result {
             Ok((success, value)) => (
                 if success {
                     ToolOutcome::Succeeded
@@ -1266,6 +1264,26 @@ impl Engine {
                 (outcome, false, json!({"error":error}))
             }
         };
+        {
+            let state = cell.state.lock().await;
+            if let Some(Item::DynamicToolCall {
+                execution,
+                success: saved_success,
+                ..
+            }) = state
+                .thread
+                .turns
+                .last()
+                .unwrap()
+                .items
+                .iter()
+                .find(|i| i.id() == item_id)
+                && execution.page.as_ref().is_some_and(|p| p.is_terminal())
+            {
+                outcome = execution.outcome.clone();
+                success = saved_success == &Some(true);
+            }
+        }
         if !success {
             tracing::Span::current().record("otel.status_code", "ERROR");
             tracing::Span::current().record(
@@ -1442,6 +1460,11 @@ impl Engine {
         {
             custom_content = None;
         }
+        let interactive_result = (success
+            && matches!(outcome, ToolOutcome::Succeeded)
+            && result["mcpServer"]["source"]["version"] == 1
+            && crate::desktop::mcp_apps::tool_uri(&result["mcpServer"]["toolMetadata"]).is_some())
+        .then_some(true);
         let result = bounded_result(serde_json::to_string(&prepared.value)?);
         let projection_ms = projection_started.elapsed().as_secs_f64() * 1000.0;
         let commit_started = std::time::Instant::now();
@@ -1463,24 +1486,30 @@ impl Engine {
             ..
         } = item
         {
-            *status = if success {
-                ToolStatus::Completed
-            } else {
-                ToolStatus::Failed
-            };
-            *saved_success = Some(success);
-            *content_items = Some(
-                custom_content.unwrap_or_else(|| vec![json!({"type":"inputText","text":result})]),
-            );
-            execution.outcome = outcome;
-            execution.result_snapshot = prepared.snapshot;
-            execution.output_projection = Some(prepared.metrics);
-            // 首次结算固定模型身份投影版本，升级后不能改写已提交给 provider 的旧回执。
-            if execution.backend.as_deref() == Some("coordination")
-                && call.name.starts_with("agent_")
-            {
-                execution.output_projection.as_mut().unwrap()["executionIdentityVersion"] =
-                    json!(if call.name == "agent_wait_any" { 2 } else { 1 });
+            if !execution.page.as_ref().is_some_and(|p| p.is_terminal()) {
+                *status = if success {
+                    ToolStatus::Completed
+                } else {
+                    ToolStatus::Failed
+                };
+                *saved_success = Some(success);
+                *content_items = Some(
+                    custom_content
+                        .unwrap_or_else(|| vec![json!({"type":"inputText","text":result})]),
+                );
+                execution.interactive_result =
+                    interactive_result.filter(|_| execution.backend.as_deref() == Some("mcp"));
+                execution.outcome = outcome;
+                execution.result_snapshot = prepared.snapshot;
+                execution.output_projection = Some(prepared.metrics);
+
+                if execution.backend.as_deref() == Some("coordination")
+                    && call.name.starts_with("agent_")
+                {
+                    // Pin the first settlement's identity version; retain old provider receipts.
+                    execution.output_projection.as_mut().unwrap()["executionIdentityVersion"] =
+                        json!(if call.name == "agent_wait_any" { 2 } else { 1 });
+                }
             }
             execution.duration_ms = Some(started.elapsed().as_millis() as u64);
         }

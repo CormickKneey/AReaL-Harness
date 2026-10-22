@@ -641,6 +641,59 @@ try {
   checks.push(
     "real paged Core Skill read (multibyte >8192 bytes) reaches model request; two-tier real model/effort selection reaches provider",
   );
+  const sentUser = page.locator(".user-message").last();
+  const sentBubble = sentUser.locator(".user-bubble");
+  const sentSkills = sentBubble.locator(".user-message-skill");
+  await sentSkills.first().waitFor();
+  assert.deepEqual(await sentSkills.allTextContents(), ["Fixture Skill", "Fixture Skill"]);
+  assert.equal(await sentSkills.locator("svg").count(), 2);
+  assert.equal(await sentBubble.locator("details, .user-message-skill button").count(), 0);
+  const sentSkillAlignment = await sentBubble.evaluate(bubble => {
+    const skillText = [...bubble.querySelector(".user-message-skill").childNodes]
+      .find(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim());
+    const proseText = [...bubble.querySelector("p").childNodes]
+      .find(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim());
+    const skillRange = document.createRange();
+    skillRange.selectNodeContents(skillText);
+    const proseRange = document.createRange();
+    proseRange.selectNodeContents(proseText);
+    const skill = skillRange.getClientRects()[0];
+    const prose = proseRange.getClientRects()[0];
+    return { skillTop: skill.top, skillBottom: skill.bottom, proseTop: prose.top, proseBottom: prose.bottom };
+  });
+  assert.ok(sentSkillAlignment.skillTop < sentSkillAlignment.proseBottom
+    && sentSkillAlignment.proseTop < sentSkillAlignment.skillBottom,
+    `sent Skill label and prose share a row: ${JSON.stringify(sentSkillAlignment)}`);
+  assert.ok(Math.abs(sentSkillAlignment.skillBottom - sentSkillAlignment.proseBottom) <= 1,
+    `sent Skill label and prose text align within 1px: ${JSON.stringify(sentSkillAlignment)}`);
+  const assertCompactSkillBody = async () => {
+    const visibleText = await sentBubble.textContent();
+    assert.doesNotMatch(visibleText, /PAGED_SKILL_END|SECOND_SKILL_CONTENT|description:|name: fixture-skill|<skill/);
+    assert.match(visibleText, /正文保留/);
+    assert.match(visibleText, /文本附件内容/);
+  };
+  await assertCompactSkillBody();
+  const expandSentBody = sentBubble.getByRole("button", { name: "展开全文", exact: true });
+  if (await expandSentBody.count()) {
+    await expandSentBody.click();
+    await assertCompactSkillBody();
+    await sentBubble.getByRole("button", { name: "收起", exact: true }).click();
+  }
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: {
+      writeText: async text => { window.copiedSkillMessage = text; },
+    } });
+  });
+  await sentUser.getByRole("button", { name: "复制消息", exact: true }).click();
+  await sentUser.getByRole("button", { name: "已复制消息", exact: true }).waitFor();
+  const copiedSkillMessage = await page.evaluate(() => window.copiedSkillMessage);
+  assert.match(copiedSkillMessage, /<skill name="fixture-skill"/);
+  assert.match(copiedSkillMessage, /PAGED_SKILL_END/);
+  assert.match(copiedSkillMessage, /SECOND_SKILL_CONTENT/);
+  await sentBubble.scrollIntoViewIfNeeded();
+  await sentBubble.screenshot({ path: join(scratch, "03-sent-skills.png"), animations: "disabled", scale: "css" });
+  frames.push("03-sent-skills.png");
+  checks.push("sent user Skills show two inline Box labels; bodies and frontmatter stay absent through prose expansion; copying preserves complete original Skill blocks");
   const pasteUploads = (await call("media", {
     projectId: pid, threadId: tid, operation: "list",
   })).uploads;
@@ -834,7 +887,7 @@ try {
   await page.getByRole("alert").filter({ hasText: "无法读取技能" }).waitFor();
   assert.equal(received.length, requestCount);
   assert.equal(await tags().count(), 1);
-  assert.equal(await page.locator(".error-banner").count(), 0);
+  assert.equal(await page.locator('[data-testid="feedback-notice"][data-tone="error"]').count(), 0);
   assert.equal(await input().textContent(), "技能失败保留草稿");
   await rename(join(skill, "SKILL.unavailable"), join(skill, "SKILL.md"));
   await sendAndWait();

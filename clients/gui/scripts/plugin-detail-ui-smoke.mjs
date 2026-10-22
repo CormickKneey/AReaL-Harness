@@ -17,11 +17,13 @@ const fixture = join(evidence, 'fixture.tsx');
 await writeFile(fixture, `import React,{useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {PluginCenter} from '${join(gui, 'renderer/src/settings/PluginCenter.tsx')}';
+import {ApplicationIntlProvider} from '${join(gui, 'renderer/src/i18n/IntlProvider.tsx')}';
 import {UnsavedChangesProvider} from '${join(gui, 'renderer/src/settings/UnsavedChanges.tsx')}';
 import '${join(gui, 'renderer/src/styles.css')}';
 let mode='uninstalled',digest='a'.repeat(64),installed=false,auth='notStarted',state='disconnected',revision=1,lose=false;
 const calls=[]; let receipt;
-const detail=()=>({revision,id:'github@official',name:'github',displayName:'GitHub',description:'在对话中使用 GitHub。',version:null,installed,installedVersion:null,installedDigest:installed?digest:null,installedSkills:[],installedOnboardingSkill:null,enabled:installed,source:'/fixture/github',sourceDigest:digest,catalogSource:{type:'local',path:'/fixture/github'},components:['mcp'],diagnostics:['MCP declarations require explicit digest trust and connection'],skills:[],onboardingSkill:null});
+const support=()=>({digest,manifestFormat:'portable1',compatibility:{state:'allowed',reasonCodes:[]},validation:{provider:'unverified',platform:'unverified',distribution:'unverified'},components:[{kind:'mcp',sourceField:'mcp.json',status:'supported',reasonCodes:[],supportedSchema:'areal-mcp-document-envelope-v1',activationRequirements:['explicitMcpTrust','mcpConnection']},{kind:'uiSurfaces',sourceField:'plugin.json#/ui/surfaces/panel',status:'unsupported',reasonCodes:['componentNotImplemented'],supportedSchema:null,activationRequirements:[]}]});
+const detail=()=>({revision,id:'github@official',name:'github',displayName:'GitHub',description:'在对话中使用 GitHub。',version:null,installed,installedVersion:null,installedDigest:installed?digest:null,installedSkills:[],installedOnboardingSkill:null,enabled:installed,source:'/fixture/github',sourceDigest:digest,catalogSource:{type:'local',path:'/fixture/github'},componentSupport:support(),installedComponentSupport:installed?support():null,components:['mcp'],diagnostics:['MCP declarations require explicit digest trust and connection'],skills:[],onboardingSkill:null});
 const connection=()=>({pluginId:'github@official',installedDigest:digest,state:state==='connected'?'connected':auth==='ready'?'disconnected':'authRequired',trusted:state==='connected',authenticationTiming:'ON_INSTALL',servers:[{serverId:'github-mcp',state:state==='connected'?'connected':auth==='ready'?'disconnected':'authRequired',authentication:'required',config:{title:'GitHub MCP',authentication:{},authenticationRequirements:{}}}],connectors:[],diagnostics:[]});
 const action=async(_name,p)=>{calls.push({...p});switch(p.operation){
 case'pluginCapabilities':return {enabled:true};
@@ -31,11 +33,11 @@ case'pluginHooks':return {data:installed?[{pluginId:'github@official',installedD
 case'pluginMcp':return {data:installed?[connection()]:[]};
 case'pluginInstall':installed=true;return detail();
 case'pluginAuth':if(mode==='auth-unknown'&&p.authOperation==='status')throw Error('Injected auth read failure');if(p.authOperation==='start')auth='pending';if(p.authOperation==='cancel')auth='cancelled';return auth==='notStarted'?null:{status:auth};
-case'pluginConnection':state=p.connect?'connected':'disconnected';if(!p.connect)auth='ready';receipt={confirmed:true,accepted:true,result:{}};if(lose){lose=false;throw Object.assign(new Error('连接回执丢失'),{submissionUnknown:true,requestId:p.requestId});}return {data:[connection()]};
+case'pluginConnection':state=p.connect&&mode!=='failed'?'connected':'disconnected';if(!p.connect)auth='ready';receipt=mode==='failed'?{confirmed:true,accepted:true,status:'failed',operation:{requestId:p.requestId,method:'areal/plugin/connection',target:{kind:'project'}},error:{message:'PLUGIN_EXECUTION_FAILED_SENTINEL'},message:'PLUGIN_EXECUTION_FAILED_SENTINEL'}:{confirmed:true,accepted:true,status:'completed',result:{}};if(lose){lose=false;throw Object.assign(new Error('连接回执丢失'),{submissionUnknown:true,requestId:p.requestId});}return {data:[connection()]};
 case'pluginSubmission':return receipt;default:throw Error('Unexpected fixture operation '+p.operation);}};
-function App(){const [epoch,setEpoch]=useState(0);window.pluginFixture={calls,reset(next){mode=next;installed=next!=='uninstalled';auth=next==='pending'?'pending':next==='ready'||next==='connected'||next==='unknown'?'ready':'notStarted';state=next==='connected'?'connected':'disconnected';lose=next==='unknown';revision++;setEpoch(x=>x+1);},swapDigest(){digest='b'.repeat(64);revision++;window.dispatchEvent(new Event('areal-plugins-changed'));},setReady(){auth='ready';mode='ready';},};
-const project={id:'fixture',name:'workspace',root:'/fixture',state:{connected:true},pending:[]};return <UnsavedChangesProvider><div style={{height:'100vh',display:'flex'}}><PluginCenter key={epoch} project={project} projects={[project]} action={action} active surface="workspace" marketRequest={0} onSettings={()=>{}} onMarket={()=>{}} onChooseProject={()=>{}} onSelectProject={()=>{}} onStartDraft={async()=>{calls.push({operation:'startDraft'});}} /></div></UnsavedChangesProvider>;}
-createRoot(document.getElementById('root')).render(<App/>);`);
+function App(){const [epoch,setEpoch]=useState(0);window.pluginFixture={calls,reset(next){mode=next;installed=next!=='uninstalled';auth=next==='pending'?'pending':next==='ready'||next==='connected'||next==='unknown'||next==='failed'?'ready':'notStarted';state=next==='connected'?'connected':'disconnected';lose=next==='unknown'||next==='failed';revision++;setEpoch(x=>x+1);},swapDigest(){digest='b'.repeat(64);revision++;window.dispatchEvent(new Event('areal-plugins-changed'));},setReady(){auth='ready';mode='ready';},};
+const project={id:'fixture',name:'workspace',root:'/fixture',state:{connected:true},pending:[]};return <UnsavedChangesProvider><div style={{height:'100vh',display:'flex',background:'var(--color-background)'}}><PluginCenter key={epoch} project={project} projects={[project]} action={action} active surface="workspace" marketRequest={0} onSettings={()=>{}} onMarket={()=>{}} onChooseProject={()=>{}} onSelectProject={()=>{}} onStartDraft={async()=>{calls.push({operation:'startDraft'});}} /></div></UnsavedChangesProvider>;}
+createRoot(document.getElementById('root')).render(<ApplicationIntlProvider><App/></ApplicationIntlProvider>);`);
 const server = await createServer({ root: join(gui, 'renderer'), configFile: join(gui, 'renderer/vite.config.ts'), mode: 'design-system', appType: 'custom', server: { host: '127.0.0.1', port: 0, fs: { allow: [root] } } });
 server.middlewares.use(async (req, res, next) => {
   if (req.url !== '/plugin-detail-acceptance.html') return next();
@@ -91,7 +93,19 @@ try {
   await page.evaluate(() => window.pluginFixture.swapDigest());await button('审阅并连接').waitFor();await button('审阅并连接').click();assert.equal(await consent.isChecked(), false);
   checks.push('auth start/status are separate; auth ready never connects; consent is readable and resets on digest change');
   await consent.check();await button('信任并连接').click();await page.getByRole('heading', { name: '已连接', exact: true }).waitFor();
-  await button('开始对话').waitFor();await button('断开并撤销信任').waitFor();await capture('04-connected');
+    await page
+    .getByRole("region", { name: "已安装组件支持", exact: true })
+    .getByText("部分组件不受支持", { exact: true })
+    .waitFor();
+  await page
+    .getByRole("region", { name: "已安装组件支持", exact: true })
+    .getByText("当前会话的 Profile 决定实际准入。", { exact: true })
+    .waitFor();
+  assert.equal(await page.getByText("插件服务已可在对话中使用。", { exact: true }).count(), 0);
+  checks.push(
+    "digest-bound installed support displays optional unsupported UI and Thread-dependent admission",
+  );
+await button('开始对话').waitFor();await button('断开并撤销信任').waitFor();await capture('04-connected');
   await button('查看详情').click();await button('收起详情').waitFor();await capture('06-details-expanded');
   await button('断开并撤销信任').click();await button('审阅并连接').waitFor();
   checks.push('connected actions and disconnect/revoke transition');
@@ -102,6 +116,14 @@ try {
   await button('核对连接结果').click();await page.getByRole('heading', { name: '已连接', exact: true }).waitFor();
   assert.equal(await page.evaluate(() => window.pluginFixture.calls.filter(c => c.operation === 'pluginConnection').length), before);
   checks.push('UNKNOWN blocks writes and recovers original receipt without replay');
+  await open('failed');await button('审阅并连接').click();await consent.check();await button('信任并连接').click();
+  await page.getByRole('heading', { name: '连接结果待核对', exact: true }).waitFor();
+  const failedBefore=await page.evaluate(()=>window.pluginFixture.calls.filter(c=>c.operation==='pluginConnection').length);
+  await button('核对连接结果').click();await button('审阅并连接').waitFor();
+  assert.match(await page.locator('body').innerText(),/PLUGIN_EXECUTION_FAILED_SENTINEL/,'an admitted failed plugin receipt must show its execution error');
+  assert.equal(await page.evaluate(()=>window.pluginFixture.calls.filter(c=>c.operation==='pluginConnection').length),failedBefore,'a failed receipt query never replays the original operation');
+  checks.push('admitted failed plugin receipt remains an execution failure and is not replayed');
+  await capture('08-failed-receipt');
   await open('auth-unknown');await page.getByRole('heading', { name: '认证结果待核对', exact: true }).waitFor();
   assert.equal(await button('在浏览器中认证').count(), 0);assert.equal(await button('取消本次认证').count(), 0);
   await page.evaluate(() => window.pluginFixture.setReady());await button('核对认证状态').click();await button('审阅并连接').waitFor();

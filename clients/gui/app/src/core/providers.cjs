@@ -486,20 +486,22 @@ class AppProviders {
     if (snapshot?.revision === proof.applied.revision) project.providerSnapshot = snapshot;
     else if (project.providerSnapshot?.revision !== proof.applied.revision) delete project.providerSnapshot;
   }
-  async confirmProof(target, proof, snapshot) {
+  async confirmProof(target, proof, snapshot, { refreshModels = true } = {}) {
     this.validateProof(target, proof);
     if (proof.applied.revision !== snapshot.revision) throw new Error('Core 尚未确认目标模型配置，请刷新核对。');
     this.rememberProof(target, proof, snapshot);
     if (snapshot.data.some(item => item.enabled !== false && Object.hasOwn(this.config.vault.keys, item.apiKeyEnv) && proof.credentialStates[item.id] !== 'available')) throw Object.assign(new Error('Core 尚未确认模型凭据可用，请检查凭据后重试。'), { configurationSettled: true });
-    const models = await target.client.request('areal/model/list');
-    this.requireTarget(target);
-    this.rememberProof(target, proof, snapshot);
-    target.project.models = models.data ?? models.models ?? [];
+    if (refreshModels) {
+      const models = await target.client.request('areal/model/list');
+      this.requireTarget(target);
+      this.rememberProof(target, proof, snapshot);
+      target.project.models = models.data ?? models.models ?? [];
+    }
     target.project.providerError = null;
     delete target.project.providerFailure;
   }
   reconcilePending(target) { return this.inProject(target.project, () => this.inspectPending(target)); }
-  async inspectPending(target, notAccepted) {
+  async inspectPending(target, notAccepted, { refreshModels = true } = {}) {
     const pending = this.pendingApplications.get(target.project.id);
     if (!pending) return;
     try {
@@ -507,7 +509,7 @@ class AppProviders {
       const observed = await this.readProof(target, sameService ? pending.requestId : undefined);
       if (!sameService) {
         this.rememberProof(target, observed, this.value);
-        if (observed.applied.revision === pending.snapshot.revision) await this.confirmProof(target, observed, pending.snapshot);
+        if (observed.applied.revision === pending.snapshot.revision) await this.confirmProof(target, observed, pending.snapshot, { refreshModels });
         else target.project.providerError = 'Core 已换代，当前模型配置与原应用目标不同，请刷新后重新应用。';
         this.pendingApplications.delete(target.project.id);
         return { generationChanged: true };
@@ -518,7 +520,7 @@ class AppProviders {
         const result = this.validateProof(target, operation.result);
         if (result.applied.revision !== pending.targetRevision || result.applied.sequence <= pending.expectedApplied.sequence) throw new Error('Core 返回了不匹配的模型配置回执，请刷新核对。');
         if (observed.applied.revision !== result.applied.revision || observed.applied.sequence !== result.applied.sequence) throw new Error('Core 模型配置已再次变化，请刷新核对。');
-        await this.confirmProof(target, result, pending.snapshot);
+        await this.confirmProof(target, result, pending.snapshot, { refreshModels });
         this.pendingApplications.delete(target.project.id);
       } else if (operation.state === 'rejected' || operation.state === 'unknown' && !operation.error && notAccepted) {
         this.rememberProof(target, observed, this.value);
@@ -567,11 +569,11 @@ class AppProviders {
     for (const target of targets ?? await this.prepareProjects()) outcomes.push(await this.inProject(target.project, () => this.applyProject(snapshot, target)));
     return outcomes;
   }
-  async applyProject(snapshot, target) {
+  async applyProject(snapshot, target, { refreshModels = true } = {}) {
     try {
       this.requireTarget(target);
       if (target.proof.applied.revision === snapshot.revision) {
-        await this.confirmProof(target, target.proof, snapshot);
+        await this.confirmProof(target, target.proof, snapshot, { refreshModels });
         return { target, applied: true };
       }
       const credentials = this.config.credentialsFor(snapshot);
@@ -585,13 +587,13 @@ class AppProviders {
         if (receipt.operation?.requestId !== pending.requestId || receipt.operation.state !== 'applied') throw new Error('模型配置应用尚未确认，请刷新核对。');
         const result = this.validateProof(target, receipt.operation.result);
         if (result.applied.revision !== snapshot.revision || result.applied.sequence <= pending.expectedApplied.sequence || !isDeepStrictEqual(result.applied, receipt.applied)) throw new Error('Core 返回了不匹配的模型配置回执，请刷新核对。');
-        await this.confirmProof(target, result, snapshot);
+        await this.confirmProof(target, result, snapshot, { refreshModels });
         this.pendingApplications.delete(target.project.id);
         return { target, applied: true };
       } catch (error) {
         const notAccepted = error.name === 'CoreRpcError' && error.submissionUnknown !== true && ([-32602, -32601, -32003].includes(error.code)
           || error.code === -32010 && error.data?.reason === 'MODEL_CONFIGURATION_CAPACITY');
-        const reconciled = await this.inspectPending(target, notAccepted ? error : undefined);
+        const reconciled = await this.inspectPending(target, notAccepted ? error : undefined, { refreshModels });
         return { target, applied: !this.pendingApplications.has(target.project.id) && !reconciled?.rejected && this.currentTarget(target), pending: reconciled?.pending === true, error: reconciled?.error ?? error };
       }
     } catch (error) {
@@ -599,14 +601,14 @@ class AppProviders {
       return { target, pending: this.pendingApplications.has(target.project.id) || !this.currentTarget(target), error };
     }
   }
-  reconcileProject(project) {
+  reconcileProject(project, { refreshModels = true } = {}) {
     const target = this.target(project);
     return this.inProject(project, async () => {
       try {
         if (this.closed || this.backend.closing) return;
         this.requireTarget(target);
         if (!['areal/server/modelConfiguration/read', 'areal/server/modelConfiguration/apply'].every(method => target.client.capabilities?.methods?.includes(method))) throw new Error('请更新 Core 后再应用模型配置。');
-        const reconciled = await this.inspectPending(target);
+        const reconciled = await this.inspectPending(target, undefined, { refreshModels });
         if (reconciled?.pending) return;
         const snapshot = await this.config.current();
         this.requireTarget(target);
@@ -614,7 +616,7 @@ class AppProviders {
         target.proof = await this.readProof(target);
         this.rememberProof(target, target.proof, snapshot);
         if (target.proof.applied.revision === snapshot.revision) {
-          await this.confirmProof(target, target.proof, snapshot);
+          await this.confirmProof(target, target.proof, snapshot, { refreshModels });
           return;
         }
         if (this.saving || this.backend.providerUpdating || this.backend.resourcesUpdating || this.backend.activeCommands || this.backend.starting.size || this.backend.hasWork()) {
@@ -630,7 +632,7 @@ class AppProviders {
         this.backend.providerUpdating = true;
         try {
           if (this.closed || this.backend.closing) return;
-          const outcome = await this.applyProject(snapshot, target);
+          const outcome = await this.applyProject(snapshot, target, { refreshModels });
           if (!outcome.applied && !outcome.pending) this.applicationFailed(target, snapshot.revision, outcome.error);
         } finally { this.backend.providerUpdating = false; }
       } catch (error) {

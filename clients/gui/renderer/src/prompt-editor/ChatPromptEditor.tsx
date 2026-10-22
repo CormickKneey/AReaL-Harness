@@ -7,7 +7,7 @@ import type {
   MutableRefObject,
   ReactNode,
 } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { ComposerSurface, ComposerToolbar } from "./ComposerSurface.js";
 const TID_CHAT_SEND_BUTTON = "chat-send-button";
 import { AskPermissionIcon as Hand } from "../permissionIcons.js";
@@ -55,6 +55,7 @@ export function ChatPromptEditor({
   disabledReason,
   submitting = false,
   submitDisabled = false,
+  submitDisabledReason,
   allowSubmitWhenEmpty = false,
   enterSubmits = true,
   submitLabel,
@@ -109,6 +110,7 @@ export function ChatPromptEditor({
   disabledReason?: string;
   submitting?: boolean;
   submitDisabled?: boolean;
+  submitDisabledReason?: string;
   allowSubmitWhenEmpty?: boolean;
   enterSubmits?: boolean;
   submitLabel: string;
@@ -161,6 +163,8 @@ export function ChatPromptEditor({
   enableMentionPanel?: boolean;
 }) {
   const { intl } = useZCodeIntl();
+  const submitDescriptionId = useId();
+  const submitBlockedReason = submitDisabled ? submitDisabledReason : undefined;
   const toolbarRef = useComposerToolbarFit();
   const internalInputApiRef = useRef<LexicalChatInputHandle | null>(null);
   const resolvedInputApiRef = inputApiRef ?? internalInputApiRef;
@@ -451,18 +455,22 @@ export function ChatPromptEditor({
             ) : null}
             {betweenCancelAndSubmitAction}
             {submitControl ?? (
-              <ControlHintTooltip title={submitLabel} shortcut={enterSubmits ? "Enter" : "⌘/Ctrl+Enter"}>
-                <Button
-                  type="submit"
-                  variant="composer"
-                  size="icon-md"
-                  disabled={submitDisabled}
-                  data-testid={submitTestId ?? TID_CHAT_SEND_BUTTON}
-                  aria-label={submitLabel}
-                >
-                  {submitting ? <Spinner className="size-4" /> : <SendMessageIcon className="size-5" />}
-                  <span className="sr-only">{submitLabel}</span>
-                </Button>
+              <ControlHintTooltip title={submitBlockedReason ?? submitLabel} shortcut={submitBlockedReason ? undefined : enterSubmits ? "Enter" : "⌘/Ctrl+Enter"}>
+                <span className="inline-flex">
+                  <Button
+                    type="submit"
+                    variant="composer"
+                    size="icon-md"
+                    disabled={submitDisabled}
+                    data-testid={submitTestId ?? TID_CHAT_SEND_BUTTON}
+                    aria-label={submitLabel}
+                    aria-describedby={submitBlockedReason ? submitDescriptionId : undefined}
+                  >
+                    {submitting ? <Spinner className="size-4" /> : <SendMessageIcon className="size-5" />}
+                    <span className="sr-only">{submitLabel}</span>
+                  </Button>
+                  {submitBlockedReason && <span id={submitDescriptionId} className="sr-only">{submitBlockedReason}</span>}
+                </span>
               </ControlHintTooltip>
             )}
           </>}

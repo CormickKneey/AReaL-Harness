@@ -342,6 +342,10 @@ async fn side_selection_is_exact_and_frozen_after_source_advances() {
             rejected["error"]["data"]["reason"], "STALE_SELECTION",
             "{rejected}"
         );
+        assert_eq!(
+            rejected["error"]["data"]["outcome"]["kind"], "rejected",
+            "{rejected}"
+        );
     }
     let mut stale_digest = base.clone();
     stale_digest["requestId"] = json!("stale-digest");

@@ -1,4 +1,5 @@
 import type { AppLocale } from "../i18n/messages.js";
+import type { PermissionPreset } from "../permissions.js";
 export const UI_FONTS = {
   system:
     '-apple-system, system-ui, "Segoe UI", sans-serif',
@@ -53,6 +54,7 @@ export type ApplicationSettings = {
   diffMarkers: "color" | "signs";
   sendShortcut: "enter" | "modifier";
   followUp: "queue" | "steer";
+  defaultPermissionPreset: PermissionPreset;
   terminalLocation: "bottom" | "right";
   showBottomPanelControl: boolean;
   light: Palette;
@@ -67,6 +69,7 @@ export const DEFAULT_APPLICATION_SETTINGS: ApplicationSettings = {
   diffMarkers: "color",
   sendShortcut: "enter",
   followUp: "queue",
+  defaultPermissionPreset: "autoReview",
   terminalLocation: "right",
   showBottomPanelControl: true,
   ...DEFAULT_PALETTES,
@@ -90,6 +93,8 @@ export function normalizeApplicationSettings(raw: any): ApplicationSettings {
   result.reducedMotion = saved.reducedMotion === "on" || saved.reducedMotion === "off" ? saved.reducedMotion : "system";
   result.diffMarkers = saved.diffMarkers === "signs" ? "signs" : "color";
   result.followUp = saved.followUp === "steer" ? "steer" : "queue";
+  result.defaultPermissionPreset = saved.defaultPermissionPreset === "ask" || saved.defaultPermissionPreset === "autoReview" || saved.defaultPermissionPreset === "fullAccess"
+    ? saved.defaultPermissionPreset : "autoReview";
   // Preserve the existing shortcut location for installations without a choice.
   result.terminalLocation = saved.terminalLocation === "bottom" ? "bottom" : "right";
   result.showBottomPanelControl = saved.showBottomPanelControl !== false;

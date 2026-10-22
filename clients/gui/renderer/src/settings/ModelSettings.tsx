@@ -119,8 +119,8 @@ export function ModelSettings({ action, onOpenSessionSettings }: { action: Actio
   const refreshCatalog = () => navigate(() => { discard(); void state.refresh(); });
   const matches = (name: string) => name.toLowerCase().includes(query.trim().toLowerCase());
   const catalog = [
-    { id: CHATGPT, name: "ChatGPT", enabled: accountModels.length > 0, detail: accountLabel || t("settings.modelSettings.subscriptionStatusNeedsRefreshing") },
-    ...items.map(item => ({ id: item.id as string, name: item.name as string, enabled: !!item.enabled, detail: savedStatus(item) })),
+    { id: CHATGPT, name: "ChatGPT", enabled: accountModels.length > 0 },
+    ...items.map(item => ({ id: item.id as string, name: item.name as string, enabled: !!item.enabled })),
   ].filter(item => matches(item.name));
   const enabled = catalog.filter(item => item.enabled);
   const disabled = catalog.filter(item => !item.enabled);
@@ -150,7 +150,6 @@ export function ModelSettings({ action, onOpenSessionSettings }: { action: Actio
             {(group as typeof catalog).map(item => <button type="button" className="provider-catalog-row" key={item.id} aria-current={current === item.id} data-enabled={item.enabled} disabled={busy} onClick={() => choose(item.id)}>
               <span className="provider-catalog-dot" aria-hidden="true" />
               <span>{item.name}</span>
-              <small>{item.detail}</small>
             </button>)}
           </section> : null)}
           {!catalog.length && <p className="settings-muted provider-list-empty">{state.loading ? t("settings.modelSettings.loadingProviders") : query ? t("settings.modelSettings.noMatchingProviders") : t("settings.modelSettings.noProvidersAdded")}</p>}

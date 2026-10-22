@@ -51,6 +51,7 @@ async function scan(dir) {
   }
 }
 await scan(root);
+await scan(join(root, "../../design/tokens"));
 for (const path of [
   "app/LICENSE",
   "renderer/ZCODE-LICENSE",
@@ -63,6 +64,6 @@ console.log(
   JSON.stringify({
     passed: true,
     files,
-    scope: "public source inventory; dependency licenses retained during staging",
+    scope: "GUI and shared token public source inventory; dependency licenses retained during staging",
   }),
 );

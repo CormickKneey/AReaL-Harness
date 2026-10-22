@@ -147,6 +147,17 @@ pub trait DynamicToolHost: Send + Sync {
     ) -> anyhow::Result<Option<Value>> {
         Ok(None)
     }
+    async fn page_tool_notice(
+        &self,
+        _notice: areal_protocol::plugin_runtime::PageToolNotice,
+    ) -> anyhow::Result<()> {
+        anyhow::bail!("page tools unsupported")
+    }
+    async fn wait_closed(&self) {
+        while !self.is_closed() {
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+    }
     async fn call(
         &self,
         request: Value,
@@ -162,6 +173,7 @@ pub(crate) enum Backend {
     Core,
     Command(CommandTool),
     Client,
+    Page(Arc<crate::desktop::mcp_apps::page_tools::FrozenPageTool>),
     Mcp(Box<areal_mcp::McpTool>),
     Plugin(super::plugins::PluginTool),
 }

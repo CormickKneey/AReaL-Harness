@@ -102,7 +102,7 @@ export function ProcessesPane({ project, thread, action, onOpenService }: { proj
         if (requestId) { setUnknown(true); return; }
         requestId = crypto.randomUUID();
         localStorage.setItem(`${draftKey}:pending`, requestId); setUnknown(true);
-        const result = await request("processStart", { requestId, argv: ["/bin/sh", "-c", command], cwd: "workspace://repo", lifetime, tty: false, timeoutMs: 86_400_000 });
+        const result = await request("processStart", { requestId, argv: ["/bin/sh", "-c", command], cwd: "workspace://repo", lifetime, tty: false });
         id = result.id;
       }
       localStorage.removeItem(`${draftKey}:pending`); localStorage.removeItem(draftKey);

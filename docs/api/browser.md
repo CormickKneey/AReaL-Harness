@@ -48,6 +48,20 @@
 
 主文档 Ref `press` 的原生 keyDown 已确认后，若只有非目标子 Frame 导航使全页观察代次失效，可在主文档、原生 Page、Host/Core 归属、控制和视口均未变化且未取消时完成该按键的唯一 keyUp。该例外只结束已确认的输入，不允许复用旧 Ref、继续其他输入或扩大导航许可；旧读取计划仍失效，后续动作须 fresh observe 并经 Core 权限检查。回执仍为 `inputConfirmed:true / verification:not_checked`；ACK 丢失或其他 fence 失效仍保持 UNKNOWN，不重放。
 
+## 原生控件与状态等待
+
+`act` 另接受 `{kind:"scroll",target:"viewport",deltaX,deltaY}`、`{kind:"hover",ref}`、`{kind:"selectOption",ref,value}` 和 `{kind:"setChecked",ref,checked}`。滚动量必须是 `[-4096,4096]` 内的安全整数，不能同时为零。选择操作只接受原生单选 SELECT 中唯一、启用选项的 exact value，最多 256 字符。checkbox 状态为布尔值。自定义控件、多选 SELECT 和 radio 不受支持。这些变体沿用 Core 准备、批准链和公网 Origin 政策。审批显示具体滚动量、选项值或选中状态。
+
+观察为原生表单控件提供有界 `nativeControl` 事实。checkbox 含 `kind`、`enabled` 和 `checked`。SELECT 含 `kind`、`enabled`、`multiple`、`value`、`optionsComplete` 和 `options`。每个选项含不透明 `optionId`、`value`、`label`、`disabled` 和 `selected`。私有节点身份不会进入工具参数。最多表示 64 个选项，每个 value/label 最多 256 字符，选项文本合计最多 8192 UTF-8 字节。敏感控件或选项文本继续隐藏；不完整或歧义列表不能授权选择。完整观察字节预算仍然生效。
+
+准备把观察时的视口与当前视口分开绑定。精确选择绑定原 SELECT 和完整有序 OPTION 对象。同值替换、重排、类型改变或禁用选项在变更前拒绝。固定 Host 命令使用隔离世界的原生 getter/setter，仅在选择改变时发送语义 `input` 和 `change` 事件。这些事件不承诺 `isTrusted`。页面处理器可能取消或恢复状态。动作与批量回执独立报告输入派发、确认、no-op 和 `stateMatched`，不代表业务成功。选择回执不包含输入后的 SELECT 选项值或标签；完整选项事实由带隐私过滤的观察提供。checkbox 回执可包含布尔 `nativeControl` 事实。
+
+已达到目标状态的 checkbox 返回 `dispatch:"confirmed",noOp:true,inputConfirmed:false`，不产生 click 或 change。状态不同时使用原生 click 输入。输入 ACK 丢失仍是 UNKNOWN，包括 set-to-state 操作也不能自动重放。
+
+`wait.condition` 接受原生 checkbox 的 `{kind:"checked",ref,value:boolean}`，以及原生表单控件的 `{kind:"enabled",ref,value:boolean}`。等待读取原节点身份，不要求动作可用性或几何条件。disabled 控件可以满足条件。等待不发送输入，保留既有超时、接管和迟到结果栅栏。
+
+确认完成的 scroll 和 hover 使旧观察失效。后续动作前必须重新观察。`runBatch` 先记录本步确认收据，再使子计划失效。后续旧步骤为 `not_sent`，已确认前缀和外层调用去重继续保留。逐步收据包含 `inputConfirmed`、可选 `noOp` 和原生状态事实。已派发步骤不明确时保留前缀，并把工具结算为 UNKNOWN。
+
 ## 1. 两条既有连接与一个新能力
 
 批量执行在既有 `browser_v1` 包络新增 `runBatch`，不修改持久化工具定义。参数为 `{pageId, snapshotId, steps}`，包含 1–8 步；每步为已有 `act` 动作（`{operation:"act", snapshotId, action}`）或有界等待（`{operation:"wait", timeoutMs, condition?}`）。所有步骤使用同一 Page 与已观察快照，不允许导航、新页面、任意代码、隐式网络工具或文件权限。截图坐标仅可用于首步，因为输入会使截图失效；已知等待总时长不能超过内部 29 秒执行预算。Core 准备并批准具体完整序列；Main 私有保存逐步计划，在每次派发前检查原生目标和控制 fence。结果包含逐步已确认回执与 `verification:not_checked`；后续确定拒绝时剩余步骤标为 `not_sent`。任一步不确定则整个工具为 UNKNOWN，并在 Core 错误详情保留已确认前缀。相同 call 身份共享运行中或已完成结果，参数变化拒绝。Preview 沿既有 Page operation 投影显示进度。

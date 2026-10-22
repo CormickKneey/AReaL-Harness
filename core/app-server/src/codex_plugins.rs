@@ -3,24 +3,24 @@ use super::*;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
-pub(crate) const METHODS: &[&str] = &[
-    "plugin/list",
-    "plugin/installed",
-    "plugin/read",
-    "plugin/install",
-    "plugin/uninstall",
-    "plugin/reconcile",
-    "plugin/search",
-    "plugin/skill/read",
-    "marketplace/add",
-    "marketplace/remove",
-    "marketplace/upgrade",
-    "plugin/share/save",
-    "plugin/share/updateTargets",
-    "plugin/share/list",
-    "plugin/share/checkout",
-    "plugin/share/delete",
-];
+areal_protocol::method_catalog! {
+    "plugin/list" => Read;
+    "plugin/installed" => Read;
+    "plugin/read" => Read;
+    "plugin/install" => Mutation;
+    "plugin/uninstall" => Mutation;
+    "plugin/reconcile" => Mutation;
+    "plugin/search" => Read;
+    "plugin/skill/read" => Read;
+    "marketplace/add" => Mutation;
+    "marketplace/remove" => Mutation;
+    "marketplace/upgrade" => Mutation;
+    "plugin/share/save" => Mutation;
+    "plugin/share/updateTargets" => Mutation;
+    "plugin/share/list" => Read;
+    "plugin/share/checkout" => Mutation;
+    "plugin/share/delete" => Mutation;
+}
 fn unavailable() -> RpcError {
     RpcError {
         code: -32004,

@@ -57,10 +57,30 @@ Cookie 名为 `areal_session_<origin摘要>`，不指定 Domain，使用 `HttpOn
 | server/status/drain/gc | manage | 资源使用、收敛与 Blob 回收 |
 | subscription/remove | observe | 退订观察，不撤销工具宿主 |
 
+### 聊天权限
+
+`features.permissionPresets` 表示支持 `options.permissionPreset: "ask" | "autoReview" | "fullAccess"`。`areal/thread/start` 接受可选 `options` 并原子保存初始配置；`areal/thread/configure` 沿用 revision 与空闲条件。旧配置缺失 preset 时保留原语义。客户端不得在能力缺失时静默忽略新选择。
+
+Core 返回可选 `EffectiveConfig.permissions: {resources:"workspace"|"deployment",reviewer:"human"|"model"|"none",fullAccessAvailable:boolean}`。`features.permissionFullAccess` 用于创建前的部署可用性判断。Ask 与 AutoReview 使用工作区和任务 scratch，命令网络关闭；FullAccess 使用部署允许的范围。只读、Profile、父任务与显式规则继续收窄权限。队列保存入队时的完整配置。
+
+`run_command` 可携带 `permissionRequest:{readRoots:string[],writeRoots:string[],network:boolean,justification:string}`，显式申请单次附加权限。批准绑定最终参数摘要，只建立本操作 Scope；不改变后续命令的基础权限，不自动重试先前失败命令。自动审核使用独立的无工具模型请求，结果绑定摘要；拒绝不执行，审核失败或不确定时进入人工审批。审核记录随工具执行历史保存。
+
+受管命令权限不等于 Core、插件、MCP 或浏览器宿主的整体隔离。浏览器继续使用独立的页面取控与精确计划校验。详见[权限架构](../design/permissions.md)。
+
 <a id="submissions"></a>
 ## 提交、配置与恢复
 
 requestId 是持久业务键，RPC id 只关联响应。相同身份、方法、键和规范参数返回原结果；参数不同冲突。Thread 最多 1024 收据，管理日志 4096；容量满拒绝而不遗忘旧键。重启后 accepted 但无结果的管理记录为 UNKNOWN，不重新执行。
+
+`features.taskRequestReceipts` 扩展 `areal/request/read`，统一查询当前身份的 Thread、管理和 Task 回执，仍保留旧字段。每条记录增加 `operation:{method,requestId,target}` 和 `status:admitted|completed|failed|unconfirmed`；完成时提供原始 `result` 或 `error`。Task 方法名统一为公开 RPC 名称，创建结果保留原始 Task ID。查询还检查 Task 及其所有 Run 的 Thread 可见范围。带 `threadId` 时限定 Thread 和 Task 回执，并兼容附带同身份、同请求键的部署管理回执；受限 principal 仍只能取得可见 Thread 的记录。`retention:threadAndDeploymentLifetime` 与 `capacities:{thread:1024,management:4096,task:8192}` 分别说明保留范围与容量。恢复需匹配方法、身份、目标和已有 digest，空结果仍是未确认。归档后的 Thread 仍可查询保留回执。
+
+`features.atomicConfigureReceipt` 允许 `areal/thread/configure` 携带可选 `requestId`。Core 在 revision CAS 前查同身份、方法、键及请求 digest；同请求返回原配置，不同参数冲突。配置和回执在同一 Thread 快照提交。回执含原始配置结果、请求 digest、`expectedRevision`、`resultingRevision` 和 `configurationHash`。省略 `requestId` 的旧调用方仍可使用原有 CAS 行为。升级前已写入管理日志的配置请求优先按原身份、方法、请求键和移除 `requestId` 后的原始参数 digest 查询；已完成记录返回原配置，未知记录返回已受理且不重放。只有不存在旧记录的新请求写入 Thread 回执。
+
+Desktop 在发送外层命令之前分配可恢复写入的原 `requestId`，复合命令的 `read|subscription|mutation` 效果与子操作声明集中在 `desktop-contract`。Core RPC 的效果和回执家族来自 Core `methodSemantics`。现有 pending 日志保存不可变原操作引用，outcomes 仅保存身份、受理及完成状态；普通会话结果不会复制完整历史。`status:failed` 仍可为 `accepted:true`，表示已经受理后的执行失败，不是未执行证明。创建返回原 `threadId` 和 `requestId`，本机日志或展示刷新故障不能推翻 Core 已确认结果。配置与所有 Task 写入沿用原请求键；旧 `localOnly` 配置记录只观察，不补造请求键或写 revision 屏障。
+
+每个项目和客户端连接代际只有一个只读收据核对任务。按 0.5、1、2、4、8 秒间隔查询原 `areal/request/read`，单轮预算 30 秒；断连、生命周期操作或关闭时停止，重连、新 pending 或相关通知可以重新唤起。原响应仍在途时不抢先结算。缺失收据、单项查询失败或展示刷新失败不删除原 pending，也不阻止其它收据结算；不会重放任何未知写入。只有方法、请求键和已知目标一致的收据可以结算，创建类在同键同方法下绑定返回的新资源身份。
+
+`openThread` 独占观察重试，包括连接仍健康时的读取超时；同一 Thread/连接共用一次有界恢复。权限、认证、大小和游标等确定性失败不自动重试。`observationErrors[threadId]` 使用独立 occurrence `id`、项目/Thread/连接代际、`reason`、`recovery` 与 `refreshPending` 描述读取故障，只在相应观察成功后清除；受理收据与读取故障分别投影。`pnpm --dir clients/gui run test:recovery` 验证真实 Core 上的创建刷新失败、晚到收据、健康连接超时、本机日志落盘失败及配置/Task 回执恢复。
 
 `areal/turn/submit` 是普通会话的原子提交入口，使用 `{requestId,threadId,expectedConfigRevision,intent}`。`intent` 互斥取 `{type:"message",input}`、`{type:"continue",expectedTurnId}` 或 `{type:"edit",expectedTurnId,itemId,input}`，继续分支不接受文本。能力由 `features.ordinaryTurnSubmit=true` 和方法声明共同确认。Core 在 lifecycle、Thread、普通所有权锁内先查收据，再核验配置、归属、归档、压缩、取消结算及 UNKNOWN。Task、Goal、Side 和任务管理会话沿用其既有入口。
 
@@ -77,6 +97,8 @@ turn/start/enqueue 使用 `{requestId,threadId,input,expectedConfigRevision?,int
 可选 `thread/start.admissionGuard: {ordinarySession:true}` 在创建 Thread 或启动 Workflow 前检查实际解析的显式/默认 Profile。绑定 Workflow 的 Profile 返回参数错误 `-32602`，消息以 `UNSUPPORTED_PROFILE:` 开头。已受理的 guarded 创建重放返回原 Thread，不再尝试启动 Workflow。能力由 `features.threadStartAdmissionGuard` 声明。省略 guard 保持既有本地行为；省略字段保持旧收据摘要不变。新 guard 检查之前先查询收据，同参数已受理请求返回记录结果，不重新判定变化后的状态。
 
 `areal/thread/observe` 在 `thread` 旁返回 `ownership: {kind: "ordinary" | "task", taskId?, runId?}`。`features.atomicObserveOwnership=true` 保证所有权、快照与订阅在同一 Thread → Tasks 锁内捕获。判定与普通准入共用：活动/结算中 Goal、受管/子 Thread、排队/运行/等待 Run 或未结算 worker 属于 Task；已结算的暂停/阻塞 Run、历史和未来调度本身不构成所有权。Task/Run 标识遵循既有 Task 与协调会话可见性授权；隐藏或无对应 Task 的所有权仍返回不带标识的 `kind: "task"`。同一 Thread 有多个 Run 预留时，标识只指向当前活动/结算中 Goal 对应的唯一 Run；没有这类 Goal 时，仅唯一候选 Run 可提供标识。无法确定唯一归属时仍返回不带标识的 `kind: "task"`。该投影不持久化到 Thread。
+
+普通 Turn 的 start/enqueue/submit 在原子提交前已知的参数、配置、容量或输入能力拒绝，返回 `outcome.kind=rejected`、`recovery.kind=none`，不创建受理回执。Fork/Side 已知的来源、锚点、目标 Profile 与请求键拒绝也保留原 `reason` 并标记 rejected。存储失败、已受理失败或传输未知不据数值错误码推断为未受理；客户端继续核对原请求，不自动重发。
 
 `areal/queue/steer` 使用 `{requestId,threadId,expectedRevision,queueItemId,expectedTurnId}` 将 pending 项原子转为指定活动轮次的引导。Core 在同一 Thread 锁下预留引导容量、校验目标轮次与输入，并将消息、队列状态 `steered` 和请求收据一次持久化后通知执行器；失败保留 pending 项。成功返回 `{queueRevision,queueItemId,turnId,itemId}`。执行沿用活动轮次的模型和模式；队列更新仍保留加入时配置。相同身份、业务键和参数返回原结果，参数变化冲突；`areal/request/read` 带 threadId 查询该收据。未知结果只查询、不自动重发。
 
@@ -103,6 +125,24 @@ thread/configure 使用 expectedRevision，仅空闲且不压缩时生效。rese
 options.readOnly 收窄 Scope 写根和网络；toolAllowlist 收窄 Profile；preapprovedTools 不能取消部署强制审批，且只匹配当前工具名；预批准读取工具不会豁免它触发的 hook。maxModelRounds 为 1–1024，最后一轮仅交接，不等于团队请求预算。Profile/Workflow 定义使用不可变 id/revision；Skill 引用不冻结资源内容，见下文。
 
 <a id="skills"></a>
+### 有界历史显示
+
+GUI 协商 `boundedObservation` 与 `boundedHistory` 后，普通、Side 和归档聊天统一使用 `areal/thread/observe {mode:"bounded",maxBytes:262144}` 建立显示基线。Core 明确返回 `HISTORY_BUDGET_TOO_SMALL` 时，仅增大一次到 1 MiB；仍失败则保留当前聊天的读取错误。`CoreClient` 对该次完整响应独立执行同样的字节上限，安装基线仍在同步 `onResult` 中完成。浏览器宿主恢复另须 `boundedResume`；不以附加工具替代原有宿主绑定。缺少新能力的 Core 保留完整历史兼容路径，不能提供分页容量保证。
+
+Desktop 的只读 `history` 命令接受 `{projectId,threadId,viewId,operation:"acquire"|"loadOlder"|"loadItem"|"release",itemId?}`。仅 `loadItem` 接受 `itemId`；游标、预算与 Core 身份由 Desktop 持有。Messages 为每个阅读视图获取并释放独立 `viewId`，主聊天、Side 和子对话复用同一入口。加载旧页按 Turn/Item ID 合并到当前显示投影，保留读取期间的新事件。Fork 继承历史和 Side 参考快照继续保留原有来源契约。
+
+显示缓存最多保留 8 个聊天窗口，每个保留最新基线和 4 个已加载旧页；更深翻页会释放靠近最新基线的旧页，并在消息流明确标出省略区间。最后一个阅读视图释放时删除旧页和显式展开内容；另一个 GUI 的同一聊天视图仍存在时不释放其内容，也不取消 Core 执行或删除持久历史。完整条目及正在拼接的条目共享 128 MiB 序列化字节预算。打开聊天不自动展开大型 `historyDeferred` 条目；用户点击“加载完整内容”后，Desktop 才按不超过 1 MiB 的响应分片校验 UTF-8 偏移、总长度和版本，完成后替换原占位项。显式展开会增加该条目的可见内存，预算不代表进程峰值内存上限。
+
+旧页游标失效只重建对应聊天基线；条目版本变化丢弃已读片段并至多从 Core 提供的 `restartCursor` 重读一次。加载中保留真实占位项和进度，错误不伪装为 Agent 消息。自动文件变更摘要只读取已加载显示内容；大型工具记录尚未加载时明确提示先展开，不通过完整 `thread/read` 绕过预算。所有历史读取均不重放提交。
+
+Desktop 按已认证 socket 管理阅读视图，客户端断开会释放其全部引用；迟到的 acquire 不能恢复已关闭的视图，也不能释放另一客户端的同名视图。重建基线会让 Renderer 重新获取视图。完成轮次后，如果显示历史超过 1 MiB，会重取有界基线，并释放旧页及显式展开内容，用户可再次按需读取；显式展开不能豁免后续完成历史的容量限制。
+
+Desktop → Main 延续 256 MiB 单帧边界。发送端每连接最多一个正在发送的帧、一份合并后的待发状态，以及总序列化字节不超过 32 MiB 的有序普通回包队列。投影只在实际发送时编码；大条目状态等待发送回调后才发送下一帧，避免将合法大帧后的命令回包误判为慢消费者。发送错误、超时或队列超限关闭连接并释放缓存；现有请求超时仍生效。
+
+### Core 崩溃后的受控恢复
+
+Desktop 首先按相同 generation 查询状态并尝试重连。仅在 `status --recovery` 返回正向 Host 清理证明，且 applicationOwner、存活的客户端生命周期和新读取的配置均匹配时，才调用受控恢复；丢失回复后仍以原 generation 读取已记录的后继，不回退到 `ensure`。每个原 generation 最多两次受控 CLI 查询/恢复调用，每项目五分钟最多两个崩溃候选；`cleanupUnconfirmed` 读取等待最长 30 秒。派发和采纳前均复核生命周期、项目、客户端和退出状态。恢复后的 connect/reconcile 使用 `observeOnly`，Core 启动保留 UNKNOWN，不重放未知提交。权威证明和恢复接口见[本地共享服务](local-service.md)。
+
 ## 模型配置热应用
 
 共享服务提供两个窄方法，能力以当前连接的 `areal/capabilities.methods` 为准。仅经过认证、具有 `manage` 和 `tools`、不受 Thread 范围限制的 `desktop-owner` 可以调用；观察者、普通模型客户端和独立无配置控制器的 Engine 不具有此能力。请求不能指定文件路径、Provider 元数据或任意进程环境。
@@ -148,7 +188,7 @@ contentItems 按顺序保存 inputText 或 arealMedia，实际字节进入模型
 
 ## 进程与保留
 
-process/start 默认 lifetime=turn；thread 生命周期需 Profile allowThreadProcesses，写服务还需部署 allow-concurrent-writes。输入归因到认证身份，输出游标与清理沿用 Runtime。PTY resize 为实际 ioctl；pipe EOF 关闭 FD，canonical PTY 使用 VEOF，raw mode 不支持。
+process/start 默认 lifetime=turn；thread 生命周期需 Profile allowThreadProcesses，写服务还需部署 allow-concurrent-writes。GUI 终端与手动启动的 GUI 进程继承父 Runtime 限额，不再申请固定 24 小时时长；显式 `timeoutMs` 只能收窄父限额。输入归因到认证身份，输出游标与清理沿用 Runtime。PTY resize 为实际 ioctl；pipe EOF 关闭 FD，canonical PTY 使用 VEOF，raw mode 不支持。
 
 GUI 终端选择账户中可执行的登录 shell，缺失时依次尝试 `SHELL` 和 `/bin/sh`。桌面适配器提交交互登录会话的具体 argv，并通过字面 `/usr/bin/env` 参数设置 `SHELL`、`USER`、`LOGNAME` 和 `TERM=xterm-256color`。登录和交互初始化文件负责建立用户工具链环境。Runtime 保留现有环境过滤与权限。恢复读取原托管进程 argv。运行中的终端隐藏常规清理诊断，已退出或状态不确定的进程继续显示退出与清理事实。
 
@@ -265,6 +305,20 @@ MCP 清理失败保持 cleanupFailed，并持久保存 cleanupUnconfirmed。无�
 
 `areal/marketplace/add`、`areal/marketplace/addGit`、`areal/marketplace/remove`、`areal/marketplace/update` 和 `areal/plugin/uninstall` 在完整 `{"result":catalog}` 回执不超过 256 KiB 时返回原完整目录。超限的成功返回 `{"revision":N,"catalogRefreshRequired":true}`，表示变更已在目录版本 N 完成。相同请求重试和回执查询保留这个原始结果，即使目录随后变化或 Core 重启。`areal/plugin/list` 另行读取完整当前目录，版本可能晚于 N；它不替换历史回执。失败仍返回原错误。
 
+### 组件支持报告
+
+`PluginDetail.componentSupport` 对应候选 `sourceDigest`，`installedComponentSupport` 对应准确的 `installedDigest`。可空报告包含 `digest`、`manifestFormat`、`components`、`compatibility` 和 `validation`。尚未解析或来源不可读的候选没有报告；经校验且没有声明的包返回空组件列表。旧安装 State 缺少字段时，Core 从通过完整性校验的安装缓存重算。候选变化不会替换安装报告。
+
+逐项记录包含 `kind`、包内 `sourceField`、`status`、`reasonCodes`、可空 `supportedSchema`、`required` 和 `activationRequirements`。kind 为 `skills`、`mcp`、`hooks`、`apps`、`commands`、`agents`、`uiSurfaces`。status 为 `supported`、`partial`、`unsupported`。Commands、agents 与 UI surfaces 保留独立声明记录，不导出命令、prompt、环境或凭据值。声明键限制为 256 字节，隐式路径限制为 1024 字节，报告最多 4096 项。超限拒绝候选，不静默丢项。
+
+`supportedSchema` 只标识实际验证的解析契约。MCP 与 Hook 声明结构支持不证明运行配置、宿主策略、认证、平台行为或发行包已经通过验收。`validation.scope` 为 `staticParserContract`，provider、platform、distribution 保留 `unverified`。前提指向既有安装、启用、目标 Thread Profile、摘要信任、连接、认证、Connector 映射及 Hook 授权边界，不授予权限。通过 `areal/plugin/mcp/list` 和 `areal/plugin/hooks/list` 读取当前事实，同时匹配 `pluginId` 和 `installedDigest`。查看报告不会解析远端来源、启动代码或连接、认证、信任或调用模型。固定 Codex adapter 保持原有返回结构。
+
+只有已识别的 portable 1.0.0 manifest 可以声明 `extensions.org.areal.componentRequirements`，严格结构为 `{"version":1,"requiredKinds":["skills"]}`，两个成员都必需。未知成员、版本、kind、重复、错误类型或超过七个 kind 均拒绝解析。兼容格式同名字段、MCP `required`、Skill dependencies 不具有包级必需语义。必需 kind 至少有一项声明，且该 kind 全部记录都须为 `supported`。缺失、partial 或 unsupported 返回 `compatibility.state=blocked`，原因分别为 `requiredKindMissing:<kind>` 或 `requiredKindUnsupported:<kind>`，否则为 `allowed`。
+
+安装可以保留 blocked 包供检查，`enabled` 仍表示配置范围的意图。Store 既有有效选择从 Skills、组件、版本发布及执行检查中排除 blocked 包。历史 Skill 引用同时受当前包有效状态及其自身不可变包摘要的兼容性约束。允许的新版本不能放行曾被阻止的旧版本；兼容的历史引用仍可在更新后使用，停用、卸载或当前包被阻止会撤销使用资格。可选 unsupported 声明不阻止有效 Skill。动态信任或连接前提独立于静态门禁。
+
+Hook 报告复用运行时声明选择与强类型文档解析，`mcp_tool` 是受识别的 MCP handler 类型。无效声明仍显示 partial 记录；已有规则选择的默认文档另列记录。Hook 的 `supportedSchema` 仅表示文档和 handler 字段结构，不证明 matcher 行为、平台命令、信任或执行结果。Apps 报告先按组件加载规则解析 manifest 路径数组，再识别文档中的单个字符串 `id` 对象、按 id 索引的对象映射和声明数组。静态连接器声明不证明映射、认证或连接已完成。
+
 ## 插件来源、MCP 与桌面 Apps
 
 新增方法保留无限制 `manage` 授权要求，参数类型见生成 schema。来源变更使用目录 CAS 与管理回执：`areal/plugin/resolve {id,expectedRevision,requestId}`；`areal/marketplace/addGit {url,refName?,sparsePaths?,expectedRevision,requestId}`；`areal/marketplace/remove {root,expectedRevision,requestId}`；`areal/marketplace/update {expectedRevision,requestId}`。
@@ -275,11 +329,42 @@ MCP 清理失败保持 cleanupFailed，并持久保存 cleanupUnconfirmed。无�
 
 `areal/mcp/apps/list {threadId?}` 返回完整工具元信息。`areal/mcp/app/open/request/close` 绑定 `threadId/serverId/instanceId/generation`；工具请求还绑定 `requestId`。`areal/mcp/extension/call` 的 kind 为 `settingsRead/settingsUpdate/settingsAction/mentionsSearch`。`areal/mcp/forms/list`、`areal/mcp/form/respond/preview` 验证完整待回复请求与来源服务器。`areal/mcp/tool/result {threadId,callId}` 读取已持久保存的原始 MCP 结果，模型只用剔除 `_meta` 的投影。
 
+`areal/mcp/app/openFromResult {threadId,turnId,itemId,requestId}` 只接受精确 Core 记录身份，要求无限制 manage 授权。`areal/mcp/apps/list` 的 `requestEpoch` 用于组成 `result-v1.<requestEpoch>.<UUID>`。响应是 `{status:"open",instance}`、`{status:"closed"}` 或 `{status:"unavailable",reason}`；Main 将 open 映射为不透明页面描述符 `app`。Renderer 不提供 HTML、资源 URI、参数或来源证明。
+
+Core 按 turnId 再按 itemId 读取成功完成的 MCP 记录，核对原始快照的长度与 SHA，再使用保存的有效参数和原始 MCP 结果。来源证明在原 MCP 调用时绑定插件摘要、连接世代、Thread、cwd 和 Apps 进程 epoch；发布页面前再次检查当前启用状态与原连接。页面准备只读声明资源，不再次调用原业务工具，也不新增工具 Turn。后续页面调用仍受原有 App 可见性和授权限制。
+
+结果打开回执与实例共同保存在版本化 `mcp-apps.json`，一次原子提交；每个进程 epoch 最多 1024 条、每条最多 1 KiB、整文件最多 8 MiB，回执不逐出。满额后仍可重试旧请求、关闭和撤权。相同请求不同来源冲突，同来源并发共享实例；关闭原子终结全部别名，旧请求只返回 closed。新 UUID 才表示显式重开。旧 epoch 总是失效。UNKNOWN 保留原请求；未知关闭立即撤销页面 token，并保留原关闭意图直至核对完成。
+
 文件授权只来自可信 Main。已认证的非 `desktop-owner` 不能提交 `fileResource` 或私有 `ui/host-file`；App bridge 不暴露这个私有方法。实际写入回执的方法名为 `areal/mcp/app/file/write`，通过既有 `areal/request/read {requestId}` 查询。通知新增 `areal/mcp/app/notification`、`areal/mcp/tool/result`、`areal/mcp/form/requested`；桌面共享服务保留实例和连接版本，旧窗口不得接收其他实例事件。
 
 原生 Main 使用 `areal/mcp/form/resource/prepare {threadId,requestId,fieldName}`、`stage {selectionToken,requestId,paths}` 和 `release {threadId,requestId,fieldName,uri}`。prepare/stage 要求带认证的 desktop-owner，通用 Renderer 命令不能调用；stage 按 UUID/参数进入已有管理账本，UNKNOWN 只查原收据。路径和 selection token 留在 Main/Core，Renderer 只见不透明 URI。现代 discovery 协商 MRTR，逐轮保留参数并将 requestState 留在私有层。
 
 固定 Codex0.162.1 的 `plugin/list/installed/read/install/uninstall/reconcile/search` 与 `marketplace/add/remove/upgrade` 共享包所有者。只有 `plugin/search` 需要 initialize 的 `experimentalApi:true`。没有配置私有托管服务时，share/remote catalog 返回 `-32004` 与 capability；不返回伪空成功。`marketplace/add {source,refName?,sparsePaths?}` 已支持顶层 sparse cone 路径和更新保留；完整 hooks 与其余边界见[验收矩阵](../development/codex-plugins-p1-p3-acceptance.md)。
+
+### 有限页面工具
+
+`areal/mcp/app/tools/register`、`revoke`、`claim` 和 `resolve` 要求无限制的 `manage` 与 `tools` 授权。参数与响应由 `core/protocol` 类型生成。页内工具不能通过通用 Renderer 管理转发调用这些接口。
+
+注册是可信 Main 对原页面已完成 SDK initialize 的证明。声明仅包含 `version:1`、`documentId` 和唯一的 `getSelection`、`applyPatch` kind，不接受自定义名称、schema、描述或执行代码。Core 生成带 registration 命名空间的工具名与 schemaDigest，并在普通 Turn 准入时冻结。工具只进入原 Thread 的有效目录，沿用普通权限、hooks、结果预算和 ToolCall 历史。只读 Side、研究任务和未获授权的受限 worker 不继承这些工具。readOnly 声明不授予权限。
+
+| 操作 | 输入中的身份 | 结果 |
+| --- | --- | --- |
+| `register` | `threadId,instanceId,generation,ownerId,declaration` | `registrationId,documentId,tools`，每项包含 kind、name 和 schemaDigest |
+| `revoke` | `threadId,instanceId,generation,registrationId,ownerId` | `revoked:true`，先撤销目录与新 claim，再结算在途调用 |
+| `claim` | `threadId,turnId,callId,registrationId,ownerId,schemaDigest` | `granted` 带 claimId、kind、documentId 和有效 arguments，或 `notGranted` 带 reason |
+| `resolve` | 同一调用身份、可选 claimId 和 reply | 持久提交后返回 `accepted` |
+
+`reply` 只接受 `completed` 加规定结果、`noEffect` 加 `cancelled/closed/unavailable` 原因，或 `unknown`。`getSelection` 返回文档 revision、anchor、head、有界 selectedText、truncated 和 dirty。`applyPatch` 接受 `expectedDocumentRevision` 与 `{from,to,insert}`。成功证据包含前后 revision、原始范围、插入长度和 dirty；冲突或拒绝明确表示未修改。所有偏移与长度使用 UTF-16 单位，LF 占一个单位。拒绝 CR 插入与截断代理对的偏移。
+
+Core 绑定原始实际 ToolHost、App epoch、Thread、实例、MCP generation、插件摘要、registration 与 schema。Desktop 服务在打开响应返回前绑定原 Main socket；ownerId 只是服务生成的句柄。相同 principal 或已知 ID 不能转移归属。Main 再验证原窗口、token、epoch 和初始化 mount。`pending` 与 `cancelled` 通知仅发往原 socket，只含关联身份，不授予执行。
+
+Core 先保存普通调用意图、运行审批及 hooks，再发布待领取调用。claim 必须持久保存后才能返回唯一执行许可。单次 invocation 串行处理领取与结算，端点不独立写历史。相同终态内容重复提交只查询原收据，异内容冲突。已确认终态及结果快照不受后续 hook 错误、反馈或通用 finalizer 覆盖。
+
+领取前取消是确定未执行。领取后仅有效完成证据或原执行端的 `noEffect` 可确定结果，超时、abort 或连接丢失不能证明未修改。取消排空一秒后无证据则保存 UNKNOWN，重启与重开均不重放。任一原连接替换都会撤销工具执行，保留未保存页面。安装包摘要变化同样撤销旧页面工具的目录与新领取许可，旧实例不能重新登记；保留页面不表示恢复执行权限。只有显式新打开的实例可以重新登记，隐藏但有效的页面仍可执行。
+
+Desktop 在撤销后保留原归属 32 秒，供已领取调用结算。确认撤销或关闭后释放记录；无法确认时仅保留不含连接引用的身份标记。归属记录总计最多 128 条，达到上限时拒绝新绑定。注册不能使当前 Thread 的有效工具目录超过现有 128 工具上限；终态 resolve、revoke 与关闭使用保留控制容量。
+
+v1 每实例一份登记、每 Main 八份、每 Core Host 32 份、每 runtime 128 份。每页最多两个在途调用、每 Host 16 个，Host 参数合计最多 128 KiB。声明最多 1 KiB，documentId 最多 64 字节，单次输入和输出各最多 32 KiB。文档最多 65,536 UTF-16 单位，替换和返回选区最多 4,096 单位，截断必须标记。领取期限十秒，领取后执行期限三十秒，取消排空一秒。既有页面请求预算和 2 MiB 资源限制保持有效。该能力不提供 sampling、跨设备编辑或任意页面执行平台。
 
 ## 插件 Hooks
 
@@ -329,6 +414,8 @@ GUI 服务的窄命令 `trajectory` 支持 `{operation:"status"}`、`{operation:
 
 ## Desktop 后台命令兼容
 
-共享 Desktop 的 `areal.desktop-service.v1` 认证快照新增 `service.commandContract: "areal.desktop-commands.v1"`。这项声明来自驻留 Desktop 代码，与 Rust Core 的能力独立。Main 将精确匹配结果投影为顶层及每个项目的 `desktopCapabilities.currentCommands`，不采用旧快照自行声明的同名投影。
+共享 Desktop 的 `areal.desktop-service.v1` 认证快照新增 `service.commandContract: "areal.desktop-commands.v2"`。这项声明来自驻留 Desktop 代码，与 Rust Core 的能力独立。Main 将精确匹配结果投影为顶层及每个项目的 `desktopCapabilities.currentCommands`，不采用旧快照自行声明的同名投影。
 
 缺失或未知命令声明不阻止只读接入；停止原后台另需独立的 lifecycle version 2 能力。Main 对需要当前语义的 `send`、`continue`、`prepareCreator`、`feedback`、携带 MCP 内容的 steer/队列更新、新增插件管理操作、`providers.defaultAndApply` 和 `trajectory.setEnabled` 在发出前返回 `SERVICE_COMMAND_UNSUPPORTED`。这是已知未提交，不带未知提交标记或伪造的请求 ID。兼容的队列操作继续使用原业务请求键；不退回另一种写操作。评价草稿读取、偏好及 MCP Apps/表单轮询按这项可用性降级，保留本地草稿。
+
+命令 version 2 还要求创建、配置和 Task 写入保留原调用者身份及规范化的受理/执行结果。Main 在旧 version 1 上分配业务请求 ID 之前拒绝这些写入；已有只读观察和旧队列/追加指令核查仍保留。

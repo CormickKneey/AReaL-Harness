@@ -2,6 +2,39 @@
 
 use crate::model;
 use std::time::Duration;
+use tokio::time::Instant;
+
+pub(crate) struct ResponseDeadline {
+    first_event: Option<Instant>,
+    stream_idle_timeout: Duration,
+}
+
+impl ResponseDeadline {
+    pub(crate) fn new(request_timeout: Duration, stream_idle_timeout: Duration) -> Self {
+        Self {
+            first_event: Some(Instant::now() + request_timeout),
+            stream_idle_timeout,
+        }
+    }
+
+    pub(crate) fn deadline(&self) -> Instant {
+        self.first_event
+            .unwrap_or_else(|| Instant::now() + self.stream_idle_timeout)
+    }
+
+    pub(crate) fn observe_event(&mut self) {
+        self.first_event = None;
+    }
+
+    pub(crate) fn idle_error(&self, purpose: &str) -> anyhow::Error {
+        let phase = if self.first_event.is_some() {
+            "request"
+        } else {
+            "stream"
+        };
+        idle_error(&format!("{purpose} {phase}"))
+    }
+}
 
 pub(crate) fn exhausted(
     mode: areal_config::NetworkRetryMode,

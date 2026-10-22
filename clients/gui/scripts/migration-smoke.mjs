@@ -243,7 +243,8 @@ async function call(name, params) {
   if (!result.ok) throw Error(result.error.message);
   return result.value;
 }
-async function until(predicate, label) {
+// Return the observed desktop snapshot, never the predicate's value.
+async function waitForSnapshot(predicate, label) {
   const end = Date.now() + 30000;
   while (Date.now() < end) {
     const s = await state();
@@ -349,7 +350,7 @@ try {
   }, workspace);
   await button("不在项目中工作").click();
   await page.getByRole("menuitem", { name: "新建项目", exact: true }).click();
-  await until((s) => project(s)?.state?.connected, "project ready");
+  await waitForSnapshot((s) => project(s)?.state?.connected, "project ready");
   const pid = project(await state()).id;
   const selectFixtureProfile = async () => {
     await page.waitForFunction((id) => {
@@ -371,12 +372,12 @@ try {
     const count = turnCountOf(await state());
     await input().fill(text);
     await button("发送").click();
-    await until((s) => turnCountOf(s) > count, "turn admission");
+    await waitForSnapshot((s) => turnCountOf(s) > count, "turn admission");
   };
   if (journey) {
-    await journey.run({ app: () => app, page: () => page, state, call, until, button, launch, quit, received, checks, previewUrl });
+    await journey.run({ app: () => app, page: () => page, state, call, until: waitForSnapshot, button, launch, quit, received, checks, previewUrl });
   } else {
-  // 通过已有提示入口复现旧错误；后续真实发送不应继续展示它。
+  // 通用提示入口是短暂 toast；后续真实发送不应把它升级为常驻错误。
   await page.evaluate(() =>
     document.dispatchEvent(
       new CustomEvent("areal:toast", {
@@ -384,16 +385,18 @@ try {
       }),
     ),
   );
-  await page.locator(".error-banner").waitFor();
+  const toast = page.getByTestId("toast");
+  await toast.filter({ hasText: "thread is busy or the target turn is stale" }).waitFor();
   await send("检查当前项目");
-  await until(
+  await waitForSnapshot(
     (s) =>
       Object.values(project(s).state.threads).some(
         (t) => t.turns?.at(-1)?.status === "completed",
       ),
     "first send",
   );
-  await page.waitForFunction(() => !document.querySelector(".error-banner"));
+  await toast.waitFor({ state: "hidden" });
+  assert.equal(await page.locator('[data-testid="feedback-notice"][data-tone="error"]').count(), 0);
   const tid = await page.locator("[data-testid=areal-workbench]").getAttribute("data-thread-id");
   assert.equal(project(await state()).configurations[tid].profile.id, "standard");
   assert.equal(project(await state()).configurations[tid].profile.revision, "v1");
@@ -401,7 +404,7 @@ try {
   assert.ok(tid);
   await shot("02-conversation");
   checks.push("sandboxed Electron; project picker; first send; real Core/Runtime and local SSE");
-  checks.push("new message clears previous error banner after real Core acceptance");
+  checks.push("transient toast clears without becoming persistent feedback after real Core acceptance");
   // 子对话只改变侧面板；真实子 Thread、工具记录与停止结果由 Core 提供。
   const reference = await page.evaluate(async ({ pid }) => {
     const response = await window.arealDesktop.command("media", { projectId: pid, threadId: document.querySelector("[data-testid=areal-workbench]").dataset.threadId, operation: "upload", mime: "image/png", bytes: Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aL1sAAAAASUVORK5CYII="), char => char.charCodeAt(0)) });
@@ -409,13 +412,16 @@ try {
     return response.value;
   }, { pid });
   await call("send", { projectId: pid, threadId: tid, text: "启动子任务", attachments: [{ type: "image", url: reference.uri }] });
-  await until(async () => (await call("manage", { projectId: pid, parentThreadId: tid, operation: "agents", limit: 30 })).data.length === 3, "three real children");
+  await waitForSnapshot(async () => (await call("manage", { projectId: pid, parentThreadId: tid, operation: "agents", limit: 30 })).data.length === 3, "three real children");
   const children = (await call("manage", { projectId: pid, parentThreadId: tid, operation: "agents", limit: 30 })).data;
   const doneChild = children.find(t => t.preview === "子任务完成");
   const liveChild = children.find(t => t.preview === "子任务等待停止");
   assert.ok(doneChild && liveChild);
-  const backgroundProcess = await call("manage", { projectId: pid, threadId: tid, operation: "processStart", requestId: randomUUID(), argv: ["/bin/sh", "-c", "printf 'Resource process ready\\n'; sleep 300"], cwd: "workspace://repo", lifetime: "thread", tty: false, timeoutMs: 600000 });
+  const backgroundProcess = await call("manage", { projectId: pid, threadId: tid, operation: "processStart", requestId: randomUUID(), argv: ["/bin/sh", "-c", "printf 'Resource process ready\\n'; sleep 300"], cwd: "workspace://repo", lifetime: "thread", tty: false });
   assert.ok(backgroundProcess.id);
+  const backgroundState = await call("manage", { projectId: pid, threadId: tid, operation: "process", id: backgroundProcess.id });
+  assert.equal(backgroundState.process.state, "running", JSON.stringify(backgroundState));
+  assert.ok(backgroundState.process.processId, "a start receipt alone does not prove Runtime execution");
   const mainWidth = await page.locator("[data-testid=chat-view]").evaluate(el => el.getBoundingClientRect().width);
   await button("任务资源").click();
   const resources = page.getByRole("region", { name: "任务资源", exact: true });
@@ -497,7 +503,7 @@ try {
   assert.equal(await input().innerText(), "主对话草稿保持");
   assert.ok(finishAgentParent);
   finishAgentParent();
-  await until(s => current(s).turns.at(-1)?.status === "completed", "parent completes after child stop");
+  await waitForSnapshot(s => current(s).turns.at(-1)?.status === "completed", "parent completes after child stop");
   await shot("02c-agent-interrupted");
   await button("关闭面板").click();
   await input().fill("");
@@ -530,16 +536,16 @@ try {
   if (!process.env.AREAL_GUI_RESOURCE_SMOKE_ONLY) {
   await send("审批写入");
   await button("允许一次").click();
-  await until((s) => current(s).turns.at(-1)?.status === "completed", "approved write");
+  await waitForSnapshot((s) => current(s).turns.at(-1)?.status === "completed", "approved write");
   assert.equal(await readFile(join(workspace, "approved.txt"), "utf8"), "approved once");
   await send("需要问答");
   await page.getByRole("radio", { name: /最小修改/ }).click();
-  await until((s) => current(s).turns.at(-1)?.status === "completed", "question resumed");
+  await waitForSnapshot((s) => current(s).turns.at(-1)?.status === "completed", "question resumed");
   checks.push("tool approval executes filesystem write; question reply resumes same turn");
   await send("等待停止");
-  await until((s) => current(s).turns.at(-1)?.status === "inProgress", "running");
+  await waitForSnapshot((s) => current(s).turns.at(-1)?.status === "inProgress", "running");
   await call("stop", { projectId: pid, threadId: tid, turnId: current(await state()).turns.at(-1).id, requestId: randomUUID() });
-  await until((s) => current(s).turns.at(-1)?.status !== "inProgress", "stopped");
+  await waitForSnapshot((s) => current(s).turns.at(-1)?.status !== "inProgress", "stopped");
   checks.push("explicit turn cancellation");
   // 未完成的目标必须先暂停并结算，清除后同一聊天仍能接受普通消息。
   const beforeGoal = await call("manage", { projectId: pid, threadId: tid, operation: "goal" });
@@ -551,16 +557,16 @@ try {
     expectedRevision: beforeGoal.revision,
     maxTurns: 3,
   });
-  await until(
+  await waitForSnapshot(
     (s) => current(s).goals?.goal?.status === "active" && !!finishBackground,
     "goal running",
   );
   assert.equal(await button("清除目标").isDisabled(), true);
   await button("暂停目标").click();
-  await until((s) => current(s).goals?.goal?.settling === true, "goal cancellation settling");
+  await waitForSnapshot((s) => current(s).goals?.goal?.settling === true, "goal cancellation settling");
   assert.equal(await button("清除目标").isDisabled(), true);
   finishBackground();
-  await until(
+  await waitForSnapshot(
     (s) =>
       current(s).goals?.goal?.status === "paused" &&
       !current(s).goals.goal.settling &&
@@ -568,16 +574,16 @@ try {
     "goal paused and settled",
   );
   await button("清除目标").click();
-  await until(
+  await waitForSnapshot(
     (s) => current(s).goals?.goal === null && !project(s).pending.length,
     "unfinished goal cleared",
   );
   await send("目标清除后发送普通消息");
-  await until(
+  await waitForSnapshot(
     (s) => current(s).turns.at(-1)?.status === "completed",
     "message after clearing goal",
   );
-  assert.equal(await page.locator(".error-banner").count(), 0);
+  assert.equal(await page.locator('[data-testid="feedback-notice"][data-tone="error"]').count(), 0);
   assert.equal(current(await state()).goals.goal, null);
   checks.push(
     "unfinished Goal pause settles before clear; same chat accepts a normal message after clear",
@@ -597,7 +603,18 @@ try {
   checks.push("native file edit and Git diff panel");
   await openPanel("终端");
   const terminal = page.locator(".xterm-helper-textarea");
-  await terminal.waitFor();
+  await page.locator(".terminal-pane .xterm-screen").waitFor();
+  await terminal.waitFor({ state: "attached" });
+  let terminalProcess;
+  await waitForSnapshot(async () => {
+    const records = await call("manage", { projectId: pid, threadId: tid, operation: "processes" });
+    const process = records.data.find(item => item.id !== backgroundProcess.id);
+    if (process?.state === "failed") assert.fail(JSON.stringify(process));
+    if (process?.state !== "running" || !process.processId) return false;
+    terminalProcess = process;
+    return true;
+  }, "UI terminal Runtime process running");
+  await terminal.focus();
   await terminal.pressSequentially("printf 'AREAL_TERMINAL_OK\\n'");
   await terminal.press("Enter");
   let output = "";
@@ -612,7 +629,7 @@ try {
         projectId: pid,
         threadId: tid,
         operation: "processOutput",
-        id: processes.data.at(-1).id,
+        id: terminalProcess.id,
         maxBytes: 4096,
       });
       output = (result.chunks ?? [])
@@ -647,7 +664,7 @@ try {
   });
   let previewWindowState = null;
   try {
-    await until(async () => {
+    await waitForSnapshot(async () => {
       previewWindowState = await app.evaluate(({ app, BrowserWindow }) => {
         const window = BrowserWindow.getAllWindows()[0];
         return { id: window.id, visible: window.isVisible(), minimized: window.isMinimized(),
@@ -693,7 +710,7 @@ try {
   checks.push("settings navigation and appearance");
   await input().fill("保留未发送草稿");
   await call("send", { projectId: pid, threadId: tid, text: "后台持续执行" });
-  await until(
+  await waitForSnapshot(
     (s) => current(s).turns.at(-1)?.status === "inProgress" && finishBackground,
     "background started",
   );
@@ -706,7 +723,7 @@ try {
   process.kill(adapter.pid, 0);
   finishBackground();
   await revealWindow();
-  await until(
+  await waitForSnapshot(
     (s) => project(s)?.state?.connected && current(s)?.turns.at(-1)?.status === "completed",
     "recover after window close",
   );
@@ -739,9 +756,9 @@ try {
     await new Promise((r) => setTimeout(r, 100));
   }
   assert.throws(() => process.kill(adapter.pid, 0), error => error.code === "ESRCH", "the fault-injected adapter has exited");
-  await until(s => s.connection?.state !== "ready", "observe adapter disconnection");
+  await waitForSnapshot(s => s.connection?.state !== "ready", "observe adapter disconnection");
   await call("connectService", {});
-  await until(async (s) => {
+  await waitForSnapshot(async (s) => {
     const next = JSON.parse(await readFile(join(scratch, "core/service.json"), "utf8"));
     return next.pid !== adapter.pid && project(s)?.state?.connected;
   }, "recover after adapter exit");
@@ -750,7 +767,7 @@ try {
   );
   assert.deepEqual(restored, transport);
   await send("适配器重连后继续");
-  await until(
+  await waitForSnapshot(
     (s) =>
       current(s).turns.length === turnCount + 1 && current(s).turns.at(-1)?.status === "completed",
     "continued after adapter exit",
@@ -768,7 +785,7 @@ try {
   await quit();
   await waitForApplicationStop(beforeQuit);
   await launch();
-  await until(s => project(s)?.state?.connected && current(s)?.turns.length === turnCount + 1, "cold application reopen restores history");
+  await waitForSnapshot(s => project(s)?.state?.connected && current(s)?.turns.length === turnCount + 1, "cold application reopen restores history");
   assert.equal(received.length, requestsBeforeQuit, "cold application reopen never replays model requests");
   assert.equal(await input().textContent(), "冷启动保留草稿");
   checks.push("application exit stops its original service generations and processes; cold reopen restores history and draft without replay");
@@ -786,7 +803,7 @@ try {
   await hideWindow();
   await new Promise((r) => setTimeout(r, 4500));
   await revealWindow();
-  await until((s) => project(s)?.state?.connected, "scheduled task reconnect");
+  await waitForSnapshot((s) => project(s)?.state?.connected, "scheduled task reconnect");
   let task;
   for (let i = 0; i < 100; i++) {
     task = await call("manage", { projectId: pid, operation: "task", taskId: scheduled.id });

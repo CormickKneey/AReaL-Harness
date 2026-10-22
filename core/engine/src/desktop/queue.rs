@@ -480,7 +480,7 @@ impl Engine {
                 .goal
                 .as_ref()
                 .is_some_and(|g| g.status == areal_protocol::goals::GoalStatus::Active);
-        if automatic && !self.task_allows_continuation(&state.thread).await {
+        if automatic && !self.task_allows_continuation(&state.thread).await? {
             return Ok(());
         }
         if (index.is_some() && data.queue.paused) || (index.is_none() && !automatic) {

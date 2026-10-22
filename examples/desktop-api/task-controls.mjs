@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { once } from "node:events";
+import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { spawnNative } from "../../scripts/native-child.mjs";
@@ -209,8 +210,20 @@ try {
   await writeFile(path, JSON.stringify(record));
   const taskPath = join(data, "desktop/task-mode.json");
   const taskRecord = JSON.parse(await readFile(taskPath, "utf8"));
-  taskRecord.tasks[recurring.id].runs[0].usage.reservedTokens = 17;
-  taskRecord.tasks[recurring.id].runs[0].usage.accountingComplete = false;
+  assert.equal(taskRecord.version, 5);
+  const head = taskRecord.tasks[createHash("sha256").update(recurring.id).digest("hex")];
+  const ledger = join(data, "desktop/task-ledger");
+  const savedTask = JSON.parse(await readFile(join(ledger, head.body), "utf8"));
+  const otherRun = savedTask.runs.find((run) => run.id === blocked.runs[0].id);
+  assert.ok(otherRun, "the other Run must remain in this bounded fixture's hot window");
+  otherRun.usage.reservedTokens = 17;
+  otherRun.usage.accountingComplete = false;
+  // Core 已停止；创建新内容寻址叶并更新隔离根，不覆盖原不可变叶。
+  const bytes = Buffer.from(JSON.stringify(savedTask));
+  head.body = createHash("sha256").update(bytes).digest("hex");
+  head.hot_bytes = bytes.length;
+  head.settlement_limit = Math.max(head.settlement_limit, bytes.length);
+  await writeFile(join(ledger, head.body), bytes, { flag: "wx", mode: 0o600 });
   await writeFile(taskPath, JSON.stringify(taskRecord));
   await start();
   const beforeResume = await goal(recurring.threadId),

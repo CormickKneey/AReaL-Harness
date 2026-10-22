@@ -217,7 +217,7 @@ async fn runtime_with_scope_error(
                     json!({"protocolVersion":"areal.runtime.v0","runtimeEpoch":epoch,"connectionId":"fixture","rootScopeId":root,"capabilities":{"methods":["scope.check","fs.execute"]}})
                 }
                 "scope.check" => json!({"available":true}),
-                "scope.create" | "scope.revoke" => scope.clone(),
+                "scope.create" | "scope.get" | "scope.revoke" => scope.clone(),
                 "scope.waitClosed" => {
                     // A completed Turn must not be visible before this acknowledgement.
                     if hold {
@@ -588,6 +588,8 @@ async fn tool_journal_precedes_submission_and_result_drives_the_next_model_round
         *fixture.methods.lock().unwrap(),
         [
             "connection.open",
+            "scope.get",
+            "scope.create",
             "scope.create",
             "fs.execute",
             "scope.revoke",

@@ -18,8 +18,9 @@ async fn legacy_task_store_is_loaded_with_the_new_snapshot_version() {
         br#"{"version":1,"tasks":{},"receipts":[]}"#,
     )
     .unwrap();
-    let tasks = Tasks::open(root.path()).unwrap();
-    assert_eq!(tasks.state.lock().await.version, 3);
+    let store = crate::store::Store::open(root.path()).unwrap();
+    let tasks = Tasks::open(root.path(), &store).unwrap();
+    assert_eq!(tasks.state.lock().await.version, 5);
 }
 
 struct Coordinator {
@@ -129,6 +130,7 @@ async fn unified_task_worker_preserves_multimodal_input() {
                 thread_id: None,
                 interaction_mode: Some(InteractionMode::Headless),
                 schedule: None,
+                schedule_v2: None,
                 token_budget: Some(100000),
                 max_turns: Some(4),
                 max_active_seconds: Some(30),
@@ -292,6 +294,7 @@ async fn fixture() -> (
                 thread_id: None,
                 interaction_mode: Some(InteractionMode::Headless),
                 schedule: None,
+                schedule_v2: None,
                 token_budget: Some(100000),
                 max_turns: Some(4),
                 max_active_seconds: Some(30),
@@ -545,10 +548,12 @@ async fn restart_preserves_unknown_isolated_work_and_never_replays_it() {
     record["cleanupConfirmed"] = Value::Null;
     std::fs::write(&group_path, serde_json::to_vec(&record).unwrap()).unwrap();
     let task_path = root.path().join("desktop/task-mode.json");
-    let mut tasks: Value = serde_json::from_slice(&std::fs::read(&task_path).unwrap()).unwrap();
-    tasks["tasks"][&task_id]["runs"][0]["status"] = json!("running");
-    tasks["tasks"][&task_id]["runs"][0]["workers"][0]["settled"] = json!(false);
-    std::fs::write(task_path, serde_json::to_vec(&tasks).unwrap()).unwrap();
+    let mut task = serde_json::to_value(&done).unwrap();
+    task["runs"][0]["status"] = json!("running");
+    task["runs"][0]["workers"][0]["settled"] = json!(false);
+    let legacy =
+        json!({"version":3,"tasks":{task_id.clone():task},"receipts":[],"preparations":{}});
+    std::fs::write(task_path, serde_json::to_vec(&legacy).unwrap()).unwrap();
 
     let resumed = Engine::open(
         root.path(),

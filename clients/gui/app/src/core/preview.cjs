@@ -63,6 +63,91 @@ async function batchWithin(promise, deadline) {
     })]);
   } finally { clearTimeout(timer); }
 }
+const nativeControlReader = `function (key) {
+  if (!Object.prototype.hasOwnProperty.call(globalThis, key)) {
+    const get = (prototype, name) => Object.getOwnPropertyDescriptor(prototype, name).get;
+    const tag = get(Element.prototype, 'tagName'), connected = get(Node.prototype, 'isConnected');
+    const owner = get(Node.prototype, 'ownerDocument'), parent = get(Node.prototype, 'parentNode');
+    const attr = Element.prototype.getAttribute, matches = Element.prototype.matches;
+    const inputType = get(HTMLInputElement.prototype, 'type'), checked = get(HTMLInputElement.prototype, 'checked');
+    const options = get(HTMLSelectElement.prototype, 'options'), multiple = get(HTMLSelectElement.prototype, 'multiple');
+    const selectedIndex = get(HTMLSelectElement.prototype, 'selectedIndex');
+    const optionValue = get(HTMLOptionElement.prototype, 'value'), label = get(HTMLOptionElement.prototype, 'label');
+    const disabled = get(HTMLOptionElement.prototype, 'disabled'), selected = get(HTMLOptionElement.prototype, 'selected');
+    const setIndex = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'selectedIndex').set;
+    const dispatch = EventTarget.prototype.dispatchEvent, EventConstructor = Event;
+    const identities = new WeakMap(); let next = 0;
+    const identity = node => { if (!identities.has(node)) identities.set(node, ++next); return identities.get(node); };
+    const isSensitive = node => /password|passcode|secret|token|api.?key|credit.?card|cc-|cvv|authorization|one.?time.?code|credential|file/i
+      .test(['type', 'name', 'id', 'autocomplete', 'aria-label'].map(name => attr.call(node, name) || '').join(' '));
+    const optionDisabled = option => {
+      if (disabled.call(option)) return true;
+      for (let node = parent.call(option); node; node = parent.call(node))
+        if (node.nodeType === 1 && tag.call(node) === 'OPTGROUP' && attr.call(node, 'disabled') !== null) return true;
+      return false;
+    };
+    const read = node => {
+      if (!connected.call(node) || owner.call(node) !== document) return null;
+      const name = tag.call(node);
+      if (!['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON'].includes(name)) return null;
+      if (isSensitive(node)) return { kind: 'redacted', identity: identity(node) };
+      const enabled = !matches.call(node, ':disabled'), base = { identity: identity(node), enabled };
+      if (name === 'INPUT') {
+        const type = inputType.call(node);
+        return type === 'checkbox' ? { ...base, kind: 'checkbox', checked: checked.call(node) } : { ...base, kind: 'input', type };
+      }
+      if (name !== 'SELECT') return { ...base, kind: name.toLowerCase() };
+      const collection = options.call(node), list = collection.length <= 64 ? Array.from(collection) : []; let bytes = 0;
+      const complete = collection.length <= 64 && list.every(option => {
+        const value = optionValue.call(option), text = label.call(option);
+        bytes += new TextEncoder().encode(value + text).length;
+        return owner.call(option) === document && connected.call(option) && value.length <= 256 && text.length <= 256 && bytes <= 8192
+          && !/password|passcode|secret|token|api.?key|credit.?card|cvv|authorization|one.?time.?code|credential/i.test(value + ' ' + text);
+      });
+      return { ...base, kind: 'select', multiple: multiple.call(node), selectedIndex: selectedIndex.call(node),
+        optionsComplete: complete, options: complete ? list.map(option => ({ identity: identity(option),
+          value: optionValue.call(option), label: label.call(option), disabled: optionDisabled(option), selected: selected.call(option) })) : [] };
+    };
+    const select = (node, expected, value) => {
+      const current = read(node);
+      if (!current || current.kind !== 'select' || !current.enabled || current.multiple || !current.optionsComplete
+        || !['identity', 'enabled', 'kind', 'multiple', 'selectedIndex', 'optionsComplete'].every(field => current[field] === expected[field])
+        || current.options.length !== expected.options.length || current.options.some((option, index) =>
+          !['identity', 'value', 'label', 'disabled', 'selected'].every(field => option[field] === expected.options[index][field])))
+        return { accepted: false };
+      const candidates = current.options.filter(option => option.value === value);
+      if (candidates.length !== 1 || candidates[0].disabled) return { accepted: false };
+      const index = current.options.indexOf(candidates[0]), list = options.call(node), option = list[index];
+      if (!option || identity(option) !== candidates[0].identity) return { accepted: false };
+      const noOp = selectedIndex.call(node) === index;
+      if (!noOp) {
+        setIndex.call(node, index);
+        dispatch.call(node, new EventConstructor('input', { bubbles: true }));
+        dispatch.call(node, new EventConstructor('change', { bubbles: true }));
+      }
+      return { accepted: true, noOp, control: read(node) };
+    };
+    Object.defineProperty(globalThis, key, { value: Object.freeze({ read, select }) });
+  }
+  return globalThis[key].read(this);
+}`;
+function publicNativeControl(page, record) {
+  if (!record || record.kind === 'redacted') return undefined;
+  const { identity, selectedIndex, options, ...facts } = record;
+  if (!options) return facts;
+  return { ...facts, value: options[selectedIndex]?.value ?? '', options: options.map(({ identity, ...option }) => {
+    const key = `${record.identity}:${identity}`;
+    if (!page.optionIds.has(key)) page.optionIds.set(key, randomUUID());
+    return { optionId: page.optionIds.get(key), ...option };
+  }) };
+}
+function invalidateActionObservation(page) {
+  page.refs.clear(); page.nativeControls.clear(); page.optionIds.clear();
+  page.lastObservation = null; page.observedViewportKey = null; page.needsObservation = true;
+  page.lastCapture = null;
+  invalidateDocumentPlans(page);
+}
+
 const viewportScript = `({width:innerWidth,height:innerHeight,scrollX,scrollY,deviceScaleFactor:devicePixelRatio})`;
 const coordinateKinds = new Set(['clickAt', 'drag', 'pressAt']);
 const documentReadyWait = (operation, parameters) => operation === 'wait' && parameters?.condition?.kind === 'documentReady';
@@ -315,14 +400,17 @@ class CorePreview {
     this.fileReceipts = new Map();
     this.owner = null;
     this.view = null;
+    this.suppressedPresentation = null;
     this.browserHostId = randomUUID();
     this.hostGeneration = randomBytes(4).readUInt32BE(0);
     // A call identity is retained for this host lifetime. Losing a transport
     // reply must never turn a repeated call into permission to replay a prefix.
     this.batchCalls = new Map();
+    this.discoveryPlans = new Map();
     window.on('blur', () => this.cancelHumanGesture(this.humanMouseGesture?.page));
     // 人工输入来源只在 Main 记录；Renderer 没有通用 sendInputEvent 能力。
     window.webContents.on('before-mouse-event', (event, mouse) => {
+      if (this.suppressedPresentation) return;
       const page = this.pages.get(this.owner);
       if (!page?.view || !window.isFocused()) return;
       const bounds = page.view.getBounds();
@@ -345,12 +433,35 @@ class CorePreview {
       void this.humanInput(page.projectId, page.threadId, page.id, { ...mouse, x, y }).catch(() => {});
     });
     window.webContents.on('before-input-event', (event, input) => {
+      if (this.suppressedPresentation) return;
       const page = this.pages.get(this.owner);
       if (!page?.view || page.id !== this.nativeInputOwner || page.view.getVisible()
         || !page.requestedVisible || !window.isFocused() || !['agent', 'transferring'].includes(page.control)) return;
       event.preventDefault();
       void this.humanKey(page, input).catch(() => {});
     });
+  }
+  setPresentationSuppressed(suppressed) {
+    if (suppressed) {
+      if (this.suppressedPresentation) return;
+      const page = this.pages.get(this.owner), view = this.view;
+      this.suppressedPresentation = { page, view, visible: view?.getVisible() === true };
+      view?.setVisible(false);
+      page?.activeSelection?.cancel();
+      page?.activeRead?.cancel();
+      this.cancelHumanGesture(page);
+      return;
+    }
+    const previous = this.suppressedPresentation;
+    this.suppressedPresentation = null;
+    if (!previous?.visible) return;
+    const { page, view } = previous;
+    if (page && view && this.pageStillOwned(page) && page.view === view && this.view === view
+      && this.owner === pageKey(page.coreInstanceId, page.projectId, page.threadId, page.id)
+      && this.selected.get(workspaceKey(page.coreInstanceId, page.projectId, page.threadId)) === page.id
+      && !page.crashed && !view.webContents.isDestroyed() && page.requestedVisible
+      && page.control !== 'transferring' && !page.activeAction)
+      view.setVisible(true);
   }
   workspacePages(projectId, threadId) {
     return [...this.pages.values()].filter(page => page.coreInstanceId === this.coreIdentity(projectId)
@@ -417,6 +528,7 @@ class CorePreview {
     for (const item of this.listeners) if (item.key === event.workspaceId) item.listener(event);
   }
   dispose() {
+    this.discoveryPlans.clear();
     for (const key of [...this.pages.keys()]) this.release(key);
     this.view = null; this.owner = null;
     this.fileReceipts.clear();
@@ -643,7 +755,7 @@ class CorePreview {
         }
         if (page.control === 'transferring' && page.controlEpoch === epoch) {
           page.control = 'human'; page.transferError = null;
-          page.view?.setVisible(this.pageStillOwned(page) && this.owner === pageKey(page.coreInstanceId, page.projectId, page.threadId, page.id)
+          page.view?.setVisible(!this.suppressedPresentation && this.pageStillOwned(page) && this.owner === pageKey(page.coreInstanceId, page.projectId, page.threadId, page.id)
             && page.requestedVisible === true);
           this.changed(page, 'controlChanged');
         }
@@ -660,6 +772,68 @@ class CorePreview {
     return page.converging;
   }
   revokeAll() { for (const page of this.pages.values()) this.revoke(page); }
+  prepareDiscovery(request) {
+    if (!this.owns(request.projectId, request.threadId)
+      || this.coreIdentity(request.projectId) !== request.coreInstanceId) throw new Error('plan_stale');
+    for (const [id, record] of this.discoveryPlans)
+      if (record.plan.expiresAt <= Date.now()) this.discoveryPlans.delete(id);
+    if (this.discoveryPlans.size >= 128) throw new Error('not_sent');
+    const page = this.page(request.projectId, request.threadId);
+    const c = page?.view?.webContents;
+    if (page && (!this.pageStillOwned(page) || !c || page.crashed || c.isDestroyed()
+      || c.isDevToolsOpened() || !['human', 'agent'].includes(page.control))) throw new Error('plan_stale');
+    const source = page ? c.getURL() || page.url || 'about:blank' : 'about:blank';
+    const workspace = workspaceKey(request.coreInstanceId, request.projectId, request.threadId);
+    const plan = { preparedActionId: randomUUID(), operation: 'describe', pageId: page?.id ?? null,
+      origin: page ? new URL(source).origin : 'about:blank', url: observationUrl(source),
+      alreadyControlled: page?.control === 'agent', control: page?.control ?? null,
+      humanRevision: page?.humanRevision ?? 0, documentEpoch: page?.documentGeneration ?? 0,
+      pageGeneration: page?.pageGeneration ?? 0, controlEpoch: page?.controlEpoch ?? 0,
+      browserHostId: this.browserHostId, hostGeneration: this.hostGeneration,
+      coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration,
+      projectId: request.projectId, threadId: request.threadId, turnId: request.turnId,
+      callId: request.callId, expiresAt: Date.now() + 300000 };
+    plan.fingerprint = createHash('sha256').update(JSON.stringify(plan)).digest('hex');
+    this.discoveryPlans.set(plan.preparedActionId, { plan, page, view: page?.view,
+      source, sequence: this.eventSequences.get(workspace) ?? 0 });
+    return { coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration,
+      projectId: request.projectId, threadId: request.threadId, turnId: request.turnId,
+      callId: request.callId, pageId: plan.pageId, browserHostId: this.browserHostId,
+      hostGeneration: this.hostGeneration, pageGeneration: plan.pageGeneration,
+      controlEpoch: plan.controlEpoch, plan };
+  }
+  consumeDiscovery(request) {
+    const approved = request.browserApproval?.plan;
+    const saved = approved && this.discoveryPlans.get(approved.preparedActionId);
+    if (saved) this.discoveryPlans.delete(approved.preparedActionId);
+    const page = this.page(request.projectId, request.threadId);
+    const workspace = workspaceKey(request.coreInstanceId, request.projectId, request.threadId);
+    if (!saved || !isDeepStrictEqual(saved.plan, approved) || approved.expiresAt <= Date.now()
+      || approved.operation !== 'describe' || approved.coreInstanceId !== request.coreInstanceId
+      || approved.coreGeneration !== request.coreGeneration || approved.projectId !== request.projectId
+      || approved.threadId !== request.threadId || approved.turnId !== request.turnId || approved.callId !== request.callId
+      || approved.browserHostId !== this.browserHostId || approved.hostGeneration !== this.hostGeneration
+      || this.coreIdentity(request.projectId) !== request.coreInstanceId || !this.owns(request.projectId, request.threadId)
+      || page !== saved.page || (this.eventSequences.get(workspace) ?? 0) !== saved.sequence)
+      throw new Error('plan_stale');
+    if (page) {
+      const c = page.view?.webContents;
+      if (!this.pageStillOwned(page) || page.view !== saved.view || !c || c.isDestroyed() || page.crashed
+        || c.isDevToolsOpened() || (c.getURL() || page.url || 'about:blank') !== saved.source
+        || page.control !== approved.control || (page.humanRevision ?? 0) !== approved.humanRevision
+        || page.documentGeneration !== approved.documentEpoch || page.pageGeneration !== approved.pageGeneration
+        || page.controlEpoch !== approved.controlEpoch) throw new Error('plan_stale');
+    }
+    return saved;
+  }
+  controlPermit(projectId, threadId, pageId) {
+    const page = this.page(projectId, threadId, pageId);
+    const c = page?.view?.webContents;
+    if (!page || !this.pageStillOwned(page) || page.control !== 'agent' || !c || c.isDestroyed() || page.crashed)
+      throw new Error('plan_stale');
+    return { pageId: page.id, browserHostId: this.browserHostId, hostGeneration: this.hostGeneration,
+      pageGeneration: page.pageGeneration, controlEpoch: page.controlEpoch, origin: new URL(c.getURL()).origin };
+  }
   async ensureAgentPage(projectId, threadId) {
     // 仅供已通过 Core 权限的工具回调调用；展示页面不会隐式认领。
     if (!this.owns(projectId, threadId) || !this.coreIdentity(projectId)) throw new Error('Browser thread unavailable');
@@ -1437,6 +1611,39 @@ class CorePreview {
       || controlEpoch !== page.controlEpoch || frameId !== 'main') throw new Error('stale_ref');
     return { identity, backendNodeId };
   }
+  async nativeControl(page, c, ref) {
+    const node = typeof ref === 'string' ? this.refNode(page, ref) : ref;
+    const frames = await c.debugger.sendCommand('Page.getFrameTree');
+    const world = await c.debugger.sendCommand('Page.createIsolatedWorld', { frameId: frames.frameTree.frame.id,
+      worldName: 'areal-browser-native-controls' });
+    const resolved = await c.debugger.sendCommand('DOM.resolveNode', { backendNodeId: node.backendNodeId,
+      executionContextId: world.executionContextId });
+    const objectId = resolved.object?.objectId;
+    if (!objectId) throw new Error('stale_ref');
+    try {
+      const result = await c.debugger.sendCommand('Runtime.callFunctionOn', { objectId, returnByValue: true,
+        arguments: [{ value: page.nativeControlKey }], functionDeclaration: nativeControlReader });
+      if (result.exceptionDetails) throw new Error('target_unavailable');
+      return { ...node, control: result.result?.value ?? null };
+    } finally { await c.debugger.sendCommand('Runtime.releaseObject', { objectId }).catch(() => {}); }
+  }
+  async selectNativeOption(page, c, target, expected, value, dispatch) {
+    const frames = await c.debugger.sendCommand('Page.getFrameTree');
+    const world = await c.debugger.sendCommand('Page.createIsolatedWorld', { frameId: frames.frameTree.frame.id,
+      worldName: 'areal-browser-native-controls' });
+    const resolved = await c.debugger.sendCommand('DOM.resolveNode', { backendNodeId: target.backendNodeId,
+      executionContextId: world.executionContextId });
+    const objectId = resolved.object?.objectId;
+    if (!objectId) throw new Error('stale_ref');
+    try {
+      return await dispatch({ objectId, returnByValue: true,
+        arguments: [{ value: expected }, { value }],
+        functionDeclaration: `function (expected, value) {
+          const registry = globalThis[${JSON.stringify(page.nativeControlKey)}];
+          return registry ? registry.select(this, expected, value) : { accepted: false };
+        }` });
+    } finally { await c.debugger.sendCommand('Runtime.releaseObject', { objectId }).catch(() => {}); }
+  }
   async actionTarget(page, c, ref) {
     const { identity, backendNodeId } = this.refNode(page, ref);
     const ax = await c.debugger.sendCommand('Accessibility.getPartialAXTree', { backendNodeId });
@@ -1633,6 +1840,7 @@ class CorePreview {
         if (this.workspaceOutstanding(page.projectId, page.threadId) >= 16) throw new Error('not_sent');
         const plan = { preparedActionId: randomUUID(), operation: 'runBatch', pageId: page.id,
           origin: new URL(c.getURL()).origin, url: observationUrl(c.getURL()),
+          localDevelopment: stepPlans.every(plan => plan.localDevelopment === true),
           snapshotId: request.parameters.snapshotId, steps: stepPlans,
           pageGeneration: page.pageGeneration, documentEpoch: page.documentGeneration,
           controlEpoch: page.controlEpoch, viewportRevision: page.viewportRevision,
@@ -1708,7 +1916,11 @@ class CorePreview {
               browserApproval: { plan: approved.steps[index] },
               batchGuard: () => record.cancelled || performance.now() >= deadline });
             receipts.push({ stepIndex: index, operation: step.operation, status: 'confirmed', dispatch: result.dispatch,
-              verification: result.verification ?? 'not_checked', preparedActionId: result.preparedActionId });
+              verification: result.verification ?? 'not_checked', preparedActionId: result.preparedActionId,
+              inputConfirmed: result.inputConfirmed, ...(result.noOp ? { noOp: true } : {}),
+              ...(result.nativeControl ? { nativeControl: result.nativeControl } : {}),
+              ...(result.stateMatched !== undefined ? { stateMatched: result.stateMatched } : {}) });
+            if (result.observationInvalidated) invalidateActionObservation(page);
             page.batchProgress = { callId: request.callId, completed: receipts.length,
               total: request.parameters.steps.length, status: 'running' };
             this.changed(page, 'operationChanged');
@@ -1852,7 +2064,7 @@ class CorePreview {
     const url = new URL(c.getURL());
     const local = ['http:', 'https:'].includes(url.protocol) && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
     if (!local && !['http:', 'https:'].includes(url.protocol)) throw new Error('human_takeover_required');
-    const needsRefs = request.operation === 'act' || request.parameters.condition?.kind === 'accessibleName';
+    const needsRefs = request.operation === 'act' || ['accessibleName', 'checked', 'enabled'].includes(request.parameters.condition?.kind);
     if ((needsRefs && (page.needsObservation || page.lastObservationTurnId !== request.turnId))
       || (request.operation === 'act' && request.parameters.snapshotId !== page.lastObservation)) throw new Error('stale_ref');
     const coordinate = request.operation === 'act' && coordinateKinds.has(request.parameters.action.kind);
@@ -1860,18 +2072,37 @@ class CorePreview {
     if (coordinate && (!capture || capture.observationId !== request.parameters.snapshotId
       || capture.pageGeneration !== page.pageGeneration || capture.documentEpoch !== page.documentGeneration
       || capture.controlEpoch !== page.controlEpoch || capture.viewportRevision !== page.viewportRevision)) throw new Error('stale_ref');
-    let target = null;
+    const scroll = request.parameters.action?.kind === 'scroll';
+    const nativeAction = ['selectOption', 'setChecked'].includes(request.parameters.action?.kind);
+    let target = null, native = null, waitNative = null;
     page.activePrepare = true;
     try {
       if (!c.debugger.isAttached()) c.debugger.attach('1.3');
-      if (coordinate && !local) throw new Error('human_takeover_required');
+      if ((coordinate || scroll) && !local) throw new Error('human_takeover_required');
       if (coordinate) target = coordinateTarget(capture, request.parameters.action);
-      else if (request.operation === 'act') target = await (request.batchDeadline
+      else if (request.operation === 'act' && !scroll) target = await (request.batchDeadline
         ? batchWithin(this.actionTarget(page, c, request.parameters.action.ref), request.batchDeadline)
         : this.actionTarget(page, c, request.parameters.action.ref));
       if (request.parameters.action?.kind === 'fill'
         && !/^(textField|textbox|searchbox|comboBox|spinbutton)$/i.test(target.role))
         throw new Error('target_unavailable');
+      if (nativeAction) {
+        native = await this.nativeControl(page, c, request.parameters.action.ref);
+        const control = native.control, observed = page.nativeControls.get(native.identity);
+        if (!control || !control.enabled || !observed || observed.identity !== control.identity
+          || control.kind !== (request.parameters.action.kind === 'selectOption' ? 'select' : 'checkbox')) throw new Error('target_unavailable');
+        if (control.kind === 'select' && (!control.optionsComplete || control.multiple
+          || !isDeepStrictEqual(control, observed)
+          || control.options.filter(option => option.value === request.parameters.action.value).length !== 1
+          || control.options.find(option => option.value === request.parameters.action.value)?.disabled)) throw new Error('target_unavailable');
+      }
+      if (['checked', 'enabled'].includes(request.parameters.condition?.kind)) {
+        waitNative = await this.nativeControl(page, c, request.parameters.condition.ref);
+        const observed = page.nativeControls.get(waitNative.identity), control = waitNative.control;
+        if (!control || !observed || observed.identity !== control.identity || observed.kind !== control.kind
+          || control.kind === 'redacted' || (request.parameters.condition.kind === 'checked' && control.kind !== 'checkbox'))
+          throw new Error('target_unavailable');
+      }
       const semantics = !local && target ? await this.publicActionSemantics(page, c, target, request.parameters.action) : null;
       const viewport = readiness ? null : await (request.batchDeadline
         ? batchWithin(readIsolated(c, viewportScript), request.batchDeadline)
@@ -1881,23 +2112,26 @@ class CorePreview {
         || !this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== request.controlEpoch
         || page.pageGeneration !== request.pageGeneration || (!readiness && page.documentGeneration !== initialDocument) || c.isDestroyed()
         || (readiness ? new URL(c.getURL()).origin !== url.origin : c.getURL() !== url.href)) throw new Error('plan_stale');
+      if (needsRefs && page.observedViewportKey !== viewportKey) throw new Error('plan_stale');
       if (!readiness && page.viewportKey !== viewportKey) { page.viewportKey = viewportKey; page.viewportRevision++; }
       if (coordinate && (capture.viewportKey !== viewportKey || capture.url !== url.href)) throw new Error('plan_stale');
       const plan = { preparedActionId: randomUUID(), operation: request.operation, pageId: page.id,
-        origin: url.origin, url: observationUrl(url.href),
+        origin: url.origin, url: observationUrl(url.href), localDevelopment: local,
         snapshotId: request.operation === 'act' ? request.parameters.snapshotId : null,
         target: target ? coordinate ? { ...target, captureId: capture.observationId,
           bitmapWidth: capture.bitmapWidth, bitmapHeight: capture.bitmapHeight }
-          : { ref: request.parameters.action.ref, role: target.role, name: target.name, x: target.x, y: target.y, ...(semantics ? { semantics } : {}) } : null,
+          : { ref: request.parameters.action.ref, role: target.role, name: target.name, x: target.x, y: target.y, ...(semantics ? { semantics } : {}),
+            ...(native ? { nativeControl: publicNativeControl(page, native.control) } : {}) }
+          : scroll ? { kind: 'viewport', x: Math.floor(viewport.width / 2), y: Math.floor(viewport.height / 2) } : null,
         action: request.operation === 'act' ? request.parameters.action : waitAction(request.parameters),
         pageGeneration: page.pageGeneration, documentEpoch: page.documentGeneration,
         controlEpoch: page.controlEpoch, viewportRevision: page.viewportRevision, viewportKey,
         browserHostId: this.browserHostId, hostGeneration: this.hostGeneration,
         threadId: request.threadId, turnId: request.turnId, callId: request.callId,
         expiresAt: Date.now() + 300000 };
-      plan.fingerprint = createHash('sha256').update(JSON.stringify({ plan, targetIdentity: target?.identity })).digest('hex');
-      page.plans.set(plan.preparedActionId, { plan, targetIdentity: target?.identity, pageUrl: url.href,
-        waitIdentity: request.parameters.condition?.kind === 'accessibleName'
+      plan.fingerprint = createHash('sha256').update(JSON.stringify({ plan, targetIdentity: target?.identity, native: native?.control, waitNative: waitNative?.control })).digest('hex');
+      page.plans.set(plan.preparedActionId, { plan, targetIdentity: target?.identity, native: native?.control, waitNative: waitNative?.control, pageUrl: url.href,
+        waitIdentity: ['accessibleName', 'checked', 'enabled'].includes(request.parameters.condition?.kind)
           ? this.refNode(page, request.parameters.condition.ref).identity : null });
       return { coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration,
         projectId: request.projectId, threadId: request.threadId, turnId: request.turnId, callId: request.callId,
@@ -1954,7 +2188,8 @@ class CorePreview {
     const stepTimeout = request.operation === 'wait'
       ? Math.min(30000, request.parameters.timeoutMs + 1000)
       : request.parameters.action.kind === 'drag' ? 12000 : 5000;
-    let waitResult;
+    let waitResult, noOp = false, actualControl, stateMatched;
+    const invalidatesObservation = ['scroll', 'hover'].includes(request.parameters.action?.kind);
     const deadline = setTimeout(() => action.cancel(), request.batchDeadline
       ? Math.max(1, Math.min(stepTimeout, request.batchDeadline - performance.now())) : stepTimeout);
     try {
@@ -1991,11 +2226,18 @@ class CorePreview {
             } else {
               const node = this.refNode(page, condition.ref);
               if (node.identity !== saved.waitIdentity) throw new Error('stale_ref');
-              const ax = await read(c.debugger.sendCommand('Accessibility.getPartialAXTree',
-                { backendNodeId: node.backendNodeId, fetchRelatives: false }));
-              const value = ax.nodes?.find(value => value.backendDOMNodeId === node.backendNodeId && !value.ignored);
-              if (!value) throw new Error('stale_ref');
-              matched = value.name?.value === condition.name;
+              if (['checked', 'enabled'].includes(condition.kind)) {
+                const native = (await read(this.nativeControl(page, c, condition.ref))).control;
+                if (!native || native.identity !== saved.waitNative?.identity || native.kind !== saved.waitNative.kind
+                  || native.type !== saved.waitNative.type) throw new Error('stale_ref');
+                matched = native[condition.kind] === condition.value;
+              } else {
+                const ax = await read(c.debugger.sendCommand('Accessibility.getPartialAXTree',
+                  { backendNodeId: node.backendNodeId, fetchRelatives: false }));
+                const value = ax.nodes?.find(value => value.backendDOMNodeId === node.backendNodeId && !value.ignored);
+                if (!value) throw new Error('stale_ref');
+                matched = value.name?.value === condition.name;
+              }
             }
             current();
             if (matched) break;
@@ -2009,20 +2251,29 @@ class CorePreview {
           elapsedMs: Math.round(performance.now() - started) };
       } else {
         if (!c.debugger.isAttached()) c.debugger.attach('1.3');
-        const coordinate = coordinateKinds.has(request.parameters.action.kind);
-        let target = coordinate ? saved.plan.target
+        const coordinate = coordinateKinds.has(request.parameters.action.kind), scroll = request.parameters.action.kind === 'scroll';
+        const refTarget = !coordinate && !scroll;
+        let target = !refTarget ? saved.plan.target
           : await Promise.race([this.actionTarget(page, c, request.parameters.action.ref), stop]);
-        if (!coordinate && (target.identity !== saved.targetIdentity || target.x !== saved.plan.target.x || target.y !== saved.plan.target.y
+        if (refTarget && (target.identity !== saved.targetIdentity || target.x !== saved.plan.target.x || target.y !== saved.plan.target.y
           || target.role !== saved.plan.target.role || target.name !== saved.plan.target.name))
           throw new Error('plan_stale');
         await Promise.race([new Promise(resolve => setTimeout(resolve, 50)), stop]);
-        if (!coordinate) target = await Promise.race([this.actionTarget(page, c, request.parameters.action.ref), stop]);
+        if (refTarget) target = await Promise.race([this.actionTarget(page, c, request.parameters.action.ref), stop]);
         const currentViewport = await Promise.race([readIsolated(c, viewportScript), stop]);
-        if ((!coordinate && (target.identity !== saved.targetIdentity || target.x !== saved.plan.target.x || target.y !== saved.plan.target.y
+        if ((refTarget && (target.identity !== saved.targetIdentity || target.x !== saved.plan.target.x || target.y !== saved.plan.target.y
           || target.role !== saved.plan.target.role || target.name !== saved.plan.target.name))
           || viewportFacts(this.window, page, currentViewport).key !== saved.plan.viewportKey
           || c.getURL() !== saved.pageUrl || page.controlEpoch !== saved.plan.controlEpoch)
           throw new Error('plan_stale');
+        let native = null;
+        if (saved.native) {
+          native = (await Promise.race([this.nativeControl(page, c, request.parameters.action.ref), stop])).control;
+          if (!native || !native.enabled || native.identity !== saved.native.identity || native.kind !== saved.native.kind
+            || (native.kind === 'select' && !isDeepStrictEqual(native, saved.native))) throw new Error('plan_stale');
+          noOp = native.kind === 'checkbox' && native.checked === request.parameters.action.checked;
+          if (noOp) { actualControl = publicNativeControl(page, native); stateMatched = true; }
+        }
         let navigationIntent = null;
         if (saved.plan.target?.semantics) {
           const semantics = await this.publicActionSemantics(page, c, target, request.parameters.action);
@@ -2056,7 +2307,24 @@ class CorePreview {
           live();
           page.approvedActionNavigation = navigationIntent ? { ...navigationIntent,
             controlEpoch: page.controlEpoch, pageGeneration: page.pageGeneration, expiresAt: Date.now() + 30000 } : null;
-          if (request.parameters.action.kind === 'drag') {
+          if (request.parameters.action.kind === 'setChecked' && noOp) return;
+          if (request.parameters.action.kind === 'selectOption') {
+            const result = await this.selectNativeOption(page, c, target, saved.native, request.parameters.action.value, params => {
+              live(); action.dispatched = true;
+              return this.dispatchInput(page, 'Runtime.callFunctionOn', params);
+            });
+            if (result.exceptionDetails || !result.result?.value) throw new Error('outcome_unknown');
+            const receipt = result.result.value;
+            if (receipt.accepted === false) { action.dispatched = false; throw new Error('plan_stale'); }
+            noOp = receipt.noOp;
+            if (noOp) action.dispatched = false;
+            stateMatched = receipt.control?.kind === 'select' && receipt.control.options[receipt.control.selectedIndex]?.value === request.parameters.action.value;
+          } else if (scroll) {
+            await input({ type: 'mouseWheel', x: target.x, y: target.y, deltaX: request.parameters.action.deltaX,
+              deltaY: request.parameters.action.deltaY });
+          } else if (request.parameters.action.kind === 'hover') {
+            await input({ type: 'mouseMoved', x: target.x, y: target.y, button: 'none' });
+          } else if (request.parameters.action.kind === 'drag') {
             const { from, to, steps } = target;
             await input({ type: 'mouseMoved', x: from.x, y: from.y, button: 'none' });
             await input({ type: 'mousePressed', x: from.x, y: from.y, button: 'left', clickCount: 1 });
@@ -2068,6 +2336,11 @@ class CorePreview {
             live(); action.dispatched = true;
             await this.dispatchInput(page, 'DOM.focus', { backendNodeId: target.backendNodeId });
           } else await click(coordinate ? target.point : target);
+          if (request.parameters.action.kind === 'setChecked') {
+            const after = (await this.nativeControl(page, c, request.parameters.action.ref)).control;
+            actualControl = publicNativeControl(page, after);
+            stateMatched = after?.kind === 'checkbox' && after.checked === request.parameters.action.checked;
+          }
           if (request.parameters.action.kind === 'fill') {
             const modifier = process.platform === 'darwin' ? 4 : 2;
             // macOS 的 CDP 输入还需显式编辑命令，单独的 Command+A 不会执行全选。
@@ -2091,11 +2364,15 @@ class CorePreview {
       }
       if (!this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== saved.plan.controlEpoch)
         throw new Error(action.dispatched ? 'outcome_unknown' : 'not_sent');
+      if (invalidatesObservation && !request.batchGuard) invalidateActionObservation(page);
       return { coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration,
         projectId: request.projectId, threadId: request.threadId, turnId: request.turnId, callId: request.callId,
         pageId: page.id, browserHostId: this.browserHostId, hostGeneration: this.hostGeneration,
         pageGeneration: page.pageGeneration, controlEpoch: page.controlEpoch,
-        dispatch: action.dispatched ? 'confirmed' : 'not_sent', inputConfirmed: action.dispatched,
+        dispatch: action.dispatched || noOp ? 'confirmed' : 'not_sent', inputConfirmed: action.dispatched,
+        ...(noOp ? { noOp: true } : {}), ...(actualControl ? { nativeControl: actualControl } : {}),
+        ...(stateMatched !== undefined ? { stateMatched } : {}),
+        ...(invalidatesObservation ? { observationInvalidated: true } : {}),
         verification: 'not_checked', ...(waitResult ? { wait: waitResult } : {}),
         preparedActionId: saved.plan.preparedActionId };
     } catch (error) {
@@ -2110,7 +2387,7 @@ class CorePreview {
         && page.inputPending.size === 0
         && page.heldButtons.size === 0 && page.heldKeys.size === 0) {
         if (!c.isDestroyed() && c.debugger.isAttached() && !page.diagnosticsReady) c.debugger.detach();
-        page.view?.setVisible(this.pageStillOwned(page) && this.owner === pageKey(page.coreInstanceId, page.projectId, page.threadId, page.id)
+        page.view?.setVisible(!this.suppressedPresentation && this.pageStillOwned(page) && this.owner === pageKey(page.coreInstanceId, page.projectId, page.threadId, page.id)
           && page.requestedVisible === true);
       } else if (page.control === 'agent' && page.controlEpoch === saved.plan.controlEpoch) {
         // Even a failed action must release native input before local input resumes.
@@ -2205,6 +2482,7 @@ class CorePreview {
         if (png.length > 2 * 1024 * 1024) throw new Error('Screenshot byte budget exceeded');
         if (!this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== epoch)
           throw new Error(invalidation());
+        page.observedViewportKey = viewportKey;
         page.lastObservation = base.observationId;
         page.lastObservationTurnId = turnId;
         page.lastCapture = { observationId: base.observationId, pageGeneration: page.pageGeneration,
@@ -2279,7 +2557,8 @@ class CorePreview {
       const fieldEcho = text => fieldValues.some(value => text === value || (value.length >= 3 && text.includes(value)));
       const limitNodes = parameters.budget?.nodes ?? 200;
       const limitBytes = parameters.budget?.textBytes ?? 32 * 1024;
-      const nextRefs = new Map();
+      const nextRefs = new Map(), nextNativeControls = new Map();
+      page.optionIds.clear();
       const entryByNodeId = new Map();
       let textBytes = 0, truncated = false;
       for (const node of nodes) {
@@ -2314,10 +2593,22 @@ class CorePreview {
         if (!line) continue;
         let ancestor = node.parentId;
         while (ancestor && !entryByNodeId.has(ancestor)) ancestor = parent.get(ancestor);
+        let native;
+        if (ref && /^(checkbox|combobox|listbox|button|textbox|textfield|searchbox|spinbutton)$/i.test(role)
+          && (!node.frameId || node.frameId === frames.frameTree.frame.id)) {
+          const result = await Promise.race([this.nativeControl(page, c, { identity, backendNodeId: node.backendDOMNodeId }), cancelled]);
+          native = result.control;
+          const privateEcho = text => nodes.some(other => other.nodeId !== node.nodeId && fieldNodes.has(other.nodeId)
+            && !publicSearchFields.has(other.nodeId) && String(other.value?.value ?? '')
+            && (text === String(other.value.value) || (String(other.value.value).length >= 3 && text.includes(String(other.value.value)))));
+          if (native?.kind === 'select' && native.options.some(option => privateEcho(option.value) || privateEcho(option.label)))
+            native = { ...native, optionsComplete: false, options: [] };
+        }
         const entry = { id: `n${entries.length + 1}`, role, name,
           ...(ancestor ? { parent: entryByNodeId.get(ancestor) } : {}),
           ...(node.frameId ? { frameId: node.frameId } : {}),
           ...(ref ? { ref } : {}),
+          ...(native ? { nativeControl: publicNativeControl(page, native) } : {}),
           ...(value ? { value } : {}),
           ...(node.description?.value ? { description: concealed
             ? '[redacted]' : safeText(node.description.value) } : {}),
@@ -2328,6 +2619,7 @@ class CorePreview {
         if (lines.length >= limitNodes || textBytes + bytes > limitBytes) { truncated = true; break; }
         lines.push(line);
         if (ref) nextRefs.set(identity, ref);
+        if (native) nextNativeControls.set(identity, native);
         entries.push(entry);
         entryByNodeId.set(node.nodeId, entry.id);
         textBytes += bytes;
@@ -2343,6 +2635,7 @@ class CorePreview {
         refsEvicted++;
       }
       page.refs = retainedRefs;
+      page.nativeControls = nextNativeControls;
       const seenFrames = new Set(nodes.map(node => node.frameId).filter(Boolean));
       const childFrames = [];
       const walkFrames = (branch, root = false) => {
@@ -2353,6 +2646,7 @@ class CorePreview {
       walkFrames(frames.frameTree, true);
       if (!this.pageStillOwned(page) || page.control !== 'agent' || page.controlEpoch !== epoch)
         throw new Error(invalidation());
+      page.observedViewportKey = viewportKey;
       page.lastObservation = base.observationId;
       page.lastObservationTurnId = turnId;
       page.needsObservation = false;
@@ -2386,7 +2680,7 @@ class CorePreview {
     const page = { id: options.id ?? randomUUID(), pageGeneration: options.pageGeneration ?? 1, view, partition,
       session: view.webContents.session, coreInstanceId: this.coreIdentity(projectId), projectId, threadId,
       openerId: options.openerId ?? null, origin: options.origin ?? 'human', title: '', error: '', url: '', committedUrl: '', crashed: false,
-      control: 'human', controlEpoch: 0, documentGeneration: 0, viewportRevision: 0, refs: new Map(),
+      control: 'human', controlEpoch: 0, documentGeneration: 0, viewportRevision: 0, refs: new Map(), nativeControls: new Map(), optionIds: new Map(), nativeControlKey: randomUUID(), observedViewportKey: null,
       plans: new Map(), lastObservation: null, needsObservation: true, nextRef: 0,
       heldButtons: new Map(), heldKeys: new Map(), inputPending: new Set(), requestedVisible: false,
       downloads: new Set(), downloadRecords: new Map(), dialogPending: false, fileHandoff: null,
@@ -3046,7 +3340,7 @@ class CorePreview {
         }
         this.owner = key; this.view = page.view;
         page.requestedVisible = request.visible !== false;
-        page.view.setVisible(page.requestedVisible && page.control !== 'transferring' && !page.activeAction);
+        page.view.setVisible(!this.suppressedPresentation && page.requestedVisible && page.control !== 'transferring' && !page.activeAction);
         break;
       case 'navigate':
         page.url = target; page.error = '';

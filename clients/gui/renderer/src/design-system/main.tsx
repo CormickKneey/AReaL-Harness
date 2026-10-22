@@ -1,3 +1,5 @@
+import { ProductCandidate } from "./ProductCandidate.js";
+import { DesignDocument } from "./DesignDocument.js";
 import { ApplicationIntlProvider } from "../i18n/IntlProvider.js";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -102,7 +104,13 @@ function Preview() {
     if (conversationExercise) setApplicationPreferences({ contentSize: Number(fontSize) });
   }, [conversationExercise, fontSize]);
   useLayoutEffect(() => { setApplicationPreferences({ reducedMotion: reducedMotion ? "on" : "off" }); }, [reducedMotion]);
-  useEffect(() => { document.querySelector(".design-preview")?.scrollTo(0, 0); }, []);
+  useEffect(() => {
+    let fragment = window.location.hash.slice(1);
+    try { fragment = decodeURIComponent(fragment); } catch {}
+    const target = fragment && document.getElementById(fragment);
+    if (target) target.scrollIntoView();
+    else document.querySelector(".design-preview")?.scrollTo(0, 0);
+  }, []);
   useLayoutEffect(() => {
     const root = document.documentElement;
     root.classList.toggle("dark", dark);
@@ -125,7 +133,10 @@ function Preview() {
   const disabled = state === "busy" || state === "unknown";
   return <main className="design-preview" data-width={width} data-view={new URLSearchParams(window.location.search).has("conversation") ? "conversation" : new URLSearchParams(window.location.search).has("settings") ? "settings" : undefined}>
     <header className="design-preview-header">
-      <div><h1>客户端设计系统</h1><p>生产组件与语义 Token · Base 候选 {baseCandidate.version}（未冻结）</p></div>
+      <div><h1>客户端设计系统</h1><p>生产组件与语义 Token · Base 候选 {baseCandidate.version}（未冻结）</p>
+        <nav className="design-preview-navigation" aria-label="设计预览导航"><a href="?product-candidate">完整产品候选</a><a href="?docs=design/README.md">设计说明</a><a href={`${window.location.pathname}#controls`}>组件示例</a>
+          {new URLSearchParams(window.location.search).get("returnTo")?.startsWith("?docs=") && <a href={`${window.location.pathname}${new URLSearchParams(window.location.search).get("returnTo")}`}>返回来源设计说明</a>}
+        </nav></div>
       <label>主题<select aria-label="主题" value={dark ? "dark" : "light"} onChange={event => setDark(event.target.value === "dark")}><option value="light">明亮</option><option value="dark">深色</option></select></label>
       <label>字号<select aria-label="字号" value={fontSize} onChange={event => setFontSize(event.target.value)}><option value="14">14</option><option value="18">18</option></select></label>
       <label>面板宽度<select aria-label="面板宽度" value={width} onChange={event => setWidth(event.target.value)}><option value="wide">宽面板</option><option value="narrow">窄面板</option></select></label>
@@ -135,7 +146,7 @@ function Preview() {
     </header>
     {sharedWorkspace ? <SharedWorkspacePreview dark={dark} /> : conversationExercise ? <ConversationFlowExercise dark={dark} /> : decisionExercise ? <DecisionTransferExercise key={state} state={state} /> : exercise ? <SettingsReflowExercise key={exerciseContent} stress={exerciseContent === "stress"} state={state} /> : <>
     <SettingsPreview />
-    <section className="design-preview-panel" aria-label="公共控件">
+    <section id="controls" className="design-preview-panel" aria-label="公共控件">
       <h2>设置控件 · 按交互选择</h2>
       <p className="text-ui-sm text-foreground-subtle">执行操作用按钮，开启或关闭用开关，多项选择用下拉，仅两个选项直接并排选择。</p>
       <SettingsPage><SettingsSection>
@@ -170,7 +181,7 @@ function Preview() {
       <h2>Composer</h2>
       <div className="composer-dock">
         <ConversationComposer project={project} modelConfig={project.configurations.main} modelDisabled={disabled}
-          onConfigureModel={() => setMessage("模型配置仅作预览。")} onModelSettings={() => setMessage("配置入口仅作预览。")}
+          onConfigureModel={() => setMessage("模型配置仅作预览。")}
           initialValue={text} inputApiRef={api} inputTestId="preview-composer" workspacePath="/preview" taskId="preview-main" placeholder="随心输入"
           disabled={disabled} submitDisabled={disabled || !text.trim()} submitting={state === "busy"} submitLabel="发送"
           enterSubmits enableMentionPanel={false} onChange={setText} onSubmit={() => { setMessage("预览收到输入，草稿保留。"); return false; }} />
@@ -197,4 +208,4 @@ function Preview() {
     </>}
   </main>;
 }
-createRoot(document.getElementById("root")!).render(<ApplicationIntlProvider><TooltipProvider><Preview /></TooltipProvider></ApplicationIntlProvider>);
+createRoot(document.getElementById("root")!).render(<ApplicationIntlProvider><TooltipProvider>{new URLSearchParams(window.location.search).has("product-candidate") ? <ProductCandidate /> : new URLSearchParams(window.location.search).has("docs") ? <DesignDocument path={new URLSearchParams(window.location.search).get("docs")!} /> : <Preview />}</TooltipProvider></ApplicationIntlProvider>);

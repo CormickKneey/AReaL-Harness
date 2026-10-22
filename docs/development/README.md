@@ -86,6 +86,27 @@ GUI 使用独立 pnpm 11.7.0 workspace。运行 `make gui-install`、`make gui-b
 
 `make setup-node` 仅安装锁定的 Node 开发依赖，供不运行格式检查的原生 CI 使用；本地完整开发仍使用 `make setup`。
 
+## 本机 Rust 共享缓存
+
+可选使用固定版本 [mr-boxington](https://github.com/jdx/mr-boxington) 复用不同工作树的编译结果。项目继续使用 `rust-toolchain.toml` 中的 Rust 版本；`.mbx.toml` 关闭 build.rs 执行结果缓存，保留 Git 修订、源码哈希等构建身份的正常生成与校验。普通 Cargo 和 CI 无需安装 mbx。
+
+```sh
+cargo install mbx --version 1.26.0 --locked
+mbx settings set build_script_execution false
+mbx settings set target.views false
+mbx settings set gc.max_total_size 40GiB
+mbx settings set gc.min_free_size 30GiB
+mbx settings set display plain
+mbx settings set savings plain
+mbx setup
+```
+
+这些 settings 写入本机用户配置，不属于项目 `.mbx.toml`；本机也关闭 build.rs 执行结果缓存，以覆盖尚未合并项目配置的旧工作树。按 `mbx setup` 输出将官方 Cargo shim 目录放到 `PATH` 前部；终端、Codex 和 Python/Node 子进程都需继承该路径。通过 `command -v cargo`、`mbx setup --status` 和 `mbx doctor` 确认入口，再继续使用 `make build`、`make check`、`make test` 等原命令。仅安装 mbx 不会接管现有 Cargo 调用；也不要将所有工作树指向同一个 `CARGO_TARGET_DIR`。
+
+`target.views=false` 保留各工作树的真实 `target` 目录，因此不会自动迁移、回收固定 Core/Runtime 路径，也没有独立的 check/clippy lane。40 GiB 是 mbx 所管理数据的逻辑容量回收目标，30 GiB 是空闲空间回收线，均非硬配额；普通 target、Electron 应用及完整发布包仍按下述规则清理。用 `mbx cache stats` 查看用量，`mbx gc --dry-run` 预览回收，`mbx explain --last` 查看当前工作树的复用情况。
+
+不要对常驻 Core、固定路径验收或发布产物执行递归 `mbx adopt`。托管目录的租约不保护直接从 target 启动的二进制和 mbx 退出后仍存活的子进程。Rust 1.94 可使用共享编译结果，但不支持要求 rustc 1.98 的跨工作树私有增量 seed 或要求 Cargo 1.100 的 target unit seed。移除 shim 的 PATH 激活即可恢复普通 Cargo；不会删除现有产物或共享缓存。
+
 ## 验证产物保留
 
 运行 `make artifact-cleanup` 预览 `~/Documents/Codex` 及本仓已登记工作树中的 AReaL 产物，默认只读。GUI 以打包记录识别轮次并检查可执行文件及 Core 的完整性，匹配的应用和 ZIP 副本归入同轮。独立 Core 则保留最新 5 个完整且通过清单校验的版本包，以构建身份和文件哈希去重。Cargo profile 是可变构建输出，不作为历史轮次计数。只有某 profile 的三个二进制均匹配已知完整包、且已有至少 5 个校验通过的版本包时，才清理其散装产物；无法识别的产物保留。

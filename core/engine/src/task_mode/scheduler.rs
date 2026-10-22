@@ -110,7 +110,7 @@ impl Engine {
             return Ok(());
         }
         task.revision += 1;
-        self.save_tasks(&mut state, candidate, id).await
+        self.save_tasks(&mut state, candidate, id, true).await
     }
 
     pub(super) async fn control_goal_from_task(
@@ -137,6 +137,9 @@ impl Engine {
     }
 
     pub(super) async fn advance_task(self: &Arc<Self>, task_id: &str) -> Result<()> {
+        if self.task_modes.frozen.load(Ordering::Acquire) {
+            return Err(Error::Storage("Task persistence requires restart".into()));
+        }
         self.edit_task(task_id, |task| {
             let current_run = task.runs.last().map(|r| r.id.as_str());
             let mut expired = false;
@@ -267,7 +270,7 @@ impl Engine {
                                     m.sequence = task.channel_sequence;
                                 }
                             }
-                            if task.messages.len() < MAX_MESSAGES {
+                            {
                                 task.channel_sequence += 1;
                                 task.messages.push(ChannelMessage {
                                     id: id(),
@@ -325,57 +328,16 @@ impl Engine {
             }
         }
         if legacy_schedule {
-            self.edit_task(task_id, |task| {
-                if task.paused || task.cancelled {
-                    return;
-                }
-                let Some(at) = task.next_run_at.filter(|at| *at <= now()) else {
-                    return;
-                };
-                let interval = task.schedule.as_ref().and_then(|s| s.interval_seconds);
-                let count = interval.map_or(1, |n| ((now() - at) / n as i64 + 1) as u64);
-                task.next_run_at =
-                    interval.map(|n| at.saturating_add((count as i64).saturating_mul(n as i64)));
-                task.skipped_runs = task.skipped_runs.saturating_add(count);
-                task.last_skipped_at = Some(at);
-            })
-            .await?;
+            let _admission = self.desktop.lifecycle.gate.lock().await;
+            if self.accepting_work() {
+                self.admit_schedule_due(task_id, false, self.schedule_now())
+                    .await?;
+            }
             return Ok(());
         }
         let task = self.task_read(task_id).await?;
         if task.cancelled || task.paused || !self.accepting_work() {
             return Ok(());
-        }
-        if task.next_run_at.is_some_and(|at| at <= now()) {
-            self.edit_task(task_id, |task| {
-                // 修改计划或暂停可能发生在上次读取之后，必须在同一状态锁下重新判断。
-                if task.paused || task.cancelled {
-                    return;
-                }
-                let Some(at) = task.next_run_at.filter(|at| *at <= now()) else {
-                    return;
-                };
-                let busy = task.runs.last().is_some_and(|r| !r.status.terminal());
-                task.next_run_at =
-                    task.schedule
-                        .as_ref()
-                        .and_then(|s| s.interval_seconds)
-                        .map(|interval| {
-                            let interval = interval as i64;
-                            at.saturating_add(
-                                ((now() - at) / interval + 1).saturating_mul(interval),
-                            )
-                        });
-                // 周期任务合并错过的时间点；已有 Run 未结束时跳过本次触发。
-                if !busy {
-                    if task.runs.len() >= MAX_RUNS {
-                        task.paused = true;
-                    } else {
-                        task.runs.push(new_run(task.thread_id.clone(), at));
-                    }
-                }
-            })
-            .await?;
         }
         let task = self.task_read(task_id).await?;
         let Some(run) = task
@@ -438,11 +400,8 @@ impl Engine {
             .await?;
             view = self.goal_get(&thread).await?;
         }
-        let used: u64 = task
-            .runs
-            .iter()
-            .map(|r| r.usage.tokens_used.saturating_add(r.usage.reserved_tokens))
-            .fold(0, u64::saturating_add);
+        let usage = self.task_modes.state.lock().await.usage(task_id);
+        let used = usage.tokens_used.saturating_add(usage.reserved_tokens);
         let budget = task.token_budget.map(|n| n.saturating_sub(used));
         if budget == Some(0) {
             return Err(invalid("task token budget exhausted"));

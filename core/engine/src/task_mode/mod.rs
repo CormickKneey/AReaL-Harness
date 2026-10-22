@@ -1,11 +1,15 @@
 //! 任务身份与通信独立持久化；执行继续复用 Goal、Thread 和 Runtime 的准入边界。
 mod channel;
+mod ledger;
+#[cfg(feature = "test-support")]
+pub use ledger::TaskCommitFault;
 mod delegations;
 mod desktop_schedules;
 #[cfg(test)]
 mod desktop_schedules_tests;
 
 mod overview;
+mod schedule;
 mod scheduler;
 mod workers;
 use super::*;
@@ -13,10 +17,18 @@ use areal_protocol::{desktop::RequestReceipt, goals::*, tasks::*};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::AtomicBool;
 
+pub enum TaskRunNowAdmission {
+    Accepted(TaskRunNowAccepted),
+    ActiveRun {
+        task_id: String,
+        run_id: String,
+        revision: u64,
+    },
+}
+
 const MAX_TASKS: usize = 1024;
 const MAX_RUNS: usize = 128;
 const MAX_MESSAGES: usize = 1024;
-const MAX_RECEIPTS: usize = 8192;
 const MAX_BYTES: usize = 32 * 1024 * 1024;
 
 #[derive(Clone, Default, Serialize, Deserialize)]
@@ -26,6 +38,13 @@ struct Snapshot {
     receipts: Vec<RequestReceipt>,
     #[serde(default)]
     preparations: BTreeMap<String, areal_protocol::desktop::ThreadStart>,
+    #[serde(skip)]
+    catalog: ledger::Catalog,
+    #[serde(skip)]
+    root: std::path::PathBuf,
+    #[cfg(feature = "test-support")]
+    #[serde(skip)]
+    fault: Arc<std::sync::Mutex<Option<TaskCommitFault>>>,
 }
 
 pub(crate) struct Tasks {
@@ -33,32 +52,36 @@ pub(crate) struct Tasks {
     events: broadcast::Sender<Value>,
     changed: Arc<tokio::sync::Notify>,
     started: AtomicBool,
+    #[cfg(feature = "test-support")]
+    clock: std::sync::atomic::AtomicI64,
+    frozen: AtomicBool,
     hosts: Mutex<BTreeMap<String, Arc<dyn tools::DynamicToolHost>>>,
     dispatching: Arc<std::sync::Mutex<HashSet<String>>>,
 }
 
 impl Tasks {
-    pub(crate) fn open(root: &Path) -> anyhow::Result<Self> {
-        let path = root.join("desktop/task-mode.json");
-        let mut state: Snapshot = if path.exists() {
-            anyhow::ensure!(
-                std::fs::metadata(&path)?.len() <= MAX_BYTES as u64,
-                "task store exceeds capacity"
-            );
-            serde_json::from_slice(&std::fs::read(path)?)?
-        } else {
-            Snapshot {
-                version: 3,
-                ..Default::default()
-            }
-        };
-        anyhow::ensure!(
-            matches!(state.version, 1..=3) && state.tasks.len() <= MAX_TASKS,
-            "unsupported task store"
-        );
-        let previous_version = state.version;
-        state.version = 3;
-        for task in state.tasks.values_mut() {
+    pub(crate) fn open(root: &Path, store: &crate::store::Store) -> anyhow::Result<Self> {
+        let mut state = Snapshot::open(root, store)?;
+        state.restore_runs();
+        Ok(Self {
+            hosts: Mutex::new(BTreeMap::new()),
+            dispatching: Arc::new(std::sync::Mutex::new(HashSet::new())),
+            state: Mutex::new(state),
+            events: broadcast::channel(256).0,
+            changed: Arc::new(tokio::sync::Notify::new()),
+            started: AtomicBool::new(false),
+            #[cfg(feature = "test-support")]
+            clock: std::sync::atomic::AtomicI64::new(-1),
+            frozen: AtomicBool::new(false),
+        })
+    }
+}
+
+impl Snapshot {
+    fn restore_runs(&mut self) {
+        let previous_version = self.version;
+        self.version = 5;
+        for task in self.tasks.values_mut() {
             for run in &mut task.runs {
                 if task.mode == TaskMode::Scheduled
                     && run.goal_id.is_none()
@@ -86,14 +109,6 @@ impl Tasks {
                 }
             }
         }
-        Ok(Self {
-            hosts: Mutex::new(BTreeMap::new()),
-            dispatching: Arc::new(std::sync::Mutex::new(HashSet::new())),
-            state: Mutex::new(state),
-            events: broadcast::channel(256).0,
-            changed: Arc::new(tokio::sync::Notify::new()),
-            started: AtomicBool::new(false),
-        })
     }
 }
 
@@ -122,10 +137,7 @@ fn receipt(
             Err(Error::Conflict)
         };
     }
-    if state.receipts.len() >= MAX_RECEIPTS {
-        return Err(Error::Exhausted("task receipt capacity reached".into()));
-    }
-    Ok(None)
+    state.old_receipt(owner, method, request, hash)
 }
 
 fn remember(
@@ -150,6 +162,8 @@ fn run_id(task: &Task) -> Option<&str> {
 }
 fn new_run(thread_id: Option<String>, scheduled_at: i64) -> TaskRun {
     TaskRun {
+        trigger: RunTrigger::Schedule,
+        accepted_schedule: None,
         objective: None,
         started_at: None,
         workers: vec![],
@@ -168,6 +182,9 @@ fn new_run(thread_id: Option<String>, scheduled_at: i64) -> TaskRun {
 fn summary(task: &Task) -> Value {
     let mut value = json!(task);
     value.as_object_mut().unwrap().remove("messages");
+    value["runCount"] = json!(task.archived_run_count + task.runs.len() as u64);
+    value["archivedRunCount"] = json!(task.archived_run_count);
+    value["runsComplete"] = json!(task.archived_run_count == 0);
     value["pendingQuestions"] = json!(
         task.messages
             .iter()
@@ -267,14 +284,29 @@ impl Engine {
         state: &mut Snapshot,
         candidate: Snapshot,
         task_id: &str,
+        retain_history: bool,
     ) -> Result<()> {
-        if serde_json::to_vec(&candidate).map_err(invalid)?.len() > MAX_BYTES {
-            return Err(Error::Exhausted("task store capacity reached".into()));
+        if self.task_modes.frozen.load(Ordering::Acquire) {
+            return Err(Error::Storage(
+                "Task persistence requires restart and durable reconciliation".into(),
+            ));
         }
-        self.store
-            .save_metadata("task-mode", &candidate)
-            .await
-            .map_err(|e| Error::Storage(e.to_string()))?;
+        let mut candidate = candidate;
+        let result = if retain_history {
+            let eligible = candidate.archiveable_ids(&self.store, Some(task_id));
+            candidate.compact(&eligible, Some(task_id))
+        } else {
+            Ok(())
+        };
+        if let Err(error) = result.and_then(|_| candidate.persist(Some(state), Some(task_id))) {
+            if matches!(error, Error::Storage(_)) {
+                self.task_modes.frozen.store(true, Ordering::Release);
+                return Err(Error::Storage(format!(
+                    "Task persistence requires restart and durable reconciliation: {error}"
+                )));
+            }
+            return Err(error);
+        }
         *state = candidate;
         if let Some(task) = state.tasks.get(task_id) {
             let _ = self.task_modes.events.send(notification("areal/task/updated", json!({
@@ -311,9 +343,23 @@ impl Engine {
         &self,
         task_id: &str,
     ) -> Result<(Value, broadcast::Receiver<Value>)> {
-        let state = self.task_modes.state.lock().await;
+        self.task_snapshot_and_subscribe_for_threads(task_id, None)
+            .await
+    }
+    pub async fn task_snapshot_and_subscribe_for_threads(
+        &self,
+        task_id: &str,
+        allowed: Option<&std::collections::BTreeSet<String>>,
+    ) -> Result<(Value, broadcast::Receiver<Value>)> {
+        let (state, events) = {
+            let state = self.task_modes.state.lock().await;
+            (state.clone(), self.task_modes.events.subscribe())
+        };
+        if !state.visible(task_id, allowed)? {
+            return Err(invalid("TASK_PERMISSION_DENIED"));
+        }
         let task = state.tasks.get(task_id).ok_or(Error::NotFound)?;
-        Ok((summary(task), self.task_modes.events.subscribe()))
+        Ok((summary(task), events))
     }
 
     pub async fn task_create(
@@ -335,7 +381,8 @@ impl Engine {
             if request.mode != TaskMode::Background && request.thread_id.is_none() {
                 return Err(invalid("foreground and scheduled tasks require threadId"));
             }
-            if (request.mode == TaskMode::Scheduled) != request.schedule.is_some()
+            if (request.mode == TaskMode::Scheduled) != (request.schedule.is_some() || request.schedule_v2.is_some())
+                || (request.schedule.is_some() && request.schedule_v2.is_some())
                 || request.schedule.as_ref().is_some_and(|s| s.at < 0 || s.interval_seconds.is_some_and(|n| !(1..=31_536_000).contains(&n))) {
                 return Err(invalid("scheduled tasks require a UTC timestamp and optional intervalSeconds in 1..31536000"));
             }
@@ -349,9 +396,13 @@ impl Engine {
             let hash = desktop::digest(&request)?;
             let mut state = engine.task_modes.state.lock().await;
             if let Some(result) = receipt(&state, &owner, "create", &request.request_id, &hash)? { return Ok(result); }
+            let captured_now = engine.schedule_now();
+            let schedule_v2 = request.schedule_v2.map(|input| schedule::resolve(input, captured_now)).transpose()?;
+            let next_run_at = if let Some(value) = &schedule_v2 { Some(schedule::Plan::versioned(value)?.first(captured_now, false)?) } else { request.schedule.as_ref().map(|s|s.at) };
             if state.tasks.len() >= MAX_TASKS { return Err(Error::Exhausted("task capacity reached".into())); }
             let mut candidate = state.clone();
             let task = Task {
+                run_count: 0, archived_run_count: 0, runs_complete: true,
                 skipped_runs: 0, last_skipped_at: None,
                 id: id(), revision: 1, channel_sequence: 0, owner: owner.clone(), mode: request.mode,
                 interaction_mode: if request.mode == TaskMode::Scheduled { InteractionMode::Interactive } else { request.interaction_mode.unwrap_or(match request.mode {
@@ -359,7 +410,7 @@ impl Engine {
                     TaskMode::Background => InteractionMode::Asynchronous,
                     TaskMode::Scheduled => InteractionMode::Interactive,
                 }) }, objective: request.objective, thread_id: request.thread_id.clone(),
-                next_run_at: request.schedule.as_ref().map(|s| s.at), schedule: request.schedule,
+                next_run_at, schedule: request.schedule, schedule_v2, last_trigger_decision: None,
                 paused: false, cancelled: false, token_budget: request.token_budget,
                 max_turns: request.max_turns, max_active_seconds: request.max_active_seconds,
                 runs: if request.mode == TaskMode::Scheduled { vec![] } else { vec![new_run(request.thread_id, now())] },
@@ -369,7 +420,7 @@ impl Engine {
             let task_id = task.id.clone();
             candidate.tasks.insert(task_id.clone(), task);
             remember(&mut candidate, owner, "create", request.request_id, hash, result.clone());
-            engine.save_tasks(&mut state, candidate, &task_id).await?;
+            engine.save_tasks(&mut state, candidate, &task_id,true).await?;
             drop(state);
             engine.start_task_scheduler();
             engine.wake_tasks();
@@ -382,6 +433,23 @@ impl Engine {
         owner: String,
         request: TaskUpdate,
     ) -> Result<Value> {
+        self.task_update_for_threads(owner, request, None).await
+    }
+    pub async fn task_update_for_threads(
+        self: &Arc<Self>,
+        owner: String,
+        request: TaskUpdate,
+        allowed: Option<&std::collections::BTreeSet<String>>,
+    ) -> Result<Value> {
+        let authorized_revision = if allowed.is_some() {
+            Some(
+                self.task_read_for_threads(&request.task_id, allowed)
+                    .await?
+                    .revision,
+            )
+        } else {
+            None
+        };
         self.mutate(move |engine| async move {
             let _gate = engine.desktop.lifecycle.gate.lock().await;
             let hash = desktop::digest(&request)?;
@@ -389,14 +457,19 @@ impl Engine {
             if let Some(value) = receipt(&state, &owner, "update", &request.request_id, &hash)? {
                 return Ok(value);
             }
+            if authorized_revision.is_some_and(|revision|state.tasks.get(&request.task_id).is_none_or(|task|task.revision!=revision)) {return Err(Error::Conflict);}
             if !engine.accepting_work() { return Err(Error::Closed); }
-            if request.objective.is_none() && request.schedule.is_none() {
+            if request.objective.is_none() && request.schedule.is_none() && request.schedule_v2.is_none() {
                 return Err(invalid("provide an objective or schedule to update"));
             }
             if request.objective.as_ref().is_some_and(|s| s.trim().is_empty() || s.chars().count() > 4000) {
                 return Err(invalid("objective must contain 1..4000 characters"));
             }
-            if request.schedule.as_ref().is_some_and(|s| s.at <= now() || s.interval_seconds.is_some_and(|n| !(1..=31_536_000).contains(&n))) {
+            let captured_now = engine.schedule_now();
+            if request.schedule.is_some() && request.schedule_v2.is_some() { return Err(invalid("provide exactly one schedule")); }
+            let schedule_v2 = request.schedule_v2.map(|input| schedule::resolve(input,captured_now)).transpose()?;
+            let next_v2 = schedule_v2.as_ref().map(|value|schedule::Plan::versioned(value)?.first(captured_now,true)).transpose()?;
+            if request.schedule.as_ref().is_some_and(|s| s.at <= captured_now || s.interval_seconds.is_some_and(|n| !(1..=31_536_000).contains(&n))) {
                 return Err(invalid("schedule requires a future UTC timestamp and optional intervalSeconds in 1..31536000"));
             }
             let mut candidate = state.clone();
@@ -408,16 +481,135 @@ impl Engine {
             if let Some(schedule) = request.schedule {
                 task.next_run_at = Some(schedule.at);
                 task.schedule = Some(schedule);
+                task.schedule_v2 = None;
             }
+            if let Some(schedule) = schedule_v2 {task.schedule_v2 = Some(schedule);task.schedule = None;task.next_run_at=next_v2;}
             task.revision += 1;
             let result = summary(task);
             remember(&mut candidate, owner, "update", request.request_id, hash, result.clone());
-            engine.save_tasks(&mut state, candidate, &request.task_id).await?;
+            engine.save_tasks(&mut state, candidate, &request.task_id,true).await?;
             drop(state);
             engine.start_task_scheduler();
             engine.wake_tasks();
             Ok(result)
         }).await
+    }
+
+    pub async fn task_run_now(
+        self: &Arc<Self>,
+        owner: String,
+        request: TaskRunNow,
+    ) -> Result<TaskRunNowAdmission> {
+        self.task_run_now_for_threads(owner, request, None).await
+    }
+
+    pub async fn task_run_now_for_threads(
+        self: &Arc<Self>,
+        owner: String,
+        request: TaskRunNow,
+        allowed: Option<&std::collections::BTreeSet<String>>,
+    ) -> Result<TaskRunNowAdmission> {
+        let task = self
+            .task_read_for_threads(&request.task_id, allowed)
+            .await?;
+        if allowed.is_some() {
+            return Err(invalid("TASK_PERMISSION_DENIED"));
+        }
+        self.mutate(move |engine| async move {
+            let host = engine.schedule_host(&task.owner).await;
+            let _gate = engine.desktop.lifecycle.gate.lock().await;
+            let hash = desktop::digest(&request)?;
+            let mut state = engine.task_modes.state.lock().await;
+            if let Some(value) = receipt(&state, &owner, "runNow", &request.request_id, &hash)? {
+                return Ok(TaskRunNowAdmission::Accepted(
+                    serde_json::from_value(value).map_err(invalid)?,
+                ));
+            }
+            if !engine.accepting_work() {
+                return Err(Error::Closed);
+            }
+            let mut candidate = state.clone();
+            let task = candidate
+                .tasks
+                .get_mut(&request.task_id)
+                .ok_or(Error::NotFound)?;
+            if task.cancelled || task.mode != TaskMode::Scheduled {
+                return Err(Error::Conflict);
+            }
+            if let Some(run) = task.runs.iter().find(|run| !run.status.terminal()) {
+                return Ok(TaskRunNowAdmission::ActiveRun {
+                    task_id: task.id.clone(),
+                    run_id: run.id.clone(),
+                    revision: task.revision,
+                });
+            }
+            if task.revision != request.expected_revision {
+                return Err(Error::Conflict);
+            }
+            if host.as_ref().is_none_or(|host| host.is_closed()) {
+                return Err(invalid("scheduled task Host is unavailable"));
+            }
+            let mut run = new_run(None, engine.schedule_now());
+            run.trigger = RunTrigger::Manual;
+            run.accepted_schedule = Some(AcceptedSchedule {
+                task_revision: task.revision,
+                schedule: task.schedule.clone(),
+                schedule_v2: task.schedule_v2.clone(),
+                decision: None,
+            });
+            run.objective = Some(task.objective.clone());
+            task.revision += 1;
+            let accepted = TaskRunNowAccepted {
+                task_id: task.id.clone(),
+                run_id: run.id.clone(),
+                revision: task.revision,
+                accepted: true,
+            };
+            task.runs.push(run);
+            remember(
+                &mut candidate,
+                owner,
+                "runNow",
+                request.request_id,
+                hash,
+                json!(accepted),
+            );
+            engine
+                .save_tasks(&mut state, candidate, &request.task_id, true)
+                .await?;
+            drop(state);
+            engine.start_task_scheduler();
+            engine.wake_tasks();
+            Ok(TaskRunNowAdmission::Accepted(accepted))
+        })
+        .await
+    }
+
+    pub async fn task_run_now_receipt_for_threads(
+        &self,
+        owner: &str,
+        request: TaskRunNow,
+        allowed: Option<&std::collections::BTreeSet<String>>,
+    ) -> Result<Value> {
+        let state = self.task_modes.state.lock().await;
+        if !state.visible(&request.task_id, allowed)? {
+            return Err(invalid("TASK_PERMISSION_DENIED"));
+        }
+        let hash = desktop::digest(&request)?;
+        let result = receipt(&state, owner, "runNow", &request.request_id, &hash)?
+            .map(serde_json::from_value::<TaskRunNowAccepted>)
+            .transpose()
+            .map_err(invalid)?;
+        if result
+            .as_ref()
+            .is_some_and(|result| result.task_id != request.task_id)
+        {
+            return Err(Error::Conflict);
+        }
+        let records: Vec<_> = result.into_iter().map(|result| json!({
+            "identity":owner,"requestId":request.request_id,"method":"areal/task/runNow","digest":hash,"result":result
+        })).collect();
+        Ok(json!({"data":records,"retention":"taskLifetime"}))
     }
 
     pub async fn task_control(
@@ -426,12 +618,39 @@ impl Engine {
         action: String,
         request: TaskControl,
     ) -> Result<Value> {
+        self.task_control_for_threads(owner, action, request, None)
+            .await
+    }
+    pub async fn task_control_for_threads(
+        self: &Arc<Self>,
+        owner: String,
+        action: String,
+        request: TaskControl,
+        allowed: Option<&std::collections::BTreeSet<String>>,
+    ) -> Result<Value> {
+        let authorized_revision = if allowed.is_some() {
+            Some(
+                self.task_read_for_threads(&request.task_id, allowed)
+                    .await?
+                    .revision,
+            )
+        } else {
+            None
+        };
         self.mutate(move |engine| async move {
             let _gate = engine.desktop.lifecycle.gate.lock().await;
             let hash = desktop::digest(&request)?;
             let mut state = engine.task_modes.state.lock().await;
             if let Some(value) = receipt(&state, &owner, &action, &request.request_id, &hash)? {
                 return Ok(value);
+            }
+            if authorized_revision.is_some_and(|revision| {
+                state
+                    .tasks
+                    .get(&request.task_id)
+                    .is_none_or(|task| task.revision != revision)
+            }) {
+                return Err(Error::Conflict);
             }
             if request.expected_run_id.is_some()
                 && !matches!(action.as_str(), "pause" | "stopRun" | "resumeRun")
@@ -525,7 +744,7 @@ impl Engine {
                 result.clone(),
             );
             engine
-                .save_tasks(&mut state, candidate, &request.task_id)
+                .save_tasks(&mut state, candidate, &request.task_id, false)
                 .await?;
             drop(state);
             engine.start_task_scheduler();
@@ -543,6 +762,12 @@ impl Engine {
         goal: &Goal,
     ) -> Result<(String, String)> {
         let mut state = self.task_modes.state.lock().await;
+        if state
+            .cold_run(Some(&goal.id), request_id.strip_prefix("task-run-"))?
+            .is_some()
+        {
+            return Err(Error::Conflict);
+        }
         let mut candidate = state.clone();
         if candidate.tasks.values().any(|t| {
             ((t.paused && t.mode != TaskMode::Scheduled)
@@ -603,6 +828,9 @@ impl Engine {
             candidate.tasks.insert(
                 task_id.clone(),
                 Task {
+                    run_count: 0,
+                    archived_run_count: 0,
+                    runs_complete: true,
                     skipped_runs: 0,
                     last_skipped_at: None,
                     id: task_id.clone(),
@@ -614,6 +842,8 @@ impl Engine {
                     objective: goal.objective.clone(),
                     thread_id: Some(goal.thread_id.clone()),
                     schedule: None,
+                    schedule_v2: None,
+                    last_trigger_decision: None,
                     next_run_at: None,
                     paused: false,
                     cancelled: false,
@@ -627,13 +857,17 @@ impl Engine {
             (task_id, run_id)
         };
         candidate.tasks.get_mut(&task_id).unwrap().revision += 1;
-        self.save_tasks(&mut state, candidate, &task_id).await?;
+        self.save_tasks(&mut state, candidate, &task_id, true)
+            .await?;
         Ok((task_id, run_id))
     }
 
-    pub(crate) async fn task_allows_continuation(&self, thread: &Thread) -> bool {
+    pub(crate) async fn task_allows_continuation(&self, thread: &Thread) -> Result<bool> {
+        if self.task_modes.frozen.load(Ordering::Acquire) {
+            return Err(Error::Storage("Task persistence requires restart".into()));
+        }
         let Some(goal) = thread.goals.goal.as_ref() else {
-            return true;
+            return Ok(true);
         };
         let state = self.task_modes.state.lock().await;
         let Some(task) = state.tasks.values().find(|t| {
@@ -641,7 +875,7 @@ impl Engine {
                 .iter()
                 .any(|r| r.goal_id.as_deref() == Some(&goal.id))
         }) else {
-            return true;
+            return Ok(state.cold_run(Some(&goal.id), None)?.is_none());
         };
         let run = task
             .runs
@@ -653,28 +887,28 @@ impl Engine {
             || run.reason.as_deref() == Some("stopRequested")
             || (task.mode != TaskMode::Scheduled && task.paused)
         {
-            return false;
+            return Ok(false);
         }
         if task.mode != TaskMode::Scheduled {
-            return true;
+            return Ok(true);
         }
         if run.status.terminal()
             || run.reason.as_deref() == Some("stopRequested")
             || task.runs.last().is_none_or(|r| r.id != run.id)
         {
-            return false;
+            return Ok(false);
         }
         if run.started_at.is_none() {
-            return true;
+            return Ok(true);
         }
         let Ok(cell) = self.raw_cell(&thread.id).await else {
-            return false;
+            return Ok(false);
         };
         let Some(host) = cell.bindings.read().await.host.clone() else {
-            return false;
+            return Ok(false);
         };
         drop(state);
-        self.host_current(&host).await
+        Ok(self.host_current(&host).await)
     }
 
     pub(crate) async fn task_active_count(&self) -> usize {
@@ -710,32 +944,40 @@ impl Engine {
         let Some(goal) = thread.goals.goal.as_ref() else {
             return (false, false);
         };
-        self.task_modes
-            .state
-            .lock()
-            .await
+        let state = self.task_modes.state.lock().await;
+        if let Some(run) = state
             .tasks
             .values()
-            .find_map(|t| {
-                t.runs
-                    .iter()
-                    .find(|r| r.goal_id.as_deref() == Some(&goal.id))
-                    .map(|r| {
-                        let agents = r.wait_requested && r.workers.iter().any(|w| !w.settled);
-                        (r.wait_requested && !agents, agents)
-                    })
-            })
-            .unwrap_or((false, false))
+            .flat_map(|t| &t.runs)
+            .find(|r| r.goal_id.as_deref() == Some(&goal.id))
+        {
+            let agents = run.wait_requested && run.workers.iter().any(|w| !w.settled);
+            return (run.wait_requested && !agents, agents);
+        }
+        match state.cold_run(Some(&goal.id), None) {
+            Ok(None) => (false, false),
+            Ok(Some(_)) => (true, false),
+            Err(error) => {
+                tracing::error!(%error,"Task wait provenance unavailable");
+                (true, false)
+            }
+        }
     }
 
     pub(crate) async fn ensure_goal_task(&self, owner: &str, goal: &Goal) -> Result<()> {
-        if !self.task_modes.state.lock().await.tasks.values().any(|t| {
+        let state = self.task_modes.state.lock().await;
+        if state.tasks.values().any(|t| {
             t.runs
                 .iter()
                 .any(|r| r.goal_id.as_deref() == Some(&goal.id))
         }) {
-            self.bind_goal_task(owner, "", goal).await?;
+            return Ok(());
         }
+        if state.cold_run(Some(&goal.id), None)?.is_some() {
+            return Err(Error::Conflict);
+        }
+        drop(state);
+        self.bind_goal_task(owner, "", goal).await?;
         Ok(())
     }
 
@@ -773,17 +1015,20 @@ impl Engine {
         })
     }
 
-    pub(crate) async fn task_goal_can_resume(&self, goal_id: &str) -> bool {
+    pub(crate) async fn task_goal_can_resume(&self, goal_id: &str) -> Result<bool> {
+        if self.task_modes.frozen.load(Ordering::Acquire) {
+            return Err(Error::Storage("Task persistence requires restart".into()));
+        }
         let state = self.task_modes.state.lock().await;
         let Some(task) = state
             .tasks
             .values()
             .find(|t| t.runs.iter().any(|r| r.goal_id.as_deref() == Some(goal_id)))
         else {
-            return true;
+            return Ok(state.cold_run(Some(goal_id), None)?.is_none());
         };
         if task.cancelled {
-            return false;
+            return Ok(false);
         }
         let run = task
             .runs
@@ -791,44 +1036,45 @@ impl Engine {
             .find(|r| r.goal_id.as_deref() == Some(goal_id))
             .unwrap();
         if task.mode != TaskMode::Scheduled {
-            return true;
+            return Ok(true);
         }
         if run.status.terminal()
             || run.reason.as_deref() == Some("stopRequested")
             || task.runs.last().is_none_or(|r| r.id != run.id)
         {
-            return false;
+            return Ok(false);
         }
         if run.started_at.is_none() {
-            return true;
+            return Ok(true);
         }
         if run.reason.as_deref() != Some("resumeRequested") {
-            return false;
+            return Ok(false);
         }
         let Some(thread) = &run.thread_id else {
-            return false;
+            return Ok(false);
         };
         let Ok(cell) = self.raw_cell(thread).await else {
-            return false;
+            return Ok(false);
         };
         let Some(host) = cell.bindings.read().await.host.clone() else {
-            return false;
+            return Ok(false);
         };
         drop(state);
-        self.host_current(&host).await
+        Ok(self.host_current(&host).await)
     }
 
     pub(crate) async fn validate_prompt_limit_owner(&self, goal_id: &str) -> Result<()> {
-        // 周期任务的总预算属于 Task，目标文本不能解除其跨 Run 额度。
-        let tasks = self.task_modes.state.lock().await;
-        if tasks.tasks.values().any(|task| {
-            task.mode == areal_protocol::tasks::TaskMode::Scheduled
-                && task.token_budget.is_some()
-                && task
-                    .runs
-                    .iter()
-                    .any(|run| run.goal_id.as_deref() == Some(goal_id))
-        }) {
+        let state = self.task_modes.state.lock().await;
+        let task_id = state
+            .tasks
+            .values()
+            .find(|t| t.runs.iter().any(|r| r.goal_id.as_deref() == Some(goal_id)))
+            .map(|t| t.id.clone())
+            .or(state.cold_run(Some(goal_id), None)?.map(|(id, _)| id));
+        if task_id
+            .and_then(|id| state.tasks.get(&id))
+            .is_some_and(|t| t.mode == TaskMode::Scheduled && t.token_budget.is_some())
+        {
             return Err(invalid(
                 "prompt limits cannot replace a recurring Task budget",
             ));
@@ -841,29 +1087,32 @@ impl Engine {
         requested: Option<u64>,
     ) -> Result<()> {
         let state = self.task_modes.state.lock().await;
-        let task = state.tasks.values().find(|task| {
-            task.mode == TaskMode::Scheduled
-                && task
-                    .runs
-                    .iter()
-                    .any(|run| run.goal_id.as_deref() == Some(goal_id))
-        });
-        if let Some(task) = task
-            && let Some(total) = task.token_budget
-        {
-            // 单轮额度包含本轮已用量；其他 Run 的已确认和预留消费先扣除。
-            let other_usage = task
-                .runs
+        let hot = state.tasks.values().find_map(|t| {
+            t.runs
                 .iter()
-                .filter(|run| run.goal_id.as_deref() != Some(goal_id))
-                .map(|run| {
-                    run.usage
-                        .tokens_used
-                        .saturating_add(run.usage.reserved_tokens)
-                })
-                .fold(0u64, u64::saturating_add);
-            if requested.is_none_or(|limit| limit > total.saturating_sub(other_usage)) {
-                return Err(invalid("TASK_TOKEN_BUDGET"));
+                .find(|r| r.goal_id.as_deref() == Some(goal_id))
+                .map(|r| (t.id.clone(), r.usage.clone()))
+        });
+        let binding = if let Some(hot) = hot {
+            Some(hot)
+        } else {
+            state
+                .cold_run(Some(goal_id), None)?
+                .map(|(id, run)| (id, run.usage))
+        };
+        if let Some((task_id, current)) = binding {
+            let task = &state.tasks[&task_id];
+            if task.mode == TaskMode::Scheduled
+                && let Some(total) = task.token_budget
+            {
+                let usage = state.usage(&task_id);
+                let other = usage
+                    .tokens_used
+                    .saturating_add(usage.reserved_tokens)
+                    .saturating_sub(current.tokens_used.saturating_add(current.reserved_tokens));
+                if requested.is_none_or(|n| n > total.saturating_sub(other)) {
+                    return Err(invalid("TASK_TOKEN_BUDGET"));
+                }
             }
         }
         Ok(())
@@ -877,6 +1126,9 @@ impl Engine {
         previous_goal: Option<&Goal>,
     ) -> Result<()> {
         let mut state = self.task_modes.state.lock().await;
+        if state.cold_run(Some(goal_id), None)?.is_some() {
+            return Err(Error::Conflict);
+        }
         let mut candidate = state.clone();
         let Some(task) = candidate
             .tasks
@@ -942,7 +1194,7 @@ impl Engine {
         }
         task.revision += 1;
         let id = task.id.clone();
-        self.save_tasks(&mut state, candidate, &id).await?;
+        self.save_tasks(&mut state, candidate, &id, true).await?;
         self.wake_tasks();
         Ok(())
     }
@@ -961,8 +1213,50 @@ impl Engine {
             let task = candidate.tasks.get_mut(&id).unwrap();
             task.paused = true;
             task.revision += 1;
-            self.save_tasks(&mut state, candidate, &id).await?;
+            self.save_tasks(&mut state, candidate, &id, true).await?;
         }
         Ok(())
+    }
+}
+
+impl Engine {
+    pub async fn task_receipts(&self, identity: &str, request_id: &str) -> Result<Vec<Value>> {
+        let state = self.task_modes.state.lock().await;
+        let mut receipts: Vec<_> = state
+            .receipts
+            .iter()
+            .filter(|record| record.identity == identity && record.request_id == request_id)
+            .cloned()
+            .collect();
+        for method in [
+            "create",
+            "update",
+            "runNow",
+            "pause",
+            "resume",
+            "cancel",
+            "stopRun",
+            "resumeRun",
+            "reply",
+        ] {
+            if receipts.iter().any(|record| record.method == method) {
+                continue;
+            }
+            if let Some(record) = state.stored_receipt(identity, method, request_id)? {
+                receipts.push(record);
+            }
+        }
+        Ok(receipts.iter().filter_map(|record| {
+            let task_id = record.result.get("taskId").or_else(|| record.result.get("id"))?.as_str()?;
+            let task = state.tasks.get(task_id)?;
+            let method = if record.method == "reply" { "areal/channel/reply".into() } else { format!("areal/task/{}", record.method) };
+            let mut value = json!(record);
+            value["method"] = json!(method);
+            value["taskId"] = json!(task_id);
+            value["threadId"] = json!(task.thread_id);
+            value["operation"] = json!({"requestId":record.request_id,"method":method,"target":{"kind":"task","taskId":task_id}});
+            value["status"] = json!("completed");
+            Some(value)
+        }).collect())
     }
 }

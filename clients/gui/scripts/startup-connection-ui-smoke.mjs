@@ -10,14 +10,14 @@ import { fileURLToPath } from 'node:url';
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(join(gui, 'app/package.json'));
 const { chromium } = require('playwright-core');
-const dist = join(gui, 'renderer/dist');
+const dist = process.env.AREAL_RENDERER_DIST || join(gui, 'renderer/dist');
 const scratch = await mkdtemp('/private/tmp/areal-startup-connection-');
 const server = createServer(async (request, response) => {
   try {
     const pathname = decodeURIComponent(new URL(request.url, 'http://local').pathname);
     const path = resolve(dist, pathname === '/' ? 'index.html' : `.${pathname}`);
     if (!path.startsWith(dist + sep)) throw new Error('Invalid asset path');
-    response.setHeader('Content-Type', { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.woff2': 'font/woff2' }[extname(path)] || 'application/octet-stream');
+    response.setHeader('Content-Type', { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' }[extname(path)] || 'application/octet-stream');
     response.end(await readFile(path));
   } catch {
     response.statusCode = 404;
@@ -33,23 +33,54 @@ try {
   page.on('pageerror', error => errors.push(error.message));
   const origin = `http://127.0.0.1:${server.address().port}`;
   await page.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
-  await page.addInitScript(() => {
+  const installFixture = () => {
     const project = { id: 'startup-fixture', root: '/isolated/workspace', state: null, error: null, models: [{ modelId: 'default', isDefault: true }], profiles: [], pending: [], summaries: [], configurations: {}, outcomes: {}, core: {} };
     const snapshot = { revision: 1, projects: [project], connection: { state: 'ready' }, library: { projects: {}, threads: {}, settings: {}, projectOrder: [] } };
-    let listener, releaseConnect, releaseStop;
+    const cached = location.search.includes('cached');
+    const light = location.search.includes('light');
+    const vanished = location.search.includes('vanished');
+    const deepLink = location.search.includes('deep-link');
+    const appCatalog = [{ serverId: 'startup-app', pluginId: 'startup-plugin', installedDigest: 'startup-digest', generation: 1, tools: [{ name: 'startup.open', title: 'Startup queued app', inputSchema: { type: 'object' }, _meta: { 'openai/ui': { entrypoints: [{ type: 'global' }] } } }] }];
+    let pendingLink = deepLink ? { id: 1, pluginId: 'startup-plugin', toolName: 'startup.open', path: '/startup-target' } : null;
+    window.deepLinks = { subscriptions: 0, active: 0, delivered: 0, consumed: 0 };
+    window.pendingDeepLink = () => pendingLink;
+    const threadId = cached ? 'saved-history' : '';
+    let listener, projectionListener, sequence = 0, releaseSnapshot, releaseConnect, releaseOpen, releaseStop;
+    let openPending = cached;
+    if (cached) {
+      project.state = { connected: true, threads: { [threadId]: { id: threadId, status: 'idle', turns: [] } }, queues: {}, interactions: {} };
+      project.summaries = [{ id: threadId, name: 'Saved startup history', status: 'idle' }];
+    }
+    if (vanished) snapshot.projects = [];
     let startupConnectPending = true;
     let stopOutcome = 'cancel';
     const publish = () => { snapshot.revision++; listener(structuredClone(snapshot)); };
     window.calls = [];
+    window.presentations = [];
+    window.initialGreeting = false;
+    new MutationObserver(() => {
+      if (!window.startupReleased && document.querySelector('.draft-greeting, [data-testid="chat-input"]')) window.initialGreeting = true;
+    }).observe(document, { childList: true, subtree: true });
     localStorage.setItem('areal-gui:project', project.id);
-    localStorage.setItem(`areal-gui:draft:${project.id}:new`, 'STARTUP_DRAFT_PRESERVED');
+    localStorage.setItem(`areal-gui:thread:${project.id}`, threadId);
+    localStorage.setItem(`areal-gui:draft:${project.id}:${threadId || 'new'}`, 'STARTUP_DRAFT_PRESERVED');
+    localStorage.setItem('areal-gui:sidebar-width', '384');
+    localStorage.setItem('areal-gui:font-size', '15');
+    window.finishDiscovery = () => { releaseSnapshot(); };
+    window.publishPartial = () => { snapshot.revision++; listener({ ...structuredClone(snapshot), projects: [{ ...structuredClone(project), id: 'partial-other-project' }], connection: { state: 'connecting' } }); };
+    window.failStartup = () => releaseConnect({ ok: false, error: { code: 'READ_FAILED', message: 'STARTUP_FAILURE' } });
+    window.finishStartup = () => releaseConnect();
+    window.finishOpen = (fail = false) => {
+      if (fail) { releaseOpen({ ok: false, error: { code: 'READ_FAILED', message: 'HELD_OPEN_FAILURE', recovery: { kind: 'none' } } }); return; }
+      project.state.threads[threadId] = { id: threadId, status: 'idle', turns: [{ id: 'restored-turn', status: 'completed', items: [{ id: 'restored-message', type: 'agentMessage', phase: 'final_answer', text: 'RESTORED_STARTUP_HISTORY' }] }] };
+      openPending = false; publish(); releaseOpen({ ok: true, value: {} });
+    };
     window.updateProject = (state, error = null) => {
       project.state = state;
       project.error = error;
       snapshot.revision++;
       listener(structuredClone(snapshot));
     };
-    window.finishStartup = () => releaseConnect();
     window.updateBackend = ({ connection = { state: 'ready' }, backendUpdate, currentCommands = true }) => {
       snapshot.connection = connection;
       snapshot.backendUpdate = backendUpdate;
@@ -59,15 +90,39 @@ try {
     window.setStopOutcome = outcome => { stopOutcome = outcome; };
     window.finishStop = () => releaseStop();
     window.arealDesktop = {
-      snapshot: async () => structuredClone(snapshot),
-      onState: callback => { listener = callback; return () => {}; },
-      theme: async () => ({ platform: 'darwin', dark: true, id: 'dark' }),
+      onProjection: callback => { projectionListener = callback; listener = value => callback({ frame: { projection: 1, stream: 'startup-fixture', sequence: ++sequence, kind: 'full', snapshot: value } }); return () => {}; },
+      requestProjection: requestId => { releaseSnapshot = () => projectionListener({ requestId, frame: { projection: 1, stream: 'startup-fixture', sequence: ++sequence, kind: 'full', snapshot: structuredClone(snapshot) } }); },
+      theme: async () => ({ platform: 'darwin', dark: !light, id: light ? 'light' : 'dark' }),
       onTheme: () => () => {},
       onMcpAppEvent: () => () => {},
-      presentReady: async () => {},
+      onMcpAppDeepLink: callback => {
+        window.deepLinks.subscriptions++;
+        window.deepLinks.active++;
+        let active = true;
+        if (pendingLink) void Promise.resolve().then(async () => {
+          if (!active || !pendingLink) return;
+          window.deepLinks.delivered++;
+          await callback(pendingLink);
+          if (active) { pendingLink = null; window.deepLinks.consumed++; }
+        }).catch(() => {});
+        return () => { active = false; window.deepLinks.active--; };
+      },
+      mcpApp: async request => {
+        window.calls.push({ name: 'mcpApp', params: request });
+        if (request.operation === 'open') return { token: 'startup-app-token', instanceId: 'startup-app-instance', serverId: 'startup-app', generation: 1, projectId: project.id, threadId: request.threadId, frameUrl: 'about:blank', toolMetadata: { name: 'startup.open', title: 'Startup queued app' }, initialArguments: {}, hostContext: {} };
+        return {};
+      },
+      presentReady: async () => { window.presentations.push({ dark: document.documentElement.classList.contains('dark'), width: document.querySelector('[data-testid="areal-sidebar"]')?.getBoundingClientRect().width }); },
+      chooseProject: async () => { window.calls.push({ name: 'chooseProject' }); return null; },
       preview: async () => ({}),
       command: async (name, params) => {
         window.calls.push({ name, params });
+        if (name === 'serviceLifecycle') {
+          if (params.operation === 'check') return window.arealDesktop.command('connectService', {});
+          const result = await window.arealDesktop.command('stopService', {});
+          if (result.ok && result.value.stopped) await window.arealDesktop.command('connectService', {});
+          return result;
+        }
         if (name === 'stopService') {
           if (stopOutcome === 'hold') return await new Promise(resolve => { releaseStop = () => resolve({ ok: true, value: { stopped: false } }); });
           if (stopOutcome === 'refuse') return { ok: false, error: { code: 'BUSY', message: '仍有其他窗口连接，无法更新后台。' } };
@@ -87,101 +142,283 @@ try {
           return { ok: true, value: {} };
         }
         if (name === 'connect' && startupConnectPending) return await new Promise(resolve => {
-          releaseConnect = () => { startupConnectPending = false; resolve({ ok: true, value: {} }); };
+          releaseConnect = (result = { ok: true, value: {} }) => { startupConnectPending = false; resolve(result); };
         });
+        if (name === 'create' && deepLink) {
+          const id = 'queued-app-thread';
+          project.state.threads[id] = { id, status: 'idle', turns: [] };
+          publish();
+          return { ok: true, value: { threadId: id } };
+        }
+        if (name === 'manage' && params.operation === 'mcpApps') return { ok: true, value: { data: deepLink ? appCatalog : [] } };
+        if (name === 'open' && openPending) return await new Promise(resolve => { releaseOpen = resolve; });
+        if (name === 'serviceStatus') return { ok: true, value: { connected: true, clients: 1, activeCommands: 0, projects: [{
+          projectId: project.id, root: project.root, started: false,
+          activeThreads: [{ threadId, turnId: 'service-active-turn' }],
+          goals: [{ threadId, status: 'active', objective: 'STARTUP_SERVICE_GOAL' }],
+          tasks: [{ id: 'service-task', threadId, mode: 'schedule', objective: 'STARTUP_SERVICE_TASK', paused: false, running: false }],
+          queues: [{ threadId, paused: true, pending: 1, running: 0 }],
+          pendingRequests: [{ threadId, awaitingResponse: true }],
+          resources: [{ id: 'service-resource', threadId, executable: 'STARTUP_SERVICE_RESOURCE', state: 'running', stale: false }],
+        }] } };
         if (name === 'workspace') return { ok: true, value: { git: true, branch: 'main' } };
         if (name === 'trajectory') return { ok: true, value: { enabled: false, state: 'disabled', queue: {}, records: [] } };
         return { ok: true, value: { data: [] } };
       },
     };
-  });
+  };
+  const regressionResults = await Promise.allSettled([
+    (async () => {
+      const target = await browser.newPage({ viewport: { width: 1280, height: 960 }, serviceWorkers: 'block' });
+      try {
+        target.on('pageerror', error => errors.push(error.message));
+        await target.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
+        await target.addInitScript(installFixture);
+        await target.goto(`${origin}/?cached&vanished`);
+        await target.waitForFunction(() => window.presentations.length === 1);
+        await target.evaluate(() => window.publishPartial());
+        await target.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        assert.equal(await target.getByTestId('areal-workbench').getAttribute('data-startup-ready'), 'false');
+        assert.equal(await target.getByTestId('areal-workbench').getAttribute('data-thread-id'), 'saved-history');
+        assert.equal(await target.evaluate(() => localStorage.getItem('areal-gui:project')), 'startup-fixture');
+        assert.deepEqual(await target.evaluate(() => window.calls.filter(call => ['connect', 'open', 'create', 'projectless'].includes(call.name))), []);
+        await target.evaluate(() => { window.startupReleased = true; window.finishDiscovery(); });
+        await target.waitForFunction(() => document.querySelector('[data-testid="areal-workbench"]')?.getAttribute('data-startup-ready') === 'true');
+        assert.equal(await target.getByTestId('areal-workbench').getAttribute('data-thread-id'), '', 'authoritative empty discovery must clear the orphaned saved conversation');
+        await target.getByTestId('chat-input').waitFor();
+        assert.equal(await target.evaluate(() => localStorage.getItem('areal-gui:project')), '');
+        assert.deepEqual(await target.evaluate(() => window.calls.filter(call => ['connect', 'open', 'create'].includes(call.name))), []);
+        checks.push('a vanished saved project preserves intent during partial discovery and settles into the empty workbench after authoritative discovery');
+        await target.screenshot({ path: join(scratch, 'vanished-project-settled.png'), animations: 'disabled' });
+      } finally { await target.close(); }
+    })(),
+    (async () => {
+      const target = await browser.newPage({ viewport: { width: 1280, height: 960 }, serviceWorkers: 'block' });
+      try {
+        target.on('pageerror', error => errors.push(error.message));
+        await target.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
+        await target.addInitScript(installFixture);
+        await target.goto(`${origin}/?cached&deep-link`);
+        await target.waitForFunction(() => window.presentations.length === 1);
+        await target.evaluate(() => window.finishDiscovery());
+        await target.waitForFunction(() => window.calls.some(call => call.name === 'open') && window.calls.some(call => call.name === 'manage' && call.params.operation === 'mcpApps'));
+        await target.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        assert.deepEqual(await target.evaluate(() => window.deepLinks), { subscriptions: 0, active: 0, delivered: 0, consumed: 0 }, 'the queued app link must stay in Main while the initial conversation is held');
+        assert.equal(await target.getByTestId('areal-workbench').getAttribute('data-thread-id'), 'saved-history');
+        assert.deepEqual(await target.evaluate(() => window.calls.filter(call => call.name === 'create' || call.name === 'mcpApp')), []);
+        assert.ok(await target.evaluate(() => window.pendingDeepLink()));
+        await target.evaluate(() => { window.startupReleased = true; window.finishOpen(); });
+        await target.waitForFunction(() => window.deepLinks.consumed === 1);
+        assert.equal(await target.getByTestId('areal-workbench').getAttribute('data-thread-id'), 'queued-app-thread');
+        await target.getByRole('tab', { name: 'Startup queued app' }).waitFor();
+        assert.equal(await target.locator('iframe[title="Startup queued app"]').count(), 1);
+        assert.equal(await target.evaluate(() => window.calls.filter(call => call.name === 'create').length), 1);
+        assert.equal(await target.evaluate(() => window.calls.filter(call => call.name === 'mcpApp' && call.params.operation === 'open').length), 1);
+        assert.deepEqual(await target.evaluate(() => ({ delivered: window.deepLinks.delivered, consumed: window.deepLinks.consumed, pending: window.pendingDeepLink() })), { delivered: 1, consumed: 1, pending: null });
+        checks.push('a queued global app link creates and reveals exactly one target conversation after initial restoration releases navigation');
+        await target.screenshot({ path: join(scratch, 'queued-app-after-release.png'), animations: 'disabled' });
+      } finally { await target.close(); }
+    })(),
+  ]);
+  assert.deepEqual(regressionResults.filter(result => result.status === 'rejected').map(result => result.reason.message), []);
+  await page.addInitScript(installFixture);
   await page.goto(origin);
-  await page.getByTestId('chat-input').waitFor();
-  await page.waitForFunction(() => window.calls.some(call => call.name === 'connect'));
-  const warning = page.getByRole('alert').filter({ hasText: '连接不可用，输入已保留。' });
-  const context = page.getByRole('group', { name: '工作区上下文', exact: true });
   const connectedState = { connected: true, threads: {}, interactions: {}, queues: {}, error: null };
-  async function assertPending(label) {
-    assert.equal(await warning.count(), 0, `${label}: startup must not show a failure alert`);
-    assert.equal(await context.innerText(), '正在连接…');
-    assert.equal(await page.getByTestId('chat-send-button').isDisabled(), true);
-    assert.match(await page.getByTestId('chat-input').innerText(), /STARTUP_DRAFT_PRESERVED/);
+  const writes = () => page.evaluate(() => window.calls.filter(call => ['send', 'create', 'enqueue', 'steer', 'projectless', 'chooseProject', 'browser', 'terminal'].includes(call.name)));
+  async function assertShell(label, target = page, expectedDark = true) {
+    await target.waitForFunction(() => window.presentations.length === 1);
+    assert.equal(await target.getByTestId('areal-workbench').getAttribute('data-startup-ready'), 'false');
+    assert.equal(await target.getByTestId('areal-workbench').getAttribute('data-shell-ready'), 'true');
+    await target.getByTestId('startup-loading').waitFor();
+    assert.equal(await target.getByTestId('startup-loading').locator('img').evaluate(image => image.complete && image.naturalWidth > 0), true);
+    assert.equal(await target.getByTestId('startup-loading').innerText(), '正在加载…');
+    assert.equal(await target.getByTestId('areal-sidebar').count(), 0);
+    assert.equal(await target.locator('.workspace-header, .application-rail, .areal-update-floating').count(), 0);
+    assert.equal(await target.getByRole('button').count(), 0);
+    assert.equal(await target.locator('.draft-greeting').count(), 0);
+    assert.equal(await target.getByRole('alert').count(), 0, 'pending startup must not report a connection failure');
+    assert.equal(await target.getByTestId('chat-input').count(), 0);
+    if (await target.locator('.header-task').count())
+      assert.doesNotMatch(await target.locator('.header-task').innerText(), /新对话/);
+    assert.deepEqual(await target.evaluate(() => window.presentations), [{ dark: expectedDark, width: undefined }]);
+    assert.equal(await target.evaluate(() => localStorage.getItem('areal-gui:project')), 'startup-fixture');
     checks.push(label);
   }
-  await assertPending('saved project with no Core snapshot');
-  await page.screenshot({ path: join(scratch, 'connecting.png'), animations: 'disabled' });
+  async function tryStartupRoutes(target = page) {
+    for (const key of ['n', 't', 'p', 'k', ',']) await target.evaluate(key => window.dispatchEvent(new KeyboardEvent('keydown', { key, ctrlKey: true, bubbles: true })), key);
+    await target.evaluate(() => window.dispatchEvent(new KeyboardEvent('keydown', { key: '`', code: 'Backquote', ctrlKey: true, bubbles: true })));
+    await target.evaluate(() => {
+      for (const label of ['打开项目', '定时任务', '插件', '展开侧边面板', '设置']) document.querySelector(`[aria-label="${label}"]`)?.click();
+    });
+    await target.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(await target.getByTestId('areal-workbench').getAttribute('data-view'), 'workspace');
+    assert.deepEqual(await target.evaluate(() => window.calls.filter(call => ['send', 'create', 'enqueue', 'steer', 'projectless', 'chooseProject', 'browser', 'terminal'].includes(call.name))), []);
+  }
+  if (process.argv.includes('--backend-only')) {
+    await page.waitForFunction(() => window.presentations.length === 1);
+    await page.evaluate(() => { window.startupReleased = true; window.finishDiscovery(); });
+    await page.waitForFunction(() => window.calls.some(call => call.name === 'connect'));
+    await page.evaluate(state => { window.updateProject(state); window.finishStartup(); }, connectedState);
+    await page.getByTestId('chat-input').waitFor();
+  } else {
+  await assertShell('the dark initial window shows only the app icon and loading before discovery');
+  await tryStartupRoutes();
+  await page.evaluate(() => window.publishPartial());
+  await assertShell('a partial discovery cannot replace or persist the remembered project');
+  await page.screenshot({ path: join(scratch, 'discovery-held.png'), animations: 'disabled' });
+  await page.evaluate(() => window.finishDiscovery());
+  await page.waitForFunction(() => window.calls.some(call => call.name === 'connect'));
+  await assertShell('project connection remains contained after authoritative discovery');
+  await tryStartupRoutes();
   await page.evaluate(state => window.updateProject({ ...state, connected: false }), connectedState);
-  await assertPending('Core initialization pending without an error');
-  await page.evaluate(state => window.updateProject({ ...state, connected: false }, 'STARTUP_FAILURE'), connectedState);
-  await warning.waitFor();
-  assert.match(await warning.innerText(), /STARTUP_FAILURE/);
-  assert.equal(await context.innerText(), '未连接');
-  checks.push('actual startup failure remains visible');
+  assert.equal(await page.getByTestId('chat-input').count(), 0);
+  await page.evaluate(() => window.failStartup());
+  await page.getByRole('alert').filter({ hasText: '暂时无法完成加载' }).waitFor();
+  assert.equal(await page.getByTestId('areal-sidebar').count(), 0);
+  assert.equal(await page.getByTestId('areal-workbench').getAttribute('data-startup-ready'), 'false');
+  assert.equal(await page.getByTestId('chat-input').count(), 0);
+  await page.getByText('查看详情', { exact: true }).click();
+  await page.getByText('STARTUP_FAILURE', { exact: true }).waitFor();
+  checks.push('failed initial observation exposes retry feedback');
   await page.screenshot({ path: join(scratch, 'failure.png'), animations: 'disabled' });
-  await page.evaluate(state => window.updateProject({ ...state, connected: false, error: '连接中断，正在恢复任务状态' }), connectedState);
-  await page.waitForFunction(() => document.querySelector('.composer-dock [role="alert"]')?.textContent.includes('连接中断，正在恢复任务状态'));
-  checks.push('Core disconnect error remains visible during recovery');
-  await page.evaluate(state => { window.updateProject(state); window.finishStartup(); }, connectedState);
-  await page.waitForFunction(() => !document.querySelector('[data-testid="chat-send-button"]').disabled);
+  await page.getByRole('button', { name: '重试加载对话', exact: true }).click();
+  await page.evaluate(state => { window.startupReleased = true; window.updateProject(state); }, connectedState);
+  await page.waitForFunction(() => !document.querySelector('[data-testid="chat-send-button"]')?.disabled && !!document.querySelector('[data-testid="chat-send-button"]'));
   await page.getByLabel('当前分支', { exact: true }).waitFor();
-  assert.equal(await warning.count(), 0);
   assert.match(await page.getByTestId('chat-input').innerText(), /STARTUP_DRAFT_PRESERVED/);
+  assert.equal(await page.evaluate(() => window.initialGreeting), false);
   assert.equal(await page.evaluate(() => localStorage.getItem('areal-gui:draft:startup-fixture:new')), 'STARTUP_DRAFT_PRESERVED');
-  assert.deepEqual(await page.evaluate(() => window.calls.filter(call => ['send', 'create', 'enqueue', 'steer'].includes(call.name))), []);
-  checks.push('recovery enables sending and preserves the draft without submitting it');
+  assert.deepEqual(await writes(), []);
+  checks.push('recovery preserves the unsent draft without a startup greeting or preparation');
   await page.screenshot({ path: join(scratch, 'ready.png'), animations: 'disabled' });
 
-  const backendStatus = page.locator('#backend-status');
-  const update = page.getByRole('button', { name: '更新后台…', exact: true });
-  const serviceCalls = () => page.evaluate(() => window.calls.filter(call => ['stopService', 'connectService', 'connect', 'open'].includes(call.name)).map(call => call.name));
+  const delayedPage = await browser.newPage({ viewport: { width: 1280, height: 960 }, serviceWorkers: 'block' });
+  delayedPage.on('pageerror', error => errors.push(error.message));
+  await delayedPage.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
+  await delayedPage.clock.install();
+  await delayedPage.addInitScript(installFixture);
+  await delayedPage.goto(`${origin}/?cached`);
+  await delayedPage.clock.runFor(100);
+  await delayedPage.evaluate(() => window.finishDiscovery());
+  await delayedPage.waitForFunction(() => window.calls.some(call => call.name === 'open'));
+  await delayedPage.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await delayedPage.clock.pauseAt(new Date(await delayedPage.evaluate(() => Date.now()) + 50));
+  await delayedPage.clock.runFor(14000);
+  assert.equal(await delayedPage.getByRole('button').count(), 0);
+  await delayedPage.clock.runFor(1100);
+  await delayedPage.getByText('加载时间较长，历史和草稿已保留。', { exact: true }).waitFor();
+  assert.equal(await delayedPage.getByTestId('areal-sidebar').count(), 0);
+  assert.equal(await delayedPage.getByTestId('chat-input').count(), 0);
+  assert.equal(await delayedPage.getByRole('button', { name: '检查后台', exact: true }).isDisabled(), true);
+  await delayedPage.getByRole('button', { name: '检查设置', exact: true }).click();
+  await delayedPage.getByRole('button', { name: '返回加载界面', exact: true }).waitFor();
+  assert.equal(await delayedPage.getByTestId('areal-sidebar').count(), 0);
+  assert.equal(await delayedPage.getByTestId('chat-input').count(), 0);
+  const recoveryDrilldowns = delayedPage.getByTestId('service-project-startup-fixture').getByRole('button');
+  await recoveryDrilldowns.first().waitFor();
+  assert.equal(await recoveryDrilldowns.count(), 6);
+  for (const drilldown of await recoveryDrilldowns.all()) {
+    assert.equal(await drilldown.isDisabled(), true, 'recovery settings must not offer navigation before successful initial restoration');
+    await drilldown.evaluate(button => button.click());
+  }
+  assert.equal(await delayedPage.getByTestId('areal-workbench').getAttribute('data-view'), 'settings');
+  assert.equal(await delayedPage.getByRole('button', { name: '返回加载界面', exact: true }).count(), 1);
+  assert.equal(await delayedPage.getByRole('button', { name: '刷新后台状态', exact: true }).isEnabled(), true);
+  await delayedPage.evaluate(() => { window.startupReleased = true; window.finishOpen(); });
+  await delayedPage.getByRole('button', { name: '返回加载界面', exact: true }).waitFor({ state: 'detached' });
+  assert.equal(await delayedPage.evaluate(() => window.calls.filter(call => call.name === 'open').length), 1);
+  for (const drilldown of await recoveryDrilldowns.all()) assert.equal(await drilldown.isEnabled(), true);
+  await delayedPage.getByTestId('service-active-saved-history').getByRole('button').click();
+  await delayedPage.getByText('RESTORED_STARTUP_HISTORY', { exact: true }).waitFor();
+  assert.equal(await delayedPage.getByTestId('areal-workbench').getAttribute('data-view'), 'workspace');
+  assert.equal(await delayedPage.evaluate(() => window.calls.filter(call => call.name === 'open').length), 2, 'a deliberate drilldown observes history only after navigation is released');
+  assert.deepEqual(await delayedPage.evaluate(() => window.calls.filter(call => ['send', 'create', 'enqueue', 'steer'].includes(call.name))), []);
+  checks.push('a 15-second soft wait keeps recovery drilldowns disabled until late success, then enables deliberate navigation without replay');
+  await delayedPage.screenshot({ path: join(scratch, 'delayed-late-success.png'), animations: 'disabled' });
+  await delayedPage.close();
+
+  const cachedPage = await browser.newPage({ viewport: { width: 1280, height: 960 }, serviceWorkers: 'block' });
+  cachedPage.on('pageerror', error => errors.push(error.message));
+  await cachedPage.route('**/*', route => new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
+  await cachedPage.addInitScript(installFixture);
+  await cachedPage.goto(`${origin}/?cached&light`);
+  await assertShell('the light initial window shows only the app icon and loading before history opens', cachedPage, false);
+  assert.equal(await cachedPage.getByTestId('areal-workbench').getAttribute('data-thread-id'), 'saved-history');
+  await cachedPage.evaluate(() => window.finishDiscovery());
+  await cachedPage.waitForFunction(() => window.calls.some(call => call.name === 'open'));
+  await assertShell('a cached empty thread stays contained while its authoritative open is held', cachedPage, false);
+  await cachedPage.screenshot({ path: join(scratch, 'loading-light.png'), animations: 'disabled' });
+  await tryStartupRoutes(cachedPage);
+  await cachedPage.evaluate(() => window.finishOpen(true));
+  await cachedPage.getByRole('alert').filter({ hasText: '暂时无法完成加载' }).waitFor();
+  assert.equal(await cachedPage.getByTestId('areal-sidebar').count(), 0);
+  await cachedPage.getByText('查看详情', { exact: true }).click();
+  await cachedPage.getByText('HELD_OPEN_FAILURE', { exact: true }).waitFor();
+  assert.equal(await cachedPage.getByTestId('chat-input').count(), 0, 'failed cached observation must not expose write controls');
+  const retry = cachedPage.getByRole('button', { name: '重试加载对话', exact: true });
+  await retry.first().click();
+  await cachedPage.waitForFunction(() => window.calls.filter(call => call.name === 'open').length === 2);
+  await cachedPage.evaluate(() => { window.startupReleased = true; window.finishOpen(); });
+  await cachedPage.getByText('RESTORED_STARTUP_HISTORY', { exact: true }).waitFor();
+  assert.match(await cachedPage.getByTestId('chat-input').innerText(), /STARTUP_DRAFT_PRESERVED/);
+  assert.equal(await cachedPage.evaluate(() => window.initialGreeting), false);
+  assert.equal(await cachedPage.getByTestId('areal-sidebar').evaluate(element => element.getBoundingClientRect().width), 384);
+  assert.deepEqual(await cachedPage.evaluate(() => window.calls.filter(call => ['send', 'create', 'enqueue', 'steer', 'projectless', 'chooseProject', 'browser', 'terminal'].includes(call.name))), []);
+  checks.push('failed cached observation stays visible, retries, and restores the saved thread and draft');
+  await cachedPage.screenshot({ path: join(scratch, 'cached-restored-light.png'), animations: 'disabled' });
+  await cachedPage.evaluate(() => window.updateBackend({ connection: { state: 'connecting' } }));
+  assert.equal(await cachedPage.getByText('RESTORED_STARTUP_HISTORY', { exact: true }).count(), 1);
+  assert.match(await cachedPage.getByTestId('chat-input').innerText(), /STARTUP_DRAFT_PRESERVED/);
+  assert.equal(await cachedPage.getByTestId('chat-send-button').isDisabled(), true);
+  checks.push('a subsequent global reconnect keeps the workbench and draft mounted while sending is blocked');
+  await cachedPage.close();
+  }
+
   const setBackend = state => page.evaluate(value => window.updateBackend(value), state);
   await setBackend({ currentCommands: false, backendUpdate: { state: 'pending' } });
-  await update.waitFor();
-  assert.equal(await backendStatus.count(), 1);
-  assert.equal(await backendStatus.getAttribute('role'), 'status');
-  assert.equal(await page.getByText('更新后台后可发送消息。草稿已保留，现有任务可继续管理。', { exact: true }).count(), 1);
-  assert.equal(await page.getByText(/当前后台版本不支持 MCP 应用和表单/).count(), 0);
-  assert.equal(await page.locator('.composer-dock .notice').filter({ hasText: /升级后台|更新后台/ }).count(), 0);
+  assert.equal(await page.locator('#backend-status').count(), 0);
   assert.equal(await page.getByTestId('chat-send-button').isDisabled(), true);
   assert.equal(await page.getByTestId('chat-input').getAttribute('contenteditable'), 'true');
   await page.getByTestId('chat-input').fill('BACKEND_UPDATE_DRAFT_PRESERVED');
-  checks.push('one global compatibility notice keeps ordinary chat editable without an MCP warning');
-
+  await page.getByRole('button', { name: '设置', exact: true }).click();
+  await page.getByRole('button', { name: '后台服务', exact: true }).click();
+  const backendStatus = page.getByTestId('backend-service-status');
+  const update = backendStatus.getByRole('button', { name: /^(更新后台…|正在更新…)$/ });
+  const serviceCalls = () => page.evaluate(() => window.calls.filter(call => ['stopService', 'connectService', 'connect', 'open'].includes(call.name)).map(call => call.name));
+  await update.waitFor();
   let before = await serviceCalls();
   await update.click();
-  await page.waitForFunction(() => !document.querySelector('#backend-status button')?.disabled);
+  await page.waitForFunction(() => !document.querySelector('[data-testid="backend-service-status"] button')?.disabled);
   assert.deepEqual(await serviceCalls(), [...before, 'stopService']);
-  assert.match(await page.getByTestId('chat-input').innerText(), /BACKEND_UPDATE_DRAFT_PRESERVED/);
-  checks.push('cancelled update preserves the draft and never connects');
+  checks.push('backend lifecycle controls move to service settings and cancelled updates never connect');
 
   await page.evaluate(() => window.setStopOutcome('hold'));
   before = await serviceCalls();
   await update.click();
-  assert.equal(await backendStatus.getByRole('button').isDisabled(), true);
-  await backendStatus.getByRole('button').evaluate(button => { button.click(); button.click(); });
+  assert.equal(await update.isDisabled(), true);
+  await update.evaluate(button => { button.click(); button.click(); });
   assert.deepEqual(await serviceCalls(), [...before, 'stopService']);
   await page.evaluate(() => window.finishStop());
-  await update.waitFor();
-  checks.push('an update in flight disables its action and only stops once');
+  await page.waitForFunction(() => !document.querySelector('[data-testid="backend-service-status"] button')?.disabled);
+  checks.push('an update in flight disables its settings action and only stops once');
 
   await page.evaluate(() => window.setStopOutcome('refuse'));
   before = await serviceCalls();
   await update.click();
+  await backendStatus.locator('summary').click();
   await backendStatus.getByText('仍有其他窗口连接，无法更新后台。', { exact: true }).waitFor();
   assert.deepEqual(await serviceCalls(), [...before, 'stopService']);
-  assert.equal(await page.locator('.error-banner').filter({ hasText: '仍有其他窗口连接' }).count(), 0);
-  checks.push('a refused update reports its actual failure locally without connecting');
+  checks.push('a refused update keeps its diagnostic in settings without connecting');
 
   await setBackend({ currentCommands: true, backendUpdate: { state: 'pending' } });
-  await backendStatus.getByText('后台有更新待应用。现有任务继续运行。', { exact: true }).waitFor();
-  assert.equal(await page.getByTestId('chat-send-button').isDisabled(), false);
+  await backendStatus.getByText('已连接后台，更新可稍后应用。现有任务继续运行。', { exact: true }).waitFor();
   await setBackend({ currentCommands: true, backendUpdate: { state: 'applying' } });
   await backendStatus.getByText('正在更新后台…', { exact: true }).waitFor();
-  assert.equal(await backendStatus.getByRole('button').isDisabled(), true);
+  assert.equal(await update.isDisabled(), true);
   await setBackend({ backendUpdate: { state: 'failed', message: '新后台启动失败，请检查配置。' } });
+  await backendStatus.locator('summary').click();
   await backendStatus.getByText('新后台启动失败，请检查配置。', { exact: true }).waitFor();
-  assert.doesNotMatch(await backendStatus.innerText(), /旧后台仍|现有任务继续/);
-  checks.push('compatible pending updates leave sending available; applying and failed states are truthful');
+  checks.push('service settings retain compatible pending, applying, and failed update states');
 
   await setBackend({ currentCommands: false, backendUpdate: { state: 'pending' } });
   await page.evaluate(() => window.setStopOutcome('unknown'));
@@ -191,29 +428,25 @@ try {
   await checkBackend.waitFor();
   assert.deepEqual(await serviceCalls(), [...before, 'stopService']);
   assert.equal(await update.count(), 0);
+  await backendStatus.locator('summary').click();
   assert.match(await backendStatus.innerText(), /后台停止回执丢失/);
   await checkBackend.click();
-  await page.waitForFunction(() => !document.querySelector('#backend-status button')?.disabled);
+  await page.waitForFunction(() => !document.querySelector('[data-testid="backend-service-status"] button')?.disabled);
   assert.deepEqual(await serviceCalls(), [...before, 'stopService', 'connectService']);
-  assert.equal(await page.getByRole('button', { name: '检查后台', exact: true }).count(), 1);
-  checks.push('UNKNOWN prioritizes authoritative recovery and only checks through connectService');
+  checks.push('UNKNOWN remains authoritative after toast dismissal and settings only check through connectService');
 
-  const restorationConnects = await page.evaluate(() => window.calls.filter(call => call.name === 'connect').length);
   await setBackend({ currentCommands: false, backendUpdate: { state: 'pending' } });
-  await page.waitForFunction(previous => window.calls.filter(call => call.name === 'connect').length === previous + 1
-    && document.querySelector('[data-testid="areal-workbench"]')?.getAttribute('data-startup-ready') === 'true', restorationConnects);
+  await page.waitForFunction(() => document.querySelector('[data-testid="areal-workbench"]')?.getAttribute('data-startup-ready') === 'true');
   await page.evaluate(() => window.setStopOutcome('confirmed'));
   before = await serviceCalls();
   await update.click();
   await backendStatus.waitFor({ state: 'detached' });
   assert.deepEqual(await serviceCalls(), [...before, 'stopService', 'connectService']);
-  assert.equal(await page.getByTestId('chat-send-button').isDisabled(), false);
-  assert.match(await page.getByTestId('chat-input').innerText(), /BACKEND_UPDATE_DRAFT_PRESERVED/);
   assert.deepEqual(await page.evaluate(() => window.calls.filter(call => ['send', 'create', 'enqueue', 'steer'].includes(call.name))), []);
-  checks.push('confirmed stop connects once, clears the notice, and preserves the unsent draft');
+  assert.equal(await page.evaluate(() => localStorage.getItem('areal-gui:draft:startup-fixture:new')), 'BACKEND_UPDATE_DRAFT_PRESERVED');
+  checks.push('a confirmed settings update connects once without replay and preserves the unsent draft');
   await setBackend({ connection: { state: 'ready', message: 'STALE_DEPLOYMENT_MESSAGE' } });
   assert.equal(await backendStatus.count(), 0);
-  checks.push('a current deployment stays quiet instead of displaying a legacy ready message');
   await page.screenshot({ path: join(scratch, 'backend-current.png'), animations: 'disabled' });
   assert.deepEqual(errors, []);
   passed = true;

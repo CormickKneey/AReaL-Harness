@@ -2,6 +2,7 @@
 //! Contract: openai/codex 092d3acd6bec3e3a14bdc7e7a2810ab628ab759d,
 //! config/src/hook_config.rs and hooks/src/engine/{discovery,matcher,mcp_runner}.rs.
 //! Definition digests are AReaL-private; callers must also bind the installed package digest.
+use crate::components::{DocumentSelection, DocumentSource};
 use crate::{ComponentDocument, InstalledComponents, package};
 use anyhow::{Context, Result};
 use regex::Regex;
@@ -258,6 +259,48 @@ fn parse(value: &Value) -> Result<Vec<(HookEvent, Vec<Group>)>> {
         .collect()
 }
 
+pub(crate) fn support(value: &Value) -> Vec<(Vec<String>, bool)> {
+    let Ok(events) = parse(value) else {
+        return vec![(vec![], false)];
+    };
+    let mut result = vec![];
+    for (event, groups) in events {
+        for (index, group) in groups.into_iter().enumerate() {
+            let source = vec!["hooks".into(), event.as_str().into(), index.to_string()];
+            if group.hooks.is_empty() {
+                result.push((source.clone(), false));
+            }
+            for (index, handler) in group.hooks.into_iter().enumerate() {
+                let mut source = source.clone();
+                source.extend(["hooks".into(), index.to_string()]);
+                let supported = match handler {
+                    Handler::Command { command, .. } => !command.trim().is_empty(),
+                    Handler::Mcp { server, tool, .. } => {
+                        event != HookEvent::SessionEnd
+                            && !server.trim().is_empty()
+                            && !tool.trim().is_empty()
+                    }
+                    Handler::Prompt {} | Handler::Agent {} => false,
+                };
+                result.push((source, supported));
+            }
+        }
+    }
+    if let Ok(file) = serde_json::from_value::<RawFile>(value.clone()) {
+        for (event, groups) in file.hooks {
+            if !HookEvent::ALL.iter().any(|known| known.as_str() == event)
+                || groups.as_array().is_some_and(Vec::is_empty)
+            {
+                result.push((vec!["hooks".into(), event], false));
+            }
+        }
+    }
+    if result.is_empty() {
+        result.push((vec![], false));
+    }
+    result
+}
+
 /// Fixed-release manifest normalization: valid declarations override the default;
 /// empty/invalid declarations fall back, but a valid empty inline object suppresses it.
 pub(crate) fn discover(
@@ -265,7 +308,8 @@ pub(crate) fn discover(
     files: &package::Files,
     portable: bool,
     diagnostics: &mut Vec<String>,
-) -> Vec<ComponentDocument> {
+) -> DocumentSelection {
+    let mut rejected = vec![];
     enum Source {
         Paths(Vec<String>),
         Inline(Vec<Value>),
@@ -294,6 +338,7 @@ pub(crate) fn discover(
         _ => None,
     };
     if declaration.is_some() && source.is_none() {
+        rejected.push(DocumentSource::Manifest(vec![]));
         diagnostics.push(
             "hooks: invalid or empty declaration; using default hooks/hooks.json when present"
                 .into(),
@@ -306,6 +351,13 @@ pub(crate) fn discover(
             .iter()
             .any(|v| validate_path(v.as_str().unwrap()).is_none())
     {
+        if source.is_some() {
+            for (index, value) in values.iter().enumerate() {
+                if validate_path(value.as_str().unwrap()).is_none() {
+                    rejected.push(DocumentSource::Manifest(vec![index]));
+                }
+            }
+        }
         diagnostics.push(
             "hooks: ignored invalid path; paths must start with ./ and stay inside the package"
                 .into(),
@@ -318,14 +370,23 @@ pub(crate) fn discover(
             vec![]
         })
     });
-    match source {
+    let documents = match source {
         Source::Inline(values) => values
             .into_iter()
             .enumerate()
-            .map(|(index, value)| ComponentDocument {
-                portable,
-                origin: format!("plugin.json#hooks[{index}]"),
-                value,
+            .map(|(index, value)| {
+                (
+                    DocumentSource::Manifest(if declaration.is_some_and(Value::is_array) {
+                        vec![index]
+                    } else {
+                        vec![]
+                    }),
+                    ComponentDocument {
+                        portable,
+                        origin: format!("plugin.json#hooks[{index}]"),
+                        value,
+                    },
+                )
             })
             .collect(),
         Source::Paths(paths) => paths
@@ -340,18 +401,26 @@ pub(crate) fn discover(
                         Ok(value)
                     });
                 match value {
-                    Ok(value) => Some(ComponentDocument {
-                        portable,
-                        origin,
-                        value,
-                    }),
+                    Ok(value) => Some((
+                        DocumentSource::Path(origin.clone()),
+                        ComponentDocument {
+                            portable,
+                            origin,
+                            value,
+                        },
+                    )),
                     Err(error) => {
+                        rejected.push(DocumentSource::Path(origin.clone()));
                         diagnostics.push(format!("hooks: {origin}: {error}"));
                         None
                     }
                 }
             })
             .collect(),
+    };
+    DocumentSelection {
+        documents,
+        rejected,
     }
 }
 

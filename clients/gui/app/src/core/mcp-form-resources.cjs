@@ -79,7 +79,7 @@ class McpFormResources {
           projectId: owner.projectId, requestId: selection.stage.requestId });
         if (!receipt.confirmed) throw new Error('Upload outcome unknown');
         this.unsettled.delete(key);
-        if (!receipt.accepted) throw new Error('Upload failed');
+        if (!receipt.accepted || receipt.status === 'failed') throw new Error(receipt.message ?? 'Upload failed');
         result = receipt.result;
       }
       const { prepared, directory, chosen } = selection;

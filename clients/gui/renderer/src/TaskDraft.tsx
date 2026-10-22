@@ -15,6 +15,23 @@ export function taskFrequency(seconds?: number) {
   }
   return `每 ${seconds} 秒`;
 }
+export function triggerExplanation(decision?: Data) {
+  if (decision?.outcome?.kind === "missedWindow") return `已超过允许的延迟，跳过 ${decision.dueCount} 次计划执行。`;
+  if (decision?.outcome?.kind === "skippedOverlap") return `前次运行未结束，跳过 ${decision.dueCount} 次计划执行。`;
+  if (decision?.outcome?.kind === "admitted" && decision.dueCount > 1) return `已将 ${decision.dueCount} 次待执行计划合并为一次，保留最早计划时间。`;
+  return decision?.outcome?.kind === "admitted" ? "已按计划受理本次执行。" : "";
+}
+function SchedulePreview({ value }: { value?: Data }) {
+  const { t } = useI18n();
+  if (!value) return null;
+  const policy = value.schedule.misfire;
+  return <section aria-label={t("operations.schedulePreview")} className="task-plan-summary">
+    <p>{t("operations.upcoming")}{value.timeZone}</p>
+    <ol>{value.occurrences.map((item: Data) => <li key={item.at}><time dateTime={item.localTime}>{item.localTime.slice(0,16).replace("T"," ")}</time></li>)}</ol>
+    <p>{policy.kind === "skip" ? policy.maxLatenessSeconds === 300 ? t("operations.skipFiveMinutes") : t("operations.lateSeconds", { seconds: policy.maxLatenessSeconds }) : t("operations.coalesceMissed")}</p>
+    {value.warnings.map((warning: string) => <p key={warning}>{({missingMonthDaySkipped:"不存在的日期已跳过。",dstGapSkipped:"夏令时跳过的当地时间不会执行。",dstFoldEarlier:"重复的当地时间仅在较早时刻执行一次。"} as Record<string,string>)[warning] ?? warning}</p>)}
+  </section>;
+}
 export type TaskConversationRenderer = (project: Data, thread: Data, beforeTurns?: ReactNode, options?: {
   afterTurns?: ReactNode; embedded?: boolean; readOnly?: boolean;
 }) => ReactNode;
@@ -129,7 +146,7 @@ export function TaskDraft({ projects, initialProjectId, task, action, disabled, 
         const projectId = prepared.ownerId!;
         let result;
         try { result = await action("manage", { projectId, operation: "taskDraftStart", draftId: draft.draftId,
-          timeZone: task?.schedule?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+          timeZone: task?.scheduleV2?.rule?.timeZone ?? task?.schedule?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
           ...(prepared.location.cwd ? { cwd: prepared.location.cwd } : {}), ...(task ? { taskId: task.id } : {}) }); }
         catch (cause) {
           if ((cause as Error & { submissionUnknown?: boolean }).submissionUnknown) mergeDraft(storageKey, draft, { pending: "start" });
@@ -235,7 +252,7 @@ export function TaskDraft({ projects, initialProjectId, task, action, disabled, 
       localStorage.setItem(key, retainedDraft(storageKey, current.current).text ?? ""); persist({ text: undefined });
       window.dispatchEvent(new CustomEvent("areal-draft-change", { detail: key }));
     }}>用保留输入替换会话草稿</Button></p>}
-    {owner && thread && <div className="task-conversation-body"><section className="task-chat-pane">{renderConversation(owner, thread, empty ? welcome : undefined, { afterTurns: task && project ? <TaskRunConversations project={project} task={task} action={action} disabled={disabled} renderConversation={renderConversation} /> : undefined })}</section>
+    {owner && thread && <div className="task-conversation-body"><section className="task-chat-pane">{renderConversation(owner, thread, empty ? welcome : undefined, { afterTurns: <><SchedulePreview value={view?.preview} />{task?.lastTriggerDecision && <p role="status" className="task-plan-note">{triggerExplanation(task.lastTriggerDecision)}</p>}{task && project && <TaskRunConversations project={project} task={task} action={action} disabled={disabled} renderConversation={renderConversation} />}</> })}</section>
     </div>}
   </main>;
 }

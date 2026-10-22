@@ -74,6 +74,10 @@ fn tool_journal_projection_preserves_pinned_upstream_item_schemas() {
             content_items: Some(vec![json!({"type":"inputText","text":"tool result"})]),
             call_id: "call".into(),
             execution: Box::new(ToolExecution {
+                permission_review: None,
+                permission_scopes: Vec::new(),
+                page: None,
+                interactive_result: None,
                 result_snapshot: None,
                 file_before: None,
                 output_projection: None,
@@ -559,9 +563,22 @@ async fn ordinary_admission_capabilities_and_rpc_errors_are_explicit() {
         "threadStartAdmissionGuard",
         "taskPauseRunGuard",
         "atomicObserveOwnership",
+        "operationOutcomes",
+        "taskRequestReceipts",
+        "atomicConfigureReceipt",
     ] {
         assert_eq!(caps["result"]["features"][feature], true, "{caps}");
     }
+    let semantics = caps["result"]["methodSemantics"].as_object().unwrap();
+    for method in caps["result"]["methods"].as_array().unwrap() {
+        assert!(
+            semantics.contains_key(method.as_str().unwrap()),
+            "missing semantics: {method}"
+        );
+    }
+    assert_eq!(semantics["areal/plugin/read"]["effect"], "read");
+    assert_eq!(semantics["areal/task/subscribe"]["effect"], "subscription");
+    assert_eq!(semantics["areal/thread/configure"]["receipt"], "thread");
     let (invalid, _) = call(
         &mut socket,
         3,
@@ -578,6 +595,49 @@ async fn ordinary_admission_capabilities_and_rpc_errors_are_explicit() {
     )
     .await;
     let id = created["result"]["thread"]["id"].as_str().unwrap();
+    let (malformed, _) = call(
+        &mut socket,
+        100,
+        "areal/thread/configure",
+        json!({"threadId":id,"requestId":"bad","unexpected":true}),
+    )
+    .await;
+    assert_eq!(malformed["error"]["data"]["outcome"]["kind"], "rejected");
+    let (stale_config, _) = call(
+        &mut socket,
+        103,
+        "areal/thread/configure",
+        json!({"threadId":id,"requestId":"stale-config","expectedRevision":999,"options":{}}),
+    )
+    .await;
+    assert_eq!(stale_config["error"]["code"], -32009);
+    assert_eq!(stale_config["error"]["data"]["outcome"]["kind"], "rejected");
+    let (failed, _) = call(
+        &mut socket,
+        101,
+        "areal/plan/update",
+        json!({"threadId":id,"requestId":"failed-plan","expectedRevision":999,"steps":[]}),
+    )
+    .await;
+    assert_eq!(
+        failed["error"]["data"]["outcome"]["kind"], "admitted",
+        "{failed}"
+    );
+    assert_eq!(
+        failed["error"]["data"]["outcome"]["operation"]["requestId"],
+        "failed-plan"
+    );
+    let (receipt, _) = call(
+        &mut socket,
+        102,
+        "areal/request/read",
+        json!({"threadId":id,"requestId":"failed-plan"}),
+    )
+    .await;
+    assert_eq!(
+        receipt["result"]["data"][0]["status"], "failed",
+        "{receipt}"
+    );
     let (observed, _) = call(
         &mut socket,
         8,
@@ -589,16 +649,57 @@ async fn ordinary_admission_capabilities_and_rpc_errors_are_explicit() {
     let req = json!({"requestId":"stale","threadId":id,"input":[{"type":"text","text":"hello"}],"admissionGuard":{"configRevision":2,"ordinarySession":true}});
     let (stale, _) = call(&mut socket, 5, "areal/turn/start", req.clone()).await;
     assert_eq!(stale["error"]["code"], -32009, "{stale}");
+    assert_eq!(
+        stale["error"]["data"]["outcome"]["kind"], "rejected",
+        "{stale}"
+    );
     let mut req = req;
     req["admissionGuard"]["configRevision"] = json!(1);
     req["requestId"] = json!("false-send");
     req["admissionGuard"]["ordinarySession"] = json!(false);
     let (invalid, _) = call(&mut socket, 6, "areal/turn/start", req.clone()).await;
     assert_eq!(invalid["error"]["code"], -32602, "{invalid}");
+    assert_eq!(
+        invalid["error"]["data"]["outcome"]["kind"], "rejected",
+        "{invalid}"
+    );
     req["admissionGuard"]["ordinarySession"] = json!(true);
     req["requestId"] = json!("not-enqueue");
     let (invalid, _) = call(&mut socket, 7, "areal/turn/enqueue", req).await;
     assert_eq!(invalid["error"]["code"], -32602, "{invalid}");
+    assert_eq!(
+        invalid["error"]["data"]["outcome"]["kind"], "rejected",
+        "{invalid}"
+    );
+    let (invalid, _) = call(
+        &mut socket,
+        104,
+        "areal/turn/submit",
+        json!({
+            "threadId": id, "requestId": "invalid-input", "expectedConfigRevision": 1,
+            "intent": {"type": "message", "input": []}
+        }),
+    )
+    .await;
+    assert_eq!(invalid["error"]["code"], -32602, "{invalid}");
+    assert_eq!(
+        invalid["error"]["data"]["outcome"]["kind"], "rejected",
+        "{invalid}"
+    );
+    let (receipt, _) = call(
+        &mut socket,
+        105,
+        "areal/request/read",
+        json!({
+            "threadId": id, "requestId": "invalid-input"
+        }),
+    )
+    .await;
+    assert_eq!(
+        receipt["result"]["data"],
+        json!([]),
+        "rejection must not create an admission receipt: {receipt}"
+    );
     assert!(engine.read(id, true).await.unwrap().turns.is_empty());
     let turn = engine
         .start(
@@ -668,5 +769,357 @@ fn interrupt_schema_keeps_guard_optional_and_strict() {
     assert!(!validator.is_valid(&json!({"threadId":"thread","turnId":"original","admissionGuard":{"ordinarySession":true,"configRevision":1}})));
     assert!(
         !validator.is_valid(&json!({"threadId":"thread","turnId":"original","requestId":"new"}))
+    );
+}
+
+#[tokio::test]
+async fn task_request_lookup_filters_shared_principal_identity_by_thread_visibility() {
+    use areal_app_server::auth::{Authentication, Permission, Principal};
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let dir = tempfile::tempdir().unwrap();
+    let engine = Engine::open(dir.path(), Arc::new(TextModel), Limits::default()).unwrap();
+    let visible = engine.create("/fixture".into()).await.unwrap();
+    let hidden = engine.create("/fixture".into()).await.unwrap();
+    let mut tasks = Vec::new();
+    for thread in [&visible, &hidden] {
+        tasks.push(engine.task_create("shared-owner".into(), serde_json::from_value(json!({
+            "requestId":"same-request","mode":"foreground","threadId":thread.id,"objective":"lookup fixture","tokenBudget":100,"maxTurns":1,"maxActiveSeconds":60
+        })).unwrap()).await);
+    }
+    assert!(tasks[0].is_ok());
+    assert!(
+        tasks[1].is_err(),
+        "same task request ID must reject a changed payload"
+    );
+    engine.task_create("shared-owner".into(), serde_json::from_value(json!({
+        "requestId":"hidden-request","mode":"foreground","threadId":hidden.id,"objective":"hidden fixture","tokenBudget":100,"maxTurns":1,"maxActiveSeconds":60
+    })).unwrap()).await.unwrap();
+    engine
+        .management_submission(
+            "shared-owner".into(),
+            "project-request".into(),
+            "areal/provider/upsert".into(),
+            json!({}),
+            |_| async { json!({"result":{"secret":"project-only"}}) },
+        )
+        .await
+        .unwrap();
+    engine.shutdown().await;
+    drop(engine);
+    let engine = Engine::open(dir.path(), Arc::new(TextModel), Limits::default()).unwrap();
+    let token = "receipt-observer-0000000000000000000000000";
+    let other_token = "receipt-other-0000000000000000000000000000";
+    let auth = Authentication {
+        version: 1,
+        principals: vec![
+            Principal {
+                id: "shared-owner".into(),
+                token: token.into(),
+                permissions: [Permission::Observe].into(),
+                thread_ids: Some([visible.id.clone()].into()),
+            },
+            Principal {
+                id: "other-owner".into(),
+                token: other_token.into(),
+                permissions: [Permission::Observe].into(),
+                thread_ids: Some([visible.id.clone()].into()),
+            },
+        ],
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let stop = CancellationToken::new();
+    let server = tokio::spawn(areal_app_server::serve_authenticated(
+        listener,
+        engine.clone(),
+        stop.clone(),
+        Some(auth),
+    ));
+    let mut request = format!("ws://{addr}").into_client_request().unwrap();
+    request
+        .headers_mut()
+        .insert("Authorization", format!("Bearer {token}").parse().unwrap());
+    let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    call(
+        &mut socket,
+        1,
+        "initialize",
+        json!({"clientInfo":{"name":"receipts","version":"1"}}),
+    )
+    .await;
+    socket
+        .send(Wire::Text(
+            json!({"method":"initialized"}).to_string().into(),
+        ))
+        .await
+        .unwrap();
+    let (found, _) = call(
+        &mut socket,
+        2,
+        "areal/request/read",
+        json!({"requestId":"same-request"}),
+    )
+    .await;
+    assert_eq!(
+        found["result"]["data"][0]["operation"]["method"], "areal/task/create",
+        "{found}"
+    );
+    assert_eq!(found["result"]["data"].as_array().unwrap().len(), 1);
+    let receipt = &found["result"]["data"][0];
+    assert_eq!(receipt["identity"], "shared-owner");
+    assert_eq!(receipt["status"], "completed");
+    assert_eq!(receipt["result"], *tasks[0].as_ref().unwrap());
+    assert_eq!(
+        receipt["operation"]["target"],
+        json!({"kind":"task","taskId":tasks[0].as_ref().unwrap()["id"]})
+    );
+    let (bound_visible, _) = call(
+        &mut socket,
+        6,
+        "areal/request/read",
+        json!({"threadId":visible.id,"requestId":"same-request"}),
+    )
+    .await;
+    assert_eq!(bound_visible["result"]["data"], found["result"]["data"]);
+    let (hidden, _) = call(
+        &mut socket,
+        3,
+        "areal/request/read",
+        json!({"requestId":"hidden-request"}),
+    )
+    .await;
+    assert_eq!(hidden["result"]["data"], json!([]), "{hidden}");
+    let (bound, _) = call(
+        &mut socket,
+        4,
+        "areal/request/read",
+        json!({"threadId":visible.id,"requestId":"hidden-request"}),
+    )
+    .await;
+    assert_eq!(bound["result"]["data"], json!([]), "{bound}");
+    let (project, _) = call(
+        &mut socket,
+        5,
+        "areal/request/read",
+        json!({"threadId":visible.id,"requestId":"project-request"}),
+    )
+    .await;
+    assert_eq!(project["result"]["data"], json!([]), "{project}");
+    let mut other_request = format!("ws://{addr}").into_client_request().unwrap();
+    other_request.headers_mut().insert(
+        "Authorization",
+        format!("Bearer {other_token}").parse().unwrap(),
+    );
+    let (mut other_socket, _) = tokio_tungstenite::connect_async(other_request)
+        .await
+        .unwrap();
+    call(
+        &mut other_socket,
+        1,
+        "initialize",
+        json!({"clientInfo":{"name":"other-receipts","version":"1"}}),
+    )
+    .await;
+    other_socket
+        .send(Wire::Text(
+            json!({"method":"initialized"}).to_string().into(),
+        ))
+        .await
+        .unwrap();
+    let (other_owner, _) = call(
+        &mut other_socket,
+        2,
+        "areal/request/read",
+        json!({"requestId":"same-request"}),
+    )
+    .await;
+    assert_eq!(other_owner["result"]["data"], json!([]), "{other_owner}");
+    other_socket.close(None).await.unwrap();
+    socket.close(None).await.unwrap();
+    stop.cancel();
+    server.await.unwrap().unwrap();
+    engine.shutdown().await;
+}
+
+#[tokio::test]
+async fn configure_preserves_legacy_management_receipts_after_reopen() {
+    use sha2::{Digest, Sha256};
+    let hash = |value: &Value| format!("{:x}", Sha256::digest(serde_json::to_vec(value).unwrap()));
+    let dir = tempfile::tempdir().unwrap();
+    let engine = Engine::open(dir.path(), Arc::new(TextModel), Limits::default()).unwrap();
+    let completed_thread = engine.create("/fixture".into()).await.unwrap();
+    let unknown_thread = engine.create("/fixture".into()).await.unwrap();
+    let fresh_thread = engine.create("/fixture".into()).await.unwrap();
+    let completed_params = json!({"threadId":completed_thread.id,"expectedRevision":1,"options":{"appendInstructions":"legacy-config"}});
+    let unknown_params = json!({"threadId":unknown_thread.id,"expectedRevision":1,"options":{"appendInstructions":"must-not-replay"}});
+    let fresh_params = json!({"threadId":fresh_thread.id,"expectedRevision":1,"options":{"appendInstructions":"fresh-config"}});
+    let original = engine
+        .configure_thread(serde_json::from_value(completed_params.clone()).unwrap())
+        .await
+        .unwrap();
+    let mut journal = serde_json::Map::new();
+    for (identity, method, request_id, params, state, response) in [
+        (
+            "trusted-embedded-host",
+            "areal/thread/configure",
+            "legacy-completed",
+            &completed_params,
+            "completed",
+            json!({"result":original}),
+        ),
+        (
+            "trusted-embedded-host",
+            "areal/thread/configure",
+            "legacy-unknown",
+            &unknown_params,
+            "accepted",
+            Value::Null,
+        ),
+        (
+            "other-owner",
+            "areal/thread/configure",
+            "fresh-configure",
+            &fresh_params,
+            "completed",
+            json!({"result":"wrong-owner"}),
+        ),
+        (
+            "trusted-embedded-host",
+            "areal/plan/update",
+            "fresh-configure",
+            &fresh_params,
+            "completed",
+            json!({"result":"wrong-method"}),
+        ),
+    ] {
+        journal.insert(hash(&json!([identity, method, request_id])), json!({
+            "identity":identity,"requestId":request_id,"method":method,"digest":hash(params),"state":state,"response":response
+        }));
+    }
+    engine.shutdown().await;
+    drop(engine);
+    let journal_path = dir.path().join("desktop/submissions.json");
+    std::fs::create_dir_all(journal_path.parent().unwrap()).unwrap();
+    std::fs::write(&journal_path, serde_json::to_vec(&journal).unwrap()).unwrap();
+    let engine = Engine::open(dir.path(), Arc::new(TextModel), Limits::default()).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let stop = CancellationToken::new();
+    let server = tokio::spawn(areal_app_server::serve(
+        listener,
+        engine.clone(),
+        stop.clone(),
+    ));
+    let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{addr}"))
+        .await
+        .unwrap();
+    call(
+        &mut socket,
+        1,
+        "initialize",
+        json!({"clientInfo":{"name":"legacy-configure","version":"1"}}),
+    )
+    .await;
+    socket
+        .send(Wire::Text(
+            json!({"method":"initialized"}).to_string().into(),
+        ))
+        .await
+        .unwrap();
+    let mut completed_request = completed_params.clone();
+    completed_request["requestId"] = json!("legacy-completed");
+    let (completed, _) = call(
+        &mut socket,
+        2,
+        "areal/thread/configure",
+        completed_request.clone(),
+    )
+    .await;
+    completed_request["options"]["appendInstructions"] = json!("changed");
+    let (conflict, _) = call(&mut socket, 3, "areal/thread/configure", completed_request).await;
+    let mut unknown_request = unknown_params;
+    unknown_request["requestId"] = json!("legacy-unknown");
+    let (unknown, _) = call(
+        &mut socket,
+        4,
+        "areal/thread/configure",
+        unknown_request.clone(),
+    )
+    .await;
+    let (unknown_repeat, _) = call(&mut socket, 5, "areal/thread/configure", unknown_request).await;
+    let (unknown_config, _) = call(
+        &mut socket,
+        6,
+        "areal/thread/inspect",
+        json!({"threadId":unknown_thread.id}),
+    )
+    .await;
+    let mut fresh_request = fresh_params;
+    fresh_request["requestId"] = json!("fresh-configure");
+    let (fresh, _) = call(&mut socket, 7, "areal/thread/configure", fresh_request).await;
+    let (archived, _) = call(
+        &mut socket,
+        8,
+        "areal/thread/archive",
+        json!({"threadId":fresh_thread.id,"requestId":"archive-fresh"}),
+    )
+    .await;
+    let (archive_receipt, _) = call(
+        &mut socket,
+        9,
+        "areal/request/read",
+        json!({"threadId":fresh_thread.id,"requestId":"archive-fresh"}),
+    )
+    .await;
+    let (malformed, _) = call(
+        &mut socket,
+        10,
+        "areal/thread/configure",
+        json!({"threadId":unknown_thread.id,"expectedRevision":1,"requestId":7}),
+    )
+    .await;
+    socket.close(None).await.unwrap();
+    stop.cancel();
+    server.await.unwrap().unwrap();
+    engine.shutdown().await;
+    assert_eq!(
+        completed["result"],
+        json!(original),
+        "completed={completed}; unknown={unknown}; state={unknown_config}"
+    );
+    assert_eq!(conflict["error"]["code"], -32009, "{conflict}");
+    assert_eq!(conflict["error"]["data"]["outcome"]["kind"], "rejected");
+    assert_eq!(
+        malformed["error"]["data"]["outcome"]["kind"], "rejected",
+        "{malformed}"
+    );
+    assert_eq!(
+        unknown["error"]["data"]["outcome"]["kind"], "admitted",
+        "{unknown}"
+    );
+    assert_eq!(
+        unknown["error"]["data"]["outcome"]["operation"]["target"]["threadId"],
+        unknown_thread.id
+    );
+    assert_eq!(
+        unknown["error"]["data"]["outcome"]["operation"]["requestId"],
+        "legacy-unknown"
+    );
+    assert_eq!(unknown_repeat["error"], unknown["error"]);
+    assert_eq!(
+        unknown_config["result"]["configuration"]["revision"], 1,
+        "{unknown_config}"
+    );
+    assert_eq!(fresh["result"]["revision"], 2, "{fresh}");
+    assert_eq!(archived["result"]["archived"], true, "{archived}");
+    assert_eq!(
+        archive_receipt["result"]["data"][0]["result"], archived["result"],
+        "{archive_receipt}"
+    );
+    let saved: Value = serde_json::from_slice(&std::fs::read(journal_path).unwrap()).unwrap();
+    assert_eq!(
+        saved.as_object().unwrap().len(),
+        journal.len() + 1,
+        "new configure must use the Thread receipt store; only archive adds a management record"
     );
 }

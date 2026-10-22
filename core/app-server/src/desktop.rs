@@ -2,78 +2,78 @@
 use super::*;
 use areal_protocol::desktop::*;
 
-pub(crate) const METHODS: &[&str] = &[
-    "areal/side/start",
-    "areal/side/context/read",
-    "areal/thread/fork",
-    "areal/conversation/history",
-    "areal/conversation/list",
-    "areal/conversation/unarchive",
-    "areal/permissions/read",
-    "areal/permissions/forget",
-    "areal/goal/get",
-    "areal/goal/create",
-    "areal/goal/update",
-    "areal/goal/pause",
-    "areal/goal/resume",
-    "areal/goal/clear",
-    "areal/provider/probe",
-    "areal/workflow/list",
-    "areal/workflow/read",
-    "areal/workflow/start",
-    "areal/thread/archive",
-    "areal/blob/release",
-    "areal/server/gc",
-    "areal/context/read",
-    "areal/context/compact",
-    "areal/agent/wait",
-    "areal/server/status",
-    "areal/server/drain",
-    "areal/model/list",
-    "areal/mcp/list",
-    "areal/mcp/read",
-    "areal/mcp/configure",
-    "areal/mcp/connect",
-    "areal/mcp/disconnect",
-    "areal/plugin/list",
-    "areal/plugin/read",
-    "areal/plugin/importArchive",
-    "areal/plugin/install",
-    "areal/plugin/configure",
-    "areal/plugin/uninstall",
-    "areal/plugin/setup",
-    "areal/marketplace/add",
-    "areal/marketplace/addGit",
-    "areal/marketplace/remove",
-    "areal/marketplace/update",
-    "areal/plugin/resolve",
-    "areal/thread/start",
-    "areal/thread/configure",
-    "areal/thread/inspect",
-    "areal/profile/list",
-    "areal/profile/read",
-    "areal/skill/list",
-    "areal/skill/read",
-    "areal/plan/read",
-    "areal/plan/update",
-    "areal/interaction/list",
-    "areal/interaction/respond",
-    "areal/provider/list",
-    "areal/provider/read",
-    "areal/provider/upsert",
-    "areal/provider/remove",
-    "areal/turn/start",
-    "areal/turn/enqueue",
-    "areal/turn/submit",
-    "areal/queue/list",
-    "areal/queue/steer",
-    "areal/queue/update",
-    "areal/queue/remove",
-    "areal/queue/reorder",
-    "areal/queue/pause",
-    "areal/queue/resume",
-    "areal/request/read",
-];
+areal_protocol::method_catalog! {
+    "areal/side/start" => Mutation, Thread;
+    "areal/side/context/read" => Read;
+    "areal/thread/fork" => Mutation, Thread;
+    "areal/conversation/history" => Read;
+    "areal/conversation/list" => Read;
+    "areal/conversation/unarchive" => Mutation, Management;
+    "areal/permissions/read" => Read;
+    "areal/permissions/forget" => Mutation;
+    "areal/goal/get" => Read;
+    "areal/goal/create" => Mutation;
+    "areal/goal/update" => Mutation;
+    "areal/goal/pause" => Mutation;
+    "areal/goal/resume" => Mutation;
+    "areal/goal/clear" => Mutation;
+    "areal/provider/probe" => Mutation;
+    "areal/workflow/list" => Read;
+    "areal/workflow/read" => Read;
+    "areal/workflow/start" => Mutation;
+    "areal/thread/archive" => Mutation, Management;
+    "areal/blob/release" => Mutation, Management;
+    "areal/server/gc" => Mutation;
+    "areal/context/read" => Read;
+    "areal/context/compact" => Mutation;
+    "areal/agent/wait" => Read;
+    "areal/server/status" => Read;
+    "areal/server/drain" => Mutation;
+    "areal/model/list" => Read;
+    "areal/mcp/list" => Read;
+    "areal/mcp/read" => Read;
+    "areal/mcp/configure" => Mutation, Management;
+    "areal/mcp/connect" => Mutation, Management;
+    "areal/mcp/disconnect" => Mutation, Management;
+    "areal/plugin/list" => Read;
+    "areal/plugin/read" => Read;
+    "areal/plugin/importArchive" => Mutation, Management;
+    "areal/plugin/install" => Mutation, Management;
+    "areal/plugin/configure" => Mutation, Management;
+    "areal/plugin/uninstall" => Mutation, Management;
+    "areal/plugin/setup" => Mutation, Management;
+    "areal/marketplace/add" => Mutation, Management;
+    "areal/marketplace/addGit" => Mutation, Management;
+    "areal/marketplace/remove" => Mutation, Management;
+    "areal/marketplace/update" => Mutation, Management;
+    "areal/plugin/resolve" => Mutation, Management;
+    "areal/thread/start" => Mutation, Thread;
+    "areal/thread/configure" => Mutation, Thread;
+    "areal/thread/inspect" => Read;
+    "areal/profile/list" => Read;
+    "areal/profile/read" => Read;
+    "areal/skill/list" => Read;
+    "areal/skill/read" => Read;
+    "areal/plan/read" => Read;
+    "areal/plan/update" => Mutation, Management;
+    "areal/interaction/list" => Read;
+    "areal/interaction/respond" => Mutation;
+    "areal/provider/list" => Read;
+    "areal/provider/read" => Read;
+    "areal/provider/upsert" => Mutation, Management;
+    "areal/provider/remove" => Mutation, Management;
+    "areal/turn/start" => Mutation, Thread;
+    "areal/turn/enqueue" => Mutation, Thread;
+    "areal/turn/submit" => Mutation, Thread;
+    "areal/queue/list" => Read;
+    "areal/queue/steer" => Mutation, Thread;
+    "areal/queue/update" => Mutation, Management;
+    "areal/queue/remove" => Mutation, Management;
+    "areal/queue/reorder" => Mutation, Management;
+    "areal/queue/pause" => Mutation, Management;
+    "areal/queue/resume" => Mutation, Management;
+    "areal/request/read" => Read;
+}
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SkillList {
@@ -148,6 +148,33 @@ fn plugin_catalog_mutation_result(catalog: Value) -> areal_engine::Result<Value>
     .map_err(|error| Error::Invalid(error.to_string()))
 }
 
+pub(crate) async fn dispatch_with_budget(
+    engine: &Arc<Engine>,
+    identity: &str,
+    method: &str,
+    params: Value,
+    overhead: usize,
+) -> Result<Value, RpcError> {
+    if method == "areal/conversation/history" && params["view"] == "own" {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        struct OwnHistory {
+            thread_id: String,
+            view: String,
+            cursor: Option<String>,
+            max_bytes: Option<usize>,
+        }
+        let request: OwnHistory = parse(params)?;
+        debug_assert_eq!(request.view, "own");
+        let budget = super::bounded_history_budget(request.max_bytes, overhead)?;
+        return engine
+            .own_history(identity, &request.thread_id, request.cursor, budget)
+            .await
+            .map_err(map_error);
+    }
+    dispatch(engine, identity, method, params).await
+}
+
 pub(crate) async fn dispatch(
     engine: &Arc<Engine>,
     identity: &str,
@@ -156,10 +183,27 @@ pub(crate) async fn dispatch(
 ) -> Result<Value, RpcError> {
     #[cfg(test)]
     crate::rpc_isolation_tests::pause(&mut params).await;
+    if method == "areal/thread/configure" && params.get("requestId").is_some() {
+        let request = params["requestId"].as_str().ok_or_else(|| {
+            rejected(
+                RpcError::invalid("requestId must be a string"),
+                "INVALID_REQUEST",
+            )
+        })?;
+        let mut legacy_params = params.clone();
+        // 旧日志摘要来自移除 requestId 的原始 JSON，重新序列化配置会改变缺省字段。
+        legacy_params.as_object_mut().unwrap().remove("requestId");
+        if let Some(reply) = engine
+            .management_submission_result(identity, request, method, &legacy_params)
+            .await
+            .map_err(map_error)?
+        {
+            return management_reply(reply);
+        }
+    }
     let mutation = matches!(
         method,
-        "areal/thread/configure"
-            | "areal/plan/update"
+        "areal/plan/update"
             | "areal/provider/upsert"
             | "areal/provider/remove"
             | "areal/mcp/configure"
@@ -234,19 +278,23 @@ pub(crate) async fn dispatch(
             )
             .await
             .map_err(map_error)?;
-        if let Some(error) = reply.get("error") {
-            return Err(RpcError {
-                code: error["code"].as_i64().unwrap_or(-32602),
-                message: error["message"]
-                    .as_str()
-                    .unwrap_or("management operation failed")
-                    .into(),
-                data: error.get("data").cloned(),
-            });
-        }
-        return Ok(reply["result"].clone());
+        return management_reply(reply);
     }
     dispatch_inner(engine, identity, method, params).await
+}
+
+fn management_reply(reply: Value) -> Result<Value, RpcError> {
+    if let Some(error) = reply.get("error") {
+        return Err(RpcError {
+            code: error["code"].as_i64().unwrap_or(-32602),
+            message: error["message"]
+                .as_str()
+                .unwrap_or("management operation failed")
+                .into(),
+            data: error.get("data").cloned(),
+        });
+    }
+    Ok(reply["result"].clone())
 }
 
 async fn dispatch_inner(
@@ -269,11 +317,14 @@ async fn dispatch_inner(
                     Ok(json!({"thread":thread,"turn":turn,"requestId":request_id}))
                 }
                 Err(Error::Conflict) => {
-                    return Err(RpcError {
-                        code: -32010,
-                        message: "request key conflicts with an existing Side".into(),
-                        data: Some(json!({"reason":"REQUEST_CONFLICT","retryable":false})),
-                    });
+                    return Err(rejected(
+                        RpcError {
+                            code: -32010,
+                            message: "request key conflicts with an existing Side".into(),
+                            data: Some(json!({"reason":"REQUEST_CONFLICT","retryable":false})),
+                        },
+                        "REQUEST_REJECTED",
+                    ));
                 }
                 Err(Error::Invalid(reason))
                     if matches!(
@@ -289,11 +340,14 @@ async fn dispatch_inner(
                             | "SELECTION_TOO_LARGE"
                     ) =>
                 {
-                    return Err(RpcError {
-                        code: -32010,
-                        message: reason.clone(),
-                        data: Some(json!({"reason":reason,"retryable":false})),
-                    });
+                    return Err(rejected(
+                        RpcError {
+                            code: -32010,
+                            message: reason.clone(),
+                            data: Some(json!({"reason":reason,"retryable":false})),
+                        },
+                        "REQUEST_REJECTED",
+                    ));
                 }
                 Err(error) => return Err(map_error(error)),
             }
@@ -324,11 +378,14 @@ async fn dispatch_inner(
                     Ok(json!({"thread":thread,"requestId":request_id}))
                 }
                 Err(Error::Conflict) => {
-                    return Err(RpcError {
-                        code: -32010,
-                        message: "request key conflicts with an existing Fork".into(),
-                        data: Some(json!({"reason":"REQUEST_CONFLICT","retryable":false})),
-                    });
+                    return Err(rejected(
+                        RpcError {
+                            code: -32010,
+                            message: "request key conflicts with an existing Fork".into(),
+                            data: Some(json!({"reason":"REQUEST_CONFLICT","retryable":false})),
+                        },
+                        "REQUEST_REJECTED",
+                    ));
                 }
                 Err(Error::Invalid(reason))
                     if matches!(
@@ -343,11 +400,14 @@ async fn dispatch_inner(
                             | "MODEL_MODALITY_INCOMPATIBLE"
                     ) =>
                 {
-                    return Err(RpcError {
-                        code: -32010,
-                        message: reason.clone(),
-                        data: Some(json!({"reason":reason,"retryable":false})),
-                    });
+                    return Err(rejected(
+                        RpcError {
+                            code: -32010,
+                            message: reason.clone(),
+                            data: Some(json!({"reason":reason,"retryable":false})),
+                        },
+                        "REQUEST_REJECTED",
+                    ));
                 }
                 Err(Error::Storage(message))
                     if message.contains("fork snapshot exceeds history limit")
@@ -754,8 +814,9 @@ async fn dispatch_inner(
         }
         "areal/plan/update" => engine.update_plan(parse(params)?).await.map(|p| json!(p)),
         "areal/thread/configure" => engine
-            .configure_thread(parse(params)?)
+            .configure_thread_as(identity.into(), parse(params)?)
             .await
+            .map_err(atomic_mutation_error)
             .map(|c| json!(c)),
         "areal/thread/inspect" => {
             let p: ThreadId = parse(params)?;
@@ -803,16 +864,20 @@ async fn dispatch_inner(
                 .await
                 .map(|()| json!({}))
         }
-        "areal/turn/start" | "areal/turn/enqueue" => {
-            engine
-                .start_durable(
-                    identity.into(),
-                    parse(params)?,
-                    method == "areal/turn/enqueue",
-                )
-                .await
-        }
-        "areal/turn/submit" => engine.submit_turn(identity.into(), parse(params)?).await,
+        // These owners validate before committing the Turn/queue and receipt together.
+        // Storage and admitted outcome errors must retain their uncertainty.
+        "areal/turn/start" | "areal/turn/enqueue" => engine
+            .start_durable(
+                identity.into(),
+                parse(params)?,
+                method == "areal/turn/enqueue",
+            )
+            .await
+            .map_err(atomic_mutation_error),
+        "areal/turn/submit" => engine
+            .submit_turn(identity.into(), parse(params)?)
+            .await
+            .map_err(atomic_mutation_error),
         "areal/queue/steer" => engine.steer_queue(identity.into(), parse(params)?).await,
         "areal/queue/list" => {
             let p: ThreadId = parse(params)?;

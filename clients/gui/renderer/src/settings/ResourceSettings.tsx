@@ -236,7 +236,7 @@ export function McpSettings({
                   <div>
                     <strong>{item.serverId}</strong>
                     <p>{pluginSourceLabel(item.owner, t)}</p>
-                    <p>{item.owner.enabled ? t("settings.resourceSettings.enabledInCurrentProject") : t("settings.resourceSettings.disabledInCurrentProject")}</p>
+                    <p>{item.owner.compatibilityBlocked ? t("operations.componentIncompatible") : item.owner.enabled ? t("settings.resourceSettings.enabledInCurrentProject") : t("settings.resourceSettings.disabledInCurrentProject")}</p>
                   </div>
                   <SettingsBadge>{pluginMcpStateLabel(item.state, t)}</SettingsBadge>
                   <Button variant="outline" onClick={() => onManagePlugin?.(item.owner.pluginId)}>{t("settings.resourceSettings.managePlugin")}</Button>

@@ -1,6 +1,7 @@
 //! 已压缩历史按不可变分段追加；先同步分段，再提交引用它的当前状态快照。
 use super::*;
 use areal_protocol::{HistoryArchive, Turn};
+mod own;
 
 const MAX_SEGMENT_BYTES: u64 = 64 * 1024 * 1024;
 

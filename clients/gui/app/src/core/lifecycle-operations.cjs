@@ -4,7 +4,7 @@ const { randomUUID } = require('node:crypto');
 const { mkdir, open, readFile, readdir, rename, rm } = require('node:fs/promises');
 const { join, isAbsolute, resolve } = require('node:path');
 const { isDeepStrictEqual } = require('node:util');
-const { lifecycleCapabilities, requestStop, readStop, detachStoppedProject, readOriginalTurn } = require('./local-service.cjs');
+const { lifecycleCapabilities, requestStop, readStop, detachStoppedProject, readOriginalTurn, readTurnMetadata } = require('./local-service.cjs');
 
 const KINDS = Object.freeze(['stopDesktop', 'updateDesktop', 'stopProject', 'updateProject', 'interruptTurn']);
 const PHASES = new Set(['notAttempted', 'acceptedPending', 'blocked', 'admissionUnconfirmed', 'settlementIncomplete', 'completed']);
@@ -359,20 +359,33 @@ class LifecycleOperations {
     }
   }
 
+  readLiveTurn(project, target, threadId, turnId) {
+    const client = project.client;
+    const assertCurrent = () => {
+      if (this.currentTarget(target) !== project) throw failure('原工作区归属已变化', 'CONFIRMATION_STALE');
+      this.backend.requireConnection(project, client);
+    };
+    return readTurnMetadata(client, threadId, turnId, { assertCurrent,
+      observe: () => this.backend.readObservation(project, threadId, { client, current: () => { assertCurrent(); return true; } }),
+    });
+  }
+
   async interrupt(record, target) {
-    let project;
+    let project, client;
     try {
       project = this.currentTarget(target);
       if (!project.client?.ready || !project.client.capabilities?.methods?.includes('turn/interrupt'))
         throw failure('当前 Core 不支持精确轮次中断', 'LIFECYCLE_UNSUPPORTED');
-      const { thread } = await project.client.request('thread/read', { threadId: record.threadId, includeTurns: true });
-      this.currentTarget(target);
-      if (!thread.turns?.some(turn => turn.id === record.turnId && turn.status === 'inProgress'))
+      client = project.client;
+      const turn = await this.readLiveTurn(project, target, record.threadId, record.turnId);
+      if (turn?.status !== 'inProgress')
         throw failure('原轮次已结束，请刷新聊天状态', 'TURN_NOT_ACTIVE');
     } catch (error) { target.phase = 'blocked'; target.error = this.error(error); return; }
     target.phase = 'acceptedPending'; await this.store(record);
     try {
-      await project.client.request('turn/interrupt', { threadId: record.threadId, turnId: record.turnId });
+      this.currentTarget(target);
+      this.backend.requireConnection(project, client);
+      await client.request('turn/interrupt', { threadId: record.threadId, turnId: record.turnId });
       const deadline = Date.now() + 10000;
       do {
         await this.inspectInterrupt(record, target);
@@ -389,9 +402,7 @@ class LifecycleOperations {
     const project = this.backend.projects.get(target.projectId) ?? this.backend.ownedEngines?.get(target.projectId)?.project;
     let turn;
     if (project?.client?.ready && project.service?.serviceId === target.serviceId && project.service.generation === target.generation) {
-      const { thread } = await project.client.request('thread/read', { threadId: record.threadId, includeTurns: true });
-      this.currentTarget(target);
-      turn = thread.turns?.find(turn => turn.id === record.turnId);
+      turn = await this.readLiveTurn(project, target, record.threadId, record.turnId);
     } else turn = await readOriginalTurn(this.backend, target, record.threadId, record.turnId);
     applyTurnReceipt(record, target, turn);
   }

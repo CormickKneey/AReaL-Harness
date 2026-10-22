@@ -207,7 +207,10 @@ fn walk(
             | "max_response_bytes"
             | "max_tool_buffer_bytes",
         ]
-        | ["network", "stream_idle_timeout_seconds"] => Some(format!("limits.{}", names[1])),
+        | [
+            "network",
+            "model_request_timeout_seconds" | "stream_idle_timeout_seconds",
+        ] => Some(format!("limits.{}", names[1])),
         ["context", "mode"] => Some("limits.context_mode".into()),
         ["context", "reference_tokens"] => Some("limits.context_reference_tokens".into()),
         ["context", "observation_tokens"] => Some("limits.context_observation_tokens".into()),
@@ -345,6 +348,7 @@ fn walk(
                     | "max_side_turn_seconds"
                     | "max_children_per_turn"
                     | "max_agent_depth"
+                    | "model_request_timeout_seconds"
                     | "stream_idle_timeout_seconds"
                     | "max_history_bytes"
                     | "max_output_bytes"

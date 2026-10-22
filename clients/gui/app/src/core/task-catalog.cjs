@@ -10,7 +10,7 @@ function bounded(work, deadline, timeout) {
     .finally(() => clearTimeout(timer));
 }
 
-function ownerRead(backend, saved, inbox, limit, trace, deadline = performance.now() + deadlineMs) {
+function ownerRead(backend, saved, inbox, limit, trace, deadline) {
   let pending = reads.get(backend);
   if (!pending) { pending = new Map(); reads.set(backend, pending); }
   const key = `${saved.id}:${inbox ? 'inbox' : 'list'}`;
@@ -18,27 +18,34 @@ function ownerRead(backend, saved, inbox, limit, trace, deadline = performance.n
   if (existing) {
     trace.advance('shared_wait', { connectionGeneration: existing.state.generation, pages: existing.state.pages });
     if (!existing.state.closed && existing.limit >= limit) return existing.result;
-    return bounded(existing.work.catch(() => {}), deadline, () => Object.assign(new Error('任务目录读取超时，请重试。上次读取仍在结束。'), { code: 'TASK_CATALOG_TIMEOUT', stage: existing.state.stage }))
-      .then(() => ownerRead(backend, saved, inbox, limit, trace, deadline));
+    return existing.connection.then(() => {
+      deadline ??= performance.now() + deadlineMs;
+      return bounded(existing.work.catch(() => {}), deadline, () => Object.assign(new Error('任务目录读取超时，请重试。上次读取仍在结束。'), { code: 'TASK_CATALOG_TIMEOUT', stage: existing.state.stage }))
+        .then(() => ownerRead(backend, saved, inbox, limit, trace, deadline));
+    });
   }
-  if (performance.now() >= deadline) return Promise.reject(Object.assign(new Error('任务目录读取超时，请重试。'), { code: 'TASK_CATALOG_TIMEOUT', stage: 'start' }));
+  if (deadline !== undefined && performance.now() >= deadline) return Promise.reject(Object.assign(new Error('任务目录读取超时，请重试。'), { code: 'TASK_CATALOG_TIMEOUT', stage: 'list' }));
   const state = { closed: false, stage: 'start', pages: 0, generation: 0 };
   const timeout = () => Object.assign(new Error('任务目录读取超时，请重试。后台连接仍由现有启动流程管理。'), { code: 'TASK_CATALOG_TIMEOUT', stage: state.stage, pages: state.pages, connectionGeneration: state.generation });
+  const failure = error => { error.stage ??= state.stage; error.pages ??= state.pages; error.connectionGeneration ??= state.generation; throw error; };
   const guard = (project, client) => {
     if (state.closed || performance.now() >= deadline) throw timeout();
     if (!backend.saved.some(owner => owner.id === saved.id)) throw new Error('任务所有者已移除');
-    if (project) {
-      backend.requireConnection(project, client);
-      if ((project.connectionGeneration ?? 0) !== state.generation) throw Object.assign(new Error('连接已换代，请重试'), { code: 'STALE_CONNECTION' });
-    }
+    backend.lifecycleOperations.assertProject(saved.id);
+    if (backend.projects.get(saved.id) !== project) throw new Error('任务所有者已移除');
+    backend.requireConnection(project, client);
+    if (!client.ready || (project.connectionGeneration ?? 0) !== state.generation) throw Object.assign(new Error('连接已换代，请重试'), { code: 'STALE_CONNECTION' });
   };
-  const work = (async () => {
+  const connection = Promise.resolve().then(() => {
     trace.advance('start');
-    const project = await backend.start(saved.id);
-    guard();
-    const client = project.client;
-    state.generation = project.connectionGeneration ?? 0;
+    return backend.readConnection(saved.id);
+  }).catch(failure);
+  const work = (async () => {
+    const { project, client, generation } = await connection;
+    deadline ??= performance.now() + deadlineMs;
+    state.generation = generation;
     state.stage = 'list';
+    guard(project, client);
     trace.advance('list', { connectionGeneration: state.generation });
     const data = new Map(), cursors = new Set();
     let after;
@@ -59,9 +66,9 @@ function ownerRead(backend, saved, inbox, limit, trace, deadline = performance.n
     const rows = [...data.values()].slice(0, limit);
     if (!inbox) for (const task of rows) project.model.setTask(task);
     return { data: rows, hasMore: !!after || data.size > limit, connectionGeneration: state.generation, pages: state.pages };
-  })().catch(error => { error.stage ??= state.stage; error.pages ??= state.pages; error.connectionGeneration ??= state.generation; throw error; });
-  const result = bounded(work, deadline, () => { state.closed = true; return timeout(); }).finally(() => { state.closed = true; });
-  const flight = { result, work, state, limit };
+  })().catch(failure);
+  const result = connection.then(() => bounded(work, deadline, () => { state.closed = true; return timeout(); })).finally(() => { state.closed = true; });
+  const flight = { connection, result, work, state, limit };
   pending.set(key, flight);
   const clear = () => { if (pending.get(key) === flight) pending.delete(key); };
   work.then(clear, clear);

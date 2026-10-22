@@ -118,6 +118,71 @@ fn failure(i: &ConfigInputs) -> ConfigError {
 }
 
 #[test]
+fn model_request_timeout_is_independent_and_preserves_configuration_sources() {
+    let root = tempfile::tempdir().unwrap();
+    let mut i = inputs(root.path());
+    let defaults = load_config(&i).unwrap();
+    assert_eq!(defaults.model_request_timeout_seconds, 300);
+    assert_eq!(defaults.stream_idle_timeout_seconds, 30);
+    assert!(matches!(
+        defaults.sources["limits.model_request_timeout_seconds"],
+        ConfigSource::Default
+    ));
+    for (schema, group) in [(1, "limits"), (2, "network")] {
+        write(
+            &mut i,
+            &format!(
+                "schema_version={schema}\n[{group}]\nmodel_request_timeout_seconds=600\nstream_idle_timeout_seconds=45\n"
+            ),
+        );
+        let config = load_config(&i).unwrap();
+        assert_eq!(config.model_request_timeout_seconds, 600);
+        assert_eq!(config.stream_idle_timeout_seconds, 45);
+        assert!(matches!(
+            config.sources["limits.model_request_timeout_seconds"],
+            ConfigSource::File { .. }
+        ));
+        for group in ["network", "limits"] {
+            assert_eq!(
+                config.diagnostic(false)[group]["model_request_timeout_seconds"],
+                600
+            );
+        }
+    }
+    let name = "AREAL_HARNESS_MODEL_REQUEST_TIMEOUT_SECONDS";
+    for value in ["1", "86400"] {
+        set(&mut i, name, value);
+        let config = load_config(&i).unwrap();
+        assert_eq!(
+            config.model_request_timeout_seconds,
+            value.parse::<u64>().unwrap()
+        );
+        assert_eq!(config.stream_idle_timeout_seconds, 45);
+        assert!(matches!(
+            &config.sources["limits.model_request_timeout_seconds"],
+            ConfigSource::Env { name: source } if source == name
+        ));
+    }
+    for value in ["0", "86401", "-1", "bad"] {
+        set(&mut i, name, value);
+        let error = failure(&i);
+        assert_eq!(error.kind, ConfigErrorKind::InvalidValue);
+        assert_eq!(error.field, "limits.model_request_timeout_seconds");
+    }
+    i.env.remove(std::ffi::OsStr::new(name));
+    write(
+        &mut i,
+        "schema_version=2\n[network]\nmodel_request_timeout_seconds=600\n[limits]\nmodel_request_timeout_seconds=300\n",
+    );
+    assert_eq!(failure(&i).kind, ConfigErrorKind::Conflict);
+    write(
+        &mut i,
+        "schema_version=2\n[network]\nmodel_request_timeout_seconds=0\n",
+    );
+    assert_eq!(failure(&i).kind, ConfigErrorKind::InvalidValue);
+}
+
+#[test]
 fn inspection_permissions_are_explicit_validated_and_keep_the_read_only_default() {
     let root = tempfile::tempdir().unwrap();
     let mut i = inputs(root.path());

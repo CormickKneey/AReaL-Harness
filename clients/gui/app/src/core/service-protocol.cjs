@@ -1,13 +1,14 @@
 'use strict';
 const { randomBytes, randomUUID, timingSafeEqual } = require('node:crypto');
+const { isDeepStrictEqual } = require('node:util');
 const { appendFileSync } = require('node:fs');
 const { WebSocketServer } = require('ws');
-const { validateCommand: validateDesktopCommand, desktopError } = require('@areal/workbench/desktop-contract');
+const { validateCommand: validateDesktopCommand, desktopError, validateMcpPageDeclaration, validateMcpPageReply } = require('@areal/workbench/desktop-contract');
 const { inspectResources, recoverResource, blocked } = require('./resource-recovery.cjs');
 const { validToolInput, failure: browserFailure, success: browserSuccess } = require('./browser-tool.cjs');
 const { ProjectionEncoder } = require('@areal/workbench/state-projection');
 const PROTOCOL = 'areal.desktop-service.v1';
-const COMMAND_CONTRACT = 'areal.desktop-commands.v1';
+const COMMAND_CONTRACT = 'areal.desktop-commands.v2';
 const browserKey = (projectId, threadId) => JSON.stringify([projectId, threadId]);
 function validateCommand(name, params) {
   validateDesktopCommand(name, params, { serviceOnly: true });
@@ -37,8 +38,12 @@ class DesktopService {
     this.backgroundNotifications = backgroundNotifications; this.power = power;
     this.pendingNotificationTarget = null;
     this.token = randomBytes(32).toString('hex'); this.clients = new Set();
+    this.mcpPageOwners = new Map();
+    backend.onMcpPageToolNotice = event => this.mcpPageToolNotice(event);
+    backend.onMcpPageToolsDisconnected = client => this.revokeMcpPageTools(lease => lease.client === client);
     this.browserClaims = new Map(); this.browserClaimAttempts = new Map();
     this.browserEntrypoints = new Map();
+    this.browserDiscoveryPlans = new Map();
     this.browserPending = new Map(); this.nextBrowserId = 0;
     this.browserTestTrace = process.env.AREAL_BROWSER_READ_TEST_TRACE;
     backend.browserRead = request => this.browserRead(request);
@@ -52,15 +57,149 @@ class DesktopService {
         || !['string', 'number'].includes(typeof event.generation)
         || notification?.jsonrpc !== '2.0' || notification.id !== undefined
         || !['notifications/resources/updated', 'notifications/resources/list_changed',
-          'notifications/tools/list_changed', 'ui/notifications/host-context-changed'].includes(notification.method)) return;
+          'notifications/tools/list_changed', 'ui/notifications/host-context-changed', 'ui/notifications/closed'].includes(notification.method)) return;
       // Only authenticated clients that completed hello are present in this set.
       // Main owns the final app-instance/window match; background events never reveal a pane.
       const params = { projectId: event.projectId, threadId: event.threadId,
         instanceId: event.instanceId, generation: event.generation,
         notification: { jsonrpc: '2.0', method: notification.method,
           ...(notification.params === undefined ? {} : { params: notification.params }) } };
+      if (notification.method === 'ui/notifications/closed') {
+        const lease = this.mcpPageOwners.get(JSON.stringify([event.projectId, event.instanceId]));
+        if (lease?.threadId === event.threadId && lease.generation === event.generation) this.retireMcpPageOwner(lease, true);
+      }
       for (const socket of this.clients) this.send(socket, { method: 'mcpAppNotification', params });
     };
+  }
+  bindMcpPageOwner(socket, project, client, request, response) {
+    const instance = request.operation === 'mcpAppOpenFromResult' ? response?.status === 'open' && response.instance : response;
+    if (!instance?.instanceId) return;
+    const key = JSON.stringify([request.projectId, instance.instanceId]);
+    const previous = this.mcpPageOwners.get(key);
+    if (this.closed || !this.clients.has(socket) || socket.readyState !== 1 || project.client !== client || !client.ready
+      || previous && (previous.socket !== socket || previous.client !== client || previous.revoked)) throw new Error('Page tool opening owner lease is stale');
+    if (previous) return;
+    if (this.mcpPageOwners.size >= 128) throw new Error('Page tool owner capacity reached');
+    this.mcpPageOwners.set(key, { project, client, socket, ownerId: socket.mcpPageOwnerId ??= randomUUID(), projectId: request.projectId,
+      threadId: request.threadId, instanceId: instance.instanceId, generation: instance.generation, revoked: false });
+  }
+  async mcpPageTools(socket, params) {
+    if (!params || !['register', 'revoke', 'claim', 'resolve'].includes(params.operation)) throw new Error('Invalid page tool operation');
+    const fields = ['operation', 'projectId', 'threadId', 'instanceId', 'generation'];
+    const extra = params.operation === 'register' ? ['declaration'] : params.operation === 'revoke' ? ['registrationId']
+      : ['turnId', 'callId', 'registrationId', 'ownerId', 'schemaDigest', ...(params.operation === 'resolve' ? ['claimId', 'reply'] : [])];
+    if (Object.keys(params).some(key => ![...fields, ...extra].includes(key))) throw new Error('Invalid page tool fields');
+    const lease = this.mcpPageOwners.get(JSON.stringify([params.projectId, params.instanceId]));
+    const current = () => lease && this.mcpPageOwners.get(JSON.stringify([params.projectId, params.instanceId])) === lease && lease.socket === socket && lease.client === lease.project.client
+      && lease.client.ready && this.clients.has(socket) && socket.readyState === 1 && !this.closed;
+    if (!current() || lease.threadId !== params.threadId || lease.generation !== params.generation
+      || lease.revoked && !['resolve', 'revoke'].includes(params.operation)) throw new Error('Page tool owner lease is stale');
+    const binding = { threadId: lease.threadId, instanceId: lease.instanceId, generation: lease.generation, ownerId: lease.ownerId };
+    if (params.operation === 'register') {
+      validateMcpPageDeclaration(params.declaration);
+      const fingerprint = JSON.stringify(params.declaration);
+      if (lease.registrationPromise) {
+        if (lease.declaration !== fingerprint) throw new Error('Page tool declaration changed');
+        return lease.registrationPromise;
+      }
+      lease.declaration = fingerprint;
+      lease.pendingNotices = [];
+      lease.registrationPromise = (async () => {
+        const registration = await lease.client.request('areal/mcp/app/tools/register', { ...binding, declaration: params.declaration });
+        lease.registration = registration;
+        if (!current() || lease.revoked) {
+          this.retireMcpPageOwner(lease);
+          if (lease.client.ready) void lease.client.request('areal/mcp/app/tools/revoke', { ...binding, registrationId: registration.registrationId })
+            .then(result => { if (result?.revoked === true) this.retireMcpPageOwner(lease, true); }).catch(() => {});
+          throw new Error('Page tool owner lease is stale');
+        }
+        const notices = lease.pendingNotices;
+        lease.pendingNotices = undefined;
+        for (const notice of notices ?? []) if (notice.params.registrationId === registration.registrationId) this.mcpPageToolNotice(notice);
+        return registration;
+      })().catch(error => { this.retireMcpPageOwner(lease); throw error; });
+      return lease.registrationPromise;
+    }
+    if (!lease.registration || params.registrationId !== lease.registration.registrationId) throw new Error('Invalid page tool registration');
+    if (params.operation === 'revoke') {
+      this.retireMcpPageOwner(lease);
+      const result = await lease.client.request('areal/mcp/app/tools/revoke', { ...binding, registrationId: lease.registration.registrationId });
+      if (result?.revoked === true) this.retireMcpPageOwner(lease, true);
+      return result;
+    }
+    if (params.ownerId !== lease.ownerId || !lease.registration.tools.some(tool => tool.schemaDigest === params.schemaDigest)
+      || !['turnId', 'callId'].every(key => typeof params[key] === 'string' && params[key].length > 0 && params[key].length <= 256)) throw new Error('Invalid page tool owner or call');
+    const coordinates = { threadId: lease.threadId, turnId: params.turnId, callId: params.callId,
+      registrationId: lease.registration.registrationId, ownerId: lease.ownerId, schemaDigest: params.schemaDigest };
+    if (params.operation === 'resolve') validateMcpPageReply(params.reply);
+    return lease.client.request(`areal/mcp/app/tools/${params.operation}`, { ...coordinates,
+      ...(params.operation === 'resolve' ? { ...(params.claimId === undefined ? {} : { claimId: params.claimId }), reply: params.reply } : {}) });
+  }
+  mcpPageToolNotice(event) {
+    if (this.closed || !['areal/mcp/app/tools/pending', 'areal/mcp/app/tools/cancelled'].includes(event?.method)) return;
+    const params = event.params;
+    const coordinates = ['threadId', 'turnId', 'callId', 'registrationId', 'ownerId', 'schemaDigest'];
+    if (!params || !coordinates.every(key => typeof params[key] === 'string' && params[key].length > 0 && params[key].length <= 256)
+      || Object.keys(params).some(key => !coordinates.includes(key) && key !== 'claimId')
+      || params.claimId !== undefined && (typeof params.claimId !== 'string' || params.claimId.length === 0 || params.claimId.length > 256)) return;
+    const candidates = [...this.mcpPageOwners.values()].filter(lease => lease.projectId === event.projectId
+      && lease.client === event.client && lease.project?.client === event.client && lease.client?.ready
+      && lease.socket?.readyState === 1 && this.clients.has(lease.socket)
+      && lease.threadId === params.threadId && lease.ownerId === params.ownerId
+      && !(lease.revoked && event.method.endsWith('/pending')));
+    const owner = candidates.find(lease => lease.registration?.registrationId === params.registrationId);
+    if (owner) {
+      if (owner.registration.tools.some(tool => tool.schemaDigest === params.schemaDigest))
+        this.send(owner.socket, { method: 'mcpPageToolNotice', params: { projectId: owner.projectId,
+          instanceId: owner.instanceId, generation: owner.generation, method: event.method, params } });
+      return;
+    }
+    for (const lease of candidates) {
+      if (lease.registration || !lease.pendingNotices) continue;
+      if (lease.pendingNotices.length < 32 && !lease.pendingNotices.some(notice => notice.method === event.method
+        && coordinates.every(key => notice.params[key] === params[key]) && notice.params.claimId === params.claimId))
+        lease.pendingNotices.push({ projectId: event.projectId, client: event.client, method: event.method, params: { ...params } });
+    }
+  }
+
+  retireMcpPageOwner(lease, confirmed = false) {
+    const key = JSON.stringify([lease.projectId, lease.instanceId]);
+    const current = this.mcpPageOwners.get(key);
+    if (!current || current.ownerId !== lease.ownerId) return;
+    if (!current.socket && confirmed) { this.mcpPageOwners.delete(key); return; }
+    current.revoked = true;
+    current.pendingNotices = undefined;
+    current.retired ||= confirmed;
+    current.retireAt ??= lease.retireAt ?? Date.now() + 32_000;
+    this.sweepMcpPageOwners();
+  }
+  sweepMcpPageOwners() {
+    clearTimeout(this.mcpPageExpiryTimer);
+    this.mcpPageExpiryTimer = undefined;
+    let next = Infinity;
+    for (const [key, lease] of this.mcpPageOwners) {
+      if (lease.retireAt === undefined) continue;
+      if (lease.retireAt > Date.now()) { next = Math.min(next, lease.retireAt); continue; }
+      if (lease.retired) this.mcpPageOwners.delete(key);
+      else this.mcpPageOwners.set(key, { projectId: lease.projectId, threadId: lease.threadId,
+        instanceId: lease.instanceId, generation: lease.generation, ownerId: lease.ownerId, revoked: true });
+    }
+    if (next !== Infinity && !this.closed) {
+      this.mcpPageExpiryTimer = setTimeout(() => this.sweepMcpPageOwners(), Math.max(0, next - Date.now()));
+      this.mcpPageExpiryTimer.unref?.();
+    }
+  }
+  revokeMcpPageTools(predicate) {
+    for (const lease of this.mcpPageOwners.values()) {
+      if (!lease.socket || !predicate(lease)) continue;
+      this.retireMcpPageOwner(lease);
+      this.send(lease.socket, { method: 'mcpPageToolsRevoked', params: { projectId: lease.projectId,
+        instanceId: lease.instanceId, generation: lease.generation } });
+      if (lease.registration && lease.client.ready) void lease.client.request('areal/mcp/app/tools/revoke', {
+        threadId: lease.threadId, instanceId: lease.instanceId, generation: lease.generation,
+        registrationId: lease.registration.registrationId, ownerId: lease.ownerId,
+      }).then(result => { if (result?.revoked === true) this.retireMcpPageOwner(lease, true); }).catch(() => {});
+    }
   }
   packet() {
     return { sequence: ++this.sequence, snapshot: this.backend.snapshot(), service: {
@@ -79,14 +218,86 @@ class DesktopService {
   }
   send(socket, value, full = false) {
     if (socket.readyState !== 1) return;
-    if (socket.bufferedAmount > 32 * 1024 * 1024) { socket.terminate(); return; }
-    if (socket.projection) {
-      const key = value.method === 'state' ? 'params' : 'result';
-      const packet = value[key];
-      if (packet?.snapshot && packet.service && Number.isSafeInteger(packet.sequence))
-        value = { ...value, [key]: { ...packet, snapshot: socket.projection.encode(packet.snapshot, full) } };
+    const outbound = socket.outbound ??= { queue: [], bytes: 0, active: false, state: null, closed: false };
+    if (outbound.closed) return;
+    const entry = { value, full, bytes: 0 };
+    if (outbound.active) {
+      if (value.method === 'state') {
+        if (outbound.state) {
+          const previous = outbound.state;
+          previous.value = value; previous.full = full;
+          outbound.queue.splice(outbound.queue.indexOf(previous), 1); outbound.queue.push(previous);
+          return;
+        }
+        outbound.state = entry;
+      } else {
+        entry.bytes = Buffer.byteLength(JSON.stringify(value));
+        if (outbound.bytes + entry.bytes > 32 * 1024 * 1024) { this.stopSending(socket); socket.terminate(); return; }
+        outbound.bytes += entry.bytes;
+      }
+      outbound.queue.push(entry); return;
     }
-    socket.send(JSON.stringify(value));
+    this.sendFrame(socket, entry);
+  }
+  stopSending(socket) {
+    const outbound = socket.outbound;
+    if (!outbound) return;
+    clearTimeout(outbound.timer);
+    outbound.closed = true; outbound.queue = []; outbound.state = null; outbound.bytes = 0;
+  }
+  sendFrame(socket, { value, full }) {
+    const outbound = socket.outbound;
+    if (outbound.closed || socket.readyState !== 1) { this.stopSending(socket); return; }
+    if (socket.bufferedAmount > 32 * 1024 * 1024) { this.stopSending(socket); socket.terminate(); return; }
+    outbound.active = true;
+    const fail = () => { this.stopSending(socket); socket.terminate(); };
+    outbound.timer = setTimeout(fail, 150000); outbound.timer.unref?.();
+    try {
+      if (socket.projection) {
+        const key = value.method === 'state' ? 'params' : 'result', packet = value[key];
+        if (packet?.snapshot && packet.service && Number.isSafeInteger(packet.sequence))
+          value = { ...value, [key]: { ...packet, snapshot: socket.projection.encode(packet.snapshot, full) } };
+      }
+      const text = JSON.stringify(value);
+      if (Buffer.byteLength(text) > 256 * 1024 * 1024) { fail(); return; }
+      socket.send(text, error => {
+        clearTimeout(outbound.timer);
+        if (error) { fail(); return; }
+        if (outbound.closed) return;
+        outbound.active = false;
+        const next = outbound.queue.shift();
+        if (next) {
+          outbound.bytes -= next.bytes;
+          if (outbound.state === next) outbound.state = null;
+          this.sendFrame(socket, next);
+        }
+      });
+    } catch { fail(); }
+  }
+  async historyCommand(socket, request) {
+    const views = socket.historyViews ??= new Map();
+    const key = JSON.stringify([request.projectId, request.threadId, request.viewId]);
+    let view = views.get(key);
+    if (request.operation === 'release') {
+      views.delete(key);
+      return view ? this.backend.command('history', { ...view, operation: 'release' }) : { released: true };
+    }
+    if (request.operation === 'acquire') {
+      if (!view) { view = { ...request, viewId: randomUUID() }; views.set(key, view); }
+      try { return await this.backend.command('history', { ...view, operation: 'acquire' }); }
+      catch (error) { if (views.get(key) === view) views.delete(key); throw error; }
+      finally {
+        if (socket.readyState !== 1 || views.get(key) !== view)
+          await this.backend.command('history', { ...view, operation: 'release' }).catch(() => {});
+      }
+    }
+    if (!view || socket.readyState !== 1) throw new Error('历史视图已关闭，请重新打开聊天。');
+    return this.backend.command('history', { ...request, viewId: view.viewId });
+  }
+  releaseHistoryViews(socket) {
+    for (const view of socket.historyViews?.values() ?? [])
+      void this.backend.command('history', { ...view, operation: 'release' }).catch(() => {});
+    socket.historyViews?.clear();
   }
   schedule() {
     void this.power?.refresh();
@@ -133,10 +344,14 @@ class DesktopService {
         return !req.headers.origin && actual.length === expected.length && timingSafeEqual(actual, expected);
       } });
     this.server.on('connection', socket => {
-      socket.on('error', () => {});
+      socket.on('error', () => { this.stopSending(socket); socket.terminate(); });
       socket.on('message', bytes => { void this.receive(socket, bytes); });
       socket.on('close', () => {
+        this.revokeMcpPageTools(lease => lease.socket === socket);
+        this.stopSending(socket); this.releaseHistoryViews(socket);
         for (const [key, claim] of this.browserClaims) if (claim.socket === socket) this.browserClaims.delete(key);
+        for (const [id, record] of this.browserDiscoveryPlans)
+          if (record.socket === socket) this.browserDiscoveryPlans.delete(id);
         for (const [key, entries] of this.browserEntrypoints) for (const entry of entries)
           if (entry.socket === socket) this.forgetBrowserEntrypoint(key, entry);
         for (const [key, attempt] of this.browserClaimAttempts) if (attempt.socket === socket) {
@@ -264,8 +479,10 @@ class DesktopService {
       }
       if (method === 'browserRevoke') {
         const key = browserKey(params?.projectId, params?.threadId);
+        for (const [planId, record] of this.browserDiscoveryPlans)
+          if (record.key === key && record.socket === socket) this.browserDiscoveryPlans.delete(planId);
         for (const entry of this.browserEntrypoints.get(key) ?? []) this.forgetBrowserEntrypoint(key, entry);
-        for (const pending of this.browserPending.values()) if (pending.bootstrap && pending.key === key && pending.socket === socket)
+        for (const pending of this.browserPending.values()) if ((pending.bootstrap || pending.discovery) && pending.key === key && pending.socket === socket)
           pending.reject(new Error('Browser entry revoked by human input'));
         const attempt = this.browserClaimAttempts.get(key);
         if (attempt?.socket === socket && (typeof params?.pageId !== 'string' || attempt.pageId === params.pageId)) {
@@ -313,6 +530,9 @@ class DesktopService {
         finally { this.inflight--; this.recovering = false; this.schedule(); }
         return;
       }
+      if (method === 'mcpPageTools') {
+        this.send(socket, { id, result: await this.mcpPageTools(socket, params) }); return;
+      }
       if (method === 'snapshot') { this.send(socket, { id, result: this.packet() }, true); return; }
       if (method === 'activity') {
         this.sampleActivity();
@@ -343,11 +563,18 @@ class DesktopService {
           entries.add(entry); this.browserEntrypoints.set(entryKey, entries);
         }
         let result;
-        try { result = method === 'command' ? await this.backend.command(params.name, params.name === 'media' ? decodeMedia(params.request) : params.request,
-          { onBrowserTurnStarted: turnId => entry?.resolve({ turnId }),
+        try { result = method === 'command' && params.name === 'history' ? await this.historyCommand(socket, params.request)
+          : method === 'command' ? await this.backend.command(params.name, params.name === 'media' ? decodeMedia(params.request) : params.request,
+          { onMcpAppOpened: (project, client, request, result) => this.bindMcpPageOwner(socket, project, client, request, result),
+            onBrowserTurnStarted: turnId => entry?.resolve({ turnId }),
             onBrowserTurnQueued: queueItemId => entry?.resolve({ queueItemId }) }) : await this.backend.addProject(params.path); }
         catch (error) { if (entry) this.forgetBrowserEntrypoint(entryKey, entry); throw error; }
         finally { entry?.resolve(null); }
+        if (method === 'command' && params.name === 'manage' && params.request.operation === 'mcpAppClose' && result?.closed === true) {
+          const request = params.request;
+          const lease = this.mcpPageOwners.get(JSON.stringify([request.projectId, request.instanceId]));
+          if (lease?.threadId === request.threadId && lease.generation === request.generation) this.retireMcpPageOwner(lease, true);
+        }
         if (method === 'command' && params.name === 'media') result = encodeMedia(result);
         this.publish(); this.send(socket, { id, result });
       } finally { this.inflight--; this.schedule(); }
@@ -361,16 +588,18 @@ class DesktopService {
   }
   close() {
     this.closed = true;
+    this.revokeMcpPageTools(() => true);
+    clearTimeout(this.mcpPageExpiryTimer); this.mcpPageOwners.clear();
     for (const attempt of this.browserClaimAttempts.values()) attempt.cancelled = true;
     this.browserClaimAttempts.clear();
     for (const pending of this.browserPending.values()) { clearTimeout(pending.timer); pending.reject(new Error('Browser service closed after dispatch')); }
     for (const entries of this.browserEntrypoints.values()) for (const entry of entries) entry.resolve(null);
-    this.browserPending.clear(); this.browserClaims.clear(); this.browserEntrypoints.clear();
+    this.browserPending.clear(); this.browserClaims.clear(); this.browserEntrypoints.clear(); this.browserDiscoveryPlans.clear();
     this.remote?.close();
     this.power?.close();
     this.backgroundNotifications?.close(); this.pendingNotificationTarget = null;
     clearTimeout(this.timer); clearInterval(this.activityTimer); clearInterval(this.flushTimer);
-    for (const socket of this.server?.clients ?? []) socket.terminate();
+    for (const socket of this.server?.clients ?? []) { this.stopSending(socket); this.releaseHistoryViews(socket); socket.terminate(); }
     this.server?.close();
   }
   async executeRemote(name, request) {
@@ -413,29 +642,90 @@ class DesktopService {
     }
     return null;
   }
-  async bootstrapBrowser(request, key) {
-    const entry = await this.browserEntrypoint(request, key);
-    if (!entry || !this.browserEntrypoints.get(key)?.has(entry)) return;
-    this.forgetBrowserEntrypoint(key, entry); // 仅消费这条已受理消息的入口，不重放。
-    if (request.signal?.aborted || this.browserPending.size >= 8) return;
+  async dispatchBrowserDiscovery(request, key, socket, phase, browserApproval) {
+    if (request.signal?.aborted || socket.readyState !== 1 || this.browserPending.size >= 8)
+      throw new Error('Browser entry unavailable');
     const requestId = ++this.nextBrowserId;
-    await new Promise((resolve, reject) => {
+    return new Promise((resolve, reject) => {
       const finish = (fn, value) => {
         clearTimeout(timer); request.signal?.removeEventListener('abort', abort);
         this.browserPending.delete(requestId); fn(value);
       };
       const abort = () => finish(reject, new Error('Browser entry cancelled'));
       const timer = setTimeout(() => finish(reject, new Error('Browser entry outcome unknown')), 15000);
-      this.browserPending.set(requestId, { socket: entry.socket, key, bootstrap: true,
+      this.browserPending.set(requestId, { socket, key, bootstrap: phase === 'execute', discovery: true,
         coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration,
         resolve: value => finish(resolve, value), reject: error => finish(reject, error), timer });
       request.signal?.addEventListener('abort', abort, { once: true });
-      this.send(entry.socket, { method: 'browserRequest', params: {
-        requestId, operation: 'describe', phase: 'execute', projectId: request.projectId,
+      this.send(socket, { method: 'browserRequest', params: {
+        requestId, operation: 'describe', phase, projectId: request.projectId,
         threadId: request.threadId, turnId: request.turnId, callId: request.callId,
         coreInstanceId: request.coreInstanceId, coreGeneration: request.coreGeneration,
+        ...(browserApproval ? { browserApproval } : {}),
       } });
     });
+  }
+  async bootstrapBrowser(request, key) {
+    const entry = await this.browserEntrypoint(request, key);
+    if (!entry || !this.browserEntrypoints.get(key)?.has(entry)) return;
+    this.forgetBrowserEntrypoint(key, entry);
+    await this.dispatchBrowserDiscovery(request, key, entry.socket, 'execute');
+  }
+
+  async prepareBrowserDiscovery(request, key, claim) {
+    for (const [id, record] of this.browserDiscoveryPlans)
+      if (record.plan.expiresAt <= Date.now() || record.socket.readyState !== 1) this.browserDiscoveryPlans.delete(id);
+    if (this.browserDiscoveryPlans.size >= 128) return { error: 'host_busy', dispatch: 'not_sent' };
+    const entry = await this.browserEntrypoint(request, key);
+    const socket = claim?.socket ?? entry?.socket;
+    const current = () => socket?.readyState === 1 && !request.signal?.aborted
+      && claim === this.browserClaims.get(key)
+      && (!entry || this.browserEntrypoints.get(key)?.has(entry))
+      && (!claim || (claim.coreInstanceId === request.coreInstanceId && claim.coreGeneration === request.coreGeneration))
+      && this.backend.projects.get(request.projectId)?.service?.serviceId === request.coreInstanceId
+      && this.backend.projects.get(request.projectId)?.service?.generation === request.coreGeneration;
+    if (!current()) return { error: 'human_control', dispatch: 'not_sent' };
+    const result = await this.dispatchBrowserDiscovery(request, key, socket, 'prepare');
+    if (!current()) return { error: 'human_control', dispatch: 'not_sent' };
+    if (result?.error) return { error: result.error, dispatch: 'not_sent' };
+    const plan = result?.plan;
+    if (!plan || plan.operation !== 'describe' || typeof plan.preparedActionId !== 'string'
+      || typeof plan.fingerprint !== 'string' || typeof plan.origin !== 'string'
+      || !(plan.pageId === null || typeof plan.pageId === 'string')
+      || typeof plan.browserHostId !== 'string' || typeof plan.alreadyControlled !== 'boolean'
+      || ![plan.hostGeneration, plan.pageGeneration, plan.controlEpoch, plan.humanRevision, plan.documentEpoch, plan.expiresAt].every(Number.isSafeInteger)
+      || plan.expiresAt <= Date.now() || plan.expiresAt > Date.now() + 300000
+      || plan.coreInstanceId !== request.coreInstanceId || plan.coreGeneration !== request.coreGeneration
+      || plan.projectId !== request.projectId || plan.threadId !== request.threadId
+      || plan.turnId !== request.turnId || plan.callId !== request.callId)
+      throw new Error('Invalid browser discovery plan');
+    const pageClaim = claim?.pages.get(plan.pageId);
+    if (plan.alreadyControlled ? !pageClaim || plan.browserHostId !== claim.browserHostId
+      || plan.hostGeneration !== claim.hostGeneration || plan.pageGeneration !== pageClaim.pageGeneration
+      || plan.controlEpoch !== pageClaim.controlEpoch : !entry || entry.socket !== socket)
+      return { error: 'human_control', dispatch: 'not_sent' };
+    this.browserDiscoveryPlans.set(plan.preparedActionId, { key, plan, claim, entry, socket,
+      pages: claim ? [...claim.pages.values()].map(page => ({ ...page })) : [] });
+    return plan;
+  }
+
+  consumeBrowserDiscovery(request, key, claim) {
+    const plan = request.browserApproval?.plan;
+    const record = plan && this.browserDiscoveryPlans.get(plan.preparedActionId);
+    if (record) this.browserDiscoveryPlans.delete(plan.preparedActionId);
+    if (!record || record.key !== key || !isDeepStrictEqual(record.plan, plan)
+      || record.plan.expiresAt <= Date.now() || record.socket.readyState !== 1
+      || record.claim !== claim || request.signal?.aborted
+      || this.backend.projects.get(request.projectId)?.service?.serviceId !== request.coreInstanceId
+      || this.backend.projects.get(request.projectId)?.service?.generation !== request.coreGeneration
+      || plan.coreInstanceId !== request.coreInstanceId || plan.coreGeneration !== request.coreGeneration
+      || plan.projectId !== request.projectId || plan.threadId !== request.threadId
+      || plan.turnId !== request.turnId || plan.callId !== request.callId
+      || (record.entry && (!this.browserEntrypoints.get(key)?.has(record.entry)
+        || this.backend.projects.get(request.projectId) !== record.entry.project
+        || !this.backend.currentConnection(record.entry.project, record.entry.client)))
+      || (claim && !isDeepStrictEqual(record.pages, [...claim.pages.values()]))) return null;
+    return record;
   }
 
   async browserRead(request) {
@@ -446,10 +736,27 @@ class DesktopService {
       return browserFailure('invalid_arguments', 'Unsupported browser operation or parameters');
     const action = ['act', 'wait', 'navigate', 'newPage', 'runBatch'].includes(input.operation);
     const scoped = input.operation !== 'describe';
-    if (phase === 'prepare' && !scoped) throw new Error('Browser discovery cannot prepare a page plan');
     const key = browserKey(projectId, threadId);
     let claim = this.browserClaims.get(key);
-    if (input.operation === 'describe' && phase === 'execute' && !claim) {
+    if (input.operation === 'describe' && phase === 'prepare') return this.prepareBrowserDiscovery(request, key, claim);
+    let discoveryResult;
+    if (input.operation === 'describe' && browserApproval?.plan) {
+      const prepared = this.consumeBrowserDiscovery(request, key, claim);
+      if (!prepared) return browserFailure('plan_stale', 'Browser entry authorization changed; send a new explicit request');
+      if (prepared.entry) this.forgetBrowserEntrypoint(key, prepared.entry);
+      discoveryResult = await this.dispatchBrowserDiscovery(request, key, prepared.socket, 'execute', browserApproval);
+      if (discoveryResult?.error) return browserFailure(discoveryResult.error, 'Browser entry changed; send a new explicit request');
+      claim = this.browserClaims.get(key);
+      const permit = discoveryResult?.controlPermit;
+      const pageClaim = claim?.pages.get(permit?.pageId);
+      if (!permit || discoveryResult.coreInstanceId !== coreInstanceId || discoveryResult.coreGeneration !== coreGeneration
+        || discoveryResult.projectId !== projectId || discoveryResult.threadId !== threadId
+        || discoveryResult.turnId !== turnId || discoveryResult.callId !== callId
+        || claim?.socket !== prepared.socket || permit.browserHostId !== claim?.browserHostId
+        || permit.hostGeneration !== claim?.hostGeneration || !pageClaim
+        || permit.pageGeneration !== pageClaim.pageGeneration || permit.controlEpoch !== pageClaim.controlEpoch)
+        return browserFailure('plan_stale', 'Browser entry changed during authorization');
+    } else if (input.operation === 'describe' && phase === 'execute' && !claim) {
       await this.bootstrapBrowser(request, key);
       claim = this.browserClaims.get(key);
     }
@@ -474,15 +781,25 @@ class DesktopService {
           action: { kind: 'fill', ref: '<ref>', value: '<search query>' } } },
         { operation: 'act', parameters: { pageId: '<pageId>', snapshotId: '<observe.observationId>',
           action: { kind: 'press', ref: '<ref>', key: 'Enter' } } },
+        { operation: 'act', parameters: { pageId: '<pageId>', snapshotId: '<observe.observationId>',
+          action: { kind: 'scroll', target: 'viewport', deltaX: 0, deltaY: 512 } } },
+        { operation: 'act', parameters: { pageId: '<pageId>', snapshotId: '<observe.observationId>',
+          action: { kind: 'selectOption', ref: '<native SELECT ref>', value: '<observed exact option value>' } } },
         { operation: 'diagnostics', parameters: { pageId: '<pageId>', kind: 'network', limit: 20 } },
       ],
-      actions: { ref: ['click', 'fill', 'press'], screenshot: ['clickAt', 'drag', 'pressAt'],
+      actions: { ref: ['click', 'fill', 'press', 'hover', 'selectOption', 'setChecked'],
+        viewport: ['scroll'], scroll: '{kind:scroll,target:viewport,deltaX,deltaY}; nonzero safe integers in [-4096,4096]',
+        selectOption: 'native single SELECT, exact observed unique enabled option value; semantic input/change events are not trusted physical input',
+        setChecked: 'native checkbox boolean state; already equal is a confirmed no-op without input', screenshot: ['clickAt', 'drag', 'pressAt'],
         screenshotCoordinates: 'bitmap pixels from the latest viewport capture; capture observationId is snapshotId',
         keyboard: ['Enter', 'Tab', 'Escape', 'Backspace', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'] },
-      waits: { timeoutMs: [1, 30000], conditions: ['documentReady', 'accessibleName'],
+      waits: { timeoutMs: [1, 30000], conditions: ['documentReady', 'accessibleName', 'checked', 'enabled'],
+        checked: '{kind:checked,ref,value:boolean}; original native checkbox, including disabled controls; zero input',
+        enabled: '{kind:enabled,ref,value:boolean}; original native form control; zero input',
         documentReady: '{kind:documentReady,state:interactive|complete}',
         accessibleName: '{kind:accessibleName,ref,name}; exact current AX name; stale Ref refused',
         withoutCondition: 'bounded delay only; not page readiness' },
+      ...(discoveryResult?.controlPermit ? { controlPermit: discoveryResult.controlPermit } : {}),
       pages: [...claim.pages.keys()] });
     const pageClaim = claim.pages.get(input.parameters.pageId);
     if (!pageClaim) return browserFailure('wrong_page', 'Page does not belong to this thread');

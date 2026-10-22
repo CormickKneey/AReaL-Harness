@@ -527,6 +527,7 @@ impl Engine {
                         integration_depends: vec![],
                         checks: vec![],
                         configuration: Some(workgroup::TaskConfiguration {
+                            permission_preset: child.options.permission_preset,
                             approval_tools: child.options.approval_tools,
                             system_prompt: child.options.system_prompt,
                             append_instructions: child.options.append_instructions,

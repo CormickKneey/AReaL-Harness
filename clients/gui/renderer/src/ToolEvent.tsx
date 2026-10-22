@@ -14,8 +14,10 @@ import { verifiedFileReceipts } from "./TurnFileSummary.js";
 import { DiffViewer } from "./components/ui/diff-viewer.js";
 import { MessageActions } from "./MessageActions.js";
 import { SentAttachment } from "./MessageAttachment.js";
+import type { McpResultSource, McpResultState } from "./McpAppHost.js";
 import type { Action, Data } from "./services.js";
-export function ToolEvent({ item, onFile, onAgent, agents, turnId, readTurnReview, action, projectId, threadId, animate = false, onDisclosureChange }: {
+export function ToolEvent({ item, onFile, onAgent, agents, turnId, readTurnReview, action, projectId, threadId, animate = false, onDisclosureChange, onOpenResult, resultState }: {
+  onOpenResult?: (source: McpResultSource) => Promise<void>; resultState?: McpResultState;
   animate?: boolean; onDisclosureChange?: (open: boolean) => void;
   item: Data; onAgent?: (id: string) => void; agents?: Data; onFile?: (path: string) => void; turnId?: string;
   readTurnReview?: (turnId: string, itemId?: string) => Promise<Data>;
@@ -54,6 +56,9 @@ export function ToolEvent({ item, onFile, onAgent, agents, turnId, readTurnRevie
     }).catch(cause => { if (active) setReview({ itemId: item.id, error: cause instanceof Error ? cause.message : String(cause) }); });
     return () => { active = false; };
   }, [turnId, item.id, file?.path, readOnly, readTurnReview]);
+  useEffect(() => { if (resultState?.message) setOpen(true); }, [resultState?.message]);
+  const eligibleResult = onOpenResult && projectId && threadId && turnId && item.execution?.interactiveResult === true
+    && item.status === "completed" && item.success === true && item.execution?.outcome === "succeeded" && item.execution?.backend === "mcp";
   const current = review?.itemId === item.id ? review : undefined;
   return (
     <Collapsible.Root open={open} className="tool-event" data-tool-id={item.id} data-tool-status={view.status}>
@@ -91,6 +96,10 @@ export function ToolEvent({ item, onFile, onAgent, agents, turnId, readTurnRevie
         </span>
         <ActivityIcon kind="chevron" size={14} className={open ? "tool-chevron open" : "tool-chevron"} />
       </button>}
+      {eligibleResult && <Button variant="ghost" disabled={resultState?.opening} onClick={() => void onOpenResult({ projectId, threadId, turnId, itemId: item.id })}>
+        {resultState?.opening ? t("operations.openingResult") : t("operations.openResult")}
+      </Button>}
+      {resultState?.message && <p role="status" className="notice">{resultState.message}</p>}
       {images.length > 0 && action && projectId && threadId && <div className="tool-image-preview">
         {images.map(part => <SentAttachment key={part.media.uri} part={{ type: "image", uri: part.media.uri, name: "工具图片" }} projectId={projectId} threadId={threadId} action={action} />)}
       </div>}

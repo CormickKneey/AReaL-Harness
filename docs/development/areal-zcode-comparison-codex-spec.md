@@ -86,31 +86,40 @@ AUTO-01 的长期部分以“可持续周期任务”为目标；其停止控制
 
 ## 分期与并行执行
 
-建议第一轮按下列顺序完成。每项的详细验收仍在领域 Spec 内，不能只照着本表改文件。
+本规划以 GUI 用户路径为主线。CLI 可以先验证 Core 或浏览器适配契约，但不能替代 GUI 入口与真实桌面验收。Chromium 无窗口、Core 无人审批、GUI 退出后继续执行是三个独立能力。
 
-1. AUTO-01A 容量下控制、最小收据冷存储、v3 迁移与结构化原因；UI-01 先建立真实页面切换复现。
+### 已确认的实施顺序
 
-2. AUTO-01B Run/Channel 归档与历史 UI；UI-01 修复。两条写集独立，可以并行。
+| 阶段 | 范围 | 可观察的完成条件 |
+| --- | --- | --- |
+| 一 | AUTO-01 与 UI-01 | 收据和历史容量不阻断持久停止；冷热历史保留执行归属与预算；普通导航保留活页面和未保存编辑。 |
+| 二 | AUTO-03、B1、PLG-01 | 立即运行不改变计划；浏览器动作具有可观察目标；组件支持报告绑定准确包版本。 |
+| 三 | AUTO-02 与 UI-02 | Core 日历预览与实际触发一致；精确定位原结果并挂载，原工具不再次执行。 |
+| 四 | UI-03B | 固定真实编辑器支持有限选区读取、带 revision 的页内修改、权限、取消和 UNKNOWN。它属于完整规划，不以 CLI、UI-02、PLG-01 或 UI-03A 为硬前置。 |
+| 按需求扩展 | AUTO-04、B2、B3、PLG-02 | 分别由后台运行、终端浏览器、账号登录、固定目标插件驱动；不默认为本轮全部实施。 |
 
-3. AUTO-03、B1、PLG-01 按独立写集并行。修改公共协议/生成类型由一个集成负责人串行合入。
+### 第一阶段的交付单元
 
-4. AUTO-02 和 UI-02 各自依赖对应基础完成；B2 作为独立 provider 工作流，先交付 CLI，再接 AUTO-04。
+1. 先建立容量停止和页面切换的失败用例，分别绑定隔离 Core 状态和真实 Electron 页面。
+2. AUTO-01A 提交 v3 迁移、已提交冷收据查询和容量下控制；只有持久提交后返回受理。原请求的身份、摘要和原响应仍可核对。
+3. AUTO-01B 归档已安全结算的 Run 和关闭的 Channel 记录，同时退休其 preparations。全部恢复、ensure、预算、prompt 限制、审批分类与历史授权保留冷热一致的 Run/Goal 来源。Channel 读取按原 sequence 合并分页。
+4. UI-01 复用窗口现有 apps 描述符，稳定的 token-keyed iframe 承载位于会卸载的 SidePane 条件和 Thread key 之外。隐藏页按原项目和会话路由，不抢焦点；所有保留页都接收来源撤销。
+5. 集成历史 GUI 入口、容量原因和相应公开契约；分别执行 Core 故障恢复与真实 GUI 用户路径，再检查 owned diff 并创建本地提交。
 
-5. 根据真实用例启动 AUTO-04、PLG-02、UI-03、B3；不因本文件列出了规格就自动实施。
+Core 仍是唯一 Task 账本与执行所有者。本轮首选 JSON 热快照和不可变冷段；冷段先同步，快照引用是提交点。现有 Thread 归档仅提供提交方式的先例，不直接复用其数据模型。归档不能使旧 Goal 取得新的执行资格，不能只累计预算却遗失原始归属。
 
-```mermaid
-flowchart TD
-    A["AUTO-01 控制与账本"] --> B["AUTO-03 手动运行"]
-    A --> C["AUTO-02 日历规则"]
-    D["UI-01 活页面"] --> E["UI-02 结果挂载"]
-    E --> F["UI-03 页面工具"]
-    G["PLG-01 支持矩阵"] --> H["PLG-02 组件适配"]
-    I["B2 无界面 Host"] --> J["AUTO-04 浏览器集成"]
-    B --> J
-    I --> K["B3 专用账号状态"]
-```
+### 后续切片的契约修正
 
-AUTO-04 可先做 shell/files，只有浏览器任务集成才依赖 B2；B3 的持久 Profile 可先在 CLI 验证，周期任务绑定再依赖 AUTO-04。B1 可以独立开发；B2 应通过同一组浏览器契约验收已经实现的动作，而不是承诺所有 B1 扩展都已具备。UI-01、UI-02、UI-03 会改动同一页面/bridge 边界，应顺序合并。AUTO-01、02、03 和 AUTO-04 共享 `core/protocol/src/tasks.rs` 与 `task_mode`，不可让多个 worker 同时改这些文件后寄希望于自动合并。
+- UI-02 用 threadId、turnId 和 Core itemId 精确选择工具记录。callId 可跨 Turn 重复，不能单独作为历史身份。新快照补来源绑定，旧快照证据不足时降级普通记录；关闭后的旧请求不得复活页面。
+- B1 同步提供受控选项身份和可观察事实。状态等待不复用拒绝 disabled 元素的动作检查；scroll/hover 使既有观察失效时，batch 停止并保留已确认前缀。
+- B2 如启动，CLI 的同一 Core 连接承接 prepare/call/cancel，再经私有 IPC 调用浏览器子进程。子进程不持 Core 凭据。复用双向 stream-json 审批；非交互执行不因无窗口浏览器而获得批准。
+- AUTO-03 使用原 TaskRunNow 参数扩展 `areal/request/read` 的严格 Task 范围，核对身份、摘要和原受理响应。缺收据保持 UNKNOWN，不自动重放。活跃 Run 冲突返回原 runId；总预算不足由同一已受理 Run 进入 Blocked。
+- B1 的原生 select 使用固定 Host 语义操作，绑定完整有序 OPTION 身份并派发非 trusted 的 input/change 事件。输入确认与业务验证分开。观察失效保留 batch 外层调用去重及已确认前缀。
+- PLG-01 分开标识候选 sourceDigest 与实际 installedDigest，复用现有安装、连接和信任投影。必需静态组件仅由 portable 的 `extensions.org.areal.componentRequirements={version:1,requiredKinds:[...]}` 声明；动态连接和信任不参与静态兼容判定。历史 Skill 按自身不可变包摘要检查，不能因新版兼容而放行旧的不兼容内容。
+- AUTO-04 的本地 shell/files 优先复用 Core server-owned 执行。后台浏览器只依赖实际所需的服务适配与有限授权，不要求先实现 CLI B2。
+- UI-03A 仅在实际页面触达请求预算时启动。UI-03B 依赖稳定页面和 Core 工具边界；持久业务文档优先由现有 MCP 工具操作，页内工具针对真实 selection、undo 或未提交状态。
+
+AUTO-01 与 UI-01 可在隔离工作树并行实现，公共协议、生成 schema、集成构建和桌面焦点由集成者串行管理。每一阶段都报告源码、Core/CLI、真实 GUI、真实供应商和安装包各自证据。以下领域章节的候选接口与旧依赖若与本节冲突，以本节为准；未执行项不能写成通过。
 
 ## 统一交接约束
 
@@ -570,7 +579,7 @@ Z9. [独立删除/清理历史能力](https://github.com/zai-org/ZCode/blob/0a1f
 
 **拆成两次可合并PR**：
 
-1. **AUTO-01A 控制、收据冷存储与诊断**：为 Task 增加结构化 `suspensionReason`/`storageHealth`（名称由同一协议定义）。这一 PR 必须包括最小不可变收据冷段、已提交 root 查询和 v3 迁移；先归档已提交收据释放热空间，再保证新的 stopRun/cancel 仍可持久受理。每 Task 控制状态有界，完整旧收据保存 identity/method/requestId/digest/原响应；只有其收据已进入可查询的已提交冷链后，才能覆盖控制槽。单个槽不能代替历史请求账本。旧 v3 已接近 32 MiB 的合法快照也须迁移，不能只为新计划预留空间。新增长工作容量不足先拒绝，不能在未落盘时返回 accepted。UI 显示结构化原因与恢复条件，保留执行结算状态。
+1. **AUTO-01A 控制、收据冷存储与诊断**：复用现有 Task 控制字段和 Core 结构化错误，提供容量资源与恢复条件。这一切片包括不可变收据索引、已提交根查询和 v3 迁移，保证容量下新的 stopRun/cancel 仍可持久受理。每 Task 控制状态有界，完整旧收据保存 identity、method、requestId、digest 和原响应，不能由单个可覆盖控制槽替代。旧 v3 已接近 32 MiB 的合法快照也须迁移，不能只为新计划预留空间。新增长工作容量不足先拒绝，不能在未落盘时返回 accepted。UI 显示结构化原因与恢复条件，保留执行结算状态。磁盘写入失败通过当前错误与冻结状态表达，不能要求再持久写入一个假定成功的 storageHealth。
 
 2. **AUTO-01B Run/Channel 历史与查询 UI**：仅归档 terminal 且 workers settled、usage accounting complete、无 pending问题/未知工具待检查的 Run。热记录上限成为保留窗口，非计划寿命。冷段先持久落盘再提交热快照引用；按 task/run 授权分页查历史。累计已确认/预留消费、Run总数、thread/goal关系在迁移后仍可核对。复用 A 已实现的收据冷查询，不能因压缩重新受理旧副作用。删除策略与归档策略分开。
 
@@ -578,7 +587,7 @@ Z9. [独立删除/清理历史能力](https://github.com/zai-org/ZCode/blob/0a1f
 
 - `core/engine/src/task_mode/mod.rs`、`desktop_schedules.rs`、`overview.rs`；
 
-- `core/engine/src/store.rs`，新增 `core/engine/src/store/task_archive.rs`（参考现有 `store/archive.rs` 持久原语，不复用Thread专用模型）；
+- `core/engine/src/store.rs`，新增 `core/engine/src/task_mode/ledger.rs`（参考现有 `store/archive.rs` 持久原语，不复用 Thread 专用模型）；
 
 - `core/protocol/src/tasks.rs`、`core/app-server/src/task_mode.rs`；
 
@@ -586,7 +595,7 @@ Z9. [独立删除/清理历史能力](https://github.com/zai-org/ZCode/blob/0a1f
 
 - `docs/api/tasks.md/.en.md`、`docs/features.md/.en.md`、`docs/development/testing.md/.en.md`。
 
-**拟新增接口**（提案，不是现有API）：`areal/task/runs/list {taskId,cursor?,limit?}` -> `{data,nextCursor?,hasMore}`；`areal/task/run/read {taskId,runId}`；Task summary 给 `runCount`/`archivedRunCount`/状态原因。limit沿用现有1-100和字节上限。现有客户端先检测 methods 再分页。
+**第一阶段接口契约**：`areal/task/runs/list {taskId,cursor?,limit?}` 返回 `{data:TaskRun[],nextCursor:string|null,hasMore:boolean,runCount:number}`；`areal/task/run/read {taskId,runId}` 返回原始 `TaskRun`。Task summary 提供 `runCount`、`archivedRunCount` 和 `runsComplete`。limit 为 1–100，沿用响应字节上限。列表按 `(scheduledAt,id)` 从新到旧排序，游标固定首次读取的上界，不依赖记录在热区或冷区的位置。GUI 先检测 Core methods，再使用窄管理操作；旧 Core 仅显示内联窗口。
 
 **验收**：
 
@@ -701,7 +710,7 @@ Z9. [独立删除/清理历史能力](https://github.com/zai-org/ZCode/blob/0a1f
 
 ### AUTO-01 持久方案定案和数据库取舍
 
-**P0 定案：继续使用 Core Store 的 JSON 热快照与不可变冷段，不引入 SQLite。** 冷段放在独立 `task-history/` 和 `task-receipts/` 命名空间，或把其引用显式接入 Store GC；禁止直接放进当前只遍历 Thread history 根的目录。TaskMode snapshot 保存已提交冷链head、累计量、每Task最近128个Run及所有尚未安全归档记录；128成为热窗口，不再是计划执行寿命。
+**P0 定案：继续使用 Core Store 的 JSON 与不可变文件，不引入 SQLite。** `desktop/task-mode.json` 的 v4 紧凑目录是唯一提交根，引用 `desktop/task-ledger/` 中原样 Task 热负载、历史段、收据和归属索引。内存保留现有 `Task` 及其控制字段，不另建控制 overlay。每 Task 保留最近 128 个 Run 和所有尚未安全归档的记录；128 是保留窗口，不再是计划寿命。Task 文件不混入只识别 Thread 历史根的 GC。
 
 具体提交协议：
 
@@ -713,15 +722,19 @@ Z9. [独立删除/清理历史能力](https://github.com/zai-org/ZCode/blob/0a1f
 
 4. 重启按已提交snapshot roots恢复。孤立段只能由明确GC清理，不通过文件名猜执行事实。
 
-5. 收据冷段保留完整identity/method/requestId/digest/原response。新receipt与Task变更仍在同一次snapshot commit生效；冷热lookup只用已提交root，提前写出的payload不能证明受理。可用固定数量hash-bucket链heads加速，不在热snapshot无限增长全局index。
+5. 收据保留完整 identity、method、requestId、digest 和原响应。收据与 Task 变更在同一次目录提交中生效，查询只使用已提交根。固定 256 个桶头分别指向不可变压缩 radix 索引；收据键和冷 Run/Goal 归属键使用完整 SHA-256，查找深度不超过 64。终止叶按完整键排序，最多 64 行，普通打包不超过 128 KiB；单条已有大结果可超过打包目标，但仍受原 256 MiB 文件硬上限约束。超过条数或字节界限时沿 radix 分裂，不能把桶变成无界列表。叶节点仍核对原身份，不能用摘要碰撞替换记录。历史段可以保留链结构，但停止路径不能遍历它。
 
-6. 正常新增历史先保障控制空间预留；reserve由MAX_TASKS和严格有界控制记录大小推导。stop/cancel意图用固定大小状态，完整response进入不可变收据冷链，但同样以snapshot提交为准；归档旧收据到已提交冷链后才能覆盖相应热记录。AUTO-01A 已包含这一最小收据实现和旧满快照迁移，不等待 B。归档工作不能持有停止控制锁做无界I/O。真正磁盘不可写时报告未持久，不能伪造成功。
+6. 普通增长受 32 MiB 热状态预算约束。已受理工作另有按现有 Run、worker 和结算记录大小推导的有界结算预留，保证 stop/cancel 以及后续报告和用量结算可以提交；它不能容纳新 Run、worker 或任意配置增长。旧 v3 满快照也必须迁移并获得这项保护。停止提交跳过归档，未变化的 Task 文件不重写。历史读取捕获同一个不可变快照后，在全局 Task 锁之外核对授权并生成响应。真正磁盘不可写时返回未确认持久化，不能伪造成功。
 
 7. Task总token消费=冷已结算累计+热已确认/预留；归档一次只累计一次。热冷同时存在的故障窗口仍按已提交分界计量。Channel sequence不重置。
 
-8. 暂停原因区分user、historyCapacity、receiptCapacity、storageFailure；UI读Core字段，不能从128个Run猜。容量失败给resource和remedy。
+8. 逻辑容量失败给出结构化 resource 和恢复条件，GUI 显示 Core 返回的原因，不能从 128 条记录猜测。原子替换后的目录同步失败属于提交结果未确认，冻结 Task 写入和派发；重启验证并同步已引用文件与目录后再恢复。仅重新读取根文件不能证明持久化。磁盘失败时不能假装已经持久保存 storageHealth。
 
 归档还须保留 Task/Run 对旧 Thread/Goal 的来源和授权依据。现有 app-server 的 Task 访问会核对关联 Run 的 Thread scope；不能归档后仅核对热 Run，从而扩大旧历史可见范围。分页与单条读取均通过 Core 授权，冷段文件路径不得暴露给客户端。
+
+**对原方案的进一步修正**：固定数量的 hash-bucket 链只能限制热根大小，不能限制查询成本。历史越长，停止前的收据查找和归属检查仍可能占用全局锁越久。因此改为有界索引，并把只读历史扫描移出该锁。只增加桶数或容量常数无法消除这个问题。真实 GUI 冷迁移还暴露了单收据单文件的启动问题：旧的单条叶方案迁移合法 8192 收据需要超过一万个索引文件，在正常 launcher 启动期限内尚未提交根就被回收。因此终止叶必须有界打包，验收覆盖原 v3 冷迁移和随后 v4 重启；不能用离线预热或仅延长启动时限替代。
+
+私有索引格式使用 `index_version=3` 与节点版本 2，Task 根仍为 v4。未发布的实验索引版本 2 不属于支持的生产迁移来源；新 Core 明确拒绝并保留其字节，不静默解释新叶形状。部署过的 v1–3 快照仍完整备份并迁移。
 
 **为什么不选task-only SQLite**：SQLite的事务、receipt唯一键和分页确有价值，但P0引入它要同时解决JSON迁移、与Thread持久化的跨库事务、备份/恢复和双写风险。已有Store具备冷段与原子快照原语，复用改动面更小。只有证明冷段lookup或全局Task热快照仍是瓶颈后，才用单独ADR一次迁移为唯一Task仓库；不允许GUI另存Task事实，不允许两套权威双写。
 
@@ -969,7 +982,7 @@ ZCode 的 UI App 能提供页面工具给 Agent，并在已存在的可操作任
 
 1. RED fixture：页面内 unsaved text、随机 bootId、初始化次数、订阅计数、慢工具 callId。切 tab、隐藏/显示、切 session 往返后检查。
 
-2. 稳定页承载，单次 bridge，显示引用只改布局。隐藏页面不抢焦点，点击穿透保持正确。
+2. 稳定页承载，单次 bridge，显示引用只改布局。隐藏页面不抢焦点，点击穿透保持正确。实例保存打开时的窗口 owner，销毁和撤权使用这份归属回收；不能在 will-quit 时重新读取已销毁 BrowserWindow 的 webContents。异步打开返回时复核原 owner 与 epoch，失效结果沿原关闭路径补偿。Main IPC 继续核对当前窗口、sender、主 frame 和应用 URL，旧 token 不得转交给新的 owner。
 
 3. 有界页面数与显式容量反馈。初始上限应作为产品配置明确提交；容量不足拒绝新增，不能偷偷淘汰编辑页。通过多页真实 Electron 测量决定默认值，不能直接照抄 ZCode 的 64。
 
@@ -1201,7 +1214,7 @@ P1 首期明确只接受原来源仍可验证、原 MCP 连接代次仍有效的
 
 **首个 fixture**：`getSelection()` 返回页面文档 revision 与选择范围；`applyPatch({expectedDocumentRevision, patch})` 只修改该页文档。过期 revision 返回冲突，不猜测重定位。页面仅能声明规定 schema/大小和数量以内的工具；不得借此提供任意 JS、shell、网络代理或工具名覆盖。
 
-**拟新增契约**：Core 管理 `register → claim → resolve/reject`，复用已有工具调用的权限、取消和结果持久化。具体 RPC 名称由 `core/protocol` 统一定义，以下为必要数据，不是现有 API：
+**实施契约**：固定 `areal/mcp/app/tools/register`、`revoke`、`claim`、`resolve` 四个接口。resolve 统一接受完成、明确未执行与 UNKNOWN，避免独立 reject 和外层工具回复形成多条结算路径。具体类型与预算见[桌面 API](../api/desktop.md#有限页面工具)。Core 复用普通目录、审批和 ToolCall journal，不建立页面执行账本。以下身份在准入后冻结：
 
 ```ts
 type AppToolBinding = {
@@ -1210,7 +1223,12 @@ type AppToolBinding = {
   threadId: string;
   pluginId: string;
   pluginDigest: string;
-  toolId: string;
+  appsEpoch: string;
+  toolHostId: string;
+  ownerId: string;
+  registrationId: string;
+  documentId: string;
+  kind: "getSelection" | "applyPatch";
   schemaDigest: string;
 };
 // Core 生成并持久受理 callId，页面不能指定别的 Thread 或绕开 ToolCall。
@@ -1219,9 +1237,9 @@ type AppToolBinding = {
 
 **状态与边界**：
 
-- 页面 initialize 后才能注册；Core 根据所属 Thread、插件状态和已有授权决定是否向模型发布。隐藏但仍有效的页面可以执行；已关闭或撤销代际不能执行。
+- 可信 Main 在原 source-bound bridge 完成 initialize 后才能注册。Core 根据所属 Thread、插件状态和已有授权决定是否向模型发布。隐藏但仍有效的页面可以执行；已关闭或撤销代际不能执行。
 
-- 每个 callId 只能被正确实例的一次有效 claim 持有，绑定当前 Host 连接与 generation。重复 resolve 同内容幂等，异内容冲突。旧连接不能回填新实例的结果。
+- 每个 callId 只能由打开实例的原始 ToolHost 与 Main socket 领取一次。Core 先持久保存 claim，再返回执行许可，ownerId 不代替原连接授权。重复 resolve 同内容幂等，异内容冲突。旧连接不能回填新实例的结果。
 
 - Agent 的 tool schema 在受理 Turn 时冻结；页面临时修改 schema 或插件升级不能改变在途调用含义。工具名必须带受控命名空间。
 
@@ -1245,7 +1263,9 @@ type AppToolBinding = {
 
 5. 页面隐藏后选择与文档状态保持；关闭后工具从后续可见集合消失，原已受理调用留下准确终态。
 
-6. 验证 UI-03A 的在途/字节/历史预算，拒绝无界注册和无限结果；原有 MCP Apps 文件/CAS/撤权用例不退化。
+6. 验证 UI-03B 固定的登记、在途、字节和期限限制，既有请求预算保持不变；原有 MCP Apps 文件/CAS/撤权用例不退化。
+
+**本阶段取舍**：使用锁文件已有版本的 CodeMirror，直接以 UTF-16 范围完成同步 revision 比较、事务与 undo。通知只定向唤醒，不携带执行许可。一次 invocation 是 claim 与终态的唯一写入者。持久终态必须穿过 post-hook 和通用 finalizer 保持不变。任一原连接断开后保留页面但撤销工具；本轮不实现自动迁移归属或恢复执行。
 
 **依赖与回退**：UI-03A 依赖 UI-01；UI-03B 依赖 UI-01、UI-02 与支持诊断 PLG-01。两个能力分别协商和开关控制。关闭能力时先停止新注册/新派发，再 drain 或显式取消在途调用；保留已有结果和页面内容，不删除用户业务数据。远端 UI、跨设备页面、sampling 和崩溃后恢复任意 DOM 均不在本轮范围。
 

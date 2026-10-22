@@ -162,12 +162,12 @@ class CoreLibrary {
           const bucket = id => {
             const meta = state.threads[id];
             const owner = id.slice(0, id.lastIndexOf(':'));
-            return meta?.pinned ? 'pinned' : meta?.sectionId ?? (this.backend.saved.find(p => p.id === owner)?.projectless ? 'chats' : owner);
+            return meta?.pinned ? 'pinned' : (this.backend.saved.find(p => p.id === owner)?.projectless ? 'chats' : owner);
           };
           if (before != null && bucket(before) !== bucket(key)) throw new Error('排序位置已变化，请刷新');
           state.sidebarThreadOrder = reorder(state.sidebarThreadOrder, available, key, before);
           const meta = state.threads[key];
-          state.settings[meta?.pinned ? 'sidebarSortPinned' : meta?.sectionId || this.backend.saved.find(p => p.id === projectId)?.projectless ? 'sidebarSortChats' : 'sidebarSortProjects'] = 'manual';
+          state.settings[meta?.pinned ? 'sidebarSortPinned' : this.backend.saved.find(p => p.id === projectId)?.projectless ? 'sidebarSortChats' : 'sidebarSortProjects'] = 'manual';
           break;
         }
         case 'hideProject': project.hidden = request.hidden === true; break;

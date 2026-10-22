@@ -50,20 +50,21 @@ let window, backend, preview, mcpApps, updates, quitting = false, exitReady = fa
 let browserWindowClosed = false;
 const previewSubscriptions = new Map();
 const projections = new WeakMap();
-let startupPending = true, startupPainted = false, startupReady = false;
+let startupPresentation = 'requested', startupPainted = false, startupReady = false;
 let focusRequested = false, quitAttempt = null, quitRequestSequence = 0;
 let startupShowTrace, startupPaintTrace, startupPresentTrace;
-// The renderer owns first-screen readiness; Main alone owns native visibility.
-// Consume this gate once so late data cannot reopen a window the user hid.
 function presentStartup() {
-  if (!startupPending || quitting || !window || window.isDestroyed()
+  if (startupPresentation !== 'requested' || quitting || !window || window.isDestroyed()
     || !startupPainted || !startupReady) return;
-  startupPending = false;
+  startupPresentation = 'presented';
   window.show();
   if (focusRequested) { focusRequested = false; window.focus(); }
 }
 function revealWindow() {
-  if (startupPending || !window || window.isDestroyed()) { focusRequested = true; return; }
+  if (!window || window.isDestroyed()) { focusRequested = true; return; }
+  if (startupPresentation !== 'presented') {
+    startupPresentation = 'requested'; focusRequested = true; presentStartup(); return;
+  }
   if (window.isMinimized()) window.restore();
   window.show(); window.focus();
 }
@@ -91,40 +92,71 @@ function confirmRendererQuit(attempt) {
     owner.send('areal-core:quit-request', attempt.id);
   });
 }
+function setQuitProgress(attempt, phase) {
+  if (quitAttempt !== attempt || attempt.intent === 'install') return;
+  attempt.phase = phase;
+  if (attempt.owner && !attempt.owner.isDestroyed() && attempt.owner.mainFrame === attempt.frame)
+    attempt.owner.send('areal-core:quit-progress', phase ? { state: 'quitting', phase } : { state: 'idle' });
+}
+function recordQuitStage(attempt, stage) {
+  if (quitAttempt !== attempt) return;
+  diagnostics.record({ type: 'quit-stage', attempt: attempt.id, elapsedMs: Math.floor(performance.now() - attempt.startedAt), stage });
+}
 function requestQuit(intent = 'application') {
   if (quitAttempt) return quitAttempt.promise;
   if (quitting) return Promise.resolve({ canceled: true });
-  const attempt = { id: ++quitRequestSequence, intent, owner: null, frame: null, decide: null, approved: false, promise: null };
+  const attempt = { id: ++quitRequestSequence, intent, owner: null, frame: null, decide: null, approved: false,
+    phase: null, startedAt: performance.now(), promise: null };
   quitAttempt = attempt;
   attempt.promise = (async () => {
     if (!backend) throw new Error('界面仍在准备，请稍后退出');
-    if (!await confirmRendererQuit(attempt)) return { canceled: true };
-    if (quitting) return { canceled: true };
+    if (!await confirmRendererQuit(attempt)) { recordQuitStage(attempt, 'canceled'); return { canceled: true }; }
+    if (quitting) { recordQuitStage(attempt, 'canceled'); return { canceled: true }; }
     attempt.approved = true;
     quitting = true;
+    if (intent !== 'install') preview?.setPresentationSuppressed(true);
+    setQuitProgress(attempt, 'checking');
+    recordQuitStage(attempt, 'checking');
+    recordQuitStage(attempt, 'readiness');
     await backend.waitForApplicationReady();
+    recordQuitStage(attempt, 'reconcile');
     await backend.checkLifecycle();
     if (backend.foreignOwner && (intent === 'install' || backend.desktopLifetimes.size))
       throw Object.assign(new Error('原后台属于其他应用会话，请先从其原入口安全退出，再重试安装'), { code: 'APPLICATION_OWNER_MISMATCH' });
     if (!backend.foreignOwner && !backend.serviceExited && (backend.status.connected || backend.metadata || backend.desktopLifetimes.size)) {
+      setQuitProgress(attempt, 'stopping');
+      recordQuitStage(attempt, 'stop');
       const result = await recoverConnectedService({ backend,
-        notify: options => process.platform === 'darwin' && intent !== 'install' ? dialog.showMessageBox(options) : dialog.showMessageBox(window, options), purpose: intent === 'install' ? 'update' : 'quit', forUpdate: intent === 'install' });
+        notify: async options => {
+          recordQuitStage(attempt, 'native-confirmation');
+          const answer = await (process.platform === 'darwin' && intent !== 'install' ? dialog.showMessageBox(options) : dialog.showMessageBox(window, options));
+          if (answer.response === 1) recordQuitStage(attempt, 'stop');
+          return answer;
+        }, purpose: intent === 'install' ? 'update' : 'quit', forUpdate: intent === 'install' });
       if (result.stopped !== true) {
+        recordQuitStage(attempt, result.canceled ? 'canceled' : 'incomplete');
         if (!result.canceled) backend.reportLifecycleError(new Error('应用后台停止尚未完成，请检查原请求与阻塞事项。'));
         return result;
       }
     }
+    setQuitProgress(attempt, 'finishing');
+    recordQuitStage(attempt, 'terminal');
     await backend.prepareQuit();
     if (intent === 'install') await require('../update/package-users.cjs').assertPackageUsersReleased({ packaged: app.isPackaged });
+    recordQuitStage(attempt, 'finalizing');
     if (!backend.foreignOwner) await backend.completeApplicationQuit();
+    recordQuitStage(attempt, 'disconnect');
     await backend.shutdown();
     preview?.dispose();
     exitReady = true;
+    recordQuitStage(attempt, 'exit-ready');
     if (intent !== 'install') setImmediate(() => app.quit());
     return { stopped: true, quitting: true };
-  })().finally(() => {
+  })().catch(error => { recordQuitStage(attempt, 'failed'); throw error; }).finally(() => {
     if (!exitReady && quitAttempt === attempt) {
       if (attempt.approved) quitting = false;
+      setQuitProgress(attempt, null);
+      if (intent !== 'install') preview?.setPresentationSuppressed(false);
       quitAttempt = null;
     }
   });
@@ -141,14 +173,16 @@ async function exportDiagnostics() {
 }
 const requestStopAndQuit = () => requestQuit('stop');
 const stopAndQuitFromMenu = () => { void requestStopAndQuit().catch(error => { backend?.reportLifecycleError(error); revealWindow(); }); };
-const menuBar = new MenuBar(() => quitting || startupPending ? null : window, stopAndQuitFromMenu);
+const menuBar = new MenuBar(() => quitting || startupPresentation !== 'presented' ? null : window, stopAndQuitFromMenu);
 app.on('will-quit', () => menuBar?.close());
 let notificationTarget = null, notificationSequence = 0;
 function openNotificationTarget(target) {
   notificationTarget = { ...target, id: ++notificationSequence };
   if (!window || window.isDestroyed()) return;
-  if (window.isMinimized()) window.restore();
-  if (!startupPending) { window.show(); window.focus(); }
+  if (startupPresentation === 'presented') {
+    if (window.isMinimized()) window.restore();
+    window.show(); window.focus();
+  }
   window.webContents.send('areal-core:notification-open');
 }
 let mcpAppDeepLink = null, mcpAppDeepLinkSequence = 0;
@@ -186,10 +220,13 @@ function desktopSnapshot() {
   if (state.connection?.state === 'ready' && state.library && !quitting) menuBar?.sync(state.library.settings?.showInMenuBar !== false);
   return { ...state, menuBar: menuBar?.snapshot() ?? null };
 }
-function trusted(event) {
-  if (quitting) throw new Error('应用正在退出或安装更新');
+function trustedSender(event) {
   if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame
     || !event.senderFrame.url.startsWith('areal-ui://app/')) throw new Error('拒绝非主视图请求');
+}
+function trusted(event) {
+  if (quitting) throw new Error('应用正在退出或安装更新');
+  trustedSender(event);
 }
 ipcMain.on('areal-core:quit-decision', (event, decision) => {
   const attempt = quitAttempt;
@@ -217,7 +254,7 @@ async function createWindow() {
     });
     {
       // Native recovery dialogs may reveal their parent before the normal gate.
-      window.once('show', () => { startupPending = false; startupShowTrace.finish('ok'); });
+      window.once('show', () => { startupPresentation = 'presented'; startupShowTrace.finish('ok'); });
       window.once('ready-to-show', () => { startupPainted = true; startupPaintTrace.finish('ok'); presentStartup(); });
     }
     preview = new CorePreview(window, WebContentsView,
@@ -259,9 +296,11 @@ async function createWindow() {
     window.on('close', event => {
       if (exitReady) return;
       event.preventDefault();
+      if (quitting) return;
       // A close-to-background still ends this window's Browser ownership. Fence
       // native callbacks before hiding; reopening creates fresh Pages on demand.
       browserWindowClosed = true;
+      if (startupPresentation !== 'presented') { startupPresentation = 'suppressed'; focusRequested = false; }
       preview?.dispose();
       mcpApps?.dispose();
       window.hide();
@@ -295,11 +334,15 @@ app.whenReady().then(async () => {
     if (quitting || !preview || !window || window.isDestroyed()) throw new Error('Browser host unavailable');
     try {
       if (request.operation === 'describe') {
+        if (request.phase === 'prepare') return preview.prepareDiscovery(request);
+        if (request.browserApproval?.plan) preview.consumeDiscovery(request);
         const identity = await preview.ensureAgentPage(request.projectId, request.threadId);
         try {
-          await backend.browserClaim({ ...identity, bootstrapRequestId: request.requestId });
+          if (!request.browserApproval?.plan?.alreadyControlled)
+            await backend.browserClaim({ ...identity, bootstrapRequestId: request.requestId });
           const page = preview.page(request.projectId, request.threadId, identity.pageId);
           if (!page || !preview.pageStillOwned(page) || page.control !== 'agent'
+            || preview.page(request.projectId, request.threadId) !== page
             || page.controlEpoch !== identity.controlEpoch || page.pageGeneration !== identity.pageGeneration)
             throw new Error('Browser entry was revoked');
         }
@@ -311,9 +354,16 @@ app.whenReady().then(async () => {
         }
         if (!window.isDestroyed()) window.webContents.send('areal-core:preview-event', {
           kind: 'reveal', projectId: request.projectId, threadId: request.threadId, pageId: identity.pageId });
-        return { claimed: true };
+        return { ...identity, coreGeneration: request.coreGeneration, turnId: request.turnId, callId: request.callId,
+          claimed: true, controlPermit: preview.controlPermit(request.projectId, request.threadId, identity.pageId) };
       }
-      return await (request.phase === 'prepare' ? preview.prepare(request) : preview.execute(request));
+      const result = await (request.phase === 'prepare' ? preview.prepare(request) : preview.execute(request));
+      if (request.phase !== 'prepare' && !result.error) {
+        result.controlPermit = preview.controlPermit(request.projectId, request.threadId, request.pageId);
+        if (result.createdPage) result.controlPermits = [result.controlPermit,
+          preview.controlPermit(request.projectId, request.threadId, result.createdPage.pageId)];
+      }
+      return result;
     }
     catch (error) {
       if (error.message === 'outcome_unknown') throw error;
@@ -330,11 +380,13 @@ app.whenReady().then(async () => {
         : /budget exceeded|Sensitive field|viewport changed|content changed during capture|capture guard unavailable/.test(error.message) ? 'evidence_unavailable' : 'page_unavailable' }; }
   };
   app.on('will-quit', () => mcpApps?.dispose());
-  mcpApps = new McpAppsHost({ backend, ownerId: () => window?.webContents.id,
-    notify: value => { if (window && !window.isDestroyed()) window.webContents.send('areal-core:mcp-app-event', value); },
+  mcpApps = new McpAppsHost({ backend, ownerId: () => window && !window.isDestroyed() && !window.webContents.isDestroyed() ? window.webContents.id : undefined,
+    notify: value => { if (window && !window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send('areal-core:mcp-app-event', value); },
     openFile: (request, current) => fileOpen({ backend, shell, home: app.getPath('home'), authorize: current,
       chooseSave: options => dialog.showSaveDialog(window, options) }, request) });
   backend.onMcpAppNotification = event => mcpApps?.notification(event);
+  backend.onMcpPageToolNotice = event => { void mcpApps?.pageToolNotice(event).catch(() => {}); };
+  backend.onMcpPageToolsDisconnected = event => mcpApps?.pageToolsDisconnected(event);
   protocol.handle('areal-mcp', request => mcpApps.resource(request));
   ipcMain.handle('areal-core:mcp-app-deep-link-target', event => { trusted(event); return mcpAppDeepLink; });
   ipcMain.handle('areal-core:mcp-app-deep-link-consumed', (event, id) => { trusted(event); if (mcpAppDeepLink?.id === id) mcpAppDeepLink = null; });
@@ -355,14 +407,22 @@ app.whenReady().then(async () => {
     trusted(event);
     if (!request || typeof request !== 'object') throw new Error('Invalid app request');
     if (request.operation === 'metadataImage') return mcpMetadataImages.load(request.source).catch(() => { throw new Error('Metadata image unavailable'); });
+    if (request.operation === 'openFromResult') return mcpApps.openFromResult(request, event.sender.id);
     if (request.operation === 'open') return mcpApps.open(request, event.sender.id).catch(() => { throw new Error('MCP App could not be opened'); });
     if (request.operation === 'request') return mcpApps.request(request.token, request.request, event.sender.id).catch(() => { throw new Error('MCP App request rejected or incomplete'); });
+    if (request.operation === 'pageToolsReady') return mcpApps.pageToolsReady(request.token, request.mountId, request.declaration, event.sender.id);
+    if (request.operation === 'pageToolsUnmount') return mcpApps.pageToolsUnmount(request.token, request.mountId, event.sender.id);
+    if (request.operation === 'pageToolResult') return mcpApps.pageToolResult(request.token, request.mountId, request.callId, request.reply, event.sender.id);
     if (request.operation === 'close') return mcpApps.close(request.token, event.sender.id);
     throw new Error('Unsupported app operation');
   });
   ipcMain.handle('areal-core:preview', async (event, request) => {
-    trusted(event);
+    trustedSender(event);
     validatePreview(request);
+    if (quitting) {
+      if (preview?.suppressedPresentation && request.operation === 'show') return null;
+      throw new Error('应用正在退出或安装更新');
+    }
     if (!preview) throw new Error('预览不可用');
     if (request?.operation === 'subscribe') {
       if (!backend.ownsThread(request.projectId, request.threadId)) throw new Error('请选择有效任务');

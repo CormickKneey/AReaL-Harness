@@ -65,6 +65,23 @@ pub enum State {
     Unavailable,
 }
 
+/// 仅由显式恢复发现返回；不扩展严格 v1 Service/Capabilities 的默认形状。
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RecoveryInfo {
+    pub version: u32,
+    pub generation: String,
+    pub eligible: bool,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RecoveryStatus {
+    pub service: Service,
+    pub recovery: RecoveryInfo,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Capabilities {

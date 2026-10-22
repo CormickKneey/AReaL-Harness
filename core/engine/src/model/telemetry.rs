@@ -32,6 +32,7 @@ pub(super) fn request(
         match purpose {
             RequestPurpose::Solve => "solve",
             RequestPurpose::Summary => "summary",
+            RequestPurpose::PermissionReview => "permissionReview",
         },
     );
     // 保留原始 JSON 字符串，哈希无需跨语言重新序列化浮点数或 Unicode。

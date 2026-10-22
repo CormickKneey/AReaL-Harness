@@ -54,6 +54,7 @@ async fn terminal_codes_survive_events_storage_and_restart_without_completion_re
             max_completion_retries: 0,
             watchdog_disable: true,
             stream_idle_timeout: Duration::from_millis(idle),
+            model_request_timeout: Duration::from_millis(idle),
             ..Limits::default()
         };
         let engine = Engine::open(data.path(), model.clone(), limits.clone()).unwrap();

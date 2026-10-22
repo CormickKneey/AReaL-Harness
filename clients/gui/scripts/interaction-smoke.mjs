@@ -12,6 +12,7 @@ const gui = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const desktop = join(gui, "app");
 const require = createRequire(join(desktop, "package.json"));
 const { _electron: electron } = require("playwright-core");
+const focusOnly = process.argv.includes("--focus-only");
 const root = resolve(gui, "../..");
 const binary = process.env.AREAL_GUI_EXECUTABLE
   ? resolve(dirname(process.env.AREAL_GUI_EXECUTABLE), "../Resources/areal-core/bin/areal")
@@ -65,6 +66,7 @@ await writeFile(
         displayName: "标准",
         instructions: "Complete the task",
         allowThreadProcesses: true,
+        approvalTools: focusOnly ? ["fs_create"] : [],
 
         skills: [
           { id: "fixture-skill", revision: "v1" },
@@ -124,6 +126,7 @@ const env = {
   AREAL_CORE_HOME: join(scratch, "core"),
   AREAL_CORE_USER_HOME: join(scratch, "user-home"),
   AREAL_HARNESS_HOME: join(scratch, "runtime"),
+  AREAL_HARNESS_SERVICE_HOME: join(scratch, "registry"),
   AREAL_CORE_CONFIG: config,
   AREAL_CORE_DESKTOP_CONFIG: deployment,
   AREAL_GUI_USER_DATA: join(scratch, "electron"),
@@ -135,7 +138,9 @@ let app,
   passed = false;
 const errors = [],
   frames = [],
-  checks = [];
+  checks = [],
+  focusEvidence = [],
+  identities = [];
 const button = (name) => page.getByRole("button", { name, exact: true });
 const state = () => page.evaluate(() => window.arealDesktop.snapshot());
 async function call(name, params) {
@@ -182,6 +187,101 @@ async function shot(name) {
   });
   frames.push(name + ".png");
 }
+async function tabTo(targetPage, target) {
+  for (let index = 0; index < 100; index++) {
+    await targetPage.keyboard.press("Tab");
+    if (await target.evaluate(element => element === document.activeElement)) return;
+  }
+  throw Error("Keyboard Tab did not reach " + await target.getAttribute("aria-label"));
+}
+async function focusGeometry(targetPage, target, label) {
+  await tabTo(targetPage, target);
+  const computed = await target.evaluate(element => {
+    const style = getComputedStyle(element);
+    return { visible: element.matches(":focus-visible"), width: style.outlineWidth, offset: style.outlineOffset, style: style.outlineStyle };
+  });
+  assert.deepEqual(computed, { visible: true, width: "2px", offset: "2px", style: "solid" }, label);
+  focusEvidence.push({ label, ...computed });
+}
+async function assertDecision(request, decision, filename) {
+  await until(s => current(s)?.turns.find(turn => turn.id === request.turnId)?.status === "completed", "original approval turn completed");
+  const snapshot = await state();
+  const responses = project(snapshot).state.interactions[tid].data.filter(item => item.requestId === request.requestId);
+  assert.equal(responses.length, 1, "original request has one authoritative interaction");
+  assert.equal(responses[0].response.decision, decision);
+  const turn = current(snapshot).turns.find(item => item.id === request.turnId);
+  const calls = turn.items.filter(item => item.type === "dynamicToolCall" && item.tool === "fs_create");
+  assert.equal(calls.length, 1, "one tool call belongs to the original turn");
+  assert.equal(calls[0].success, decision === "allowOnce", "Core tool result agrees with the decision");
+  if (decision === "allowOnce") assert.equal(await readFile(join(workspace, filename), "utf8"), "approved by user");
+  else await assert.rejects(readFile(join(workspace, filename)), { code: "ENOENT" });
+  focusEvidence.push({ requestId: request.requestId, turnId: request.turnId, decision, toolCalls: calls.length, toolSuccess: calls[0].success, filename });
+}
+async function verifyWebFocus() {
+  const instanceId = project(await state()).core.instanceId;
+  const descriptor = JSON.parse(execFileSync(binary, ["service", "status", "--instance", instanceId, "--json"], { env, encoding: "utf8", timeout: 20000 }));
+  assert.equal(descriptor.serviceId, instanceId);
+  assert.equal(descriptor.workspace, workspace);
+  assert.equal(descriptor.dataDir, join(env.AREAL_CORE_HOME, pid, "state"));
+  assert.ok(descriptor.authFile.startsWith(scratch + "/"), "Web authentication belongs to this fixture");
+  const auth = JSON.parse(await readFile(descriptor.authFile, "utf8"));
+  const principal = auth.principals.find(item => ["observe", "interact", "manage", "tools"].every(permission => item.permissions.includes(permission)));
+  assert.ok(principal, "real fixture principal can perform approvals");
+  const url = new URL(descriptor.endpoint);
+  url.protocol = "http:";
+  url.pathname = "/ui";
+  const windowReady = app.waitForEvent("window");
+  const security = await app.evaluate(async ({ BrowserWindow }, url) => {
+    const window = new BrowserWindow({ width: 1100, height: 800, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+    await window.loadURL(url);
+    const preferences = window.webContents.getLastWebPreferences();
+    return { sandbox: preferences.sandbox, contextIsolation: preferences.contextIsolation, nodeIntegration: preferences.nodeIntegration, preload: preferences.preload ?? null };
+  }, url.href);
+  const web = await windowReady;
+  try {
+    const webWindow = await app.browserWindow(web);
+    assert.deepEqual(security, { sandbox: true, contextIsolation: true, nodeIntegration: false, preload: null });
+    web.setDefaultTimeout(15000);
+    web.on("pageerror", error => errors.push(error.message));
+    assert.equal(await web.evaluate(() => typeof window.arealDesktop), "undefined", "local Web has no Desktop bridge");
+    const css = await web.request.get(new URL("/ui/style.css", url).href);
+    assert.equal(css.status(), 200);
+    assert.match(css.headers()["content-type"], /^text\/css/);
+    assert.equal(css.headers()["x-content-type-options"], "nosniff");
+    const stylesheet = await css.text();
+    const shared = await readFile(join(root, "design/tokens/focus.css"), "utf8");
+    assert.equal(stylesheet, shared + "\n" + await readFile(join(root, "clients/web/style.css"), "utf8"), "real HTTP CSS combines the current shared and Web sources");
+    await web.getByLabel("本地访问令牌", { exact: true }).fill(principal.token);
+    await web.getByRole("button", { name: "连接", exact: true }).click();
+    await web.locator('#connection[data-state="connected"]').waitFor();
+    await web.locator(`.thread-row[data-id="${tid}"] .thread-select`).click();
+    identities.push({ surface: "local Web", browser: "Electron Chromium", transport: "real HTTP and authenticated WebSocket", bridge: false, security, url: url.href, registry: env.AREAL_HARNESS_SERVICE_HOME, serviceId: descriptor.serviceId, generation: descriptor.generation, pid: descriptor.pid, workspace: descriptor.workspace, dataDir: descriptor.dataDir });
+    for (const [filename, label, decision, theme, width] of [["web-denied.txt", "拒绝", "deny", "light", 1100], ["web-allowed.txt", "允许一次", "allowOnce", "dark", 420]]) {
+      await web.getByRole("button", { name: "设置", exact: true }).click();
+      await web.getByLabel("外观", { exact: true }).selectOption(theme);
+      await web.getByRole("button", { name: "关闭设置", exact: true }).click();
+      await webWindow.evaluate((window, width) => window.setSize(width, 800), width);
+      await web.waitForFunction(({ theme, width }) => document.documentElement.dataset.theme === theme && innerWidth === width, { theme, width });
+      await web.locator("#prompt").fill("write:" + filename);
+      await web.locator("#prompt").press("Enter");
+      await until(s => interaction(s, "approval"), "Web approval request");
+      const request = interaction(await state(), "approval");
+      const action = web.locator("#permission-request").getByRole("button", { name: label, exact: true });
+      await action.waitFor();
+      await focusGeometry(web, action, "Web " + decision);
+      focusEvidence.push({ surface: "local Web", decision, theme, viewport: await web.evaluate(() => ({ width: innerWidth, height: innerHeight })) });
+      const frame = "focus-" + filename + ".png";
+      await web.screenshot({ path: join(scratch, frame), scale: "css", animations: "disabled" });
+      frames.push(frame);
+      await web.keyboard.press("Enter");
+      await assertDecision(request, decision, filename);
+      await web.locator("#permission-request").waitFor({ state: "hidden" });
+    }
+    checks.push("local Web serves the merged CSS and keyboard approve/deny settle the original real Core requests");
+  } finally {
+    await web.close();
+  }
+}
 async function launch() {
   app = await electron.launch({
     executablePath: process.env.AREAL_GUI_EXECUTABLE || require("electron"),
@@ -208,8 +308,9 @@ async function quit() {
 }
 console.log("Interaction evidence:", scratch);
 let pid, tid;
-const interaction = (snapshot, kind) => snapshot.projects[0].state.interactions[tid]?.data.findLast(i => i.status === "pending" && i.kind === kind);
-const current = snapshot => snapshot.projects[0].state.threads[tid];
+const project = snapshot => snapshot.projects.find(item => item.root === workspace);
+const interaction = (snapshot, kind) => project(snapshot).state.interactions[tid]?.data.findLast(i => i.status === "pending" && i.kind === kind);
+const current = snapshot => project(snapshot).state.threads[tid];
 try {
   await launch();
   await page.evaluate(() => localStorage.setItem("areal-gui:theme", "data-dense"));
@@ -218,53 +319,70 @@ try {
   await app.evaluate(({ dialog }, workspace) => { dialog.showOpenDialog = async () => ({canceled:false,filePaths:[workspace]}); }, workspace);
   await button("不在项目中工作").click();
   await page.getByRole("menuitem",{name:"新建项目",exact:true}).click();
-  await until(s => s.projects[0]?.state?.connected,"project ready");
-  pid=(await state()).projects[0].id;
+  await until(s => project(s)?.state?.connected,"project ready");
+  pid=project(await state()).id;
+  if (focusOnly) {
+    await page.waitForFunction(id => document.querySelector('[data-testid="areal-workbench"]')?.dataset.projectId === id, pid);
+    assert.ok(project(await state()).profiles.some(item => item.id === "standard" && item.revision === "v1"));
+    await page.evaluate(id => {
+      const key = `areal-gui:draft:${id}:new`;
+      localStorage.setItem(`${key}:profile`, JSON.stringify({ id: "standard", revision: "v1" }));
+      window.dispatchEvent(new CustomEvent("areal-draft-change", { detail: key }));
+    }, pid);
+  }
   const input=()=>page.getByTestId("chat-input");
   const send=async text=>{
     await input().fill(text);
     await page.getByTestId("chat-send-button").click();
-    await until(s=>Object.values(s.projects[0].state.threads).some(t=>t.turns?.at(-1)?.status==="inProgress"),"admitted turn");
-    tid=Object.values((await state()).projects[0].state.threads).find(t=>t.turns?.length)?.id;
+    await until(s=>Object.values(project(s).state.threads).some(t=>t.turns?.at(-1)?.status==="inProgress"),"admitted turn");
+    tid=Object.values(project(await state()).state.threads).find(t=>t.turns?.length)?.id;
     assert.ok(tid,"Core thread created");
   };
   const done=()=>until(s=>current(s)?.turns.at(-1)?.status==="completed","same turn completed");
   const approval=()=>page.getByRole("region",{name:"工具审批",exact:true});
   const question=()=>page.getByRole("region",{name:"需要你的回答",exact:true});
   await send("write:denied.txt");
+  if (focusOnly) assert.deepEqual(project(await state()).configurations[tid].profile.approvalTools, ["fs_create"], "real Core requires fixture tool approval");
   await until(s=>interaction(s,"approval"),"approval request");
   const denial=interaction(await state(),"approval");
   await approval().waitFor();
+  await focusGeometry(page, approval(), "GUI approval DecisionCard");
   await shot("01-approval-pending");
   assert.equal(await input().isVisible(),false,"approval replaces ordinary input");
   assert.equal(await approval().locator(".decision-card-label").innerText(),"工具");
-  await button("拒绝").click();
+  await tabTo(page, button("拒绝"));
+  await page.keyboard.press("Enter");
   await done();
-  await assert.rejects(readFile(join(workspace,"denied.txt")),{code:"ENOENT"});
-  assert.equal((await state()).projects[0].state.interactions[tid].data.find(i=>i.requestId===denial.requestId).response.decision,"deny");
+  await assertDecision(denial, "deny", "denied.txt");
   checks.push("deny resumes the original turn without writing the file");
 
   await send("write:allowed.txt");
   await until(s=>interaction(s,"approval"),"once request");
+  const allowance = interaction(await state(), "approval");
+  await focusGeometry(page, approval(), "GUI allowOnce DecisionCard");
   // The hidden Lexical editor is mounted, preserving draft ownership.
   await page.evaluate(()=>{const el=document.querySelector('[data-testid="chat-input"]');if(!el)throw Error("missing retained editor")});
-  await button("更多授权范围").click();
-  await page.getByRole("menuitem",{name:/本任务允许此操作/}).waitFor();
-  await shot("02-approval-scope-menu");
-  await page.keyboard.press("Escape");
-  await button("允许一次").click();
+  if (!focusOnly) {
+    await button("更多授权范围").click();
+    await page.getByRole("menuitem",{name:/本任务允许此操作/}).waitFor();
+    await shot("02-approval-scope-menu");
+    await page.keyboard.press("Escape");
+  }
+  await tabTo(page, button("允许一次"));
+  await page.keyboard.press("Enter");
   await done();
-  assert.equal(await readFile(join(workspace,"allowed.txt"),"utf8"),"approved by user");
+  await assertDecision(allowance, "allowOnce", "allowed.txt");
   await approval().waitFor({state:"hidden"});
   checks.push("allowOnce writes the requested file and restores the normal composer");
 
+  if (!focusOnly) {
   await send("write:session.txt");
   await until(s=>interaction(s,"approval"),"session request");
   await button("更多授权范围").click();
   await page.getByRole("menuitem",{name:/本任务允许此操作/}).click();
   await done();
   assert.equal(await readFile(join(workspace,"session.txt"),"utf8"),"approved by user");
-  assert.equal((await state()).projects[0].state.interactions[tid].data.at(-1).response.decision,"allowSession");
+  assert.equal(project(await state()).state.interactions[tid].data.at(-1).response.decision,"allowSession");
   checks.push("task scope reaches the original Core approval response");
 
   await send("write:project.txt");
@@ -273,10 +391,10 @@ try {
   await page.getByRole("menuitem",{name:/本项目允许此操作/}).click();
   await done();
   assert.equal(await readFile(join(workspace,"project.txt"),"utf8"),"approved by user");
-  assert.equal((await state()).projects[0].state.interactions[tid].data.at(-1).response.decision,"allowProject");
+  assert.equal(project(await state()).state.interactions[tid].data.at(-1).response.decision,"allowProject");
   checks.push("project scope reaches the original Core approval response");
 
-  const configBefore = (await state()).projects[0].configurations[tid];
+  const configBefore = project(await state()).configurations[tid];
   await call("configure", {projectId:pid,threadId:tid,options:{...configBefore.options,approvalTools:["fs_create"]}});
   await send("write:forced.txt");
   await until(s=>interaction(s,"approval"),"forced approval");
@@ -311,7 +429,7 @@ try {
   await shot("03-question-pending");
   await page.getByRole("radio",{name:/重构/}).click();
   await done();
-  assert.equal((await state()).projects[0].state.interactions[tid].data.find(i=>i.requestId===optionRequest.requestId).response.answers.choice,"重构");
+  assert.equal(project(await state()).state.interactions[tid].data.find(i=>i.requestId===optionRequest.requestId).response.answers.choice,"重构");
   await page.locator('[data-question-answer]').last().getByText("重构",{exact:true}).waitFor();
   await page.screenshot({path:join(scratch,"04-question-answer-full.png"),scale:"css",animations:"disabled"});
   frames.push("04-question-answer-full.png");
@@ -351,7 +469,7 @@ try {
   await question().getByRole("button",{name:"下一题",exact:true}).click();
   await question().getByRole("button",{name:"发送",exact:true}).click();
   await done();
-  assert.deepEqual((await state()).projects[0].state.interactions[tid].data.at(-1).response.answers,{choice:"最小修改",note:"统一卡片样式"});
+  assert.deepEqual(project(await state()).state.interactions[tid].data.at(-1).response.answers,{choice:"最小修改",note:"统一卡片样式"});
   await shot("06-multi-answer");
   checks.push("multiple answers preserve per-question drafts and submit atomically to Core");
 
@@ -369,6 +487,8 @@ try {
   const browserCall = current(await state()).turns.at(-1).items.find(i=>i.type==="dynamicToolCall"&&i.tool==="browser_v1");
   assert.equal(browserCall.success,true,"Core/browser host completes the approved description");
   checks.push("real Browser approval uses the shared card and retains the existing host/Core execution path");
+  }
+  if (focusOnly) await verifyWebFocus();
 
   assert.equal(errors.length,0,"renderer has no page errors");
   await writeFile(join(scratch,"final-state.json"),JSON.stringify(await state(),null,2));
@@ -383,19 +503,32 @@ try {
   process.exitCode=1;
   if(page) await page.screenshot({path:join(scratch,"failure.png")}).catch(()=>{});
 } finally {
+  const serviceMetadata = await readFile(join(scratch, "core/service.json"), "utf8").then(JSON.parse).catch(error => {
+    if (error.code !== "ENOENT") throw error;
+    return null;
+  });
   await quit();
   try {
-    const { ServiceConnection } = require(join(desktop, "src/core/service-client.cjs"));
-    const connection = new ServiceConnection();
-    try {
-      await connection.connect(
-        JSON.parse(await readFile(join(scratch, "core/service.json"), "utf8")),
-      );
-      await connection.request("stopService", { protocol: "areal.desktop-service.v1" }, true);
-      checks.push("explicit safe service stop completes");
-    } finally {
-      connection.close();
+    const alive = () => {
+      if (!serviceMetadata) return false;
+      try { process.kill(serviceMetadata.pid, 0); return true; }
+      catch (error) { if (error.code === "ESRCH") return false; throw error; }
+    };
+    if (alive()) {
+      const { ServiceConnection } = require(join(desktop, "src/core/service-client.cjs"));
+      const connection = new ServiceConnection();
+      try {
+        await connection.connect(serviceMetadata);
+        await connection.request("stopService", { protocol: "areal.desktop-service.v1" }, true);
+      } finally {
+        connection.close();
+      }
     }
+    for (let index = 0; alive() && index < 100; index++) await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(alive(), false, "owned Desktop service exits");
+    const instances = JSON.parse(execFileSync(binary, ["service", "list", "--json"], { env, encoding: "utf8", timeout: 20000 }));
+    assert.ok(instances.every(instance => instance.workspace.startsWith(scratch + "/") && instance.state === "stopped"), "all private fixture Core instances stopped");
+    checks.push("owned Desktop service exits and private Core registry contains no running instances");
   } catch (error) {
     console.error("Adapter fixture cleanup:", error.message);
     if (passed) {
@@ -456,9 +589,13 @@ try {
         arch: process.arch,
         runtime: "real Electron + real Rust Core/Runtime + deterministic local HTTP/SSE model",
         nativeDialogs: "project picker and archive/quit confirmations injected",
+        fixtureProfile: focusOnly ? "Core profile standard@v1 requires fs_create approval; Composer draft selection injected" : null,
         scratch,
         frames,
         checks,
+        focusEvidence,
+        identities,
+        focusOnly,
         errors,
       },
       null,

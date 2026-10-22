@@ -10,13 +10,13 @@ mod processes;
 mod workgroups;
 use areal_engine::{Engine, Error};
 mod task_mode;
-use areal_protocol::{Input, MAX_FRAME_BYTES, RpcError, response};
+use areal_protocol::{Input, MAX_FRAME_BYTES, MAX_RESPONSE_BYTES, RpcError, response};
 use axum::{
     Router,
     body::Body,
     extract::{
         DefaultBodyLimit, Extension, Path, Query, State, WebSocketUpgrade,
-        ws::{Message, WebSocket},
+        ws::{CloseFrame, Message, WebSocket},
     },
     http::{HeaderMap, StatusCode, header},
     response::{Html, IntoResponse, Response},
@@ -60,7 +60,7 @@ fn configured_router(
             ([("content-security-policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"), ("x-content-type-options", "nosniff"), ("referrer-policy", "no-referrer")], Html(include_str!("../../../clients/web/index.html")))
         }))
         .route("/ui/app.js", get(|| async { ([("content-type", "text/javascript; charset=utf-8"), ("x-content-type-options", "nosniff")], include_str!("../../../clients/web/app.js")) }))
-        .route("/ui/style.css", get(|| async { ([("content-type", "text/css; charset=utf-8"), ("x-content-type-options", "nosniff")], include_str!("../../../clients/web/style.css")) }))
+        .route("/ui/style.css", get(|| async { ([("content-type", "text/css; charset=utf-8"), ("x-content-type-options", "nosniff")], concat!(include_str!("../../../design/tokens/focus.css"), "\n", include_str!("../../../clients/web/style.css"))) }))
         .route("/areal/auth/session", axum::routing::post(browser_auth::session))
         .route("/areal/auth/bootstrap", axum::routing::post(browser_auth::bootstrap))
         .route("/areal/auth/bootstrap/exchange", axum::routing::post(browser_auth::exchange).layer(DefaultBodyLimit::max(1024)))
@@ -301,11 +301,55 @@ struct Connection {
     ready: bool,
     subscriptions: HashMap<String, CancellationToken>,
     suppressed: HashSet<String>,
-    tx: mpsc::Sender<Value>,
+    tx: mpsc::Sender<Outbound>,
     stop: CancellationToken,
     tasks: TaskTracker,
     delivery: Arc<Mutex<()>>,
     rpc_permits: Arc<tokio::sync::Semaphore>,
+}
+
+enum Outbound {
+    Message(Value),
+    Observation {
+        value: Value,
+        subscription: CancellationToken,
+    },
+    Event {
+        value: Value,
+        subscription: CancellationToken,
+    },
+}
+
+#[derive(Default)]
+struct BoundedJson {
+    bytes: Vec<u8>,
+}
+
+impl std::io::Write for BoundedJson {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if bytes.len() > MAX_RESPONSE_BYTES - self.bytes.len() {
+            return Err(std::io::Error::other("response exceeds byte limit"));
+        }
+        let length = self.bytes.len() + bytes.len();
+        if length > self.bytes.capacity() {
+            let capacity = length
+                .max(self.bytes.capacity().saturating_mul(2))
+                .min(MAX_RESPONSE_BYTES);
+            self.bytes.reserve_exact(capacity - self.bytes.len());
+        }
+        self.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+fn encode_outbound(value: &Value) -> Option<String> {
+    let mut output = BoundedJson::default();
+    serde_json::to_writer(&mut output, value).ok()?;
+    String::from_utf8(output.bytes).ok()
 }
 
 async fn connection(
@@ -323,22 +367,60 @@ async fn connection(
     };
     tokio::pin!(expired);
     let (mut sink, mut stream) = socket.split();
-    let (tx, mut rx) = mpsc::channel::<Value>(256);
+    let (tx, mut rx) = mpsc::channel::<Outbound>(256);
     let stop = CancellationToken::new();
     let writer_stop = stop.clone();
     let writer = tokio::spawn(async move {
         loop {
-            let value = tokio::select! { biased; _ = writer_stop.cancelled() => break, value = rx.recv() => value };
-            let Some(value) = value else {
+            let outbound = tokio::select! { biased; _ = writer_stop.cancelled() => break, value = rx.recv() => value };
+            let Some(outbound) = outbound else {
                 break;
             };
-            match tokio::time::timeout(
-                Duration::from_secs(5),
-                sink.send(Message::Text(value.to_string().into())),
-            )
-            .await
-            {
-                Ok(Ok(())) => {}
+            let (value, observation) = match outbound {
+                Outbound::Message(value) => (value, None),
+                Outbound::Observation {
+                    value,
+                    subscription,
+                } => (value, Some(subscription)),
+                Outbound::Event {
+                    value,
+                    subscription,
+                } => {
+                    if subscription.is_cancelled() {
+                        continue;
+                    }
+                    (value, None)
+                }
+            };
+            let text = encode_outbound(&value).or_else(|| {
+                if let Some(subscription) = observation {
+                    subscription.cancel();
+                }
+                let id = value.get("id").filter(|_| value.get("method").is_none())?;
+                encode_outbound(&response(
+                    id.clone(),
+                    Err(RpcError {
+                        code: -32001,
+                        message: "Core response exceeds the supported loading size".into(),
+                        data: Some(json!({
+                            "reason": "RESPONSE_TOO_LARGE",
+                            "limitBytes": MAX_RESPONSE_BYTES,
+                            "retryable": false,
+                            "delivery": "resultUnavailable",
+                        })),
+                    }),
+                ))
+            });
+            let message = match text {
+                Some(text) => Message::Text(text.into()),
+                None => Message::Close(Some(CloseFrame {
+                    code: 1009,
+                    reason: "RESPONSE_TOO_LARGE".into(),
+                })),
+            };
+            let closing = matches!(&message, Message::Close(_));
+            match tokio::time::timeout(Duration::from_secs(5), sink.send(message)).await {
+                Ok(Ok(())) if !closing => {}
                 _ => {
                     writer_stop.cancel();
                     break;
@@ -385,7 +467,7 @@ async fn connection(
                     Err(RpcError {
                         code: -32700,
                         message: "Parse error".into(),
-                        data: None,
+                        data: Some(json!({"reason":"REQUEST_REJECTED","outcome":{"kind":"rejected"},"recovery":{"kind":"none"}})),
                     }),
                 ));
                 continue;
@@ -407,7 +489,7 @@ async fn connection(
                 Err(RpcError {
                     code: -32600,
                     message: "Invalid request".into(),
-                    data: None,
+                    data: Some(json!({"reason":"REQUEST_REJECTED","outcome":{"kind":"rejected"},"recovery":{"kind":"none"}})),
                 }),
             ));
             continue;
@@ -448,7 +530,7 @@ async fn connection(
                 Err(RpcError {
                     code: -32003,
                     message: "authenticated native selection host required".into(),
-                    data: None,
+                    data: Some(json!({"reason":"REQUEST_REJECTED","outcome":{"kind":"rejected"},"recovery":{"kind":"none"}})),
                 }),
             ));
             continue;
@@ -464,7 +546,7 @@ async fn connection(
                 Err(RpcError {
                     code: -32003,
                     message: "trusted desktop file host required".into(),
-                    data: None,
+                    data: Some(json!({"reason":"REQUEST_REJECTED","outcome":{"kind":"rejected"},"recovery":{"kind":"none"}})),
                 }),
             ));
             continue;
@@ -476,9 +558,11 @@ async fn connection(
             || method.starts_with("areal/marketplace/")
             || codex_plugins::METHODS.contains(&method)
             || plugin_runtime::METHODS.contains(&method);
-        if (project_permission
-            && (!conn.principal.allows(auth::Permission::Manage)
-                || conn.principal.thread_ids.is_some()))
+        if (method.starts_with("areal/mcp/app/tools/")
+            && !conn.principal.allows(auth::Permission::Tools))
+            || (project_permission
+                && (!conn.principal.allows(auth::Permission::Manage)
+                    || conn.principal.thread_ids.is_some()))
             || !conn.principal.allows(auth::permission(method))
             || ["threadId", "parentThreadId", "sourceThreadId"]
                 .iter()
@@ -494,7 +578,7 @@ async fn connection(
                 Err(RpcError {
                     code: -32003,
                     message: "permission denied".into(),
-                    data: None,
+                    data: Some(json!({"reason":"REQUEST_REJECTED","outcome":{"kind":"rejected"},"recovery":{"kind":"none"}})),
                 }),
             ));
             continue;
@@ -505,7 +589,7 @@ async fn connection(
                 Err(RpcError {
                     code: -32600,
                     message: "plugin/search requires experimentalApi capability".into(),
-                    data: None,
+                    data: Some(json!({"reason":"REQUEST_REJECTED","outcome":{"kind":"rejected"},"recovery":{"kind":"none"}})),
                 }),
             ));
             continue;
@@ -523,7 +607,7 @@ async fn connection(
                 Err(RpcError {
                     code: -32010,
                     message: "scoped principals cannot create conversations".into(),
-                    data: Some(json!({"reason":"SCOPED_PRINCIPAL_UNSUPPORTED","retryable":false})),
+                    data: Some(json!({"reason":"SCOPED_PRINCIPAL_UNSUPPORTED","retryable":false,"outcome":{"kind":"rejected"},"recovery":{"kind":"none"}})),
                 }),
             ));
             continue;
@@ -579,6 +663,9 @@ async fn connection(
                     | "areal/mcp/form/resource/prepare"
                     | "areal/mcp/form/resource/stage"
                     | "areal/mcp/form/resource/release"
+                    | "areal/mcp/app/tools/resolve"
+                    | "areal/mcp/app/tools/revoke"
+                    | "areal/mcp/app/close"
                     | "areal/plugin/hooks/configure"
             );
             if !control && conn.rpc_permits.available_permits() <= 4 {
@@ -599,6 +686,7 @@ async fn connection(
             };
             let method = method.to_owned();
             let identity = conn.principal.id.clone();
+            let tool_host = conn.tool_host.clone();
             let principal = conn.principal.clone();
             let configuration = conn.configuration.clone();
             let engine = engine.clone();
@@ -618,7 +706,8 @@ async fn connection(
                     } else if method == "turn/steer" {
                         steer_request(&engine, &identity, params).await
                     } else if plugin_runtime::METHODS.contains(&method.as_str()) {
-                        plugin_runtime::dispatch(&engine, &identity, &method, params).await
+                        plugin_runtime::dispatch(&engine, &identity, tool_host, &method, params)
+                            .await
                     } else if codex_plugins::METHODS.contains(&method.as_str()) {
                         codex_plugins::dispatch(&engine, &identity, &method, params).await
                     } else if delegations::METHODS.contains(&method.as_str()) {
@@ -626,7 +715,14 @@ async fn connection(
                     } else if processes::METHODS.contains(&method.as_str()) {
                         processes::dispatch(&engine, &identity, &method, params).await
                     } else if desktop::METHODS.contains(&method.as_str()) {
-                        desktop::dispatch(&engine, &identity, &method, params).await
+                        desktop::dispatch_with_budget(
+                            &engine,
+                            &identity,
+                            &method,
+                            params,
+                            response_overhead(&id),
+                        )
+                        .await
                     } else {
                         workgroups::dispatch(engine, &identity, &method, params).await
                     }
@@ -637,7 +733,10 @@ async fn connection(
                 } else {
                     tokio::select! { biased; _=stop.cancelled()=>return, value=dispatch=>value }
                 };
-                if tx.try_send(response(id, result)).is_err() {
+                if tx
+                    .try_send(Outbound::Message(response(id, result)))
+                    .is_err()
+                {
                     stop.cancel();
                 }
             });
@@ -650,14 +749,43 @@ async fn connection(
         let delivery = conn.delivery.clone();
         let _delivery = delivery.lock().await;
         let result = conn
-            .dispatch(&engine, method, params)
+            .dispatch_response(
+                &engine,
+                method,
+                params,
+                response_overhead(id.as_ref().unwrap()),
+            )
             .instrument(info_span!(
                 "rpc.request",
                 rpc.system = "jsonrpc",
                 rpc.method = method
             ))
             .await;
-        conn.send(response(id.unwrap(), result));
+        let observation = if matches!(method, "thread/resume" | "areal/thread/observe") {
+            result
+                .as_ref()
+                .ok()
+                .and_then(|result| result["thread"]["id"].as_str())
+                .and_then(|id| conn.subscriptions.get(id))
+                .cloned()
+        } else {
+            None
+        };
+        let value = response(id.unwrap(), result);
+        if let Some(subscription) = observation {
+            if conn
+                .tx
+                .try_send(Outbound::Observation {
+                    value,
+                    subscription,
+                })
+                .is_err()
+            {
+                conn.stop.cancel();
+            }
+        } else {
+            conn.send(value);
+        }
     }
     stop.cancel();
     conn.tasks.close();
@@ -695,7 +823,9 @@ async fn check_side_policy(engine: &Engine, method: &str, params: &Value) -> Res
         return Err(RpcError {
             code: -32010,
             message: "Side conversations cannot use this method".into(),
-            data: Some(json!({"reason":"SIDE_POLICY_VIOLATION","retryable":false})),
+            data: Some(
+                json!({"reason":"SIDE_POLICY_VIOLATION","retryable":false,"outcome":{"kind":"rejected"},"recovery":{"kind":"none"}}),
+            ),
         });
     }
     Ok(())
@@ -827,7 +957,7 @@ impl Connection {
             return;
         }
         // 丢失协议消息后不能继续伪装为完整流；关闭连接，由客户端重新读取历史。
-        if self.tx.try_send(value).is_err() {
+        if self.tx.try_send(Outbound::Message(value)).is_err() {
             self.stop.cancel();
         }
     }
@@ -846,7 +976,15 @@ impl Connection {
         self.forward(id, events);
         Ok(())
     }
-    fn forward(&mut self, id: &str, mut events: broadcast::Receiver<Value>) {
+    fn forward(&mut self, id: &str, events: broadcast::Receiver<Value>) {
+        self.forward_authorized(id, events, None);
+    }
+    fn forward_authorized(
+        &mut self,
+        id: &str,
+        mut events: broadcast::Receiver<Value>,
+        task_engine: Option<std::sync::Weak<Engine>>,
+    ) {
         let task_filter = id.strip_prefix("task:").map(str::to_owned);
         let principal = self.principal.clone();
         let subscription = self.stop.child_token();
@@ -866,22 +1004,35 @@ impl Connection {
                 match event {
                     Ok(event) => {
                         if task_filter.as_ref().is_some_and(|id| event["params"]["taskId"].as_str()!=Some(id)) { continue; }
-                        if task_filter.is_some() && !task_mode::visible_projection(&principal,&event["params"]["task"]) {subscription.cancel();break;}
+                        if let Some(task_id)=&task_filter {
+                            let Some(engine)=task_engine.as_ref().and_then(|weak|weak.upgrade()) else {subscription.cancel();break;};
+                            if !engine.task_visible(task_id,principal.thread_ids.as_ref()).await.unwrap_or(false) {subscription.cancel();break;}
+                        }
                         if event["method"].as_str().is_some_and(|m| suppressed.contains(m)) { continue; }
                         let _delivery = delivery.lock().await;
                         if subscription.is_cancelled() { break; }
-                        if tx.try_send(event).is_err() { stop.cancel(); break; }
+                        if tx.try_send(Outbound::Event { value: event, subscription: subscription.clone() }).is_err() { stop.cancel(); break; }
                     }
                     Err(_) => { stop.cancel(); break; }
                 }
             }
         });
     }
+    #[cfg(test)]
     async fn dispatch(
         &mut self,
         engine: &Arc<Engine>,
         method: &str,
         params: Value,
+    ) -> Result<Value, RpcError> {
+        self.dispatch_response(engine, method, params, 0).await
+    }
+    async fn dispatch_response(
+        &mut self,
+        engine: &Arc<Engine>,
+        method: &str,
+        params: Value,
+        response_overhead: usize,
     ) -> Result<Value, RpcError> {
         if method == "initialize" {
             if self.initialized {
@@ -906,7 +1057,10 @@ impl Connection {
             );
         }
         if !self.ready {
-            return Err(RpcError::invalid("Not initialized"));
+            return Err(rejected(
+                RpcError::invalid("Not initialized"),
+                "NOT_INITIALIZED",
+            ));
         }
         if method == "areal/work/overview" {
             return engine
@@ -950,17 +1104,24 @@ impl Connection {
                     return Err(RpcError::invalid("subscription limit reached"));
                 }
                 let (snapshot, events) = engine
-                    .task_snapshot_and_subscribe(&p.task_id)
+                    .task_snapshot_and_subscribe_for_threads(
+                        &p.task_id,
+                        self.principal.thread_ids.as_ref(),
+                    )
                     .await
                     .map_err(map_error)?;
-                if !task_mode::visible_projection(&self.principal, &snapshot) {
+                if !engine
+                    .task_visible(&p.task_id, self.principal.thread_ids.as_ref())
+                    .await
+                    .map_err(map_error)?
+                {
                     return Err(RpcError {
                         code: -32003,
                         message: "task permission changed".into(),
                         data: None,
                     });
                 }
-                self.forward(&key, events);
+                self.forward_authorized(&key, events, Some(Arc::downgrade(engine)));
                 return Ok(snapshot);
             }
             return task_mode::dispatch(engine, &self.principal, method, params).await;
@@ -978,10 +1139,40 @@ impl Connection {
             return self.conversation_list(engine, params).await;
         }
         if plugin_runtime::METHODS.contains(&method) {
-            return plugin_runtime::dispatch(engine, &self.principal.id, method, params).await;
+            if method.starts_with("areal/mcp/app/tools/")
+                && (!self.principal.allows(auth::Permission::Manage)
+                    || !self.principal.allows(auth::Permission::Tools)
+                    || self.principal.thread_ids.is_some())
+            {
+                return Err(RpcError {
+                    code: -32003,
+                    message: "unrestricted Manage and Tools permissions required".into(),
+                    data: Some(
+                        json!({"reason":"PERMISSION_DENIED","outcome":{"kind":"rejected"},"recovery":{"kind":"none"}}),
+                    ),
+                });
+            }
+            return plugin_runtime::dispatch(
+                engine,
+                &self.principal.id,
+                self.tool_host.clone(),
+                method,
+                params,
+            )
+            .await;
         }
         if codex_plugins::METHODS.contains(&method) {
             return codex_plugins::dispatch(engine, &self.principal.id, method, params).await;
+        }
+        if method == "areal/request/read" && params.get("taskId").is_some() {
+            return engine
+                .task_run_now_receipt_for_threads(
+                    &self.principal.id,
+                    parse(params)?,
+                    self.principal.thread_ids.as_ref(),
+                )
+                .await
+                .map_err(map_error);
         }
         if desktop::METHODS.contains(&method) && method != "areal/thread/start" {
             if matches!(method, "areal/turn/start" | "areal/turn/enqueue") {
@@ -992,17 +1183,34 @@ impl Connection {
                 let p: areal_protocol::desktop::TurnSubmit = parse(params.clone())?;
                 self.subscribe(engine, &p.thread_id).await?;
             }
-            let scoped_request_search = method == "areal/request/read"
-                && self.principal.thread_ids.is_some()
-                && params.get("threadId").and_then(Value::as_str).is_none();
-            let mut result = desktop::dispatch(engine, &self.principal.id, method, params).await?;
+            let scoped_request_search =
+                method == "areal/request/read" && self.principal.thread_ids.is_some();
+            let mut result = desktop::dispatch_with_budget(
+                engine,
+                &self.principal.id,
+                method,
+                params,
+                response_overhead,
+            )
+            .await?;
             if scoped_request_search
                 && let Some(data) = result.get_mut("data").and_then(Value::as_array_mut)
             {
+                let visible_tasks: std::collections::HashSet<String> = engine
+                    .task_list_for_threads(self.principal.thread_ids.as_ref())
+                    .await
+                    .map_err(map_error)?
+                    .into_iter()
+                    .map(|task| task.id)
+                    .collect();
                 data.retain(|entry| {
-                    entry["threadId"]
-                        .as_str()
-                        .is_some_and(|id| self.principal.sees(id))
+                    if let Some(task_id) = entry["taskId"].as_str() {
+                        visible_tasks.contains(task_id)
+                    } else {
+                        entry["threadId"]
+                            .as_str()
+                            .is_some_and(|id| self.principal.sees(id))
+                    }
                 });
             }
             return Ok(result);
@@ -1083,31 +1291,49 @@ impl Connection {
                 methods.extend_from_slice(codex_plugins::METHODS);
                 methods.extend_from_slice(plugin_runtime::METHODS);
                 methods.extend_from_slice(task_mode::METHODS);
-                methods.push("areal/work/overview");
-                methods.push("areal/task/host/ready");
+                methods.extend_from_slice(&additional_methods::METHODS[..2]);
                 if !engine.runtime_capabilities().is_null() {
                     methods.extend_from_slice(processes::METHODS);
                 }
                 if engine.workgroups().is_ok() {
-                    methods.extend([
-                        "areal/workgroup/policy",
-                        "areal/workgroup/start",
-                        "areal/workgroup/list",
-                        "areal/workgroup/read",
-                        "areal/workgroup/wait",
-                        "areal/workgroup/cancel",
-                        "areal/workgroup/revise",
-                        "areal/workgroup/artifact",
-                    ]);
+                    methods.extend_from_slice(&additional_methods::METHODS[2..]);
                 }
-                Ok(json!({"apiVersion": API_VERSION, "methods": methods,
-                    "notifications": NOTIFICATIONS, "serverRequests":["item/tool/call","areal/task/prepare"],
+                let semantics = methods
+                    .iter()
+                    .map(|method| {
+                        method_semantics(method)
+                            .map(|semantics| ((*method).to_owned(), semantics))
+                            .ok_or_else(|| RpcError {
+                                code: -32603,
+                                message: format!("Missing method semantics for {method}"),
+                                data: None,
+                            })
+                    })
+                    .collect::<Result<std::collections::BTreeMap<_, _>, _>>()?;
+                let mut notifications = NOTIFICATIONS.to_vec();
+                notifications.extend([
+                    "areal/mcp/app/tools/pending",
+                    "areal/mcp/app/tools/cancelled",
+                ]);
+                let mut capabilities = json!({"apiVersion": API_VERSION, "methods": methods, "methodSemantics":semantics,
+                    "notifications": notifications, "serverRequests":["item/tool/call","areal/task/prepare"],
                     "browserToolBundles":if can_attach_browser {json!([{"bundleId":areal_protocol::desktop::BROWSER_V1_BUNDLE,
                         "definition":areal_protocol::desktop::browser_v1_tool()}])} else {json!([])},
-                    "features":{"conversationDerivationV1":json!({"preview":false,"methods":["areal/thread/fork","areal/side/start","areal/conversation/list","areal/conversation/history","areal/conversation/unarchive","areal/side/context/read"],"limits":engine.conversation_derivation_limits(),"forkBoundaries":["after","before"],"workspaceModes":["sharedCurrent"],"sideWorkspaceAccess":if engine.side_workspace_read_available() {json!(["none","readOnly"])} else {json!(["none"])},"historyBytes":engine.fork_snapshot_limit()}),"subscriptionRemoval":true,"atomicResume":true,"atomicObserve":true,"atomicObserveOwnership":true,"browserToolAttachment":can_attach_browser,
-                        "ordinaryTurnSubmit":true,"editLastMessage":true,"turnStartAdmissionGuard":true,"turnEnqueueAdmissionGuard":true,"turnInterruptAdmissionGuard":true,"threadStartAdmissionGuard":true,"taskPauseRunGuard":true,"taskModes":true,"taskChannels":true,"asyncQuestions":true,"headlessInteractions":true,"goals":true,"dynamicTools":true,"mediaOutput":true,"durableSubmissionDeduplication":true,"profiles":true,"skills":true,"plans":true,"interactions":true,"queue":true,"providerConfiguration":true,"modelReset":true,"toolMedia":true,"blobUpload":true},
-                    "limits":{"frameBytes":MAX_FRAME_BYTES,"subscriptions":128,"sendQueue":256,"threadEventWindow":128},
-                    "runtime":engine.runtime_capabilities()}))
+                    "features":json!({"operationOutcomes":true,"taskRequestReceipts":true,"atomicConfigureReceipt":true,"conversationDerivationV1":json!({"preview":false,"methods":["areal/thread/fork","areal/side/start","areal/conversation/list","areal/conversation/history","areal/conversation/unarchive","areal/side/context/read"],"limits":engine.conversation_derivation_limits(),"forkBoundaries":["after","before"],"workspaceModes":["sharedCurrent"],"sideWorkspaceAccess":if engine.side_workspace_read_available() {json!(["none","readOnly"])} else {json!(["none"])},"historyBytes":engine.fork_snapshot_limit()}),"subscriptionRemoval":true,"atomicResume":true,"atomicObserve":true,"atomicObserveOwnership":true,"browserToolAttachment":can_attach_browser,
+                        "ordinaryTurnSubmit":true,"editLastMessage":true,"turnStartAdmissionGuard":true,"turnEnqueueAdmissionGuard":true,"turnInterruptAdmissionGuard":true,"threadStartAdmissionGuard":true,"taskPauseRunGuard":true,"taskModes":true,"taskChannels":true,"asyncQuestions":true,"headlessInteractions":true,"goals":true,"dynamicTools":true,"mediaOutput":true,"durableSubmissionDeduplication":true,"profiles":true,"skills":true,"plans":true,"interactions":true,"queue":true,"providerConfiguration":true,"modelReset":true,"toolMedia":true,"blobUpload":true}),
+                    "limits":{"frameBytes":MAX_FRAME_BYTES,"responseBytes":MAX_RESPONSE_BYTES,"subscriptions":128,"sendQueue":256,"threadEventWindow":128},
+                    "runtime":engine.runtime_capabilities()});
+                capabilities["features"]["mcpPageToolsV1"] =
+                    json!({"version":1,"kinds":["getSelection","applyPatch"]});
+                capabilities["features"]["permissionPresets"] =
+                    json!(engine.permission_presets_available());
+                capabilities["features"]["permissionFullAccess"] =
+                    json!(engine.permission_full_access_available());
+                capabilities["features"]["taskRunHistory"] = json!(true);
+                capabilities["features"]["boundedObservation"] = json!(true);
+                capabilities["features"]["boundedResume"] = json!(true);
+                capabilities["features"]["boundedHistory"] = json!(true);
+                Ok(capabilities)
             }
             "areal/subscription/remove" => {
                 let p: areal_protocol::desktop::RemoveSubscriptions = parse(params)?;
@@ -1161,7 +1387,16 @@ impl Connection {
                 Ok(thread_result(engine, thread))
             }
             "thread/resume" => {
-                let p: ThreadId = parse(params)?;
+                let p: areal_protocol::desktop::ObserveThread = parse(params)?;
+                let budget = match p.mode {
+                    Some(areal_protocol::desktop::ObservationMode::Bounded) => {
+                        Some(bounded_history_budget(p.max_bytes, response_overhead)?)
+                    }
+                    None if p.max_bytes.is_some() => {
+                        return Err(RpcError::invalid("maxBytes requires mode bounded"));
+                    }
+                    None => None,
+                };
                 if !self.subscriptions.contains_key(&p.thread_id) && self.subscriptions.len() >= 128
                 {
                     return Err(RpcError {
@@ -1175,6 +1410,20 @@ impl Connection {
                         .bind_tool_host(&p.thread_id, self.tool_host.clone())
                         .await
                         .map_err(map_error)?;
+                }
+                if let Some(budget) = budget {
+                    let (result, events) = engine
+                        .snapshot_and_subscribe_bounded(
+                            &p.thread_id,
+                            &self.principal.id,
+                            self.principal.thread_ids.as_ref(),
+                            budget,
+                            thread_metadata(engine, ""),
+                        )
+                        .await
+                        .map_err(map_error)?;
+                    self.forward(&p.thread_id, events);
+                    return Ok(result);
                 }
                 let (thread, events) = engine
                     .snapshot_and_subscribe(&p.thread_id)
@@ -1192,6 +1441,24 @@ impl Connection {
                         message: "subscription limit reached".into(),
                         data: None,
                     });
+                }
+                if p.mode == Some(areal_protocol::desktop::ObservationMode::Bounded) {
+                    let budget = bounded_history_budget(p.max_bytes, response_overhead)?;
+                    let (result, events) = engine
+                        .snapshot_and_subscribe_bounded(
+                            &p.thread_id,
+                            &self.principal.id,
+                            self.principal.thread_ids.as_ref(),
+                            budget,
+                            thread_metadata(engine, ""),
+                        )
+                        .await
+                        .map_err(map_error)?;
+                    self.forward(&p.thread_id, events);
+                    return Ok(result);
+                }
+                if p.mode.is_some() || p.max_bytes.is_some() {
+                    return Err(RpcError::invalid("maxBytes requires mode bounded"));
                 }
                 let (thread, ownership, events) = engine
                     .snapshot_and_subscribe_with_ownership(
@@ -1266,33 +1533,165 @@ fn validate_model(engine: &Engine, model: Option<&str>) -> Result<(), RpcError> 
     }
     Ok(())
 }
-fn thread_result(engine: &Engine, thread: areal_protocol::Thread) -> Value {
-    json!({"cwd":thread.cwd,"thread":thread,"model":engine.model_name(),"modelProvider":engine.model_provider(),
+fn response_overhead(id: &Value) -> usize {
+    serde_json::to_vec(&response(id.clone(), Ok(Value::Null)))
+        .unwrap()
+        .len()
+        - 4
+}
+fn bounded_history_budget(max_bytes: Option<usize>, overhead: usize) -> Result<usize, RpcError> {
+    let requested = max_bytes.unwrap_or(areal_protocol::desktop::DEFAULT_HISTORY_PAGE_BYTES);
+    if !(1..=areal_protocol::desktop::MAX_HISTORY_PAGE_BYTES).contains(&requested) {
+        return Err(RpcError::invalid("maxBytes must be 1..1048576"));
+    }
+    requested.checked_sub(overhead).ok_or_else(|| RpcError {
+        code: -32012, message: "History page budget too small".into(),
+        data: Some(json!({"reason":"HISTORY_BUDGET_TOO_SMALL","retryable":false,"outcome":{"kind":"noMutation"},"recovery":{"kind":"none"}})),
+    })
+}
+fn thread_metadata(engine: &Engine, cwd: &str) -> Value {
+    json!({"cwd":cwd,"model":engine.model_name(),"modelProvider":engine.model_provider(),
         "approvalPolicy":if engine.permission_config().mode.requires_approval() { "on-request" } else { "never" },"permissionMode":engine.permission_config().mode,"approvalsReviewer":"user","sandbox":engine.sandbox(),"reasoningEffort":null})
 }
-fn parse<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, RpcError> {
-    serde_json::from_value(value).map_err(|e| RpcError::invalid(e.to_string()))
+fn thread_result(engine: &Engine, thread: areal_protocol::Thread) -> Value {
+    let mut result = thread_metadata(engine, &thread.cwd);
+    result["thread"] = json!(thread);
+    result
 }
+fn parse<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, RpcError> {
+    serde_json::from_value(value)
+        .map_err(|e| rejected(RpcError::invalid(e.to_string()), "INVALID_REQUEST"))
+}
+fn rejected(mut error: RpcError, reason: &str) -> RpcError {
+    let mut data = match error.data.take() {
+        Some(Value::Object(data)) => data,
+        _ => serde_json::Map::new(),
+    };
+    data.entry("reason").or_insert_with(|| json!(reason));
+    data.insert(
+        "outcome".into(),
+        json!(areal_protocol::desktop::FailureOutcome::Rejected),
+    );
+    data.insert(
+        "recovery".into(),
+        json!(areal_protocol::desktop::Recovery::None),
+    );
+    error.data = Some(Value::Object(data));
+    error
+}
+
+mod additional_methods {
+    areal_protocol::method_catalog! {
+        "areal/work/overview" => Read;
+        "areal/task/host/ready" => Subscription;
+        "areal/workgroup/policy" => Read;
+        "areal/workgroup/start" => Mutation;
+        "areal/workgroup/list" => Read;
+        "areal/workgroup/read" => Read;
+        "areal/workgroup/wait" => Read;
+        "areal/workgroup/cancel" => Mutation;
+        "areal/workgroup/revise" => Mutation;
+        "areal/workgroup/artifact" => Read;
+    }
+}
+
+fn method_semantics(method: &str) -> Option<areal_protocol::desktop::MethodSemantics> {
+    areal_protocol::desktop::method_semantics(method)
+        .or_else(|| desktop::method_semantics(method))
+        .or_else(|| configuration::method_semantics(method))
+        .or_else(|| task_mode::method_semantics(method))
+        .or_else(|| processes::method_semantics(method))
+        .or_else(|| codex_plugins::method_semantics(method))
+        .or_else(|| plugin_runtime::method_semantics(method))
+        .or_else(|| additional_methods::method_semantics(method))
+}
+
+fn atomic_mutation_error(error: Error) -> Error {
+    match error {
+        Error::Storage(_) | Error::OperationOutcome(_) | Error::Rejected(_) => error,
+        error => Error::Rejected(Box::new(error)),
+    }
+}
+
 fn map_error(error: Error) -> RpcError {
+    if let Error::Rejected(error) = error {
+        return rejected(map_error(*error), "REQUEST_REJECTED");
+    }
+    if let Error::HistoryRead {
+        reason,
+        thread_id,
+        restart_cursor,
+    } = &error
+    {
+        return RpcError {
+            code: -32012,
+            message: "History view requires a fresh bounded read".into(),
+            data: Some(
+                json!({"reason":reason,"threadId":thread_id,"view":"own","reset":*reason == "HISTORY_CURSOR_STALE","restartCursor":restart_cursor,"retryable":false,"outcome":{"kind":"noMutation"},"recovery":{"kind":"none"}}),
+            ),
+        };
+    }
+    if let Error::OperationOutcome(failure) = &error {
+        return RpcError {
+            code: -32011,
+            message: "Operation outcome requires reconciliation".into(),
+            data: Some(json!(failure)),
+        };
+    }
+    if let Error::Invalid(reason) = &error
+        && let Some(code) = ["CREDENTIAL_UNAVAILABLE", "MODEL_CREDENTIAL_UNAVAILABLE"]
+            .into_iter()
+            .find(|code| reason == code || reason.starts_with(&format!("{code}:")))
+    {
+        return rejected(RpcError::invalid(error.to_string()), code);
+    }
+    if matches!(&error,Error::Invalid(reason) if reason=="TASK_PERMISSION_DENIED") {
+        return RpcError {
+            code: -32003,
+            message: "task permission denied".into(),
+            data: Some(
+                json!({"reason":"PERMISSION_DENIED","outcome":{"kind":"rejected"},"recovery":{"kind":"none"}}),
+            ),
+        };
+    }
     if matches!(&error, Error::Invalid(reason) if reason == "SIDE_POLICY_VIOLATION") {
         return RpcError {
             code: -32010,
             message: "SIDE_POLICY_VIOLATION".into(),
-            data: Some(json!({"reason":"SIDE_POLICY_VIOLATION","retryable":false})),
+            data: Some(
+                json!({"reason":"SIDE_POLICY_VIOLATION","retryable":false,"outcome":{"kind":"rejected"},"recovery":{"kind":"none"}}),
+            ),
         };
     }
+    let data = match &error {
+        Error::Exhausted(reason)
+            if reason.starts_with("task hot-state capacity")
+                || reason.starts_with("task preparation capacity") =>
+        {
+            Some(
+                json!({"reason":"taskHotStateCapacity","resource":"taskHotState","recovery":"settleOrCancelExistingWork","retryable":false}),
+            )
+        }
+        Error::Storage(reason) if reason.contains("Task persistence requires restart") => Some(
+            json!({"reason":"taskStorageRecoveryRequired","resource":"taskStorage","recovery":"restartCore","retryable":false}),
+        ),
+        _ => None,
+    };
     let code = match &error {
         Error::Invalid(_) => -32602,
         Error::NotFound => -32004,
         Error::Conflict => -32009,
         Error::Exhausted(_) => -32001,
         Error::Closed => -32000,
-        Error::Storage(_) => -32603,
+        Error::Storage(_)
+        | Error::OperationOutcome(_)
+        | Error::Rejected(_)
+        | Error::HistoryRead { .. } => -32603,
     };
     RpcError {
         code,
         message: error.to_string(),
-        data: None,
+        data,
     }
 }
 

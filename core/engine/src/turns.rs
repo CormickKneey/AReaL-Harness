@@ -306,6 +306,7 @@ impl Engine {
             open_items: HashSet::new(),
             sealed: false,
             scope: None,
+            base_scope: None,
             model,
             tools: TaskTracker::new(),
             process_cursors: BTreeMap::new(),

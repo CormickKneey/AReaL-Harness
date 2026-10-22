@@ -35,7 +35,8 @@ export async function verifyDesignCatalog({ write = false, root = guiRoot } = {}
   assert.equal(registry.schemaVersion, 1, "registry.schemaVersion must be 1");
   unique(registry.tokenSources, "tokenSources");
   const tokenSources = await Promise.all(registry.tokenSources.map(path => source(root, path)));
-  const definitions = new Set([...tokenSources.join("\n").matchAll(/(--[\w-]+)["']?\s*:/g)].map(match => match[1]));
+  const sharedFocus = await readFile(new URL("../../../design/tokens/focus.css", import.meta.url), "utf8");
+  const definitions = new Set([...(sharedFocus + tokenSources.join("\n")).matchAll(/(--[\w-]+)["']?\s*:/g)].map(match => match[1]));
   list(registry.tokenGroups, "tokenGroups");
   const tokenNames = [];
   for (const group of registry.tokenGroups) {

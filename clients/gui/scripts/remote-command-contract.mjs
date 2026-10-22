@@ -48,7 +48,7 @@ async function fixture(name) {
           : { turn: { id: randomUUID() } };
       receipts.set(params.requestId, [
         {
-          method,
+          method, requestId: params.requestId,
           threadId: result.thread?.id ?? params.threadId,
           result: method === "areal/thread/start" ? null : result,
         },

@@ -41,7 +41,7 @@ impl Engine {
             ));
         }
         if report.status == GoalReportStatus::Complete {
-            if self.task_pending_required(cell).await {
+            if self.task_pending_required(cell).await? {
                 return Err(invalid(
                     "required task channel questions must be resolved before completion",
                 ));

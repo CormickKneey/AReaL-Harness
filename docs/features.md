@@ -22,7 +22,9 @@
 | 会话轮次导航 | 启用旁路预览时，选中文本后通过该轮“…”菜单询问所选内容，不自动展示浮动提示。主会话和 Side chat 共用左侧波纹轨道。悬停预览问题与回复，点击定位对应轮次，各面板独立滚动。支持方向键、Home/End、Enter/Space、Esc 和减少动态效果。[GUI](../clients/gui/README.md) |
 | 客户端 | 统一 `areal` 命令（默认 TUI、exec、version、upgrade、app-server、config、workgroup、service、web）与本地 Web；TUI 支持 Unicode 光标编辑与常用输入快捷键、持久错误提示、默认分组折叠、鼠标/键盘展开及过程/最终正文分级；CLI 实现选定 Claude Code 非交互参数与消息。[CLI 契约](api/claude-cli.md) |
 | Skills | 自动发现与显式 Profile 共用元信息登记、正文/附件按需读取；单个无效全局 Skill 告警隔离，不创建内容快照。[Skill 指南](guides/skills.md) |
-| Task Mode 与独立频道 | foreground/scheduled/background、持久 TaskRun、独立 Inbox 回复、headless 无人工等待；统一委派的 TaskRun worker 跨协调 Turn 存活并共享预算。Web 提供任务控制、定时创建和独立收件箱。[接口](api/tasks.md) |
+| Task Mode 与独立频道 | foreground/scheduled/background、持久 TaskRun、独立 Inbox 回复、headless 无人工等待；统一委派的 TaskRun worker 跨协调 Turn 存活并共享预算。Web 提供任务控制、定时创建和独立收件箱。[接口](api/tasks.md) 计划支持显式“立即运行”，创建独立 manual Run，保留暂停和下次计划时间，使用原总预算；响应丢失时只读核对原收据。 |
+| 插件组件支持 | 插件包报告按候选和已安装摘要分别列出组件解析支持、必需静态兼容及使用前提；MCP 连接、认证和 Hook 信任仍独立显示。[插件](guides/plugins.md) |
+| 有限浏览器动作 | 经 Core 逐次批准的本地开发页可执行有界 scroll/hover、原生单选 exact value、checkbox setChecked 和 checked/enabled 状态等待。选项和观察身份参与批准，UNKNOWN 不自动重放。[Browser](api/browser.md) |
 | Goal 持久目标 | 通过 `/goal` 等入口显式创建，无需配置开关；跨 Turn 自动推进、暂停/恢复/编辑/清除，用户输入优先；主/子 Agent、Workgroup、摘要共享预算。[客户端指南](guides/clients.md#goals) · [接口](api/core.md#goals) |
 | 共享本地服务 | 多 TUI 窗口与 Web 复用 Core/Runtime；本地 Web 启动通过一次性登录码自动认证；公共 JSON 发现/控制供 Desktop Main 使用，按工作区隔离、模型配置热更新、热更新未应用时的空闲安全重启（支持继承新凭据）、显式停止与故障清理。[契约](api/local-service.md) |
 | SDK | 仓库内私有 `@areal/runtime` 和 `@areal/plugins`，Node.js 22.19.0+。[SDK 契约](api/typescript-sdk.md) |

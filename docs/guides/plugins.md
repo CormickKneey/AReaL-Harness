@@ -4,6 +4,18 @@
 
 AReaL 的插件包由共享 Core 管理；GUI 与 CLI 读取同一安装与启用状态。支持本地/Git marketplace、Git 与 npm 来源、两种 manifest 中的 Skills，以及显式 onboarding；插件 MCP、Apps 和 GitHub Connector 通过现有 Core 执行边界接入。固定格式基线见 [upstream/pins.json](../../upstream/pins.json)，完整实施与验收见[任务计划](../development/codex-plugins-plan.md)。
 
+## 查看组件支持
+
+打开插件详情可查看安装组件报告。目录快照变化时，候选报告单独显示。安装更新前核对两个完整摘要。报告可以同时显示受支持的 Skills 和不支持的 commands、agents 或 UI 声明，这表示包只部分兼容，不能据此认定全部能力可用。
+
+展开逐项声明可查看解析契约、原因与使用前提。当前 MCP 连接、认证以及 Hook 定义信任仍由原有面板显示。目标会话的 Profile 决定实际准入。查看报告不会启动 setup、包代码、连接、认证或模型请求。
+
+CLI 使用 `areal plugins --workspace /path/to/project read <plugin-id>` 读取同一 Core 报告。同一命令与工作区下的 `mcp-list`、`hooks-list` 提供当前连接和信任事实。核对 `pluginId` 与 `installedDigest`，不能把候选摘要当作安装版本。静态报告中的真实供应商、平台和签名发行包验收保持未核实。
+
+Portable 作者可通过 `extensions.org.areal.componentRequirements` 声明静态必需 kind，例如 `{"version":1,"requiredKinds":["skills"]}`。每个必需 kind 的全部声明记录必须受支持。不兼容的必需 kind 会让包保留安装以供检查，但排除有效激活。可选 unsupported 声明不会禁用有效 Skill。该语义只适用于已识别的 portable 1.0.0 manifest。严格字段及限制见 [API 契约](../api/desktop.md#组件支持报告)。只有 `.zcode-plugin` 的包不受支持，请使用已有文档说明的 portable、Codex、Claude 或 Cursor manifest。
+
+历史 Skill 保留自身包摘要的静态兼容性要求。安装兼容的新版本不会解锁被阻止的旧引用。兼容的旧引用可继续使用，直到当前包被阻止、停用或卸载。
+
 ## 插件、Skills 与 MCP
 
 左侧“插件”打开插件市场。公共和个人目录按已注册来源展示，Skills 和已安装插件在同一工作区导航。点击插件或 Skill 打开内容页，可返回原列表。Skills 页的已安装总览默认展示六项，点击“查看更多”展开。下方通过“个人”和项目标签浏览各来源的已安装技能，各自保留展开状态；搜索展示全部匹配结果。市场操作使用此前明确选择的项目；尚未选择项目时，先选择或打开项目。浏览不会创建任务目录。
@@ -108,7 +120,13 @@ Git marketplace 快照最多包含 20,000 个文件和 20,000 个文件系统条
 
 ## 桌面 Apps 与 GitHub
 
-插件详情中的交互应用、全局/会话入口及匹配文件入口使用官方 MCP Apps AppBridge。详情只展示所属插件的应用与应用设置。插件页面运行在独立 origin 的沙箱框架内，不提供 Node、产品 bridge 或凭据。调用绑定项目、Thread、包摘要和连接版本；同服务器工具经普通 Core 执行、审批和日志路径调用。旧 App 在 Core 重启后失效，需要重新打开。
+插件详情中的交互应用、全局/会话入口及匹配文件入口使用官方 MCP Apps AppBridge。详情只展示所属插件的应用与应用设置。插件页面运行在独立 origin 的沙箱框架内，不提供 Node、产品 bridge 或凭据。调用绑定项目、Thread、包摘要和连接版本；同服务器工具经普通 Core 执行、审批和日志路径调用。旧 App 在 Core 重启后失效，需要重新打开。窗口内切换标签、隐藏面板、切换会话或项目，以及打开设置和定时任务，保留同一活页面与 bridge，包括未保存文字、选区、滚动位置、订阅和在途请求。显式关闭、会话归档或来源撤销才释放页面。每窗口最多保留 8 个活页面，正在打开的页面也计入；达到上限时拒绝新增，关闭页面后归还额度。后台页面的 `send:true` 消息仍发送至原所属会话；要求新建会话或修改输入草稿的后台消息返回 `app_hidden`，不会切换当前视图。
+
+普通对话中新完成且带可验证来源的 MCP 工具记录可显示“打开交互结果”。点击后使用该次调用保存的参数与结果，包括页面专用 `_meta`；模型投影仍剔除私有元数据。打开、重复点击、关闭后显式重开均不再次执行原业务工具。重复点击聚焦同一页面，隐藏与切换视图保留编辑、选区和滚动位置。旧历史没有来源证明时仍可阅读原始记录，不自动打开页面。
+
+结果页面资源支持 `text/html` 和 `text/html;profile=mcp-app`，UTF-8 内容最多 2 MiB，并保留既有 CSP 与沙箱限制。失败、取消、UNKNOWN、损坏快照、插件变更/停用/卸载、连接或 Core 进程变化都会阻止打开。资源或 bridge 初始化失败以及 10 秒内未就绪会回退原始记录并关闭页面；这不保证能辨认所有 CSP 失败原因。打开或关闭结果待确认时，点击核对同一意图，不自动产生新请求。
+
+固定版本的页面可以在 SDK initialize 中声明实验能力 `areal/page-tools`，只提供 `getSelection` 与带 `expectedDocumentRevision` 的 `applyPatch`。可信宿主完成初始化后登记，Agent 通过普通 Core 工具调用操作该页面尚未保存的选区或文字，仍受审批和取消约束。过期 revision 返回冲突，结果不明确时记为 UNKNOWN，不自动重放。隐藏页面保留执行能力；原连接断开则保留页面内容并撤销工具，须显式打开新实例。该扩展不等于支持所有第三方编辑器，作者契约见[有限页面工具](../api/desktop.md#有限页面工具)。
 
 `ui/message` 可以将文本和资源添加到草稿，保留未发送的人类内容；只有 `send:true` 发起明确的新提交。标题和 `_meta` 留在历史/UI，递归剔除 `_meta` 后才进入模型。App 上下文按实例分组，可更新或移除。设置、mentions 和表单预览通过服务器声明的工具/资源处理；不猜测方法或地址。
 

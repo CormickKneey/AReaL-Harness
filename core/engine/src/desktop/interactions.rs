@@ -245,7 +245,7 @@ impl Engine {
                 let block_schedule = status == "expired"
                     && resolved.kind == "approval"
                     && if let Some(goal) = &candidate.goals.goal {
-                        self.is_desktop_schedule_goal(&goal.id).await
+                        self.is_desktop_schedule_goal(&goal.id).await?
                     } else {
                         false
                     };
@@ -325,7 +325,7 @@ impl Engine {
             },
             _ => false,
         };
-        let (forced, restrictions) = {
+        let (forced, restrictions, preset) = {
             let state = cell.state.lock().await;
             let config = state
                 .thread
@@ -335,6 +335,7 @@ impl Engine {
             (
                 crate::permissions::forced(config, tool, arguments),
                 crate::permissions::restrictions(config),
+                config.and_then(|c| c.options.permission_preset),
             )
         };
         let (generation, can_remember) = self.permission_identity(cell, tool, arguments).await;
@@ -360,11 +361,25 @@ impl Engine {
             .iter()
             .any(|p| crate::permissions::matches_tool(p, tool));
         let browser_action = tool == "browser_v1";
-        if forced
+        let additional = arguments.get("permissionRequest").is_some();
+        let ordinary_allowed = if let Some(preset) = preset {
+            if preset == PermissionPreset::FullAccess {
+                true
+            } else if browser_action {
+                self.browser_permitted(cell, arguments).await
+            } else {
+                matches!(backend, Some(Backend::Builtin)) && !additional
+            }
+        } else {
+            false
+        };
+        let needs_approval = forced
             || plugin_prompt
-            || ((action == "ask" || browser_action)
-                && (explicit_ask || !can_remember || !(session_allowed || project_allowed)))
-        {
+            || explicit_ask
+            || (!ordinary_allowed
+                && (additional || action == "ask" || (browser_action && preset.is_none()))
+                && (additional || !can_remember || !(session_allowed || project_allowed)));
+        if needs_approval {
             if !tool.starts_with("hook:") {
                 let (name, input) = crate::plugin_hooks::tool_input(tool, arguments);
                 let effects=self.plugin_hook_event(cell,areal_plugins::hooks::HookEvent::PermissionRequest,
@@ -373,48 +388,89 @@ impl Engine {
                     Some(crate::plugin_hooks::output::PermissionDecision::Deny { reason }) => {
                         return Err(RuntimeError::new(ErrorCode::PermissionDenied, reason));
                     }
-                    Some(crate::plugin_hooks::output::PermissionDecision::Allow) if !forced => {
+                    Some(crate::plugin_hooks::output::PermissionDecision::Allow)
+                        if preset.is_none() && !forced && !explicit_ask =>
+                    {
                         return Ok(());
                     }
                     _ => {}
                 }
             }
-            if self.interaction_mode(cell).await
-                != areal_protocol::tasks::InteractionMode::Interactive
+            let reviewed = if preset == Some(PermissionPreset::AutoReview)
+                && !forced
+                && !explicit_ask
+                && !plugin_prompt
             {
-                return Err(RuntimeError::new(
-                    ErrorCode::PermissionDenied,
-                    "NON_INTERACTIVE_APPROVAL_REQUIRED: execution denied; no synchronous approval can be awaited",
-                ));
-            }
-            let result = self
-                .await_interaction(
-                    cell,
-                    call_id,
-                    Vec::new(),
-                    Some((tool, arguments.clone())),
-                    cancel,
-                    300,
-                )
-                .await
-                .map_err(|e| {
-                    RuntimeError::new(
-                        if cancel.is_cancelled() {
-                            ErrorCode::ScopeClosed
-                        } else {
-                            ErrorCode::PermissionDenied
-                        },
-                        e.to_string(),
+                match self
+                    .review_permission(cell, call_id, tool, arguments, cancel)
+                    .await?
+                {
+                    crate::permissions::ReviewDecision::Allow => true,
+                    crate::permissions::ReviewDecision::Deny => {
+                        let state = cell.state.lock().await;
+                        let reason = state
+                            .thread
+                            .turns
+                            .last()
+                            .and_then(|turn| {
+                                turn.items.iter().find_map(|item| match item {
+                                    Item::DynamicToolCall {
+                                        call_id: id,
+                                        execution,
+                                        ..
+                                    } if id == call_id => execution
+                                        .permission_review
+                                        .as_ref()
+                                        .and_then(|review| review["reason"].as_str()),
+                                    _ => None,
+                                })
+                            })
+                            .unwrap_or("independent permission review denied this operation");
+                        return Err(RuntimeError::new(ErrorCode::PermissionDenied, reason));
+                    }
+                    crate::permissions::ReviewDecision::Ask => false,
+                }
+            } else {
+                false
+            };
+            if !reviewed {
+                if self.interaction_mode(cell).await
+                    != areal_protocol::tasks::InteractionMode::Interactive
+                {
+                    return Err(RuntimeError::new(
+                        ErrorCode::PermissionDenied,
+                        "NON_INTERACTIVE_APPROVAL_REQUIRED: execution denied; no synchronous approval can be awaited",
+                    ));
+                }
+                let result = self
+                    .await_interaction(
+                        cell,
+                        call_id,
+                        Vec::new(),
+                        Some((tool, arguments.clone())),
+                        cancel,
+                        300,
                     )
-                })?;
-            if !matches!(
-                result["decision"].as_str(),
-                Some("allowOnce" | "allowSession" | "allowProject")
-            ) {
-                return Err(RuntimeError::new(
-                    ErrorCode::PermissionDenied,
-                    "tool approval denied",
-                ));
+                    .await
+                    .map_err(|e| {
+                        RuntimeError::new(
+                            if cancel.is_cancelled() {
+                                ErrorCode::ScopeClosed
+                            } else {
+                                ErrorCode::PermissionDenied
+                            },
+                            e.to_string(),
+                        )
+                    })?;
+                if !matches!(
+                    result["decision"].as_str(),
+                    Some("allowOnce" | "allowSession" | "allowProject")
+                ) {
+                    return Err(RuntimeError::new(
+                        ErrorCode::PermissionDenied,
+                        "tool approval denied",
+                    ));
+                }
             }
         }
         if cancel.is_cancelled() {

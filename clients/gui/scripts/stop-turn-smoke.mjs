@@ -16,6 +16,7 @@ const root = resolve(gui, '../..');
 const require = createRequire(join(gui, 'app/package.json'));
 const { _electron: electron } = require('playwright-core');
 const binary = process.env.AREAL_CORE_BIN;
+const snapshotCompletion = process.env.AREAL_STOP_SNAPSHOT_COMPLETION === '1';
 assert.ok(binary && isAbsolute(binary), 'Set AREAL_CORE_BIN to an absolute fixed Core binary');
 const scratch = await mkdtemp('/private/tmp/stop-turn-');
 const workspace = join(scratch, 'workspace');
@@ -46,8 +47,24 @@ const server = createServer(async (request, response) => {
 const commandLog = join(scratch, 'commands.jsonl');
 const receiptGate = join(scratch, 'receipt.gate');
 const bootstrap = `
+const { CoreBackend } = require(${JSON.stringify(join(gui, 'app/src/core/backend.cjs'))});
 const { SharedCoreBackend } = require(${JSON.stringify(join(gui, 'app/src/core/service-client.cjs'))});
 const { appendFileSync, existsSync } = require('node:fs');
+const connect = CoreBackend.prototype.connect;
+CoreBackend.prototype.connect = async function(project, ...args) {
+  const value = await connect.call(this, project, ...args);
+  if (${JSON.stringify(snapshotCompletion)}) {
+    const receive = project.client.receive.bind(project.client);
+    project.client.receive = bytes => {
+      if (JSON.parse(String(bytes)).method === 'turn/completed') {
+        appendFileSync(${JSON.stringify(commandLog)}, JSON.stringify({ completionNotificationOmitted: true }) + '\\n');
+        return;
+      }
+      return receive(bytes);
+    };
+  }
+  return value;
+};
 const command = SharedCoreBackend.prototype.command;
 const accept = SharedCoreBackend.prototype.acceptLifecycleReceipt;
 SharedCoreBackend.prototype.command = async function(name, request) {
@@ -115,6 +132,11 @@ try {
   await until(async () => (await readFile(commandLog, 'utf8')).includes('receiptHeld'), 'Completed receipt held');
   await page.getByText('执行已暂停', { exact: true }).waitFor();
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await until(async () => {
+    const value = await snapshot();
+    const stopped = current(value);
+    return stopped && value.library.threads[`${project(value).id}:${stopped.id}`]?.completionId === stopped.turns.at(-1)?.id;
+  }, 'Paused completion recorded');
   const pending = await snapshot();
   const stoppedThread = current(pending);
   const projectId = project(pending).id;
@@ -126,6 +148,13 @@ try {
   const stoppedBody = await page.locator('body').innerText();
   console.log(/此任务的原后台操作尚未结算/.test(stoppedBody) ? 'FAIL: pause shows 此任务的原后台操作尚未结算，请检查原请求' : 'PASS: pause shows no lifecycle error');
   assert.doesNotMatch(stoppedBody, /此任务的原后台操作尚未结算/, 'Stopping a turn must not show a stale lifecycle error');
+  const historyRequest = { projectId, threadId: stoppedThread.id, viewId: 'pause-history-view' };
+  for (const [operation, expected] of [['acquire', 'supported'], ['loadOlder', 'data'], ['loadItem', 'loaded'], ['release', 'released']]) {
+    const result = await page.evaluate(request => window.arealDesktop.command('history', request),
+      { ...historyRequest, operation, ...(operation === 'loadItem' ? { itemId: 'absent-item' } : {}) });
+    assert.equal(result.ok, true, `History ${operation} remains readable during interruption settlement`);
+    assert.ok(Object.hasOwn(result.value, expected), `History ${operation} executes its handler during settlement`);
+  }
   const unconfirmedSend = await page.evaluate(({ projectId, threadId }) => window.arealDesktop.command('send', { projectId, threadId, text: 'Must remain blocked until original receipt arrives.' }), { projectId, threadId: stoppedThread.id });
   assert.equal(unconfirmedSend.ok, false, 'Unconfirmed interruption still guards new execution');
   assert.equal(unconfirmedSend.error.code, 'LIFECYCLE_INCOMPLETE');
@@ -169,6 +198,19 @@ try {
   assert.equal(stopCommands.length, 1, 'Original stop is never replayed');
   assert.equal(stopCommands[0].request.turnId, turnId, 'Original stop keeps its exact turn identity');
   assert.equal(commands.filter(item => item.name === 'library' && item.request.completionId === turnId && item.error).length, 0, 'Automatic completion read is deferred until settlement');
+  const historyCommands = commands.filter(item => item.name === 'history');
+  assert.equal(historyCommands.some(item => item.error), false, 'History view lifecycle never becomes a rejected execution command');
+  const markUnread = await page.evaluate(request => window.arealDesktop.command('library', request),
+    { operation: 'readThread', projectId, threadId: stoppedThread.id, read: false });
+  assert.equal(markUnread.ok, true, 'Explicit unread change is accepted after settlement');
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const observed = await page.evaluate(request => window.arealDesktop.command('open', request),
+      { projectId, threadId: stoppedThread.id });
+    assert.equal(observed.ok, true, 'The same terminal history can be observed again');
+  }
+  const repeated = (await snapshot()).library.threads[`${projectId}:${stoppedThread.id}`];
+  assert.equal(repeated.completionId, turnId, 'Re-observing terminal history keeps the exact completion');
+  assert.equal(repeated.unread, true, 'Re-observing the same completion preserves explicit unread');
   await until(async () => !(await page.getByTestId('chat-send-button').isDisabled()), 'Follow-up submission enabled after original receipt settlement');
   assert.equal(await page.evaluate(key => localStorage.getItem(key), draftKey), preservedDraft, 'Settling the interruption preserves the draft without automatically submitting it');
   assert.equal(requests.length, 1, 'Receipt settlement does not replay the follow-up');
@@ -199,8 +241,8 @@ try {
   for (const response of held) response.destroy();
   if (server.listening) await new Promise(resolve => server.close(resolve));
   assert.equal(await hash(), coreHash, 'Core binary stays unchanged');
-  await writeFile(join(scratch, 'manifest.json'), JSON.stringify({ passed, source, guiDiffHash, binary, coreHash, checks, failure, cleanup, errors,
-    boundaries: 'Source Electron and real Core. Deterministic loopback model. A file barrier holds the completed stop receipt through the paused UI render, then explicitly releases it. Native folder picker stubbed. No packaged app or physical input.' }, null, 2));
+  await writeFile(join(scratch, 'manifest.json'), JSON.stringify({ passed, source, guiDiffHash, binary, coreHash, snapshotCompletion, checks, failure, cleanup, errors,
+    boundaries: 'Source Electron and real Core. Deterministic loopback model. A file barrier holds the completed stop receipt through the paused UI render, then explicitly releases it. Optional client delivery fixture omits completion notifications to require authoritative snapshot recovery. History handler and unread checks also use the public bridge. Native folder picker stubbed. No packaged app or physical input.' }, null, 2));
   console.log('Stop turn result:', passed ? 'PASS' : 'FAIL');
   if (!passed) process.exitCode = 1;
 }

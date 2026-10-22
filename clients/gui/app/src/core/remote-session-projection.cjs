@@ -219,7 +219,8 @@ function historyPage(thread, scope, cursor, limit = ITEM_LIMIT) {
 function configurationView(config) {
     if (!config) return null;
     return { ...pick(config,["revision","readOnly"]), model:config.model == null ? null : pick(config.model,["providerId","modelId"]), parameters:pick(config.parameters,["reasoningEffort"]),
-      profile:config.profile == null ? null : pick(config.profile,["id","revision","readOnly"]), options:pick(config.options,["readOnly","appendInstructions","approvalTools","preapprovedTools"]) };
+      profile:config.profile == null ? null : pick(config.profile,["id","revision","readOnly"]), options:pick(config.options,["permissionPreset","readOnly","appendInstructions","approvalTools","preapprovedTools"]),
+      ...(config.permissions ? { permissions: pick(config.permissions,["resources","reviewer","fullAccessAvailable"]) } : {}) };
 }
 function goalView(state) {
     if (!state) return {revision:0,eventSequence:0,goal:null};

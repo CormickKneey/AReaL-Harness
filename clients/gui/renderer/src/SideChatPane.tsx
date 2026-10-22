@@ -308,7 +308,7 @@ function SideChatEditor({ project, source, executionBlocked, action, dark, works
     <div className="composer-dock side-chat-composer" data-side-owner={owner}>
       <div ref={setMenuAnchor} className="composer-menu-anchor" />
       <ConversationComposer project={project} contextControl={<ContextMeter key={`${project.id}:${sideId ?? "draft"}`} project={project} thread={validSide ? side : undefined} action={action} />} modelConfig={config} allowModelInheritance={!sideId} modelDisabled={editorDisabled || !!active || !!sideId && (executionBlocked || !config)}
-        onConfigureModel={values => { void configure(values); }} onModelSettings={() => onPanel("设置")}
+        onConfigureModel={values => { void configure(values); }}
         workspacePath={project.root} taskId={sideId || null} triggerPanelContainer={menuAnchor}
         inputApiRef={api} inputTestId="side-chat-input" submitTestId="side-chat-send" initialValue={text}
         composerCatalog={{ entries: [], refresh: () => {} }}
