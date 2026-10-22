@@ -696,13 +696,18 @@ pub(super) fn history(thread: &Thread, store: &store::Store) -> anyhow::Result<V
                                 // 仅收窄可信协调回执的模型视图；持久原文与 GUI/SDK 的线程关联必须保留。
                                 let text = if execution.backend.as_deref() == Some("coordination")
                                     && tool.starts_with("agent_")
-                                    && execution
-                                        .output_projection
-                                        .as_ref()
-                                        .is_some_and(|view| view["executionIdentityVersion"] == 1)
-                                {
+                                    && execution.output_projection.as_ref().is_some_and(|view| {
+                                        matches!(
+                                            view["executionIdentityVersion"].as_u64(),
+                                            Some(1 | 2)
+                                        )
+                                    }) {
                                     serde_json::from_str::<Value>(&text)
-                                        .map(crate::agents::model_execution_view)
+                                        .map(|value| if execution.output_projection.as_ref().unwrap()["executionIdentityVersion"] == 1 {
+                                            crate::agents::model_execution_view_v1(value)
+                                        } else {
+                                            crate::agents::model_execution_view(value)
+                                        })
                                         .and_then(|value| serde_json::to_string(&value))
                                         .unwrap_or(text)
                                 } else {

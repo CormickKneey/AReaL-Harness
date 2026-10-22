@@ -46,6 +46,7 @@ struct ObservedResult {
     summary_contexts: AtomicUsize,
     ready: mpsc::UnboundedSender<()>,
     release: Semaphore,
+    child_release: Semaphore,
 }
 
 #[derive(Clone, Copy, Default, PartialEq)]
@@ -154,6 +155,7 @@ impl Model for ObservedResult {
             .unwrap()
             .text_content();
         if prompt == "child" {
+            self.child_release.acquire().await.unwrap().forget();
             if self.interrupt_child {
                 return Ok(Box::pin(futures_util::stream::pending()));
             }
@@ -194,6 +196,12 @@ impl Model for ObservedResult {
                     .find(|m| m.role == "tool")
                     .unwrap()
                     .text_content();
+                if self.execution_id && self.fanout == 16 {
+                    let view: Value = serde_json::from_str(&receipt).unwrap();
+                    assert!(receipt.len() <= 16 * 1024);
+                    assert_ne!(view["truncated"], true);
+                    assert_eq!(view["completed"].as_array().map_or(0, Vec::len), 16);
+                }
                 assert!(
                     receipt.contains(if self.interrupt_child {
                         if self.execution_id {
@@ -306,6 +314,7 @@ async fn observed_result_case(options: ObservedOptions) {
         summary_contexts: AtomicUsize::new(0),
         ready,
         release: Semaphore::new(0),
+        child_release: Semaphore::new(0),
     });
     let engine = Engine::open(
         dir.path(),
@@ -336,6 +345,17 @@ async fn observed_result_case(options: ObservedOptions) {
         .start(&parent.id, vec![Input::text("parent")])
         .await
         .unwrap();
+    // 所有派发回执先确定为 running，再允许子模型完成；不能靠快子任务掩盖批量投影截断。
+    bounded(async {
+        loop {
+            let thread = engine.read(&parent.id, true).await.unwrap();
+            let spawned = thread.turns[0].items.iter().filter(|item| matches!(item,
+                Item::DynamicToolCall {tool,status:areal_protocol::ToolStatus::Completed,..} if tool == "agent_spawn")).count();
+            if spawned == fanout {break;}
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }).await;
+    model.child_release.add_permits(fanout);
     bounded(receiver.recv()).await.unwrap();
     let children = engine.list(None, 64, Some(&parent.id)).await.unwrap().0;
     assert_eq!(children.len(), fanout);
@@ -379,7 +399,7 @@ async fn observed_result_case(options: ObservedOptions) {
         } else {
             3 + usize::from(recovery != Recovery::None)
         },
-        "already-observed {read_tool} result requested a second final answer"
+        "already-observed {read_tool} result requested a second final answer (execution_id={execution_id}, fanout={fanout})"
     );
     assert_eq!(
         completed.turns[0].status,

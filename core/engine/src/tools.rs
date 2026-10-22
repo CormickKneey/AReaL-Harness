@@ -1137,6 +1137,10 @@ impl Engine {
         let started = std::time::Instant::now();
         let item_id = id();
         let operation_id = runtime.map_or_else(id, |r| r.client.operation_id());
+        let coordination = rejection.is_none()
+            && entry
+                .as_ref()
+                .is_ok_and(|entry| matches!(entry.backend, Backend::Coordination));
         let item = Item::DynamicToolCall {
             id: item_id.clone(),
             tool: call.name.clone(),
@@ -1419,9 +1423,13 @@ impl Engine {
         {
             content.push(json!({"type":"inputText","text":format!("previousMatchingFailures={}: {note}", result["previousMatchingFailures"])}));
         }
-        let prepared = self
-            .prepare_tool_result(cell, &item_id, &call.name, &result, output_argv.as_deref())
-            .await?;
+        let prepared = if coordination {
+            self.prepare_coordination_result(cell, &item_id, &call.name, &result)
+                .await?
+        } else {
+            self.prepare_tool_result(cell, &item_id, &call.name, &result, output_argv.as_deref())
+                .await?
+        };
         trajectory::record_json(
             &tracing::Span::current(),
             "areal.tool.result.projected",
@@ -1472,7 +1480,7 @@ impl Engine {
                 && call.name.starts_with("agent_")
             {
                 execution.output_projection.as_mut().unwrap()["executionIdentityVersion"] =
-                    json!(1);
+                    json!(2);
             }
             execution.duration_ms = Some(started.elapsed().as_millis() as u64);
         }

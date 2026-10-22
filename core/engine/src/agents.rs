@@ -13,6 +13,16 @@ pub(crate) const CHILD_INSTRUCTIONS: &str = "Complete the assigned task within i
 pub(crate) const COMPLETION_FOCUS: &str = "Completion focus (explicit experimental policy): Keep the user's required deliverables, preservation constraints and deadline visible in the plan. Implement and verify the requested contract, including required documentation, before optional exploration. After relevant checks pass on the current source, add or repeat checks only to resolve a specific remaining concern or a later change. When delegating, include the relevant user constraints, explicit deadline and useful stopping evidence in the assignment without widening its scope. A child should verify its assigned boundary and hand off promptly; do not duplicate the parent's integration work unless assigned. State which checks actually ran and any remaining limitation. While independent work remains, do it instead of polling. When only child results are needed, use agent_wait_any with timeoutMs=30000 and after=the previous nextAfter, or agent_wait with timeoutMs=30000; shorter timeouts are useful only when a concrete deadline or other action requires them. Use artifact.available before agent_artifact. If delivery.status=applied, the source is already in this workspace: inspect the changed paths or handoff needed for integration, without rebuilding the child's investigation. Never skip required validation, infer completion from exit zero alone, replay UNKNOWN effects, or manufacture missing deliverables.";
 
 pub(crate) fn model_execution_view(mut value: Value) -> Value {
+    model_execution_view_inner(&mut value, true);
+    value
+}
+
+pub(crate) fn model_execution_view_v1(mut value: Value) -> Value {
+    model_execution_view_inner(&mut value, false);
+    value
+}
+
+fn model_execution_view_inner(value: &mut Value, compact_batch: bool) {
     if value.get("executionId").is_some() {
         // 模型控制只接受 executionId；底层身份仍保存在执行记录和客户端诊断中。
         if let Some(object) = value.as_object_mut() {
@@ -24,11 +34,25 @@ pub(crate) fn model_execution_view(mut value: Value) -> Value {
     for key in ["completed", "pending"] {
         if let Some(rows) = value.get_mut(key).and_then(Value::as_array_mut) {
             for row in rows {
-                *row = model_execution_view(std::mem::take(row));
+                model_execution_view_inner(row, compact_batch);
+                // 批量回执不重复派发时已有的描述与游标副本，避免挤掉真实结论和终态字段。
+                if compact_batch && row.get("executionId").is_some() {
+                    for field in ["title", "reason", "receiptVersion"] {
+                        row.as_object_mut().unwrap().remove(field);
+                    }
+                    if let Some(capabilities) =
+                        row.get_mut("capabilities").and_then(Value::as_object_mut)
+                    {
+                        capabilities.remove("readHandoff");
+                        capabilities.remove("supportsArtifact");
+                    }
+                    if let Some(artifact) = row.get_mut("artifact").and_then(Value::as_object_mut) {
+                        artifact.remove("nextAction");
+                    }
+                }
             }
         }
     }
-    value
 }
 
 // 只读豁免绑定内置后端，关闭委派后注册的同名外部工具不能借此调用宿主。
@@ -603,9 +627,12 @@ impl Engine {
                         pending.push(value)
                     }
                 }
-                if !completed.is_empty() || tokio::time::Instant::now() >= end {
+                let all_settled = pending.is_empty();
+                if !completed.is_empty() || all_settled || tokio::time::Instant::now() >= end {
                     return Ok(
-                        json!({"completed":completed,"pending":pending,"unchanged":unchanged,"nextAfter":next_after,"timedOut":completed.is_empty()}),
+                        json!({"completed":completed,"pending":pending,"unchanged":unchanged,"nextAfter":next_after,
+                            "allSettled":all_settled,"timedOut":completed.is_empty() && !all_settled,
+                            "nextAction":if all_settled {"Selected executions are settled; integrate the receipts already provided and complete remaining deliverables. Do not keep waiting on this set."} else {"Use new completed receipts while pending work continues; retain nextAfter to suppress unchanged terminal receipts."}}),
                     );
                 }
                 tokio::select! {biased;_=cancel.cancelled()=>anyhow::bail!("cancelled"),_=tokio::time::sleep_until(end.min(tokio::time::Instant::now()+Duration::from_millis(100)))=>{}}
@@ -1072,6 +1099,39 @@ mod tests {
         engine.shutdown().await;
     }
 
+    #[test]
+    fn model_views_preserve_legacy_versions_and_lifecycle_evidence() {
+        let row = json!({"executionId":"owned", "owner":{"threadId":"parent"},"threadId":"child",
+            "title":"assigned task","reason":"isolated compatible scope","receiptVersion":"version",
+            "status":"failed","settled":true,"resourcesReleased":false,"error":"cleanup unknown",
+            "text":"actual finding and limitation","sourceItemId":"report-v1","nextOffset":42,
+            "delivery":{"status":"unknown"},"capabilities":{"readHandoff":true,"supportsArtifact":true,"readArtifact":false}});
+        let original = json!({"completed":[row]});
+        let legacy = model_execution_view_v1(original.clone());
+        let current = model_execution_view(original);
+        assert_eq!(legacy["completed"][0]["title"], "assigned task");
+        assert!(current["completed"][0].get("title").is_none());
+        assert!(current["completed"][0].get("artifact").is_none());
+        for key in [
+            "status",
+            "settled",
+            "resourcesReleased",
+            "error",
+            "text",
+            "sourceItemId",
+            "nextOffset",
+            "delivery",
+        ] {
+            assert_eq!(
+                legacy["completed"][0][key], current["completed"][0][key],
+                "{key}"
+            );
+        }
+        assert!(legacy["completed"][0].get("owner").is_none());
+        assert_eq!(model_execution_view_v1(legacy.clone()), legacy);
+        assert_eq!(model_execution_view(current.clone()), current);
+    }
+
     struct Pending;
     #[async_trait::async_trait]
     impl Model for Pending {
@@ -1185,6 +1245,22 @@ mod tests {
         assert_eq!(next["completed"].as_array().unwrap().len(), 1);
         assert_eq!(next["completed"][0]["executionId"], ids[1]);
         assert_eq!(next["completed"][0]["status"], "cancelled");
+        let finished = tokio::time::timeout(
+            Duration::from_secs(1),
+            engine.coordinate_agent(
+                &cell,
+                &turn.id,
+                "agent_wait_any",
+                &json!({"executionIds":ids,"after":next["nextAfter"],"timeoutMs":60000}),
+                &cancel,
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(finished["allSettled"], true);
+        assert_eq!(finished["completed"], json!([]));
+        assert_eq!(finished["timedOut"], false);
         // 仍保留取消后的完整终态；伪造外部目标不能改变准入或消费状态。
         assert!(
             engine

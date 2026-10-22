@@ -50,11 +50,37 @@ impl Engine {
         raw: &Value,
         argv: Option<&[String]>,
     ) -> anyhow::Result<Prepared> {
+        self.prepare_tool_result_inner(cell, item_id, name, raw, argv, false)
+            .await
+    }
+
+    pub(super) async fn prepare_coordination_result(
+        &self,
+        cell: &Cell,
+        item_id: &str,
+        name: &str,
+        raw: &Value,
+    ) -> anyhow::Result<Prepared> {
+        self.prepare_tool_result_inner(cell, item_id, name, raw, None, true)
+            .await
+    }
+
+    async fn prepare_tool_result_inner(
+        &self,
+        cell: &Cell,
+        item_id: &str,
+        name: &str,
+        raw: &Value,
+        argv: Option<&[String]>,
+        coordination: bool,
+    ) -> anyhow::Result<Prepared> {
         let started = std::time::Instant::now();
         let bytes = serde_json::to_vec(raw)?;
         let policy = &self.extensions.policy.result_views;
         // 无损行格式在首次记录时确定，历史回放不重写旧 provider 上下文。
-        let mut baseline = if name == "read_file" && policy.file_lines {
+        let mut baseline = if coordination && name.starts_with("agent_") {
+            crate::agents::model_execution_view(raw.clone())
+        } else if name == "read_file" && policy.file_lines {
             crate::history::compact_file_text(&raw.to_string())
                 .and_then(|v| serde_json::from_str(&v).ok())
                 .unwrap_or_else(|| raw.clone())
@@ -64,7 +90,8 @@ impl Engine {
         if raw.get("mcpResult").is_some() {
             crate::desktop::mcp_apps::strip_meta(&mut baseline);
         }
-        let file_compacted = baseline != *raw;
+        let file_compacted = name == "read_file" && baseline != *raw;
+        let identity_compacted = coordination && baseline != *raw;
         if let Some(argv) = argv {
             apply_output_view(&mut baseline, argv);
         }
@@ -144,7 +171,9 @@ impl Engine {
             }
         }
         let mut candidate_bytes = None;
-        let mut kind = if file_compacted {
+        let mut kind = if identity_compacted {
+            "coordination-v2"
+        } else if file_compacted {
             "file-lines-v1"
         } else {
             "none"

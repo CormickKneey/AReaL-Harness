@@ -18,6 +18,20 @@ fn execution_receipts_observed(
         let object = value.as_object_mut()?;
         object.remove("remainingToolCalls");
         object.remove("timedOut");
+        // 批量投影可省略静态描述与游标副本；来源、正文分页、交付与清理仍须完整一致。
+        for key in ["title", "reason", "receiptVersion"] {
+            object.remove(key);
+        }
+        if let Some(capabilities) = object
+            .get_mut("capabilities")
+            .and_then(Value::as_object_mut)
+        {
+            capabilities.remove("readHandoff");
+            capabilities.remove("supportsArtifact");
+        }
+        if let Some(artifact) = object.get_mut("artifact").and_then(Value::as_object_mut) {
+            artifact.remove("nextAction");
+        }
         Some(value)
     };
     if reports.is_empty()
