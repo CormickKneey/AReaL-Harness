@@ -1,0 +1,5160 @@
+{
+  "schema_version": 1,
+  "scope": "ten seen development tasks, five repetitions per arm, fixed100; not source-isolated or four-domain capability evidence",
+  "core_revision": "41805761f94c080a4aa81383a501fccc8d7548e6",
+  "codex_binary_sha256": "1afb28c01d7d49e892bd75f11076b10f1451e34e0ee308a95e5ab7f69f9c84fe",
+  "codex_reference_revision": "014489466a1739c2c563cdfe57880c2c7c8680e3",
+  "codex_reference_binary_correspondence": "UNKNOWN",
+  "controls": {
+    "model": "gpt-6.1-sol",
+    "effort": "xhigh",
+    "verbosity": "low",
+    "service_tier": "default",
+    "root_slots_per_arm": 3,
+    "root_wall_limit_s": 1200,
+    "failed_roots_replayed": false
+  },
+  "summary": {
+    "areal": {
+      "planned": 50,
+      "admitted": 50,
+      "unadmitted": 0,
+      "relay_affected_roots": 10,
+      "relay_failed_requests": 12,
+      "normal_completed": 48,
+      "execution_non_normal": 2,
+      "stop_reasons": {
+        "WALL_LIMIT": 2
+      },
+      "nonzero_exits": 2,
+      "functional_fail_given_normal": 0,
+      "frozen_semantic_fail": 0,
+      "normal_correct": 48,
+      "artifact_pass": 50,
+      "checker_unknown": 0,
+      "states": {
+        "NORMAL_CORRECT": 48,
+        "STOPPED_WALL_LIMIT": 2
+      },
+      "ui_expected": 10,
+      "ui_probe_pass": 8,
+      "ui_review_required": 0,
+      "wall_all_median_s": 838.5112295625149,
+      "wall_all_p90_s": 1120.0433094954906,
+      "wall_normal_correct_median_s": 819.7874557085161,
+      "root_wall_total_s": 41548.25855920819,
+      "requests": 2768,
+      "unknown_usage_requests": 130,
+      "roots_with_complete_usage": 8,
+      "usage_observed_lower_bound": {
+        "input_tokens": 70317847,
+        "output_tokens": 2044927,
+        "cached_input_tokens": 14199808
+      },
+      "median_model_parallel_factor": 1.7217866349194009,
+      "tail_after_last_child_median_s": 288.4915195835056,
+      "ui_supplemental_pass": 2,
+      "ui_effective_pass": 10,
+      "tail_after_last_child_model_response_median_s": 361.76619708296494,
+      "provider_reported_capacity_rejections": 0
+    },
+    "codex": {
+      "planned": 50,
+      "admitted": 50,
+      "unadmitted": 0,
+      "relay_affected_roots": 16,
+      "relay_failed_requests": 21,
+      "normal_completed": 45,
+      "execution_non_normal": 5,
+      "stop_reasons": {},
+      "nonzero_exits": 5,
+      "functional_fail_given_normal": 0,
+      "frozen_semantic_fail": 2,
+      "normal_correct": 45,
+      "artifact_pass": 48,
+      "checker_unknown": 0,
+      "states": {
+        "EXECUTION_FAILED": 5,
+        "NORMAL_CORRECT": 45
+      },
+      "ui_expected": 10,
+      "ui_probe_pass": 8,
+      "ui_review_required": 2,
+      "wall_all_median_s": 714.9620296669891,
+      "wall_all_p90_s": 1013.1171645202935,
+      "wall_normal_correct_median_s": 738.5352549169911,
+      "root_wall_total_s": 35263.07631166908,
+      "requests": 3883,
+      "unknown_usage_requests": 636,
+      "roots_with_complete_usage": 0,
+      "usage_observed_lower_bound": {
+        "input_tokens": 77239153,
+        "output_tokens": 1726472,
+        "cached_input_tokens": 71082752
+      },
+      "median_model_parallel_factor": 2.3436841218297175,
+      "tail_after_last_child_median_s": null,
+      "ui_supplemental_pass": 0,
+      "ui_effective_pass": 8,
+      "tail_after_last_child_model_response_median_s": 126.12562102152151,
+      "provider_reported_capacity_rejections": 5
+    },
+    "paired_normal_correct": {
+      "count": 43,
+      "geometric_wall_ratio_areal_codex": 1.0804624811079018,
+      "rows": [
+        {
+          "case": "02-durable-dag",
+          "repeat": 1,
+          "wall_ratio_areal_codex": 0.7702739098249908,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "03-ticket-api",
+          "repeat": 1,
+          "wall_ratio_areal_codex": 0.8926318504991488,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "04-release-pipeline",
+          "repeat": 1,
+          "wall_ratio_areal_codex": 0.9239755006331315,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "05-ledger-reconcile",
+          "repeat": 1,
+          "wall_ratio_areal_codex": 1.5125489907241194,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "06-incident-forensics",
+          "repeat": 1,
+          "wall_ratio_areal_codex": 1.1742378291661275,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "07-release-handoff",
+          "repeat": 1,
+          "wall_ratio_areal_codex": 1.3103582473883604,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "09-content-backup",
+          "repeat": 1,
+          "wall_ratio_areal_codex": 1.2028212429536582,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "10-offline-docforge",
+          "repeat": 1,
+          "wall_ratio_areal_codex": 0.983051879112636,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "01-agent-chatroom",
+          "repeat": 2,
+          "wall_ratio_areal_codex": 1.0634387546055517,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "02-durable-dag",
+          "repeat": 2,
+          "wall_ratio_areal_codex": 0.9109330793724747,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "03-ticket-api",
+          "repeat": 2,
+          "wall_ratio_areal_codex": 1.207335723282634,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "04-release-pipeline",
+          "repeat": 2,
+          "wall_ratio_areal_codex": 1.135598174346305,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "05-ledger-reconcile",
+          "repeat": 2,
+          "wall_ratio_areal_codex": 0.9981870356963741,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "06-incident-forensics",
+          "repeat": 2,
+          "wall_ratio_areal_codex": 1.1941828866684336,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "07-release-handoff",
+          "repeat": 2,
+          "wall_ratio_areal_codex": 0.8040453474747696,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "09-content-backup",
+          "repeat": 2,
+          "wall_ratio_areal_codex": 1.034659508826562,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "10-offline-docforge",
+          "repeat": 2,
+          "wall_ratio_areal_codex": 1.9751255783937343,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "02-durable-dag",
+          "repeat": 3,
+          "wall_ratio_areal_codex": 0.8629237174613593,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "03-ticket-api",
+          "repeat": 3,
+          "wall_ratio_areal_codex": 1.1912001079620949,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "04-release-pipeline",
+          "repeat": 3,
+          "wall_ratio_areal_codex": 1.6530509788483054,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "05-ledger-reconcile",
+          "repeat": 3,
+          "wall_ratio_areal_codex": 0.9077395957534622,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "06-incident-forensics",
+          "repeat": 3,
+          "wall_ratio_areal_codex": 1.053584389741742,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "07-release-handoff",
+          "repeat": 3,
+          "wall_ratio_areal_codex": 0.6002712192931534,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "09-content-backup",
+          "repeat": 3,
+          "wall_ratio_areal_codex": 1.0590287819942765,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "10-offline-docforge",
+          "repeat": 3,
+          "wall_ratio_areal_codex": 0.8714521433386078,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "01-agent-chatroom",
+          "repeat": 4,
+          "wall_ratio_areal_codex": 1.6170200075992505,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "02-durable-dag",
+          "repeat": 4,
+          "wall_ratio_areal_codex": 1.1371132886069222,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "03-ticket-api",
+          "repeat": 4,
+          "wall_ratio_areal_codex": 0.8135182041952285,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "04-release-pipeline",
+          "repeat": 4,
+          "wall_ratio_areal_codex": 1.1215691965136338,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "05-ledger-reconcile",
+          "repeat": 4,
+          "wall_ratio_areal_codex": 1.070663366126862,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "06-incident-forensics",
+          "repeat": 4,
+          "wall_ratio_areal_codex": 1.5283404037424138,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "07-release-handoff",
+          "repeat": 4,
+          "wall_ratio_areal_codex": 0.7149574564218043,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "08-ops-portal",
+          "repeat": 4,
+          "wall_ratio_areal_codex": 1.2104649894117818,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "09-content-backup",
+          "repeat": 4,
+          "wall_ratio_areal_codex": 1.093891007623287,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "01-agent-chatroom",
+          "repeat": 5,
+          "wall_ratio_areal_codex": 1.193038861505711,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "02-durable-dag",
+          "repeat": 5,
+          "wall_ratio_areal_codex": 1.0754396566218318,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "03-ticket-api",
+          "repeat": 5,
+          "wall_ratio_areal_codex": 0.8182497087849341,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "04-release-pipeline",
+          "repeat": 5,
+          "wall_ratio_areal_codex": 1.1001454272297213,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "06-incident-forensics",
+          "repeat": 5,
+          "wall_ratio_areal_codex": 0.8509631233962459,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "07-release-handoff",
+          "repeat": 5,
+          "wall_ratio_areal_codex": 1.287216217876373,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "08-ops-portal",
+          "repeat": 5,
+          "wall_ratio_areal_codex": 1.3349753097100094,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "09-content-backup",
+          "repeat": 5,
+          "wall_ratio_areal_codex": 1.0712486182906815,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "10-offline-docforge",
+          "repeat": 5,
+          "wall_ratio_areal_codex": 1.4478756249209466,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        }
+      ],
+      "scope": "only both normal and correct; selection does not replace all-attempt outcomes",
+      "tasks_with_pairs": 10,
+      "task_equal_geometric_wall_ratio_areal_codex": 1.1017843652395136,
+      "task_cluster_bootstrap_95_interval": [
+        1.0080088722392182,
+        1.1651413377184023
+      ],
+      "task_equal_cluster_bootstrap_95_interval": [
+        1.0220317541259178,
+        1.1861139798197098
+      ],
+      "uncertainty_note": "descriptive task-cluster bootstrap over this fixed development set; not a four-domain generalization or a causal before/after estimate"
+    },
+    "paired_complete_usage": {
+      "count": 0,
+      "geometric_token_ratios_areal_codex": {
+        "input_tokens": null,
+        "output_tokens": null
+      },
+      "scope": "all root, child and auxiliary requests must have observed input/output usage in both products; incomplete pairs excluded from ratios, preserved as lower bounds"
+    }
+  },
+  "common9": {
+    "areal": {
+      "planned": 45,
+      "admitted": 45,
+      "unadmitted": 0,
+      "relay_affected_roots": 9,
+      "relay_failed_requests": 11,
+      "normal_completed": 44,
+      "execution_non_normal": 1,
+      "stop_reasons": {
+        "WALL_LIMIT": 1
+      },
+      "nonzero_exits": 1,
+      "functional_fail_given_normal": 0,
+      "frozen_semantic_fail": 0,
+      "normal_correct": 44,
+      "artifact_pass": 45,
+      "checker_unknown": 0,
+      "states": {
+        "NORMAL_CORRECT": 44,
+        "STOPPED_WALL_LIMIT": 1
+      },
+      "ui_expected": 10,
+      "ui_probe_pass": 8,
+      "ui_review_required": 0,
+      "wall_all_median_s": 809.8883281250019,
+      "wall_all_p90_s": 1102.520811216801,
+      "wall_normal_correct_median_s": 801.414808604517,
+      "root_wall_total_s": 36501.87966912519,
+      "requests": 2387,
+      "unknown_usage_requests": 106,
+      "roots_with_complete_usage": 8,
+      "usage_observed_lower_bound": {
+        "input_tokens": 60661702,
+        "output_tokens": 1790573,
+        "cached_input_tokens": 12391040
+      },
+      "median_model_parallel_factor": 1.6624179241480384,
+      "tail_after_last_child_median_s": 289.36391933303094
+    },
+    "codex": {
+      "planned": 45,
+      "admitted": 45,
+      "unadmitted": 0,
+      "relay_affected_roots": 14,
+      "relay_failed_requests": 19,
+      "normal_completed": 40,
+      "execution_non_normal": 5,
+      "stop_reasons": {},
+      "nonzero_exits": 5,
+      "functional_fail_given_normal": 0,
+      "frozen_semantic_fail": 2,
+      "normal_correct": 40,
+      "artifact_pass": 43,
+      "checker_unknown": 0,
+      "states": {
+        "EXECUTION_FAILED": 5,
+        "NORMAL_CORRECT": 40
+      },
+      "ui_expected": 10,
+      "ui_probe_pass": 8,
+      "ui_review_required": 2,
+      "wall_all_median_s": 705.5791018749878,
+      "wall_all_p90_s": 979.8408362995951,
+      "wall_normal_correct_median_s": 726.6438270834915,
+      "root_wall_total_s": 31344.163364294043,
+      "requests": 3458,
+      "unknown_usage_requests": 566,
+      "roots_with_complete_usage": 0,
+      "usage_observed_lower_bound": {
+        "input_tokens": 68876158,
+        "output_tokens": 1520314,
+        "cached_input_tokens": 63496832
+      },
+      "median_model_parallel_factor": 2.309912161428801,
+      "tail_after_last_child_median_s": null
+    },
+    "paired_normal_correct": {
+      "count": 39,
+      "geometric_wall_ratio_areal_codex": 1.0643359637621312,
+      "rows": [
+        {
+          "case": "02-durable-dag",
+          "repeat": 1,
+          "wall_ratio_areal_codex": 0.7702739098249908,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "03-ticket-api",
+          "repeat": 1,
+          "wall_ratio_areal_codex": 0.8926318504991488,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "04-release-pipeline",
+          "repeat": 1,
+          "wall_ratio_areal_codex": 0.9239755006331315,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "05-ledger-reconcile",
+          "repeat": 1,
+          "wall_ratio_areal_codex": 1.5125489907241194,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "06-incident-forensics",
+          "repeat": 1,
+          "wall_ratio_areal_codex": 1.1742378291661275,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "07-release-handoff",
+          "repeat": 1,
+          "wall_ratio_areal_codex": 1.3103582473883604,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "09-content-backup",
+          "repeat": 1,
+          "wall_ratio_areal_codex": 1.2028212429536582,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "01-agent-chatroom",
+          "repeat": 2,
+          "wall_ratio_areal_codex": 1.0634387546055517,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "02-durable-dag",
+          "repeat": 2,
+          "wall_ratio_areal_codex": 0.9109330793724747,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "03-ticket-api",
+          "repeat": 2,
+          "wall_ratio_areal_codex": 1.207335723282634,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "04-release-pipeline",
+          "repeat": 2,
+          "wall_ratio_areal_codex": 1.135598174346305,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "05-ledger-reconcile",
+          "repeat": 2,
+          "wall_ratio_areal_codex": 0.9981870356963741,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "06-incident-forensics",
+          "repeat": 2,
+          "wall_ratio_areal_codex": 1.1941828866684336,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "07-release-handoff",
+          "repeat": 2,
+          "wall_ratio_areal_codex": 0.8040453474747696,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "09-content-backup",
+          "repeat": 2,
+          "wall_ratio_areal_codex": 1.034659508826562,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "02-durable-dag",
+          "repeat": 3,
+          "wall_ratio_areal_codex": 0.8629237174613593,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "03-ticket-api",
+          "repeat": 3,
+          "wall_ratio_areal_codex": 1.1912001079620949,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "04-release-pipeline",
+          "repeat": 3,
+          "wall_ratio_areal_codex": 1.6530509788483054,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "05-ledger-reconcile",
+          "repeat": 3,
+          "wall_ratio_areal_codex": 0.9077395957534622,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "06-incident-forensics",
+          "repeat": 3,
+          "wall_ratio_areal_codex": 1.053584389741742,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "07-release-handoff",
+          "repeat": 3,
+          "wall_ratio_areal_codex": 0.6002712192931534,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "09-content-backup",
+          "repeat": 3,
+          "wall_ratio_areal_codex": 1.0590287819942765,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "01-agent-chatroom",
+          "repeat": 4,
+          "wall_ratio_areal_codex": 1.6170200075992505,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "02-durable-dag",
+          "repeat": 4,
+          "wall_ratio_areal_codex": 1.1371132886069222,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "03-ticket-api",
+          "repeat": 4,
+          "wall_ratio_areal_codex": 0.8135182041952285,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "04-release-pipeline",
+          "repeat": 4,
+          "wall_ratio_areal_codex": 1.1215691965136338,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "05-ledger-reconcile",
+          "repeat": 4,
+          "wall_ratio_areal_codex": 1.070663366126862,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "06-incident-forensics",
+          "repeat": 4,
+          "wall_ratio_areal_codex": 1.5283404037424138,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "07-release-handoff",
+          "repeat": 4,
+          "wall_ratio_areal_codex": 0.7149574564218043,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "08-ops-portal",
+          "repeat": 4,
+          "wall_ratio_areal_codex": 1.2104649894117818,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "09-content-backup",
+          "repeat": 4,
+          "wall_ratio_areal_codex": 1.093891007623287,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "01-agent-chatroom",
+          "repeat": 5,
+          "wall_ratio_areal_codex": 1.193038861505711,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "02-durable-dag",
+          "repeat": 5,
+          "wall_ratio_areal_codex": 1.0754396566218318,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "03-ticket-api",
+          "repeat": 5,
+          "wall_ratio_areal_codex": 0.8182497087849341,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "04-release-pipeline",
+          "repeat": 5,
+          "wall_ratio_areal_codex": 1.1001454272297213,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "06-incident-forensics",
+          "repeat": 5,
+          "wall_ratio_areal_codex": 0.8509631233962459,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "07-release-handoff",
+          "repeat": 5,
+          "wall_ratio_areal_codex": 1.287216217876373,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "08-ops-portal",
+          "repeat": 5,
+          "wall_ratio_areal_codex": 1.3349753097100094,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        },
+        {
+          "case": "09-content-backup",
+          "repeat": 5,
+          "wall_ratio_areal_codex": 1.0712486182906815,
+          "usage_complete_both": false,
+          "token_ratios_areal_codex": {
+            "input_tokens": null,
+            "output_tokens": null
+          }
+        }
+      ],
+      "scope": "only both normal and correct; selection does not replace all-attempt outcomes",
+      "tasks_with_pairs": 9,
+      "task_equal_geometric_wall_ratio_areal_codex": 1.0863365610689895,
+      "task_cluster_bootstrap_95_interval": [
+        0.9914633053485276,
+        1.1486111417302733
+      ],
+      "task_equal_cluster_bootstrap_95_interval": [
+        1.0063829657957104,
+        1.170302146808024
+      ],
+      "uncertainty_note": "descriptive task-cluster bootstrap over this fixed development set; not a four-domain generalization or a causal before/after estimate"
+    },
+    "paired_complete_usage": {
+      "count": 0,
+      "geometric_token_ratios_areal_codex": {
+        "input_tokens": null,
+        "output_tokens": null
+      },
+      "scope": "all root, child and auxiliary requests must have observed input/output usage in both products; incomplete pairs excluded from ratios, preserved as lower bounds"
+    }
+  },
+  "per_case": {
+    "01-agent-chatroom": {
+      "areal": {
+        "planned": 5,
+        "admitted": 5,
+        "unadmitted": 0,
+        "relay_affected_roots": 2,
+        "relay_failed_requests": 2,
+        "normal_completed": 5,
+        "execution_non_normal": 0,
+        "stop_reasons": {},
+        "nonzero_exits": 0,
+        "functional_fail_given_normal": 0,
+        "frozen_semantic_fail": 0,
+        "normal_correct": 5,
+        "artifact_pass": 5,
+        "checker_unknown": 0,
+        "states": {
+          "NORMAL_CORRECT": 5
+        },
+        "ui_expected": 5,
+        "ui_probe_pass": 5,
+        "ui_review_required": 0,
+        "wall_all_median_s": 922.7501861249912,
+        "wall_all_p90_s": 1120.3653248333953,
+        "wall_normal_correct_median_s": 922.7501861249912,
+        "root_wall_total_s": 4877.567338999012,
+        "requests": 382,
+        "unknown_usage_requests": 23,
+        "roots_with_complete_usage": 0,
+        "usage_observed_lower_bound": {
+          "input_tokens": 11288100,
+          "output_tokens": 306576,
+          "cached_input_tokens": 2185344
+        },
+        "median_model_parallel_factor": 2.0919545374509587,
+        "tail_after_last_child_median_s": 322.29828962497413
+      },
+      "codex": {
+        "planned": 5,
+        "admitted": 5,
+        "unadmitted": 0,
+        "relay_affected_roots": 1,
+        "relay_failed_requests": 2,
+        "normal_completed": 3,
+        "execution_non_normal": 2,
+        "stop_reasons": {},
+        "nonzero_exits": 2,
+        "functional_fail_given_normal": 0,
+        "frozen_semantic_fail": 1,
+        "normal_correct": 3,
+        "artifact_pass": 4,
+        "checker_unknown": 0,
+        "states": {
+          "EXECUTION_FAILED": 2,
+          "NORMAL_CORRECT": 3
+        },
+        "ui_expected": 5,
+        "ui_probe_pass": 3,
+        "ui_review_required": 2,
+        "wall_all_median_s": 535.0854440419935,
+        "wall_all_p90_s": 816.0365724920063,
+        "wall_normal_correct_median_s": 738.5352549169911,
+        "root_wall_total_s": 2514.9725758759887,
+        "requests": 313,
+        "unknown_usage_requests": 46,
+        "roots_with_complete_usage": 0,
+        "usage_observed_lower_bound": {
+          "input_tokens": 6814100,
+          "output_tokens": 185108,
+          "cached_input_tokens": 6170368
+        },
+        "median_model_parallel_factor": 2.8227854766406977,
+        "tail_after_last_child_median_s": null
+      },
+      "paired_normal_correct": {
+        "count": 3,
+        "geometric_wall_ratio_areal_codex": 1.2706545297820317,
+        "rows": [
+          {
+            "case": "01-agent-chatroom",
+            "repeat": 2,
+            "wall_ratio_areal_codex": 1.0634387546055517,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "01-agent-chatroom",
+            "repeat": 4,
+            "wall_ratio_areal_codex": 1.6170200075992505,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "01-agent-chatroom",
+            "repeat": 5,
+            "wall_ratio_areal_codex": 1.193038861505711,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          }
+        ],
+        "scope": "only both normal and correct; selection does not replace all-attempt outcomes",
+        "tasks_with_pairs": 1,
+        "task_equal_geometric_wall_ratio_areal_codex": 1.2706545297820317,
+        "uncertainty_note": "descriptive task-cluster bootstrap over this fixed development set; not a four-domain generalization or a causal before/after estimate"
+      },
+      "paired_complete_usage": {
+        "count": 0,
+        "geometric_token_ratios_areal_codex": {
+          "input_tokens": null,
+          "output_tokens": null
+        },
+        "scope": "all root, child and auxiliary requests must have observed input/output usage in both products; incomplete pairs excluded from ratios, preserved as lower bounds"
+      }
+    },
+    "02-durable-dag": {
+      "areal": {
+        "planned": 5,
+        "admitted": 5,
+        "unadmitted": 0,
+        "relay_affected_roots": 0,
+        "relay_failed_requests": 0,
+        "normal_completed": 5,
+        "execution_non_normal": 0,
+        "stop_reasons": {},
+        "nonzero_exits": 0,
+        "functional_fail_given_normal": 0,
+        "frozen_semantic_fail": 0,
+        "normal_correct": 5,
+        "artifact_pass": 5,
+        "checker_unknown": 0,
+        "states": {
+          "NORMAL_CORRECT": 5
+        },
+        "ui_expected": 0,
+        "ui_probe_pass": 0,
+        "ui_review_required": 0,
+        "wall_all_median_s": 715.5349003330339,
+        "wall_all_p90_s": 959.4242929582135,
+        "wall_normal_correct_median_s": 715.5349003330339,
+        "root_wall_total_s": 3947.7402489160886,
+        "requests": 267,
+        "unknown_usage_requests": 5,
+        "roots_with_complete_usage": 2,
+        "usage_observed_lower_bound": {
+          "input_tokens": 6278783,
+          "output_tokens": 202314,
+          "cached_input_tokens": 1159936
+        },
+        "median_model_parallel_factor": 1.7581993008378896,
+        "tail_after_last_child_median_s": 225.01213783302228
+      },
+      "codex": {
+        "planned": 5,
+        "admitted": 5,
+        "unadmitted": 0,
+        "relay_affected_roots": 2,
+        "relay_failed_requests": 2,
+        "normal_completed": 5,
+        "execution_non_normal": 0,
+        "stop_reasons": {},
+        "nonzero_exits": 0,
+        "functional_fail_given_normal": 0,
+        "frozen_semantic_fail": 0,
+        "normal_correct": 5,
+        "artifact_pass": 5,
+        "checker_unknown": 0,
+        "states": {
+          "NORMAL_CORRECT": 5
+        },
+        "ui_expected": 0,
+        "ui_probe_pass": 0,
+        "ui_review_required": 0,
+        "wall_all_median_s": 909.4519558750035,
+        "wall_all_p90_s": 929.6849922668073,
+        "wall_normal_correct_median_s": 909.4519558750035,
+        "root_wall_total_s": 4179.786766584002,
+        "requests": 547,
+        "unknown_usage_requests": 101,
+        "roots_with_complete_usage": 0,
+        "usage_observed_lower_bound": {
+          "input_tokens": 11567976,
+          "output_tokens": 192868,
+          "cached_input_tokens": 11000832
+        },
+        "median_model_parallel_factor": 2.4995417539146394,
+        "tail_after_last_child_median_s": null
+      },
+      "paired_normal_correct": {
+        "count": 5,
+        "geometric_wall_ratio_areal_codex": 0.9416700758684384,
+        "rows": [
+          {
+            "case": "02-durable-dag",
+            "repeat": 1,
+            "wall_ratio_areal_codex": 0.7702739098249908,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "02-durable-dag",
+            "repeat": 2,
+            "wall_ratio_areal_codex": 0.9109330793724747,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "02-durable-dag",
+            "repeat": 3,
+            "wall_ratio_areal_codex": 0.8629237174613593,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "02-durable-dag",
+            "repeat": 4,
+            "wall_ratio_areal_codex": 1.1371132886069222,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "02-durable-dag",
+            "repeat": 5,
+            "wall_ratio_areal_codex": 1.0754396566218318,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          }
+        ],
+        "scope": "only both normal and correct; selection does not replace all-attempt outcomes",
+        "tasks_with_pairs": 1,
+        "task_equal_geometric_wall_ratio_areal_codex": 0.9416700758684384,
+        "uncertainty_note": "descriptive task-cluster bootstrap over this fixed development set; not a four-domain generalization or a causal before/after estimate"
+      },
+      "paired_complete_usage": {
+        "count": 0,
+        "geometric_token_ratios_areal_codex": {
+          "input_tokens": null,
+          "output_tokens": null
+        },
+        "scope": "all root, child and auxiliary requests must have observed input/output usage in both products; incomplete pairs excluded from ratios, preserved as lower bounds"
+      }
+    },
+    "03-ticket-api": {
+      "areal": {
+        "planned": 5,
+        "admitted": 5,
+        "unadmitted": 0,
+        "relay_affected_roots": 1,
+        "relay_failed_requests": 1,
+        "normal_completed": 5,
+        "execution_non_normal": 0,
+        "stop_reasons": {},
+        "nonzero_exits": 0,
+        "functional_fail_given_normal": 0,
+        "frozen_semantic_fail": 0,
+        "normal_correct": 5,
+        "artifact_pass": 5,
+        "checker_unknown": 0,
+        "states": {
+          "NORMAL_CORRECT": 5
+        },
+        "ui_expected": 0,
+        "ui_probe_pass": 0,
+        "ui_review_required": 0,
+        "wall_all_median_s": 570.0881339169864,
+        "wall_all_p90_s": 681.0398983752181,
+        "wall_normal_correct_median_s": 570.0881339169864,
+        "root_wall_total_s": 2934.3225696260342,
+        "requests": 174,
+        "unknown_usage_requests": 8,
+        "roots_with_complete_usage": 2,
+        "usage_observed_lower_bound": {
+          "input_tokens": 4003858,
+          "output_tokens": 130280,
+          "cached_input_tokens": 750720
+        },
+        "median_model_parallel_factor": 1.6124466386034944,
+        "tail_after_last_child_median_s": 126.46691404201556
+      },
+      "codex": {
+        "planned": 5,
+        "admitted": 5,
+        "unadmitted": 0,
+        "relay_affected_roots": 3,
+        "relay_failed_requests": 5,
+        "normal_completed": 5,
+        "execution_non_normal": 0,
+        "stop_reasons": {},
+        "nonzero_exits": 0,
+        "functional_fail_given_normal": 0,
+        "frozen_semantic_fail": 0,
+        "normal_correct": 5,
+        "artifact_pass": 5,
+        "checker_unknown": 0,
+        "states": {
+          "NORMAL_CORRECT": 5
+        },
+        "ui_expected": 0,
+        "ui_probe_pass": 0,
+        "ui_review_required": 0,
+        "wall_all_median_s": 631.6309602500114,
+        "wall_all_p90_s": 686.1147998417903,
+        "wall_normal_correct_median_s": 631.6309602500114,
+        "root_wall_total_s": 3026.804936792032,
+        "requests": 334,
+        "unknown_usage_requests": 55,
+        "roots_with_complete_usage": 0,
+        "usage_observed_lower_bound": {
+          "input_tokens": 6989885,
+          "output_tokens": 155462,
+          "cached_input_tokens": 6466816
+        },
+        "median_model_parallel_factor": 2.1065129977385486,
+        "tail_after_last_child_median_s": null
+      },
+      "paired_normal_correct": {
+        "count": 5,
+        "geometric_wall_ratio_areal_codex": 0.9690532844020145,
+        "rows": [
+          {
+            "case": "03-ticket-api",
+            "repeat": 1,
+            "wall_ratio_areal_codex": 0.8926318504991488,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "03-ticket-api",
+            "repeat": 2,
+            "wall_ratio_areal_codex": 1.207335723282634,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "03-ticket-api",
+            "repeat": 3,
+            "wall_ratio_areal_codex": 1.1912001079620949,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "03-ticket-api",
+            "repeat": 4,
+            "wall_ratio_areal_codex": 0.8135182041952285,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "03-ticket-api",
+            "repeat": 5,
+            "wall_ratio_areal_codex": 0.8182497087849341,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          }
+        ],
+        "scope": "only both normal and correct; selection does not replace all-attempt outcomes",
+        "tasks_with_pairs": 1,
+        "task_equal_geometric_wall_ratio_areal_codex": 0.9690532844020145,
+        "uncertainty_note": "descriptive task-cluster bootstrap over this fixed development set; not a four-domain generalization or a causal before/after estimate"
+      },
+      "paired_complete_usage": {
+        "count": 0,
+        "geometric_token_ratios_areal_codex": {
+          "input_tokens": null,
+          "output_tokens": null
+        },
+        "scope": "all root, child and auxiliary requests must have observed input/output usage in both products; incomplete pairs excluded from ratios, preserved as lower bounds"
+      }
+    },
+    "04-release-pipeline": {
+      "areal": {
+        "planned": 5,
+        "admitted": 5,
+        "unadmitted": 0,
+        "relay_affected_roots": 2,
+        "relay_failed_requests": 2,
+        "normal_completed": 5,
+        "execution_non_normal": 0,
+        "stop_reasons": {},
+        "nonzero_exits": 0,
+        "functional_fail_given_normal": 0,
+        "frozen_semantic_fail": 0,
+        "normal_correct": 5,
+        "artifact_pass": 5,
+        "checker_unknown": 0,
+        "states": {
+          "NORMAL_CORRECT": 5
+        },
+        "ui_expected": 0,
+        "ui_probe_pass": 0,
+        "ui_review_required": 0,
+        "wall_all_median_s": 667.027752916998,
+        "wall_all_p90_s": 716.7910689664016,
+        "wall_normal_correct_median_s": 667.027752916998,
+        "root_wall_total_s": 3407.54315683202,
+        "requests": 315,
+        "unknown_usage_requests": 14,
+        "roots_with_complete_usage": 1,
+        "usage_observed_lower_bound": {
+          "input_tokens": 6521851,
+          "output_tokens": 182089,
+          "cached_input_tokens": 1510784
+        },
+        "median_model_parallel_factor": 2.247705845190643,
+        "tail_after_last_child_median_s": 139.21599658302148
+      },
+      "codex": {
+        "planned": 5,
+        "admitted": 5,
+        "unadmitted": 0,
+        "relay_affected_roots": 1,
+        "relay_failed_requests": 1,
+        "normal_completed": 5,
+        "execution_non_normal": 0,
+        "stop_reasons": {},
+        "nonzero_exits": 0,
+        "functional_fail_given_normal": 0,
+        "frozen_semantic_fail": 0,
+        "normal_correct": 5,
+        "artifact_pass": 5,
+        "checker_unknown": 0,
+        "states": {
+          "NORMAL_CORRECT": 5
+        },
+        "ui_expected": 0,
+        "ui_probe_pass": 0,
+        "ui_review_required": 0,
+        "wall_all_median_s": 606.3087082919956,
+        "wall_all_p90_s": 670.9526730166108,
+        "wall_normal_correct_median_s": 606.3087082919956,
+        "root_wall_total_s": 2957.1449011250224,
+        "requests": 334,
+        "unknown_usage_requests": 55,
+        "roots_with_complete_usage": 0,
+        "usage_observed_lower_bound": {
+          "input_tokens": 5069816,
+          "output_tokens": 134236,
+          "cached_input_tokens": 4548608
+        },
+        "median_model_parallel_factor": 2.578158423226192,
+        "tail_after_last_child_median_s": null
+      },
+      "paired_normal_correct": {
+        "count": 5,
+        "geometric_wall_ratio_areal_codex": 1.1643659908405983,
+        "rows": [
+          {
+            "case": "04-release-pipeline",
+            "repeat": 1,
+            "wall_ratio_areal_codex": 0.9239755006331315,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "04-release-pipeline",
+            "repeat": 2,
+            "wall_ratio_areal_codex": 1.135598174346305,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "04-release-pipeline",
+            "repeat": 3,
+            "wall_ratio_areal_codex": 1.6530509788483054,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "04-release-pipeline",
+            "repeat": 4,
+            "wall_ratio_areal_codex": 1.1215691965136338,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "04-release-pipeline",
+            "repeat": 5,
+            "wall_ratio_areal_codex": 1.1001454272297213,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          }
+        ],
+        "scope": "only both normal and correct; selection does not replace all-attempt outcomes",
+        "tasks_with_pairs": 1,
+        "task_equal_geometric_wall_ratio_areal_codex": 1.1643659908405983,
+        "uncertainty_note": "descriptive task-cluster bootstrap over this fixed development set; not a four-domain generalization or a causal before/after estimate"
+      },
+      "paired_complete_usage": {
+        "count": 0,
+        "geometric_token_ratios_areal_codex": {
+          "input_tokens": null,
+          "output_tokens": null
+        },
+        "scope": "all root, child and auxiliary requests must have observed input/output usage in both products; incomplete pairs excluded from ratios, preserved as lower bounds"
+      }
+    },
+    "05-ledger-reconcile": {
+      "areal": {
+        "planned": 5,
+        "admitted": 5,
+        "unadmitted": 0,
+        "relay_affected_roots": 1,
+        "relay_failed_requests": 1,
+        "normal_completed": 5,
+        "execution_non_normal": 0,
+        "stop_reasons": {},
+        "nonzero_exits": 0,
+        "functional_fail_given_normal": 0,
+        "frozen_semantic_fail": 0,
+        "normal_correct": 5,
+        "artifact_pass": 5,
+        "checker_unknown": 0,
+        "states": {
+          "NORMAL_CORRECT": 5
+        },
+        "ui_expected": 0,
+        "ui_probe_pass": 0,
+        "ui_review_required": 0,
+        "wall_all_median_s": 792.9412890840322,
+        "wall_all_p90_s": 836.3627100253885,
+        "wall_normal_correct_median_s": 792.9412890840322,
+        "root_wall_total_s": 3786.090424085036,
+        "requests": 146,
+        "unknown_usage_requests": 8,
+        "roots_with_complete_usage": 0,
+        "usage_observed_lower_bound": {
+          "input_tokens": 3290189,
+          "output_tokens": 142842,
+          "cached_input_tokens": 636288
+        },
+        "median_model_parallel_factor": 1.2823620492097771,
+        "tail_after_last_child_median_s": 458.7143248760258
+      },
+      "codex": {
+        "planned": 5,
+        "admitted": 5,
+        "unadmitted": 0,
+        "relay_affected_roots": 0,
+        "relay_failed_requests": 0,
+        "normal_completed": 4,
+        "execution_non_normal": 1,
+        "stop_reasons": {},
+        "nonzero_exits": 1,
+        "functional_fail_given_normal": 0,
+        "frozen_semantic_fail": 0,
+        "normal_correct": 4,
+        "artifact_pass": 5,
+        "checker_unknown": 0,
+        "states": {
+          "NORMAL_CORRECT": 4,
+          "EXECUTION_FAILED": 1
+        },
+        "ui_expected": 0,
+        "ui_probe_pass": 0,
+        "ui_review_required": 0,
+        "wall_all_median_s": 681.6753079580085,
+        "wall_all_p90_s": 730.2654429749819,
+        "wall_normal_correct_median_s": 698.2138536040002,
+        "root_wall_total_s": 3095.682509831997,
+        "requests": 271,
+        "unknown_usage_requests": 40,
+        "roots_with_complete_usage": 0,
+        "usage_observed_lower_bound": {
+          "input_tokens": 4736107,
+          "output_tokens": 154922,
+          "cached_input_tokens": 4323200
+        },
+        "median_model_parallel_factor": 2.199681564738851,
+        "tail_after_last_child_median_s": null
+      },
+      "paired_normal_correct": {
+        "count": 4,
+        "geometric_wall_ratio_areal_codex": 1.1006111279638007,
+        "rows": [
+          {
+            "case": "05-ledger-reconcile",
+            "repeat": 1,
+            "wall_ratio_areal_codex": 1.5125489907241194,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "05-ledger-reconcile",
+            "repeat": 2,
+            "wall_ratio_areal_codex": 0.9981870356963741,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "05-ledger-reconcile",
+            "repeat": 3,
+            "wall_ratio_areal_codex": 0.9077395957534622,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "05-ledger-reconcile",
+            "repeat": 4,
+            "wall_ratio_areal_codex": 1.070663366126862,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          }
+        ],
+        "scope": "only both normal and correct; selection does not replace all-attempt outcomes",
+        "tasks_with_pairs": 1,
+        "task_equal_geometric_wall_ratio_areal_codex": 1.1006111279638007,
+        "uncertainty_note": "descriptive task-cluster bootstrap over this fixed development set; not a four-domain generalization or a causal before/after estimate"
+      },
+      "paired_complete_usage": {
+        "count": 0,
+        "geometric_token_ratios_areal_codex": {
+          "input_tokens": null,
+          "output_tokens": null
+        },
+        "scope": "all root, child and auxiliary requests must have observed input/output usage in both products; incomplete pairs excluded from ratios, preserved as lower bounds"
+      }
+    },
+    "06-incident-forensics": {
+      "areal": {
+        "planned": 5,
+        "admitted": 5,
+        "unadmitted": 0,
+        "relay_affected_roots": 1,
+        "relay_failed_requests": 1,
+        "normal_completed": 5,
+        "execution_non_normal": 0,
+        "stop_reasons": {},
+        "nonzero_exits": 0,
+        "functional_fail_given_normal": 0,
+        "frozen_semantic_fail": 0,
+        "normal_correct": 5,
+        "artifact_pass": 5,
+        "checker_unknown": 0,
+        "states": {
+          "NORMAL_CORRECT": 5
+        },
+        "ui_expected": 0,
+        "ui_probe_pass": 0,
+        "ui_review_required": 0,
+        "wall_all_median_s": 606.9252035419922,
+        "wall_all_p90_s": 694.8389959082008,
+        "wall_normal_correct_median_s": 606.9252035419922,
+        "root_wall_total_s": 2998.576325290953,
+        "requests": 166,
+        "unknown_usage_requests": 7,
+        "roots_with_complete_usage": 1,
+        "usage_observed_lower_bound": {
+          "input_tokens": 3594668,
+          "output_tokens": 124772,
+          "cached_input_tokens": 595584
+        },
+        "median_model_parallel_factor": 1.4444859312613065,
+        "tail_after_last_child_median_s": 335.8397845829604
+      },
+      "codex": {
+        "planned": 5,
+        "admitted": 5,
+        "unadmitted": 0,
+        "relay_affected_roots": 1,
+        "relay_failed_requests": 1,
+        "normal_completed": 5,
+        "execution_non_normal": 0,
+        "stop_reasons": {},
+        "nonzero_exits": 0,
+        "functional_fail_given_normal": 0,
+        "frozen_semantic_fail": 0,
+        "normal_correct": 5,
+        "artifact_pass": 5,
+        "checker_unknown": 0,
+        "states": {
+          "NORMAL_CORRECT": 5
+        },
+        "ui_expected": 0,
+        "ui_probe_pass": 0,
+        "ui_review_required": 0,
+        "wall_all_median_s": 468.8635502080142,
+        "wall_all_p90_s": 670.2162324002129,
+        "wall_normal_correct_median_s": 468.8635502080142,
+        "root_wall_total_s": 2663.338167918002,
+        "requests": 212,
+        "unknown_usage_requests": 32,
+        "roots_with_complete_usage": 0,
+        "usage_observed_lower_bound": {
+          "input_tokens": 3406060,
+          "output_tokens": 105286,
+          "cached_input_tokens": 2962304
+        },
+        "median_model_parallel_factor": 1.627929748944838,
+        "tail_after_last_child_median_s": null
+      },
+      "paired_normal_correct": {
+        "count": 5,
+        "geometric_wall_ratio_areal_codex": 1.1395290852205526,
+        "rows": [
+          {
+            "case": "06-incident-forensics",
+            "repeat": 1,
+            "wall_ratio_areal_codex": 1.1742378291661275,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "06-incident-forensics",
+            "repeat": 2,
+            "wall_ratio_areal_codex": 1.1941828866684336,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "06-incident-forensics",
+            "repeat": 3,
+            "wall_ratio_areal_codex": 1.053584389741742,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "06-incident-forensics",
+            "repeat": 4,
+            "wall_ratio_areal_codex": 1.5283404037424138,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "06-incident-forensics",
+            "repeat": 5,
+            "wall_ratio_areal_codex": 0.8509631233962459,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          }
+        ],
+        "scope": "only both normal and correct; selection does not replace all-attempt outcomes",
+        "tasks_with_pairs": 1,
+        "task_equal_geometric_wall_ratio_areal_codex": 1.1395290852205526,
+        "uncertainty_note": "descriptive task-cluster bootstrap over this fixed development set; not a four-domain generalization or a causal before/after estimate"
+      },
+      "paired_complete_usage": {
+        "count": 0,
+        "geometric_token_ratios_areal_codex": {
+          "input_tokens": null,
+          "output_tokens": null
+        },
+        "scope": "all root, child and auxiliary requests must have observed input/output usage in both products; incomplete pairs excluded from ratios, preserved as lower bounds"
+      }
+    },
+    "07-release-handoff": {
+      "areal": {
+        "planned": 5,
+        "admitted": 5,
+        "unadmitted": 0,
+        "relay_affected_roots": 0,
+        "relay_failed_requests": 0,
+        "normal_completed": 5,
+        "execution_non_normal": 0,
+        "stop_reasons": {},
+        "nonzero_exits": 0,
+        "functional_fail_given_normal": 0,
+        "frozen_semantic_fail": 0,
+        "normal_correct": 5,
+        "artifact_pass": 5,
+        "checker_unknown": 0,
+        "states": {
+          "NORMAL_CORRECT": 5
+        },
+        "ui_expected": 0,
+        "ui_probe_pass": 0,
+        "ui_review_required": 0,
+        "wall_all_median_s": 858.6140452499967,
+        "wall_all_p90_s": 926.921107166406,
+        "wall_normal_correct_median_s": 858.6140452499967,
+        "root_wall_total_s": 4128.746748959034,
+        "requests": 191,
+        "unknown_usage_requests": 8,
+        "roots_with_complete_usage": 1,
+        "usage_observed_lower_bound": {
+          "input_tokens": 4800918,
+          "output_tokens": 157698,
+          "cached_input_tokens": 949248
+        },
+        "median_model_parallel_factor": 1.2432125959504046,
+        "tail_after_last_child_median_s": 521.8797493330203
+      },
+      "codex": {
+        "planned": 5,
+        "admitted": 5,
+        "unadmitted": 0,
+        "relay_affected_roots": 1,
+        "relay_failed_requests": 1,
+        "normal_completed": 5,
+        "execution_non_normal": 0,
+        "stop_reasons": {},
+        "nonzero_exits": 0,
+        "functional_fail_given_normal": 0,
+        "frozen_semantic_fail": 0,
+        "normal_correct": 5,
+        "artifact_pass": 5,
+        "checker_unknown": 0,
+        "states": {
+          "NORMAL_CORRECT": 5
+        },
+        "ui_expected": 0,
+        "ui_probe_pass": 0,
+        "ui_review_required": 0,
+        "wall_all_median_s": 1012.9450276659918,
+        "wall_all_p90_s": 1123.4289940000046,
+        "wall_normal_correct_median_s": 1012.9450276659918,
+        "root_wall_total_s": 4651.517255998973,
+        "requests": 338,
+        "unknown_usage_requests": 39,
+        "roots_with_complete_usage": 0,
+        "usage_observed_lower_bound": {
+          "input_tokens": 7894015,
+          "output_tokens": 164550,
+          "cached_input_tokens": 7208576
+        },
+        "median_model_parallel_factor": 1.4994271787896518,
+        "tail_after_last_child_median_s": null
+      },
+      "paired_normal_correct": {
+        "count": 5,
+        "geometric_wall_ratio_areal_codex": 0.8974080536453201,
+        "rows": [
+          {
+            "case": "07-release-handoff",
+            "repeat": 1,
+            "wall_ratio_areal_codex": 1.3103582473883604,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "07-release-handoff",
+            "repeat": 2,
+            "wall_ratio_areal_codex": 0.8040453474747696,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "07-release-handoff",
+            "repeat": 3,
+            "wall_ratio_areal_codex": 0.6002712192931534,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "07-release-handoff",
+            "repeat": 4,
+            "wall_ratio_areal_codex": 0.7149574564218043,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "07-release-handoff",
+            "repeat": 5,
+            "wall_ratio_areal_codex": 1.287216217876373,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          }
+        ],
+        "scope": "only both normal and correct; selection does not replace all-attempt outcomes",
+        "tasks_with_pairs": 1,
+        "task_equal_geometric_wall_ratio_areal_codex": 0.8974080536453201,
+        "uncertainty_note": "descriptive task-cluster bootstrap over this fixed development set; not a four-domain generalization or a causal before/after estimate"
+      },
+      "paired_complete_usage": {
+        "count": 0,
+        "geometric_token_ratios_areal_codex": {
+          "input_tokens": null,
+          "output_tokens": null
+        },
+        "scope": "all root, child and auxiliary requests must have observed input/output usage in both products; incomplete pairs excluded from ratios, preserved as lower bounds"
+      }
+    },
+    "08-ops-portal": {
+      "areal": {
+        "planned": 5,
+        "admitted": 5,
+        "unadmitted": 0,
+        "relay_affected_roots": 1,
+        "relay_failed_requests": 2,
+        "normal_completed": 4,
+        "execution_non_normal": 1,
+        "stop_reasons": {
+          "WALL_LIMIT": 1
+        },
+        "nonzero_exits": 1,
+        "functional_fail_given_normal": 0,
+        "frozen_semantic_fail": 0,
+        "normal_correct": 4,
+        "artifact_pass": 5,
+        "checker_unknown": 0,
+        "states": {
+          "NORMAL_CORRECT": 4,
+          "STOPPED_WALL_LIMIT": 1
+        },
+        "ui_expected": 5,
+        "ui_probe_pass": 3,
+        "ui_review_required": 0,
+        "wall_all_median_s": 1106.066827750008,
+        "wall_all_p90_s": 1199.5271853752026,
+        "wall_normal_correct_median_s": 1040.9977935829957,
+        "root_wall_total_s": 5394.739988208021,
+        "requests": 397,
+        "unknown_usage_requests": 19,
+        "roots_with_complete_usage": 0,
+        "usage_observed_lower_bound": {
+          "input_tokens": 11611208,
+          "output_tokens": 261089,
+          "cached_input_tokens": 2694144
+        },
+        "median_model_parallel_factor": 1.8005379326449034,
+        "tail_after_last_child_median_s": 638.4296113750024
+      },
+      "codex": {
+        "planned": 5,
+        "admitted": 5,
+        "unadmitted": 0,
+        "relay_affected_roots": 1,
+        "relay_failed_requests": 1,
+        "normal_completed": 3,
+        "execution_non_normal": 2,
+        "stop_reasons": {},
+        "nonzero_exits": 2,
+        "functional_fail_given_normal": 0,
+        "frozen_semantic_fail": 1,
+        "normal_correct": 3,
+        "artifact_pass": 4,
+        "checker_unknown": 0,
+        "states": {
+          "EXECUTION_FAILED": 2,
+          "NORMAL_CORRECT": 3
+        },
+        "ui_expected": 5,
+        "ui_probe_pass": 5,
+        "ui_review_required": 0,
+        "wall_all_median_s": 755.6033469579997,
+        "wall_all_p90_s": 817.3734151751967,
+        "wall_normal_correct_median_s": 800.6388363750011,
+        "root_wall_total_s": 3640.609895583999,
+        "requests": 451,
+        "unknown_usage_requests": 68,
+        "roots_with_complete_usage": 0,
+        "usage_observed_lower_bound": {
+          "input_tokens": 8971834,
+          "output_tokens": 175846,
+          "cached_input_tokens": 8248832
+        },
+        "median_model_parallel_factor": 2.309912161428801,
+        "tail_after_last_child_median_s": null
+      },
+      "paired_normal_correct": {
+        "count": 2,
+        "geometric_wall_ratio_areal_codex": 1.2711966307904992,
+        "rows": [
+          {
+            "case": "08-ops-portal",
+            "repeat": 4,
+            "wall_ratio_areal_codex": 1.2104649894117818,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "08-ops-portal",
+            "repeat": 5,
+            "wall_ratio_areal_codex": 1.3349753097100094,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          }
+        ],
+        "scope": "only both normal and correct; selection does not replace all-attempt outcomes",
+        "tasks_with_pairs": 1,
+        "task_equal_geometric_wall_ratio_areal_codex": 1.2711966307904992,
+        "uncertainty_note": "descriptive task-cluster bootstrap over this fixed development set; not a four-domain generalization or a causal before/after estimate"
+      },
+      "paired_complete_usage": {
+        "count": 0,
+        "geometric_token_ratios_areal_codex": {
+          "input_tokens": null,
+          "output_tokens": null
+        },
+        "scope": "all root, child and auxiliary requests must have observed input/output usage in both products; incomplete pairs excluded from ratios, preserved as lower bounds"
+      }
+    },
+    "09-content-backup": {
+      "areal": {
+        "planned": 5,
+        "admitted": 5,
+        "unadmitted": 0,
+        "relay_affected_roots": 1,
+        "relay_failed_requests": 2,
+        "normal_completed": 5,
+        "execution_non_normal": 0,
+        "stop_reasons": {},
+        "nonzero_exits": 0,
+        "functional_fail_given_normal": 0,
+        "frozen_semantic_fail": 0,
+        "normal_correct": 5,
+        "artifact_pass": 5,
+        "checker_unknown": 0,
+        "states": {
+          "NORMAL_CORRECT": 5
+        },
+        "ui_expected": 0,
+        "ui_probe_pass": 0,
+        "ui_review_required": 0,
+        "wall_all_median_s": 997.6628838340112,
+        "wall_all_p90_s": 1108.0369283665902,
+        "wall_normal_correct_median_s": 997.6628838340112,
+        "root_wall_total_s": 5026.5528682089935,
+        "requests": 349,
+        "unknown_usage_requests": 14,
+        "roots_with_complete_usage": 1,
+        "usage_observed_lower_bound": {
+          "input_tokens": 9272127,
+          "output_tokens": 282913,
+          "cached_input_tokens": 1908992
+        },
+        "median_model_parallel_factor": 2.088873153741035,
+        "tail_after_last_child_median_s": 347.72026024901425
+      },
+      "codex": {
+        "planned": 5,
+        "admitted": 5,
+        "unadmitted": 0,
+        "relay_affected_roots": 4,
+        "relay_failed_requests": 6,
+        "normal_completed": 5,
+        "execution_non_normal": 0,
+        "stop_reasons": {},
+        "nonzero_exits": 0,
+        "functional_fail_given_normal": 0,
+        "frozen_semantic_fail": 0,
+        "normal_correct": 5,
+        "artifact_pass": 5,
+        "checker_unknown": 0,
+        "states": {
+          "NORMAL_CORRECT": 5
+        },
+        "ui_expected": 0,
+        "ui_probe_pass": 0,
+        "ui_review_required": 0,
+        "wall_all_median_s": 892.1634432919964,
+        "wall_all_p90_s": 1044.0823929497974,
+        "wall_normal_correct_median_s": 892.1634432919964,
+        "root_wall_total_s": 4614.306354584027,
+        "requests": 658,
+        "unknown_usage_requests": 130,
+        "roots_with_complete_usage": 0,
+        "usage_observed_lower_bound": {
+          "input_tokens": 13426365,
+          "output_tokens": 252036,
+          "cached_input_tokens": 12567296
+        },
+        "median_model_parallel_factor": 2.7175165356772193,
+        "tail_after_last_child_median_s": null
+      },
+      "paired_normal_correct": {
+        "count": 5,
+        "geometric_wall_ratio_areal_codex": 1.0908225986352762,
+        "rows": [
+          {
+            "case": "09-content-backup",
+            "repeat": 1,
+            "wall_ratio_areal_codex": 1.2028212429536582,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "09-content-backup",
+            "repeat": 2,
+            "wall_ratio_areal_codex": 1.034659508826562,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "09-content-backup",
+            "repeat": 3,
+            "wall_ratio_areal_codex": 1.0590287819942765,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "09-content-backup",
+            "repeat": 4,
+            "wall_ratio_areal_codex": 1.093891007623287,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "09-content-backup",
+            "repeat": 5,
+            "wall_ratio_areal_codex": 1.0712486182906815,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          }
+        ],
+        "scope": "only both normal and correct; selection does not replace all-attempt outcomes",
+        "tasks_with_pairs": 1,
+        "task_equal_geometric_wall_ratio_areal_codex": 1.0908225986352762,
+        "uncertainty_note": "descriptive task-cluster bootstrap over this fixed development set; not a four-domain generalization or a causal before/after estimate"
+      },
+      "paired_complete_usage": {
+        "count": 0,
+        "geometric_token_ratios_areal_codex": {
+          "input_tokens": null,
+          "output_tokens": null
+        },
+        "scope": "all root, child and auxiliary requests must have observed input/output usage in both products; incomplete pairs excluded from ratios, preserved as lower bounds"
+      }
+    },
+    "10-offline-docforge": {
+      "areal": {
+        "planned": 5,
+        "admitted": 5,
+        "unadmitted": 0,
+        "relay_affected_roots": 1,
+        "relay_failed_requests": 1,
+        "normal_completed": 4,
+        "execution_non_normal": 1,
+        "stop_reasons": {
+          "WALL_LIMIT": 1
+        },
+        "nonzero_exits": 1,
+        "functional_fail_given_normal": 0,
+        "frozen_semantic_fail": 0,
+        "normal_correct": 4,
+        "artifact_pass": 5,
+        "checker_unknown": 0,
+        "states": {
+          "NORMAL_CORRECT": 4,
+          "STOPPED_WALL_LIMIT": 1
+        },
+        "ui_expected": 0,
+        "ui_probe_pass": 0,
+        "ui_review_required": 0,
+        "wall_all_median_s": 1048.9186576670036,
+        "wall_all_p90_s": 1186.0141059832008,
+        "wall_normal_correct_median_s": 966.575931708503,
+        "root_wall_total_s": 5046.378890082997,
+        "requests": 381,
+        "unknown_usage_requests": 24,
+        "roots_with_complete_usage": 0,
+        "usage_observed_lower_bound": {
+          "input_tokens": 9656145,
+          "output_tokens": 254354,
+          "cached_input_tokens": 1808768
+        },
+        "median_model_parallel_factor": 2.108814275153056,
+        "tail_after_last_child_median_s": 282.79271737500676
+      },
+      "codex": {
+        "planned": 5,
+        "admitted": 5,
+        "unadmitted": 0,
+        "relay_affected_roots": 2,
+        "relay_failed_requests": 2,
+        "normal_completed": 5,
+        "execution_non_normal": 0,
+        "stop_reasons": {},
+        "nonzero_exits": 0,
+        "functional_fail_given_normal": 0,
+        "frozen_semantic_fail": 0,
+        "normal_correct": 5,
+        "artifact_pass": 5,
+        "checker_unknown": 0,
+        "states": {
+          "NORMAL_CORRECT": 5
+        },
+        "ui_expected": 0,
+        "ui_probe_pass": 0,
+        "ui_review_required": 0,
+        "wall_all_median_s": 761.7504595830105,
+        "wall_all_p90_s": 940.4693165922131,
+        "wall_normal_correct_median_s": 761.7504595830105,
+        "root_wall_total_s": 3918.9129473750363,
+        "requests": 425,
+        "unknown_usage_requests": 70,
+        "roots_with_complete_usage": 0,
+        "usage_observed_lower_bound": {
+          "input_tokens": 8362995,
+          "output_tokens": 206158,
+          "cached_input_tokens": 7585920
+        },
+        "median_model_parallel_factor": 2.5991980399437296,
+        "tail_after_last_child_median_s": null
+      },
+      "paired_normal_correct": {
+        "count": 4,
+        "geometric_wall_ratio_areal_codex": 1.2510840505845873,
+        "rows": [
+          {
+            "case": "10-offline-docforge",
+            "repeat": 1,
+            "wall_ratio_areal_codex": 0.983051879112636,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "10-offline-docforge",
+            "repeat": 2,
+            "wall_ratio_areal_codex": 1.9751255783937343,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "10-offline-docforge",
+            "repeat": 3,
+            "wall_ratio_areal_codex": 0.8714521433386078,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          },
+          {
+            "case": "10-offline-docforge",
+            "repeat": 5,
+            "wall_ratio_areal_codex": 1.4478756249209466,
+            "usage_complete_both": false,
+            "token_ratios_areal_codex": {
+              "input_tokens": null,
+              "output_tokens": null
+            }
+          }
+        ],
+        "scope": "only both normal and correct; selection does not replace all-attempt outcomes",
+        "tasks_with_pairs": 1,
+        "task_equal_geometric_wall_ratio_areal_codex": 1.2510840505845873,
+        "uncertainty_note": "descriptive task-cluster bootstrap over this fixed development set; not a four-domain generalization or a causal before/after estimate"
+      },
+      "paired_complete_usage": {
+        "count": 0,
+        "geometric_token_ratios_areal_codex": {
+          "input_tokens": null,
+          "output_tokens": null
+        },
+        "scope": "all root, child and auxiliary requests must have observed input/output usage in both products; incomplete pairs excluded from ratios, preserved as lower bounds"
+      }
+    }
+  },
+  "scheduler": {
+    "areal": {
+      "admission_to_last_exit_s": 14016.47520494461,
+      "three_root_slot_utilization": 0.9880814767788684,
+      "note": "includes startup and end-of-queue idle; checker runs outside root slots",
+      "controller_refill_delay_median_s": 0.0010218620300292969,
+      "controller_refill_delay_p90_s": 0.001373004913330078,
+      "controller_refill_note": "after root result settlement and before new admission; does not hide observer settlement within run_one"
+    },
+    "codex": {
+      "admission_to_last_exit_s": 11989.723404169083,
+      "three_root_slot_utilization": 0.9803694692797599,
+      "note": "includes startup and end-of-queue idle; checker runs outside root slots",
+      "controller_refill_delay_median_s": 0.0012111663818359375,
+      "controller_refill_delay_p90_s": 0.0016550540924072264,
+      "controller_refill_note": "after root result settlement and before new admission; does not hide observer settlement within run_one"
+    },
+    "overall_root_makespan_s": 14016.47520494461
+  },
+  "trace_summary": {
+    "areal": {
+      "roots": 50,
+      "final_count_distribution": {
+        "1": 48,
+        "0": 2
+      },
+      "identical_final_repetitions": 0,
+      "premature_artifact_calls": 0,
+      "versioned_wait_calls": 103,
+      "same_terminal_page_rereads_detected": 0,
+      "prefix_transitions": 0,
+      "frozen_contract_rejections": 0,
+      "first_spawn_median_s": 76.64283585397061
+    },
+    "codex": {
+      "roots": 50,
+      "final_count_distribution": {
+        "0": 5,
+        "1": 45
+      },
+      "identical_final_repetitions": 0,
+      "premature_artifact_calls": 0,
+      "versioned_wait_calls": 0,
+      "same_terminal_page_rereads_detected": 0,
+      "prefix_transitions": 0,
+      "frozen_contract_rejections": 0,
+      "first_spawn_median_s": null
+    }
+  },
+  "protocol": {
+    "areal": {
+      "requests_settled": 2768,
+      "statuses": {
+        "200": 2750,
+        "503": 6,
+        "None": 12
+      },
+      "transport_failures": {
+        "ERR_STREAM_PREMATURE_CLOSE": 74,
+        "ECONNRESET": 12,
+        "ABORT_ERR": 37
+      },
+      "native_responses_lite_request_headers": 0,
+      "sticky_route_requests": 0,
+      "sticky_route_responses": 2750,
+      "encoded_controls": {
+        "{\"parallel_tool_calls\": true, \"reasoning\": {\"context\": \"all_turns\", \"effort\": \"xhigh\"}, \"text\": {\"verbosity\": \"low\"}}": 2736,
+        "{\"parallel_tool_calls\": null, \"reasoning\": {\"context\": \"all_turns\", \"effort\": \"xhigh\"}, \"text\": {\"verbosity\": \"low\"}}": 32
+      }
+    },
+    "codex": {
+      "requests_settled": 3883,
+      "statuses": {
+        "200": 3855,
+        "None": 21,
+        "503": 7
+      },
+      "transport_failures": {
+        "ABORT_ERR": 497,
+        "ERR_STREAM_PREMATURE_CLOSE": 102,
+        "ECONNRESET": 21
+      },
+      "native_responses_lite_request_headers": 3883,
+      "sticky_route_requests": 3655,
+      "sticky_route_responses": 228,
+      "encoded_controls": {
+        "{\"parallel_tool_calls\": false, \"reasoning\": {\"context\": \"all_turns\", \"effort\": \"xhigh\"}, \"text\": {\"verbosity\": \"low\"}}": 3883
+      }
+    }
+  },
+  "rows": [
+    {
+      "case": "01-agent-chatroom",
+      "repeat": 1,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 1023.589448957995,
+      "stop_reason": null,
+      "requests": 73,
+      "unknown_usage_requests": 12,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1665060,
+        "output_tokens": 54945,
+        "cached_input_tokens": 387840
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": true,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": true,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.332637054898228,
+      "tail_after_last_child_model_response_s": 412.6241976250021,
+      "run": "matrix-r01-01-agent-chatroom-areal"
+    },
+    {
+      "case": "01-agent-chatroom",
+      "repeat": 1,
+      "arm": "codex",
+      "state": "EXECUTION_FAILED",
+      "normal_correct": false,
+      "artifact_pass": true,
+      "wall_s": 288.5695867500035,
+      "stop_reason": null,
+      "requests": 27,
+      "unknown_usage_requests": 6,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 290194,
+        "output_tokens": 27350,
+        "cached_input_tokens": 237568
+      },
+      "provider_reported_capacity_rejection": true,
+      "ui_probe_pass": false,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": true,
+      "model_parallel_factor": 3.346634022832586,
+      "tail_after_last_child_model_response_s": 0.3623156670073513,
+      "run": "matrix-r01-01-agent-chatroom-codex"
+    },
+    {
+      "case": "02-durable-dag",
+      "repeat": 1,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 715.5349003330339,
+      "stop_reason": null,
+      "requests": 57,
+      "unknown_usage_requests": 1,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1426892,
+        "output_tokens": 43069,
+        "cached_input_tokens": 246912
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.8184467882741915,
+      "tail_after_last_child_model_response_s": 231.9025374580524,
+      "run": "matrix-r01-02-durable-dag-areal"
+    },
+    {
+      "case": "02-durable-dag",
+      "repeat": 1,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 928.9356567920186,
+      "stop_reason": null,
+      "requests": 108,
+      "unknown_usage_requests": 22,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 2224916,
+        "output_tokens": 38289,
+        "cached_input_tokens": 2112384
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.4830467938866985,
+      "tail_after_last_child_model_response_s": 129.5807421670179,
+      "run": "matrix-r01-02-durable-dag-codex"
+    },
+    {
+      "case": "03-ticket-api",
+      "repeat": 1,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 500.31087783398107,
+      "stop_reason": null,
+      "requests": 36,
+      "unknown_usage_requests": 0,
+      "complete_usage": true,
+      "usage_observed_lower_bound": {
+        "input_tokens": 864158,
+        "output_tokens": 28215,
+        "cached_input_tokens": 175104
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.6395134472234325,
+      "tail_after_last_child_model_response_s": 75.5049122920027,
+      "run": "matrix-r01-03-ticket-api-areal"
+    },
+    {
+      "case": "03-ticket-api",
+      "repeat": 1,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 560.489610083052,
+      "stop_reason": null,
+      "requests": 103,
+      "unknown_usage_requests": 16,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 2263711,
+        "output_tokens": 42439,
+        "cached_input_tokens": 2191872
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.7077767397625454,
+      "tail_after_last_child_model_response_s": 74.31913950009039,
+      "run": "matrix-r01-03-ticket-api-codex"
+    },
+    {
+      "case": "04-release-pipeline",
+      "repeat": 1,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 650.9807068330119,
+      "stop_reason": null,
+      "requests": 68,
+      "unknown_usage_requests": 3,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1457288,
+        "output_tokens": 33265,
+        "cached_input_tokens": 357760
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.247705845190643,
+      "tail_after_last_child_model_response_s": 172.30185620801058,
+      "run": "matrix-r01-04-release-pipeline-areal"
+    },
+    {
+      "case": "04-release-pipeline",
+      "repeat": 1,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 704.543255083001,
+      "stop_reason": null,
+      "requests": 62,
+      "unknown_usage_requests": 8,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1059173,
+        "output_tokens": 29719,
+        "cached_input_tokens": 953728
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.8144963735685682,
+      "tail_after_last_child_model_response_s": 351.98308704199735,
+      "run": "matrix-r01-04-release-pipeline-codex"
+    },
+    {
+      "case": "05-ledger-reconcile",
+      "repeat": 1,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 809.8883281250019,
+      "stop_reason": null,
+      "requests": 27,
+      "unknown_usage_requests": 1,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 778943,
+        "output_tokens": 27904,
+        "cached_input_tokens": 138368
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.2692495457277897,
+      "tail_after_last_child_model_response_s": 537.9311981250066,
+      "run": "matrix-r01-05-ledger-reconcile-areal"
+    },
+    {
+      "case": "05-ledger-reconcile",
+      "repeat": 1,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 535.4460140410229,
+      "stop_reason": null,
+      "requests": 47,
+      "unknown_usage_requests": 7,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 871577,
+        "output_tokens": 28302,
+        "cached_input_tokens": 743040
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.709930301363747,
+      "tail_after_last_child_model_response_s": 136.8324042490276,
+      "run": "matrix-r01-05-ledger-reconcile-codex"
+    },
+    {
+      "case": "06-incident-forensics",
+      "repeat": 1,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 546.4954424579628,
+      "stop_reason": null,
+      "requests": 33,
+      "unknown_usage_requests": 1,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 616528,
+        "output_tokens": 25843,
+        "cached_input_tokens": 112512
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.4906093253851387,
+      "tail_after_last_child_model_response_s": 360.2283394159167,
+      "run": "matrix-r01-06-incident-forensics-areal"
+    },
+    {
+      "case": "06-incident-forensics",
+      "repeat": 1,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 465.4043915839866,
+      "stop_reason": null,
+      "requests": 47,
+      "unknown_usage_requests": 5,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 825641,
+        "output_tokens": 20408,
+        "cached_input_tokens": 753152
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.6816863308549208,
+      "tail_after_last_child_model_response_s": 130.17624112503836,
+      "run": "matrix-r01-06-incident-forensics-codex"
+    },
+    {
+      "case": "07-release-handoff",
+      "repeat": 1,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 969.796788666019,
+      "stop_reason": null,
+      "requests": 40,
+      "unknown_usage_requests": 1,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 889535,
+        "output_tokens": 31647,
+        "cached_input_tokens": 226432
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.2132146231207404,
+      "tail_after_last_child_model_response_s": 766.3997968750191,
+      "run": "matrix-r01-07-release-handoff-areal"
+    },
+    {
+      "case": "07-release-handoff",
+      "repeat": 1,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 740.1004958749982,
+      "stop_reason": null,
+      "requests": 63,
+      "unknown_usage_requests": 10,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1340449,
+        "output_tokens": 32660,
+        "cached_input_tokens": 1172736
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.8280430562801215,
+      "tail_after_last_child_model_response_s": 48.75544529198669,
+      "run": "matrix-r01-07-release-handoff-codex"
+    },
+    {
+      "case": "08-ops-portal",
+      "repeat": 1,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 1196.703084125009,
+      "stop_reason": null,
+      "requests": 77,
+      "unknown_usage_requests": 2,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 2483602,
+        "output_tokens": 52754,
+        "cached_input_tokens": 670080
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": true,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": true,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.8005379326449034,
+      "tail_after_last_child_model_response_s": 738.8184442920028,
+      "run": "matrix-r01-08-ops-portal-areal"
+    },
+    {
+      "case": "08-ops-portal",
+      "repeat": 1,
+      "arm": "codex",
+      "state": "EXECUTION_FAILED",
+      "normal_correct": false,
+      "artifact_pass": true,
+      "wall_s": 715.1716600839864,
+      "stop_reason": null,
+      "requests": 100,
+      "unknown_usage_requests": 15,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 2000468,
+        "output_tokens": 41887,
+        "cached_input_tokens": 1849472
+      },
+      "provider_reported_capacity_rejection": true,
+      "ui_probe_pass": true,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": true,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.798116171449128,
+      "tail_after_last_child_model_response_s": 0,
+      "run": "matrix-r01-08-ops-portal-codex"
+    },
+    {
+      "case": "09-content-backup",
+      "repeat": 1,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 997.6628838340112,
+      "stop_reason": null,
+      "requests": 69,
+      "unknown_usage_requests": 2,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1818870,
+        "output_tokens": 57770,
+        "cached_input_tokens": 460160
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.117138852674338,
+      "tail_after_last_child_model_response_s": 381.8291191670287,
+      "run": "matrix-r01-09-content-backup-areal"
+    },
+    {
+      "case": "09-content-backup",
+      "repeat": 1,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 829.4357034999994,
+      "stop_reason": null,
+      "requests": 142,
+      "unknown_usage_requests": 31,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 2792186,
+        "output_tokens": 50761,
+        "cached_input_tokens": 2631168
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 3.395667091627761,
+      "tail_after_last_child_model_response_s": 74.88995874999091,
+      "run": "matrix-r01-09-content-backup-codex"
+    },
+    {
+      "case": "10-offline-docforge",
+      "repeat": 1,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 748.8402207079926,
+      "stop_reason": null,
+      "requests": 95,
+      "unknown_usage_requests": 1,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 2487556,
+        "output_tokens": 60788,
+        "cached_input_tokens": 575360
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.4800902979877053,
+      "tail_after_last_child_model_response_s": 154.32701566600008,
+      "run": "matrix-r01-10-offline-docforge-areal"
+    },
+    {
+      "case": "10-offline-docforge",
+      "repeat": 1,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 761.7504595830105,
+      "stop_reason": null,
+      "requests": 78,
+      "unknown_usage_requests": 10,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1615100,
+        "output_tokens": 43907,
+        "cached_input_tokens": 1409280
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.2950530535328393,
+      "tail_after_last_child_model_response_s": 309.8423896249733,
+      "run": "matrix-r01-10-offline-docforge-codex"
+    },
+    {
+      "case": "01-agent-chatroom",
+      "repeat": 2,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 922.7501861249912,
+      "stop_reason": null,
+      "requests": 71,
+      "unknown_usage_requests": 1,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 2154371,
+        "output_tokens": 65336,
+        "cached_input_tokens": 394368
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": true,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": true,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.2647976471798965,
+      "tail_after_last_child_model_response_s": 328.16426554200007,
+      "run": "matrix-r02-01-agent-chatroom-areal"
+    },
+    {
+      "case": "01-agent-chatroom",
+      "repeat": 2,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 867.7041175420163,
+      "stop_reason": null,
+      "requests": 112,
+      "unknown_usage_requests": 22,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 2622445,
+        "output_tokens": 50187,
+        "cached_input_tokens": 2390144
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": true,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": true,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.715191226928417,
+      "tail_after_last_child_model_response_s": 119.03965787604102,
+      "run": "matrix-r02-01-agent-chatroom-codex"
+    },
+    {
+      "case": "02-durable-dag",
+      "repeat": 2,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 847.3358758329996,
+      "stop_reason": null,
+      "requests": 50,
+      "unknown_usage_requests": 0,
+      "complete_usage": true,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1214205,
+        "output_tokens": 41893,
+        "cached_input_tokens": 165760
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.7581993008378896,
+      "tail_after_last_child_model_response_s": 311.8882525410154,
+      "run": "matrix-r02-02-durable-dag-areal"
+    },
+    {
+      "case": "02-durable-dag",
+      "repeat": 2,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 930.1845492499997,
+      "stop_reason": null,
+      "requests": 106,
+      "unknown_usage_requests": 19,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 2203974,
+        "output_tokens": 37184,
+        "cached_input_tokens": 2117760
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.6071347955063797,
+      "tail_after_last_child_model_response_s": 55.39841866699862,
+      "run": "matrix-r02-02-durable-dag-codex"
+    },
+    {
+      "case": "03-ticket-api",
+      "repeat": 2,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 570.0881339169864,
+      "stop_reason": null,
+      "requests": 36,
+      "unknown_usage_requests": 2,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 863836,
+        "output_tokens": 25243,
+        "cached_input_tokens": 189184
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.5346752059495938,
+      "tail_after_last_child_model_response_s": 174.97707124997396,
+      "run": "matrix-r02-03-ticket-api-areal"
+    },
+    {
+      "case": "03-ticket-api",
+      "repeat": 2,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 472.18691779198707,
+      "stop_reason": null,
+      "requests": 51,
+      "unknown_usage_requests": 8,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 933527,
+        "output_tokens": 28621,
+        "cached_input_tokens": 845952
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.1065129977385486,
+      "tail_after_last_child_model_response_s": 150.13831437498447,
+      "run": "matrix-r02-03-ticket-api-codex"
+    },
+    {
+      "case": "04-release-pipeline",
+      "repeat": 2,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 662.8800464160158,
+      "stop_reason": null,
+      "requests": 62,
+      "unknown_usage_requests": 5,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1224080,
+        "output_tokens": 36688,
+        "cached_input_tokens": 191744
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.336609664386333,
+      "tail_after_last_child_model_response_s": 140.08423479102203,
+      "run": "matrix-r02-04-release-pipeline-areal"
+    },
+    {
+      "case": "04-release-pipeline",
+      "repeat": 2,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 583.7276436249958,
+      "stop_reason": null,
+      "requests": 51,
+      "unknown_usage_requests": 11,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 621027,
+        "output_tokens": 21180,
+        "cached_input_tokens": 511744
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.1942139718275033,
+      "tail_after_last_child_model_response_s": 303.738094291999,
+      "run": "matrix-r02-04-release-pipeline-codex"
+    },
+    {
+      "case": "05-ledger-reconcile",
+      "repeat": 2,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 680.4394549580174,
+      "stop_reason": null,
+      "requests": 33,
+      "unknown_usage_requests": 1,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 633390,
+        "output_tokens": 30181,
+        "cached_input_tokens": 103040
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.4079822411996026,
+      "tail_after_last_child_model_response_s": 468.3550199579913,
+      "run": "matrix-r02-05-ledger-reconcile-areal"
+    },
+    {
+      "case": "05-ledger-reconcile",
+      "repeat": 2,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 681.6753079580085,
+      "stop_reason": null,
+      "requests": 70,
+      "unknown_usage_requests": 8,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1311569,
+        "output_tokens": 37820,
+        "cached_input_tokens": 1209344
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.199681564738851,
+      "tail_after_last_child_model_response_s": 169.71876004099613,
+      "run": "matrix-r02-05-ledger-reconcile-codex"
+    },
+    {
+      "case": "06-incident-forensics",
+      "repeat": 2,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 606.9252035419922,
+      "stop_reason": null,
+      "requests": 38,
+      "unknown_usage_requests": 2,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 676866,
+        "output_tokens": 25179,
+        "cached_input_tokens": 77440
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.5608795327694456,
+      "tail_after_last_child_model_response_s": 399.1640051669965,
+      "run": "matrix-r02-06-incident-forensics-areal"
+    },
+    {
+      "case": "06-incident-forensics",
+      "repeat": 2,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 508.23471874999814,
+      "stop_reason": null,
+      "requests": 46,
+      "unknown_usage_requests": 12,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 622286,
+        "output_tokens": 18921,
+        "cached_input_tokens": 506496
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.7307580424694684,
+      "tail_after_last_child_model_response_s": 86.8924170829996,
+      "run": "matrix-r02-06-incident-forensics-codex"
+    },
+    {
+      "case": "07-release-handoff",
+      "repeat": 2,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 858.6140452499967,
+      "stop_reason": null,
+      "requests": 30,
+      "unknown_usage_requests": 2,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 540601,
+        "output_tokens": 29112,
+        "cached_input_tokens": 149888
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.286804156550474,
+      "tail_after_last_child_model_response_s": 721.6101709169743,
+      "run": "matrix-r02-07-release-handoff-areal"
+    },
+    {
+      "case": "07-release-handoff",
+      "repeat": 2,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 1067.867686750018,
+      "stop_reason": null,
+      "requests": 65,
+      "unknown_usage_requests": 5,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1505389,
+        "output_tokens": 30895,
+        "cached_input_tokens": 1366272
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.4994271787896518,
+      "tail_after_last_child_model_response_s": 280.4306633330416,
+      "run": "matrix-r02-07-release-handoff-codex"
+    },
+    {
+      "case": "08-ops-portal",
+      "repeat": 2,
+      "arm": "areal",
+      "state": "STOPPED_WALL_LIMIT",
+      "normal_correct": false,
+      "artifact_pass": true,
+      "wall_s": 1201.4099195419985,
+      "stop_reason": "WALL_LIMIT",
+      "requests": 76,
+      "unknown_usage_requests": 7,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1912386,
+        "output_tokens": 47013,
+        "cached_input_tokens": 461696
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": false,
+      "ui_supplemental_review_accepted": true,
+      "ui_effective_pass": true,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.7412314762289707,
+      "tail_after_last_child_model_response_s": 677.613853250019,
+      "run": "matrix-r02-08-ops-portal-areal"
+    },
+    {
+      "case": "08-ops-portal",
+      "repeat": 2,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 800.6388363750011,
+      "stop_reason": null,
+      "requests": 84,
+      "unknown_usage_requests": 9,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1820566,
+        "output_tokens": 40596,
+        "cached_input_tokens": 1587328
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": true,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": true,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.2148922311196575,
+      "tail_after_last_child_model_response_s": 319.97343587499927,
+      "run": "matrix-r02-08-ops-portal-codex"
+    },
+    {
+      "case": "09-content-backup",
+      "repeat": 2,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 1097.2017864169902,
+      "stop_reason": null,
+      "requests": 88,
+      "unknown_usage_requests": 5,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 2333333,
+        "output_tokens": 67142,
+        "cached_input_tokens": 501632
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.2716414062713195,
+      "tail_after_last_child_model_response_s": 425.6900178749929,
+      "run": "matrix-r02-09-content-backup-areal"
+    },
+    {
+      "case": "09-content-backup",
+      "repeat": 2,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 1060.4472070829943,
+      "stop_reason": null,
+      "requests": 121,
+      "unknown_usage_requests": 22,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 2531423,
+        "output_tokens": 47498,
+        "cached_input_tokens": 2364032
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.600696471475115,
+      "tail_after_last_child_model_response_s": 292.82102608299465,
+      "run": "matrix-r02-09-content-backup-codex"
+    },
+    {
+      "case": "10-offline-docforge",
+      "repeat": 2,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 1163.0898879579909,
+      "stop_reason": null,
+      "requests": 74,
+      "unknown_usage_requests": 8,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 2595478,
+        "output_tokens": 55650,
+        "cached_input_tokens": 451328
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.8041954902638702,
+      "tail_after_last_child_model_response_s": 636.7278140409908,
+      "run": "matrix-r02-10-offline-docforge-areal"
+    },
+    {
+      "case": "10-offline-docforge",
+      "repeat": 2,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 588.8688297499903,
+      "stop_reason": null,
+      "requests": 76,
+      "unknown_usage_requests": 16,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1241564,
+        "output_tokens": 33974,
+        "cached_input_tokens": 1132416
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.6243224733107153,
+      "tail_after_last_child_model_response_s": 154.71016149997013,
+      "run": "matrix-r02-10-offline-docforge-codex"
+    },
+    {
+      "case": "01-agent-chatroom",
+      "repeat": 3,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 1184.8825754169957,
+      "stop_reason": null,
+      "requests": 91,
+      "unknown_usage_requests": 6,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 3012115,
+        "output_tokens": 62362,
+        "cached_input_tokens": 622976
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": true,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": true,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.0675600391996865,
+      "tail_after_last_child_model_response_s": 480.4650794589834,
+      "run": "matrix-r03-01-agent-chatroom-areal"
+    },
+    {
+      "case": "01-agent-chatroom",
+      "repeat": 3,
+      "arm": "codex",
+      "state": "EXECUTION_FAILED",
+      "normal_correct": false,
+      "artifact_pass": false,
+      "wall_s": 85.07817262498429,
+      "stop_reason": null,
+      "requests": 5,
+      "unknown_usage_requests": 2,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 35515,
+        "output_tokens": 1237,
+        "cached_input_tokens": 32128
+      },
+      "provider_reported_capacity_rejection": true,
+      "ui_probe_pass": false,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": true,
+      "model_parallel_factor": 1.3784496384119744,
+      "tail_after_last_child_model_response_s": 0,
+      "run": "matrix-r03-01-agent-chatroom-codex"
+    },
+    {
+      "case": "02-durable-dag",
+      "repeat": 3,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 677.9293568340363,
+      "stop_reason": null,
+      "requests": 52,
+      "unknown_usage_requests": 0,
+      "complete_usage": true,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1272844,
+        "output_tokens": 44263,
+        "cached_input_tokens": 222720
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.037740169775656,
+      "tail_after_last_child_model_response_s": 122.50736450101249,
+      "run": "matrix-r03-02-durable-dag-areal"
+    },
+    {
+      "case": "02-durable-dag",
+      "repeat": 3,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 785.6191029589972,
+      "stop_reason": null,
+      "requests": 125,
+      "unknown_usage_requests": 22,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 2892166,
+        "output_tokens": 43771,
+        "cached_input_tokens": 2747008
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.7582377922432872,
+      "tail_after_last_child_model_response_s": 57.27703495899914,
+      "run": "matrix-r03-02-durable-dag-codex"
+    },
+    {
+      "case": "03-ticket-api",
+      "repeat": 3,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 752.3988680420152,
+      "stop_reason": null,
+      "requests": 42,
+      "unknown_usage_requests": 5,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 871899,
+        "output_tokens": 26407,
+        "cached_input_tokens": 119808
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.48825977680489,
+      "tail_after_last_child_model_response_s": 248.54611933403066,
+      "run": "matrix-r03-03-ticket-api-areal"
+    },
+    {
+      "case": "03-ticket-api",
+      "repeat": 3,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 631.6309602500114,
+      "stop_reason": null,
+      "requests": 53,
+      "unknown_usage_requests": 10,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1039288,
+        "output_tokens": 19497,
+        "cached_input_tokens": 918656
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.945855262788904,
+      "tail_after_last_child_model_response_s": 81.75432791700587,
+      "run": "matrix-r03-03-ticket-api-codex"
+    },
+    {
+      "case": "04-release-pipeline",
+      "repeat": 3,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 730.646043500019,
+      "stop_reason": null,
+      "requests": 64,
+      "unknown_usage_requests": 0,
+      "complete_usage": true,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1444458,
+        "output_tokens": 39075,
+        "cached_input_tokens": 438912
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.1398370600883054,
+      "tail_after_last_child_model_response_s": 191.14255695903557,
+      "run": "matrix-r03-04-release-pipeline-areal"
+    },
+    {
+      "case": "04-release-pipeline",
+      "repeat": 3,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 441.99849420800456,
+      "stop_reason": null,
+      "requests": 63,
+      "unknown_usage_requests": 9,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 895014,
+        "output_tokens": 26050,
+        "cached_input_tokens": 776064
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.578158423226192,
+      "tail_after_last_child_model_response_s": 138.4830697909929,
+      "run": "matrix-r03-04-release-pipeline-codex"
+    },
+    {
+      "case": "05-ledger-reconcile",
+      "repeat": 3,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 648.8090539590048,
+      "stop_reason": null,
+      "requests": 30,
+      "unknown_usage_requests": 2,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 542105,
+        "output_tokens": 26581,
+        "cached_input_tokens": 135296
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.3449008958681419,
+      "tail_after_last_child_model_response_s": 429.7727965009981,
+      "run": "matrix-r03-05-ledger-reconcile-areal"
+    },
+    {
+      "case": "05-ledger-reconcile",
+      "repeat": 3,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 714.7523992499919,
+      "stop_reason": null,
+      "requests": 62,
+      "unknown_usage_requests": 13,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1113956,
+        "output_tokens": 31544,
+        "cached_input_tokens": 1044608
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.429941551890024,
+      "tail_after_last_child_model_response_s": 50.521444874990266,
+      "run": "matrix-r03-05-ledger-reconcile-codex"
+    },
+    {
+      "case": "06-incident-forensics",
+      "repeat": 3,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 466.3497433330049,
+      "stop_reason": null,
+      "requests": 28,
+      "unknown_usage_requests": 0,
+      "complete_usage": true,
+      "usage_observed_lower_bound": {
+        "input_tokens": 896657,
+        "output_tokens": 21416,
+        "cached_input_tokens": 150400
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.2219950662607553,
+      "tail_after_last_child_model_response_s": 363.30405475001317,
+      "run": "matrix-r03-06-incident-forensics-areal"
+    },
+    {
+      "case": "06-incident-forensics",
+      "repeat": 3,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 442.63159920898033,
+      "stop_reason": null,
+      "requests": 31,
+      "unknown_usage_requests": 3,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 467065,
+        "output_tokens": 17710,
+        "cached_input_tokens": 412032
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.4286318187795428,
+      "tail_after_last_child_model_response_s": 347.5046394999954,
+      "run": "matrix-r03-06-incident-forensics-codex"
+    },
+    {
+      "case": "07-release-handoff",
+      "repeat": 3,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 608.041746834002,
+      "stop_reason": null,
+      "requests": 37,
+      "unknown_usage_requests": 0,
+      "complete_usage": true,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1067205,
+        "output_tokens": 28699,
+        "cached_input_tokens": 123904
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.3416538759709062,
+      "tail_after_last_child_model_response_s": 171.21711662603775,
+      "run": "matrix-r03-07-release-handoff-areal"
+    },
+    {
+      "case": "07-release-handoff",
+      "repeat": 3,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 1012.9450276659918,
+      "stop_reason": null,
+      "requests": 74,
+      "unknown_usage_requests": 9,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1903078,
+        "output_tokens": 33095,
+        "cached_input_tokens": 1773824
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.4062324318229997,
+      "tail_after_last_child_model_response_s": 487.23306799901184,
+      "run": "matrix-r03-07-release-handoff-codex"
+    },
+    {
+      "case": "08-ops-portal",
+      "repeat": 3,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 975.9287594159832,
+      "stop_reason": null,
+      "requests": 85,
+      "unknown_usage_requests": 8,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 2141082,
+        "output_tokens": 50404,
+        "cached_input_tokens": 426496
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": true,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": true,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.107007686774789,
+      "tail_after_last_child_model_response_s": 428.84089883300476,
+      "run": "matrix-r03-08-ops-portal-areal"
+    },
+    {
+      "case": "08-ops-portal",
+      "repeat": 3,
+      "arm": "codex",
+      "state": "EXECUTION_FAILED",
+      "normal_correct": false,
+      "artifact_pass": false,
+      "wall_s": 540.6662511250179,
+      "stop_reason": null,
+      "requests": 88,
+      "unknown_usage_requests": 15,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1427624,
+        "output_tokens": 31579,
+        "cached_input_tokens": 1325440
+      },
+      "provider_reported_capacity_rejection": true,
+      "ui_probe_pass": true,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": true,
+      "ui_review_required": false,
+      "model_parallel_factor": 3.0919277895760198,
+      "tail_after_last_child_model_response_s": 0,
+      "run": "matrix-r03-08-ops-portal-codex"
+    },
+    {
+      "case": "09-content-backup",
+      "repeat": 3,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 860.6989857089939,
+      "stop_reason": null,
+      "requests": 39,
+      "unknown_usage_requests": 0,
+      "complete_usage": true,
+      "usage_observed_lower_bound": {
+        "input_tokens": 803314,
+        "output_tokens": 37965,
+        "cached_input_tokens": 106880
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.3340100520462692,
+      "tail_after_last_child_model_response_s": 294.56229233398335,
+      "run": "matrix-r03-09-content-backup-areal"
+    },
+    {
+      "case": "09-content-backup",
+      "repeat": 3,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 812.7248289590352,
+      "stop_reason": null,
+      "requests": 139,
+      "unknown_usage_requests": 29,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 2734944,
+        "output_tokens": 49354,
+        "cached_input_tokens": 2578688
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 3.2937598121481124,
+      "tail_after_last_child_model_response_s": 50.94374062505085,
+      "run": "matrix-r03-09-content-backup-codex"
+    },
+    {
+      "case": "10-offline-docforge",
+      "repeat": 3,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 884.2332057500025,
+      "stop_reason": null,
+      "requests": 70,
+      "unknown_usage_requests": 6,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1405454,
+        "output_tokens": 44216,
+        "cached_input_tokens": 203008
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.204907956649154,
+      "tail_after_last_child_model_response_s": 301.0374498339952,
+      "run": "matrix-r03-10-offline-docforge-areal"
+    },
+    {
+      "case": "10-offline-docforge",
+      "repeat": 3,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 1014.6663962090097,
+      "stop_reason": null,
+      "requests": 95,
+      "unknown_usage_requests": 16,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1905985,
+        "output_tokens": 44954,
+        "cached_input_tokens": 1772800
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.5991980399437296,
+      "tail_after_last_child_model_response_s": 359.8083939180069,
+      "run": "matrix-r03-10-offline-docforge-codex"
+    },
+    {
+      "case": "01-agent-chatroom",
+      "repeat": 4,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 865.2438687910326,
+      "stop_reason": null,
+      "requests": 77,
+      "unknown_usage_requests": 1,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 2508910,
+        "output_tokens": 65723,
+        "cached_input_tokens": 412672
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": true,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": true,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.0919545374509587,
+      "tail_after_last_child_model_response_s": 335.35408654098865,
+      "run": "matrix-r04-01-agent-chatroom-areal"
+    },
+    {
+      "case": "01-agent-chatroom",
+      "repeat": 4,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 535.0854440419935,
+      "stop_reason": null,
+      "requests": 79,
+      "unknown_usage_requests": 9,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1731714,
+        "output_tokens": 49674,
+        "cached_input_tokens": 1534464
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": true,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": true,
+      "ui_review_required": false,
+      "model_parallel_factor": 3.0245551065945775,
+      "tail_after_last_child_model_response_s": 103.53891829197528,
+      "run": "matrix-r04-01-agent-chatroom-codex"
+    },
+    {
+      "case": "02-durable-dag",
+      "repeat": 4,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 1034.1499043750227,
+      "stop_reason": null,
+      "requests": 48,
+      "unknown_usage_requests": 2,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 896329,
+        "output_tokens": 33120,
+        "cached_input_tokens": 151168
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.408336331917239,
+      "tail_after_last_child_model_response_s": 246.35719537502155,
+      "run": "matrix-r04-02-durable-dag-areal"
+    },
+    {
+      "case": "02-durable-dag",
+      "repeat": 4,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 909.4519558750035,
+      "stop_reason": null,
+      "requests": 103,
+      "unknown_usage_requests": 19,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 2168244,
+        "output_tokens": 36945,
+        "cached_input_tokens": 2110208
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.358574502498504,
+      "tail_after_last_child_model_response_s": 82.86251008399995,
+      "run": "matrix-r04-02-durable-dag-codex"
+    },
+    {
+      "case": "03-ticket-api",
+      "repeat": 4,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 574.0014438750222,
+      "stop_reason": null,
+      "requests": 29,
+      "unknown_usage_requests": 1,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 628806,
+        "output_tokens": 25333,
+        "cached_input_tokens": 83840
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.6124466386034944,
+      "tail_after_last_child_model_response_s": 137.9670788340154,
+      "run": "matrix-r04-03-ticket-api-areal"
+    },
+    {
+      "case": "03-ticket-api",
+      "repeat": 4,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 705.5791018749878,
+      "stop_reason": null,
+      "requests": 70,
+      "unknown_usage_requests": 13,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1496053,
+        "output_tokens": 34843,
+        "cached_input_tokens": 1371392
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.223531352614978,
+      "tail_after_last_child_model_response_s": 93.1662823749939,
+      "run": "matrix-r04-03-ticket-api-codex"
+    },
+    {
+      "case": "04-release-pipeline",
+      "repeat": 4,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 696.0086071659753,
+      "stop_reason": null,
+      "requests": 61,
+      "unknown_usage_requests": 5,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1172837,
+        "output_tokens": 33856,
+        "cached_input_tokens": 272512
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.2176102281516075,
+      "tail_after_last_child_model_response_s": 224.93291049898835,
+      "run": "matrix-r04-04-release-pipeline-areal"
+    },
+    {
+      "case": "04-release-pipeline",
+      "repeat": 4,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 620.5667999170255,
+      "stop_reason": null,
+      "requests": 81,
+      "unknown_usage_requests": 9,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1417021,
+        "output_tokens": 29732,
+        "cached_input_tokens": 1302912
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.595470803102989,
+      "tail_after_last_child_model_response_s": 9.780085000034887,
+      "run": "matrix-r04-04-release-pipeline-codex"
+    },
+    {
+      "case": "05-ledger-reconcile",
+      "repeat": 4,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 792.9412890840322,
+      "stop_reason": null,
+      "requests": 27,
+      "unknown_usage_requests": 1,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 711890,
+        "output_tokens": 31448,
+        "cached_input_tokens": 133248
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.1467522089468083,
+      "tail_after_last_child_model_response_s": 611.763637626078,
+      "run": "matrix-r04-05-ledger-reconcile-areal"
+    },
+    {
+      "case": "05-ledger-reconcile",
+      "repeat": 4,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 740.6074721249752,
+      "stop_reason": null,
+      "requests": 43,
+      "unknown_usage_requests": 2,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 838262,
+        "output_tokens": 33150,
+        "cached_input_tokens": 760960
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.6998826745727242,
+      "tail_after_last_child_model_response_s": 257.30740908393636,
+      "run": "matrix-r04-05-ledger-reconcile-codex"
+    },
+    {
+      "case": "06-incident-forensics",
+      "repeat": 4,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 716.5831076250179,
+      "stop_reason": null,
+      "requests": 39,
+      "unknown_usage_requests": 2,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 821005,
+        "output_tokens": 27691,
+        "cached_input_tokens": 129920
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.4444859312613065,
+      "tail_after_last_child_model_response_s": 517.0826865000417,
+      "run": "matrix-r04-06-incident-forensics-areal"
+    },
+    {
+      "case": "06-incident-forensics",
+      "repeat": 4,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 468.8635502080142,
+      "stop_reason": null,
+      "requests": 38,
+      "unknown_usage_requests": 6,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 564792,
+        "output_tokens": 20915,
+        "cached_input_tokens": 497920
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.5897468314822498,
+      "tail_after_last_child_model_response_s": 328.07611950003775,
+      "run": "matrix-r04-06-incident-forensics-codex"
+    },
+    {
+      "case": "07-release-handoff",
+      "repeat": 4,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 829.6865832920303,
+      "stop_reason": null,
+      "requests": 37,
+      "unknown_usage_requests": 1,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1202464,
+        "output_tokens": 34357,
+        "cached_input_tokens": 214528
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.2270773436820606,
+      "tail_after_last_child_model_response_s": 708.3215449590352,
+      "run": "matrix-r04-07-release-handoff-areal"
+    },
+    {
+      "case": "07-release-handoff",
+      "repeat": 4,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 1160.4698654999956,
+      "stop_reason": null,
+      "requests": 68,
+      "unknown_usage_requests": 10,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1670783,
+        "output_tokens": 35858,
+        "cached_input_tokens": 1552384
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.3594054773002797,
+      "tail_after_last_child_model_response_s": 532.3236171249882,
+      "run": "matrix-r04-07-release-handoff-codex"
+    },
+    {
+      "case": "08-ops-portal",
+      "repeat": 4,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 914.6313973750221,
+      "stop_reason": null,
+      "requests": 75,
+      "unknown_usage_requests": 1,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 2168159,
+        "output_tokens": 56343,
+        "cached_input_tokens": 456576
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": true,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": true,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.030124605191041,
+      "tail_after_last_child_model_response_s": 394.74048579100054,
+      "run": "matrix-r04-08-ops-portal-areal"
+    },
+    {
+      "case": "08-ops-portal",
+      "repeat": 4,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 755.6033469579997,
+      "stop_reason": null,
+      "requests": 72,
+      "unknown_usage_requests": 13,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1388545,
+        "output_tokens": 33986,
+        "cached_input_tokens": 1287680
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": true,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": true,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.2073477654483704,
+      "tail_after_last_child_model_response_s": 318.4607735830359,
+      "run": "matrix-r04-08-ops-portal-codex"
+    },
+    {
+      "case": "09-content-backup",
+      "repeat": 4,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 1115.2603563329903,
+      "stop_reason": null,
+      "requests": 76,
+      "unknown_usage_requests": 4,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 2194360,
+        "output_tokens": 63155,
+        "cached_input_tokens": 389888
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.0748218149282383,
+      "tail_after_last_child_model_response_s": 464.3506346659851,
+      "run": "matrix-r04-09-content-backup-areal"
+    },
+    {
+      "case": "09-content-backup",
+      "repeat": 4,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 1019.5351717500016,
+      "stop_reason": null,
+      "requests": 135,
+      "unknown_usage_requests": 26,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 2746241,
+        "output_tokens": 51680,
+        "cached_input_tokens": 2536832
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.7175165356772193,
+      "tail_after_last_child_model_response_s": 44.97480783300125,
+      "run": "matrix-r04-09-content-backup-codex"
+    },
+    {
+      "case": "10-offline-docforge",
+      "repeat": 4,
+      "arm": "areal",
+      "state": "STOPPED_WALL_LIMIT",
+      "normal_correct": false,
+      "artifact_pass": true,
+      "wall_s": 1201.2969180000073,
+      "stop_reason": "WALL_LIMIT",
+      "requests": 66,
+      "unknown_usage_requests": 4,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1293344,
+        "output_tokens": 39449,
+        "cached_input_tokens": 223744
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.3660285710208082,
+      "tail_after_last_child_model_response_s": 185.11401104202378,
+      "run": "matrix-r04-10-offline-docforge-areal"
+    },
+    {
+      "case": "10-offline-docforge",
+      "repeat": 4,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 829.173697167018,
+      "stop_reason": null,
+      "requests": 78,
+      "unknown_usage_requests": 14,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1416928,
+        "output_tokens": 42304,
+        "cached_input_tokens": 1283200
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.3287937411609314,
+      "tail_after_last_child_model_response_s": 360.1949247920129,
+      "run": "matrix-r04-10-offline-docforge-codex"
+    },
+    {
+      "case": "01-agent-chatroom",
+      "repeat": 5,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 881.1012597079971,
+      "stop_reason": null,
+      "requests": 70,
+      "unknown_usage_requests": 3,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1947644,
+        "output_tokens": 58210,
+        "cached_input_tokens": 367488
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": true,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": true,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.07254468966742,
+      "tail_after_last_child_model_response_s": 323.70548508298816,
+      "run": "matrix-r05-01-agent-chatroom-areal"
+    },
+    {
+      "case": "01-agent-chatroom",
+      "repeat": 5,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 738.5352549169911,
+      "stop_reason": null,
+      "requests": 90,
+      "unknown_usage_requests": 7,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 2134232,
+        "output_tokens": 56660,
+        "cached_input_tokens": 1976064
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": true,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": true,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.8227854766406977,
+      "tail_after_last_child_model_response_s": 225.5483414589835,
+      "run": "matrix-r05-01-agent-chatroom-codex"
+    },
+    {
+      "case": "02-durable-dag",
+      "repeat": 5,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 672.7902115409961,
+      "stop_reason": null,
+      "requests": 60,
+      "unknown_usage_requests": 2,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1468513,
+        "output_tokens": 39969,
+        "cached_input_tokens": 373376
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.7023417936098308,
+      "tail_after_last_child_model_response_s": 256.46488820697414,
+      "run": "matrix-r05-02-durable-dag-areal"
+    },
+    {
+      "case": "02-durable-dag",
+      "repeat": 5,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 625.5955017079832,
+      "stop_reason": null,
+      "requests": 105,
+      "unknown_usage_requests": 19,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 2078676,
+        "output_tokens": 36679,
+        "cached_input_tokens": 1913472
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.4995417539146394,
+      "tail_after_last_child_model_response_s": 96.6231308329734,
+      "run": "matrix-r05-02-durable-dag-codex"
+    },
+    {
+      "case": "03-ticket-api",
+      "repeat": 5,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 537.5232459580293,
+      "stop_reason": null,
+      "requests": 31,
+      "unknown_usage_requests": 0,
+      "complete_usage": true,
+      "usage_observed_lower_bound": {
+        "input_tokens": 775159,
+        "output_tokens": 25082,
+        "cached_input_tokens": 182784
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.6540993116249119,
+      "tail_after_last_child_model_response_s": 113.82701683306368,
+      "run": "matrix-r05-03-ticket-api-areal"
+    },
+    {
+      "case": "03-ticket-api",
+      "repeat": 5,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 656.9183467919938,
+      "stop_reason": null,
+      "requests": 57,
+      "unknown_usage_requests": 8,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1257306,
+        "output_tokens": 30062,
+        "cached_input_tokens": 1138944
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.078303715734464,
+      "tail_after_last_child_model_response_s": 58.77689733399893,
+      "run": "matrix-r05-03-ticket-api-codex"
+    },
+    {
+      "case": "04-release-pipeline",
+      "repeat": 5,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 667.027752916998,
+      "stop_reason": null,
+      "requests": 60,
+      "unknown_usage_requests": 1,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1223188,
+        "output_tokens": 39205,
+        "cached_input_tokens": 249856
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.3518715559409853,
+      "tail_after_last_child_model_response_s": 165.92800720900414,
+      "run": "matrix-r05-04-release-pipeline-areal"
+    },
+    {
+      "case": "04-release-pipeline",
+      "repeat": 5,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 606.3087082919956,
+      "stop_reason": null,
+      "requests": 77,
+      "unknown_usage_requests": 18,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1077581,
+        "output_tokens": 27555,
+        "cached_input_tokens": 1004160
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.6736905686446315,
+      "tail_after_last_child_model_response_s": 83.87047754199011,
+      "run": "matrix-r05-04-release-pipeline-codex"
+    },
+    {
+      "case": "05-ledger-reconcile",
+      "repeat": 5,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 854.0122979589796,
+      "stop_reason": null,
+      "requests": 29,
+      "unknown_usage_requests": 3,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 623861,
+        "output_tokens": 26728,
+        "cached_input_tokens": 126336
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.2823620492097771,
+      "tail_after_last_child_model_response_s": 547.1073988339922,
+      "run": "matrix-r05-05-ledger-reconcile-areal"
+    },
+    {
+      "case": "05-ledger-reconcile",
+      "repeat": 5,
+      "arm": "codex",
+      "state": "EXECUTION_FAILED",
+      "normal_correct": false,
+      "artifact_pass": true,
+      "wall_s": 423.2013164579985,
+      "stop_reason": null,
+      "requests": 49,
+      "unknown_usage_requests": 10,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 600743,
+        "output_tokens": 24106,
+        "cached_input_tokens": 565248
+      },
+      "provider_reported_capacity_rejection": true,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.4052762783989827,
+      "tail_after_last_child_model_response_s": 5.155818040977465,
+      "run": "matrix-r05-05-ledger-reconcile-codex"
+    },
+    {
+      "case": "06-incident-forensics",
+      "repeat": 5,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 662.222828332975,
+      "stop_reason": null,
+      "requests": 28,
+      "unknown_usage_requests": 2,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 583612,
+        "output_tokens": 24643,
+        "cached_input_tokens": 125312
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.3521728852076704,
+      "tail_after_last_child_model_response_s": 457.7856480409682,
+      "run": "matrix-r05-06-incident-forensics-areal"
+    },
+    {
+      "case": "06-incident-forensics",
+      "repeat": 5,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 778.2039081670227,
+      "stop_reason": null,
+      "requests": 50,
+      "unknown_usage_requests": 6,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 926276,
+        "output_tokens": 27332,
+        "cached_input_tokens": 792704
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.627929748944838,
+      "tail_after_last_child_model_response_s": 232.41924287503934,
+      "run": "matrix-r05-06-incident-forensics-codex"
+    },
+    {
+      "case": "07-release-handoff",
+      "repeat": 5,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 862.6075849169865,
+      "stop_reason": null,
+      "requests": 47,
+      "unknown_usage_requests": 4,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1101113,
+        "output_tokens": 33883,
+        "cached_input_tokens": 234496
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.2432125959504046,
+      "tail_after_last_child_model_response_s": 342.91039791697403,
+      "run": "matrix-r05-07-release-handoff-areal"
+    },
+    {
+      "case": "07-release-handoff",
+      "repeat": 5,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 670.1341802079696,
+      "stop_reason": null,
+      "requests": 68,
+      "unknown_usage_requests": 5,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1474316,
+        "output_tokens": 32042,
+        "cached_input_tokens": 1343360
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.710953963816695,
+      "tail_after_last_child_model_response_s": 166.24854487396078,
+      "run": "matrix-r05-07-release-handoff-codex"
+    },
+    {
+      "case": "08-ops-portal",
+      "repeat": 5,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 1106.066827750008,
+      "stop_reason": null,
+      "requests": 84,
+      "unknown_usage_requests": 1,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 2905979,
+        "output_tokens": 54575,
+        "cached_input_tokens": 679296
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": false,
+      "ui_supplemental_review_accepted": true,
+      "ui_effective_pass": true,
+      "ui_review_required": false,
+      "model_parallel_factor": 1.6624179241480384,
+      "tail_after_last_child_model_response_s": 700.9457828750019,
+      "run": "matrix-r05-08-ops-portal-areal"
+    },
+    {
+      "case": "08-ops-portal",
+      "repeat": 5,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 828.5298010419938,
+      "stop_reason": null,
+      "requests": 107,
+      "unknown_usage_requests": 16,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 2334631,
+        "output_tokens": 27798,
+        "cached_input_tokens": 2198912
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": true,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": true,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.309912161428801,
+      "tail_after_last_child_model_response_s": 122.67049987602513,
+      "run": "matrix-r05-08-ops-portal-codex"
+    },
+    {
+      "case": "09-content-backup",
+      "repeat": 5,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 955.7288559160079,
+      "stop_reason": null,
+      "requests": 77,
+      "unknown_usage_requests": 3,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 2122250,
+        "output_tokens": 56881,
+        "cached_input_tokens": 450432
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.088873153741035,
+      "tail_after_last_child_model_response_s": 375.3938217910181,
+      "run": "matrix-r05-09-content-backup-areal"
+    },
+    {
+      "case": "09-content-backup",
+      "repeat": 5,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 892.1634432919964,
+      "stop_reason": null,
+      "requests": 121,
+      "unknown_usage_requests": 22,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 2621571,
+        "output_tokens": 52743,
+        "cached_input_tokens": 2456576
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.587900713047678,
+      "tail_after_last_child_model_response_s": 35.817125333007425,
+      "run": "matrix-r05-09-content-backup-codex"
+    },
+    {
+      "case": "10-offline-docforge",
+      "repeat": 5,
+      "arm": "areal",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 1048.9186576670036,
+      "stop_reason": null,
+      "requests": 76,
+      "unknown_usage_requests": 5,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 1874313,
+        "output_tokens": 54251,
+        "cached_input_tokens": 355328
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.108814275153056,
+      "tail_after_last_child_model_response_s": 429.62865754199447,
+      "run": "matrix-r05-10-offline-docforge-areal"
+    },
+    {
+      "case": "10-offline-docforge",
+      "repeat": 5,
+      "arm": "codex",
+      "state": "NORMAL_CORRECT",
+      "normal_correct": true,
+      "artifact_pass": true,
+      "wall_s": 724.4535646660079,
+      "stop_reason": null,
+      "requests": 98,
+      "unknown_usage_requests": 14,
+      "complete_usage": false,
+      "usage_observed_lower_bound": {
+        "input_tokens": 2183418,
+        "output_tokens": 41019,
+        "cached_input_tokens": 1988224
+      },
+      "provider_reported_capacity_rejection": false,
+      "ui_probe_pass": null,
+      "ui_supplemental_review_accepted": false,
+      "ui_effective_pass": false,
+      "ui_review_required": false,
+      "model_parallel_factor": 2.6896959028055383,
+      "tail_after_last_child_model_response_s": 135.19841958300094,
+      "run": "matrix-r05-10-offline-docforge-codex"
+    }
+  ],
+  "validation": {
+    "rust_passed": 1113,
+    "rust_ignored": 14,
+    "source_docs_markdown": 201,
+    "full_verify_elapsed_s": 588.0850389003754,
+    "full_verify_exit": 0,
+    "native_regressions": {
+      "native-isolated-policy": 0,
+      "native-http-capacity-and-cancel": 0,
+      "native-bounded-stream": 0,
+      "paired-native-tool-preflight": 0
+    }
+  },
+  "excluded_attempts": {
+    "model_roots": 12,
+    "known_usage_lower_bound": {
+      "input_tokens": 11528808,
+      "output_tokens": 305881,
+      "cached_input_tokens": 2861696
+    },
+    "short_probe_requests": 112,
+    "short_probe_usage_unknown": 7,
+    "short_probe_known_usage_lower_bound": {
+      "input_tokens": 2205,
+      "output_tokens": 1654
+    }
+  },
+  "gate": {
+    "mechanism_regressions_passed": true,
+    "complete_fixed100": true,
+    "frozen_integrity_passed": true,
+    "quality_gate_passed": true,
+    "ui_review_remaining": 0,
+    "descriptive_performance_gate_passed": true,
+    "current_common9_ratio": 1.0863365610689895,
+    "historical_threshold": 1.340550486498663,
+    "completion_focus_enabled_locally": true,
+    "global_performance_defaults_promoted": false,
+    "scope": "seen development set only; historical41percent used a deficient relay and is not a causal before/after baseline",
+    "mechanism_only_local_install_eligible": true
+  },
+  "local_install": {
+    "status": "VERIFIED",
+    "source_revision": "41805761f94c080a4aa81383a501fccc8d7548e6",
+    "completion_focus": true,
+    "parallel_read_calls": 4,
+    "network_retry_mode": "bounded",
+    "threads_preserved": 40,
+    "durable_history_files_verified": 1346,
+    "original_worktree_entries_preserved": 491,
+    "pre_post_hot_cold_projection_difference": "UNKNOWN; old cold and new live full40 match; initial hash assertion retained"
+  },
+  "historical41percent_causal_baseline_valid": false,
+  "unknown_usage_policy": "missing usage remains UNKNOWN; totals are lower bounds; exact token/cost ratios unavailable"
+}
