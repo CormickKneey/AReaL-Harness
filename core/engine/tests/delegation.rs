@@ -117,6 +117,9 @@ struct WorkerFixture {
     attempts: AtomicUsize,
     checks: AtomicUsize,
     max_model_rounds: AtomicUsize,
+    block_attempt: AtomicBool,
+    attempt_started: Semaphore,
+    attempt_release: Semaphore,
 }
 struct FactoryFixture(Arc<WorkerFixture>);
 #[async_trait]
@@ -142,6 +145,10 @@ impl Executor for WorkerFixture {
         _: CancellationToken,
     ) -> anyhow::Result<Tree> {
         self.attempts.fetch_add(1, Ordering::SeqCst);
+        if self.block_attempt.load(Ordering::SeqCst) {
+            self.attempt_started.add_permits(1);
+            self.attempt_release.acquire().await?.forget();
+        }
         self.max_model_rounds.store(
             task.configuration
                 .as_ref()
@@ -319,6 +326,9 @@ impl Fixture {
             attempts: AtomicUsize::new(0),
             checks: AtomicUsize::new(0),
             max_model_rounds: AtomicUsize::new(0),
+            block_attempt: AtomicBool::new(false),
+            attempt_started: Semaphore::new(0),
+            attempt_release: Semaphore::new(0),
         });
         let mut extensions = areal_engine::tools::ToolExtensions::default();
         if research {
@@ -418,6 +428,53 @@ impl Fixture {
         self.runtime.shutdown().await.unwrap();
         self.peer.await.unwrap();
     }
+}
+
+#[tokio::test]
+async fn artifact_readiness_matches_the_guard_without_reading_unsettled_bytes() {
+    let fixture = Fixture::open(Some(false)).await;
+    fixture.worker.block_attempt.store(true, Ordering::SeqCst);
+    let mut request = fixture.request("readiness", "modify", "changes");
+    request.independent = true;
+    request.writes = vec!["result.txt".into()];
+    let started = fixture.engine.delegate(request).await.unwrap();
+    let execution = started["executionId"].as_str().unwrap();
+    fixture
+        .worker
+        .attempt_started
+        .acquire()
+        .await
+        .unwrap()
+        .forget();
+    let pending = fixture
+        .engine
+        .execution_read(&fixture.parent, execution)
+        .await
+        .unwrap();
+    assert_eq!(pending["capabilities"]["supportsArtifact"], true);
+    assert_eq!(pending["capabilities"]["readArtifact"], false);
+    assert_eq!(pending["artifact"]["available"], false);
+    let not_ready = fixture
+        .engine
+        .execution_artifact(&fixture.parent, execution, Some("result.txt".into()), 0)
+        .await
+        .unwrap();
+    assert_eq!(not_ready["ready"], false);
+    assert!(not_ready.get("text").is_none() && not_ready.get("base64").is_none());
+    assert_eq!(not_ready["execution"]["executionId"], execution);
+    fixture.worker.attempt_release.add_permits(1);
+    let ready = fixture.wait(&started).await;
+    assert_eq!(ready["artifact"]["available"], true);
+    assert_eq!(ready["capabilities"]["readArtifact"], true);
+    assert_ne!(ready["receiptVersion"], pending["receiptVersion"]);
+    let file = fixture
+        .engine
+        .execution_artifact(&fixture.parent, execution, Some("result.txt".into()), 0)
+        .await
+        .unwrap();
+    assert_eq!(file["exists"], true);
+    assert_eq!(file["verified"], false);
+    fixture.close().await;
 }
 
 #[tokio::test]

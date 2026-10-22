@@ -319,6 +319,8 @@ See [Skills](skills.en.md) for discovery, [tools](tools.en.md) for extensions an
 
 The bounded native read concurrency candidate uses the same JSON: `{"policy":{"parallelReadCalls":4}}`. The range is 1–4, with a default of 1. Explicitly selecting 4 permits bounded overlap without increasing total model, tool or output budgets. Unknown backends and stateful tools remain barriers; hooks and finite output limits retain serial execution. See the [Core contract](../api/core.en.md#tool-concurrency-and-execution-progress). This is not promoted as a global performance default without source-isolated confirmation.
 
+`ToolPolicy.completionFocus` (JSON `completionFocus`) is an explicit behavioral experiment defaulting to false. It asks the Agent to finish required deliverables and relevant validation, add checks for specific unresolved concerns, hand off within assigned child boundaries, and use longer idle waits and receipt cursors. It neither forces a final nor waives acceptance, expands budgets or infers task requirements. Example: `{"policy":{"parallelReadCalls":4,"completionFocus":true}}`. Isolated workers inherit pure tool policy; absent unseen-source evidence this is not promoted as a global default.
+
 Tool result views are configured in the JSON file named by `[tools] extensions_file`, under `policy.resultViews`: `mode` is `off`, `observe` (default) or `on`, with `searchGroups` and `repeatLines` switches. Large-result snapshots and bundled rg work independently of this switch. See [tools](tools.en.md) for quotas and retrieval.
 
 ## Persistent trajectory export

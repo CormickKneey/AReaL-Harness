@@ -670,7 +670,20 @@ impl Service {
         Ok((entry.control.clone(), entry.cancel.clone()))
     }
     pub async fn read(&self, id: &str, owner: Option<&str>) -> Result<Value> {
-        Ok(self.view(id, &self.get(id, owner).await?.0.read()))
+        let record = self.get(id, owner).await?.0.read();
+        let mut value = self.view(id, &record);
+        value["artifactAvailable"] = json!(self.artifact_available(&record));
+        Ok(value)
+    }
+
+    fn artifact_available(&self, record: &Record) -> bool {
+        record.status == "completed"
+            && record.cleanup_confirmed == Some(true)
+            && (!self.is_strict()
+                || record
+                    .final_check
+                    .as_ref()
+                    .is_some_and(|check| check.passed && check.tree_hash == record.head))
     }
     pub(crate) async fn handoff(
         &self,
@@ -802,13 +815,7 @@ impl Service {
     ) -> Result<Value> {
         let record = self.get(id, owner).await?.0.read();
         ensure!(
-            record.status == "completed"
-                && record.cleanup_confirmed == Some(true)
-                && (!self.is_strict()
-                    || record
-                        .final_check
-                        .as_ref()
-                        .is_some_and(|c| c.passed && c.tree_hash == record.head)),
+            self.artifact_available(&record),
             "artifact is not settled or has not passed required final acceptance"
         );
         let root = self.root.join(id);

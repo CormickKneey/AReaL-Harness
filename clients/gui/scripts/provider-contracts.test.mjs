@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { definitions, connectionMetadata } from "../packages/provider-config/connections.cjs";
 import { ModelCatalog } from "../packages/chatgpt-provider/catalog.js";
-import { openaiRequest, protocolAdapters } from "../packages/chatgpt-provider/adapters.js";
+import {
+  openaiRequest,
+  subscriptionRequest,
+  protocolAdapters,
+} from "../packages/chatgpt-provider/adapters.js";
 import { providerError } from "../packages/chatgpt-provider/errors.js";
 
 function session() {
@@ -116,6 +120,21 @@ test("late catalog from switched account cannot overwrite new choices", async ()
     catalog.models.map((m) => m.id),
     ["new"],
   );
+});
+test("subscription adapter preserves explicit parallel tool control in both directions", () => {
+  const request = {
+    model: "fixture",
+    stream: true,
+    input: [],
+    tools: [{ type: "function", name: "read", parameters: {} }],
+  };
+  for (const parallel of [true, false]) {
+    assert.equal(
+      subscriptionRequest({ ...request, parallel_tool_calls: parallel }).parallel_tool_calls,
+      parallel,
+    );
+  }
+  assert.equal(Object.hasOwn(subscriptionRequest(request), "parallel_tool_calls"), false);
 });
 test("SIWC adapter namespaces tools and keeps call IDs, history and supported controls", () => {
   const body = {

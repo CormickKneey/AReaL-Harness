@@ -319,6 +319,8 @@ turn_model_rounds = 0
 
 连续内置只读工具的并发候选也使用该 JSON：`{"policy":{"parallelReadCalls":4}}`。范围为 1–4，默认 1；显式选择 4 允许有界并发，不扩大模型、工具或输出总预算。未知后端和有状态工具保留屏障，hooks 与有限输出等条件下保持串行，见[Core 契约](../api/core.md#工具并发与执行进度)。未经来源隔离确认，不作为全局性能默认值推广。
 
+`ToolPolicy.completionFocus`（JSON `completionFocus`）是默认 false 的显式行为实验。启用后提示 Agent 先完成用户要求的交付与必要验证，仅为具体未解问题增加复查，子任务按自身边界及时交接，空闲时使用较长等待与回执游标。它不强制 final、不免除验收、不扩大预算，也不推断题目要求。示例：`{"policy":{"parallelReadCalls":4,"completionFocus":true}}`。隔离 worker 继承纯工具策略；缺少未见来源证据时不推广为全局默认。
+
 工具结果视图通过 `[tools] extensions_file` 指向的 JSON 配置，在 `policy.resultViews` 下设置 `mode: off|observe|on`（默认 observe）及 `searchGroups`、`repeatLines` 开关。大结果快照与内置 rg 不依赖该开关；额度和回取行为见[工具指南](tools.md)。
 
 ## 持久轨迹导出

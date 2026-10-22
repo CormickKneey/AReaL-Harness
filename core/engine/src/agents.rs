@@ -9,6 +9,9 @@ pub(crate) const INSTRUCTIONS: &str = "Delegation is optional; complete small or
 
 pub(crate) const CHILD_INSTRUCTIONS: &str = "Complete the assigned task within its scope and stopping condition. Save useful findings with agent_report: summarize conclusions, cite evidence or artifact paths, and list remaining work. Checkpoint before further exploration so a failure does not discard the handoff. Finish with verified results and explicitly identify incomplete work.";
 
+// 仅由显式部署策略启用；不给未验证结果发完成证明，也不按题目识别交付物。
+pub(crate) const COMPLETION_FOCUS: &str = "Completion focus (explicit experimental policy): Keep the user's required deliverables, preservation constraints and deadline visible in the plan. Implement and verify the requested contract, including required documentation, before optional exploration. After relevant checks pass on the current source, add or repeat checks only to resolve a specific remaining concern or a later change. When delegating, include the relevant user constraints, explicit deadline and useful stopping evidence in the assignment without widening its scope. A child should verify its assigned boundary and hand off promptly; do not duplicate the parent's integration work unless assigned. State which checks actually ran and any remaining limitation. While independent work remains, do it instead of polling. When only child results are needed, use agent_wait_any with timeoutMs=30000 and after=the previous nextAfter, or agent_wait with timeoutMs=30000; shorter timeouts are useful only when a concrete deadline or other action requires them. Use artifact.available before agent_artifact. If delivery.status=applied, the source is already in this workspace: inspect the changed paths or handoff needed for integration, without rebuilding the child's investigation. Never skip required validation, infer completion from exit zero alone, replay UNKNOWN effects, or manufacture missing deliverables.";
+
 pub(crate) fn model_execution_view(mut value: Value) -> Value {
     if value.get("executionId").is_some() {
         // 模型控制只接受 executionId；底层身份仍保存在执行记录和客户端诊断中。
@@ -53,7 +56,7 @@ impl tools::Registry {
             ),
             (
                 "agent_artifact",
-                "Read an isolated execution's completed candidate changes or a changed file in bounded chunks. Candidate availability is not evidence that tests passed or that changes were applied.",
+                "Read an isolated execution's candidate changes or a changed file in bounded chunks, only when artifact.available=true in its receipt. If not ready, returns readiness and the current receipt without artifact bytes; wait for settlement instead of repeating the read. delivery.status=applied means these changes are already in this workspace. Availability does not certify tests or application.",
                 json!({"executionId":target,"path":{"type":"string"},"offset":{"type":"integer","minimum":0}}),
                 vec!["executionId"],
             ),
@@ -71,8 +74,8 @@ impl tools::Registry {
             ),
             (
                 "agent_wait_any",
-                "Wait until any of the selected direct children settles, then return settled results and pending IDs. Pass only children whose results are still needed; already settled children return immediately. timeoutMs defaults to 10000; 0 polls. Waiting releases model and execution capacity.",
-                json!({"executionIds":{"type":"array","minItems":1,"maxItems":16,"uniqueItems":true,"items":target},"timeoutMs":{"type":"integer","minimum":0,"maximum":60000}}),
+                "Wait for a selected child to settle. Return completed receipts, pending receipts, unchanged settled IDs and nextAfter. Pass nextAfter as after on the next wait to avoid waking again for an unchanged terminal receipt. A new report, cleanup, verification or delivery version still returns. timeoutMs defaults to 10000; 0 polls. Waiting releases model and execution capacity.",
+                json!({"executionIds":{"type":"array","minItems":1,"maxItems":16,"uniqueItems":true,"items":target},"timeoutMs":{"type":"integer","minimum":0,"maximum":60000},"after":{"type":"object","maxProperties":16,"additionalProperties":{"type":"string","minLength":64,"maxLength":64}}}),
                 vec!["executionIds"],
             ),
             (
@@ -562,6 +565,17 @@ impl Engine {
             );
             let timeout = args["timeoutMs"].as_u64().unwrap_or(10000);
             anyhow::ensure!(timeout <= 60000, "wait exceeds 60000 ms");
+            let after: std::collections::BTreeMap<String, String> = args
+                .get("after")
+                .map(|value| serde_json::from_value(value.clone()))
+                .transpose()?
+                .unwrap_or_default();
+            anyhow::ensure!(
+                after.iter().all(|(id, version)| ids.contains(id)
+                    && version.len() == 64
+                    && version.bytes().all(|b| b.is_ascii_hexdigit())),
+                "after must contain only selected execution IDs and their returned receiptVersion"
+            );
             for id in &ids {
                 let record = self.execution_record(&parent.id, id).await?;
                 self.validate_execution_owner(&record, turn_id).await?;
@@ -570,17 +584,28 @@ impl Engine {
             loop {
                 let mut completed = Vec::new();
                 let mut pending = Vec::new();
+                let mut unchanged = Vec::new();
+                let mut next_after = std::collections::BTreeMap::new();
                 for id in &ids {
                     let value = self.execution_wait_and_deliver(&parent.id, id, 0).await?;
+                    let version = value["receiptVersion"]
+                        .as_str()
+                        .context("execution receipt has no version")?
+                        .to_owned();
+                    next_after.insert(id.clone(), version.clone());
                     if value["settled"] == true {
-                        completed.push(value)
+                        if after.get(id) == Some(&version) {
+                            unchanged.push(id.clone());
+                        } else {
+                            completed.push(value)
+                        }
                     } else {
                         pending.push(value)
                     }
                 }
                 if !completed.is_empty() || tokio::time::Instant::now() >= end {
                     return Ok(
-                        json!({"completed":completed,"pending":pending,"timedOut":completed.is_empty()}),
+                        json!({"completed":completed,"pending":pending,"unchanged":unchanged,"nextAfter":next_after,"timedOut":completed.is_empty()}),
                     );
                 }
                 tokio::select! {biased;_=cancel.cancelled()=>anyhow::bail!("cancelled"),_=tokio::time::sleep_until(end.min(tokio::time::Instant::now()+Duration::from_millis(100)))=>{}}
@@ -1056,6 +1081,137 @@ mod tests {
         async fn stream(&self, _: Vec<Message>) -> anyhow::Result<model::ModelStream> {
             Ok(Box::pin(futures_util::stream::pending()))
         }
+    }
+
+    #[tokio::test]
+    async fn execution_wait_cursor_suppresses_only_the_same_settled_receipt() {
+        use areal_protocol::delegation::{Delivery, ExecutionOwner, ExecutionRecord, ExecutionRef};
+        let dir = tempfile::tempdir().unwrap();
+        let engine = Engine::open(dir.path(), Arc::new(Pending), Limits::default()).unwrap();
+        let parent = engine.create("/workspace".into()).await.unwrap();
+        let turn = engine
+            .start(&parent.id, vec![Input::text("parent")])
+            .await
+            .unwrap();
+        let cell = engine.cell(&parent.id).await.unwrap();
+        let mut ids = Vec::new();
+        for n in 0..2 {
+            let (child, child_turn) = engine
+                .spawn_child(&parent.id, vec![Input::text("own")])
+                .await
+                .unwrap();
+            let execution = format!("cursor-execution-{n}");
+            cell.state
+                .lock()
+                .await
+                .thread
+                .desktop
+                .get_or_insert_with(Default::default)
+                .executions
+                .push(ExecutionRecord {
+                    execution_id: execution.clone(),
+                    request_id: format!("cursor-{n}"),
+                    request_hash: format!("hash-{n}"),
+                    owner: ExecutionOwner::Turn {
+                        thread_id: parent.id.clone(),
+                        turn_id: turn.id.clone(),
+                    },
+                    title: "cursor child".into(),
+                    delivery: Delivery::Report,
+                    strategy: "sharedReadOnly".into(),
+                    reason: "fixture".into(),
+                    execution: Some(ExecutionRef::Thread {
+                        thread_id: child.id.clone(),
+                        turn_id: child_turn.id.clone(),
+                    }),
+                    error: None,
+                    cancel_requested: false,
+                });
+            ids.push(execution);
+        }
+        engine
+            .execution_cancel(&parent.id, &ids[0], true)
+            .await
+            .unwrap();
+        engine
+            .execution_wait(&parent.id, &ids[0], 5000)
+            .await
+            .unwrap();
+        let cancel = CancellationToken::new();
+        let first = engine
+            .coordinate_agent(
+                &cell,
+                &turn.id,
+                "agent_wait_any",
+                &json!({"executionIds":ids,"timeoutMs":0}),
+                &cancel,
+            )
+            .await
+            .unwrap();
+        assert_eq!(first["completed"].as_array().unwrap().len(), 1);
+        let started = tokio::time::Instant::now();
+        let second = engine
+            .coordinate_agent(
+                &cell,
+                &turn.id,
+                "agent_wait_any",
+                &json!({"executionIds":ids,"after":first["nextAfter"],"timeoutMs":120}),
+                &cancel,
+            )
+            .await
+            .unwrap();
+        assert!(started.elapsed() >= Duration::from_millis(100));
+        assert_eq!(second["completed"], json!([]));
+        assert_eq!(second["unchanged"], json!([ids[0]]));
+        assert_eq!(second["timedOut"], true);
+        engine
+            .execution_cancel(&parent.id, &ids[1], true)
+            .await
+            .unwrap();
+        engine
+            .execution_wait(&parent.id, &ids[1], 5000)
+            .await
+            .unwrap();
+        let next = engine
+            .coordinate_agent(
+                &cell,
+                &turn.id,
+                "agent_wait_any",
+                &json!({"executionIds":ids,"after":second["nextAfter"],"timeoutMs":0}),
+                &cancel,
+            )
+            .await
+            .unwrap();
+        assert_eq!(next["completed"].as_array().unwrap().len(), 1);
+        assert_eq!(next["completed"][0]["executionId"], ids[1]);
+        assert_eq!(next["completed"][0]["status"], "cancelled");
+        // 仍保留取消后的完整终态；伪造外部目标不能改变准入或消费状态。
+        assert!(
+            engine
+                .coordinate_agent(
+                    &cell,
+                    &turn.id,
+                    "agent_wait_any",
+                    &json!({"executionIds":ids,"after":{"foreign":"0".repeat(64)},"timeoutMs":0}),
+                    &cancel
+                )
+                .await
+                .is_err()
+        );
+        cancel.cancel();
+        assert!(
+            engine
+                .coordinate_agent(
+                    &cell,
+                    &turn.id,
+                    "agent_wait_any",
+                    &json!({"executionIds":ids,"after":next["nextAfter"],"timeoutMs":60000}),
+                    &cancel
+                )
+                .await
+                .is_err()
+        );
+        engine.shutdown().await;
     }
 
     #[tokio::test]

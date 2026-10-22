@@ -413,6 +413,9 @@ impl Engine {
         if let Some(instructions) = instructions {
             prefix.push(Message::text("system", instructions));
         }
+        if self.extensions.policy.completion_focus {
+            prefix.push(Message::text("system", agents::COMPLETION_FOCUS));
+        }
         if self.extensions.agents.is_none()
             && !cell.research
             && self.limits.max_children_per_turn > 0

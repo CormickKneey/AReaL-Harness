@@ -218,7 +218,7 @@ Models use one delegation entry point to describe intent and delivery. Core sele
 | `agent_spawn` | `{prompt,intent:"inspect"\|"modify",delivery:"report"\|"changes"\|"patch",writes?,independent?,requiresCurrentEnvironment?,requireTrustedChecks?,maxModelRounds?}` |
 | `agent_read` | `{executionId,offset?:0}` |
 | `agent_wait` | `{executionId,timeoutMs?:10000}` |
-| `agent_wait_any` | `{executionIds,timeoutMs?:10000}` |
+| `agent_wait_any` | `{executionIds,timeoutMs?:10000,after?:{executionId:receiptVersion}}` |
 | `agent_artifact` | `{executionId,path?,offset?:0}` |
 | `agent_report` | `{summary,evidence,remaining}` |
 | `agent_send_input` | `{executionId,prompt}` |
@@ -259,7 +259,9 @@ Client delegation and delivery also obey Goal budget-confirmation and stop-repor
 
 An isolated worker Runtime inherits the network ceiling granted by the trusted parent Runtime. A parent that denies network, or an executor without a trusted host, continues to deny it; read-only child Scopes can narrow it further. Network authority grants no host file, credential or extra source write access.
 
-Receipts include `capabilities.{sendInput,readHandoff,readArtifact,contract}`. Shared execution supports live input; isolated contracts remain frozen. When sendInput=false, supply context at creation or cancel and confirm settlement before a revised task. Capabilities never grant permission or resume a finished child.
+Receipts include `capabilities.{sendInput,readHandoff,readArtifact,supportsArtifact,contract}`. Shared execution supports live input; isolated contracts remain frozen. When sendInput=false, supply context at creation or cancel and confirm settlement before a revised task. Capabilities never grant permission or resume a finished child. `supportsArtifact` advertises backend support; `readArtifact` and `artifact.available` reflect current execution, cleanup and required-acceptance readiness. The same predicate guards artifact bytes. Early `agent_artifact` calls return `ready=false`, the current execution receipt and wait guidance without reading unsettled bytes. `delivery.status=applied` means changes already exist in the parent workspace.
+
+Receipts add `receiptVersion`, binding source, execution, cleanup, error, verification and delivery versions while excluding transient polling activity and page offsets. `agent_wait_any` returns `nextAfter`; pass it back as `after` to list unchanged settled receipts only in `unchanged`, without waking immediately again. New versions return through `completed`; unfinished entries remain `pending`, and timeouts do not certify completion. Only selected execution IDs are allowed in `after`; ownership is unchanged. Omission retains prior behavior.
 
 Isolated workers can use the existing agent_report without recursively delegating. Core persists committed checkpoints and final replies, paged in 8 KiB UTF-8 chunks with a 32 MiB serialized handoff limit; overflow explicitly fails while retaining original history. Restart at offset zero after sourceItemId changes. Running, failed and cancelled work may return partial handoffs, which certify neither completion, checks, application nor resource release. Isolated activity updates with committed handoff snapshots; an unchanged activity count alone does not establish a stalled worker. Legacy isolated executions without a handoff file return empty text and source=none.
 
@@ -437,7 +439,9 @@ Rust `Limits` and `ResolvedCoreConfig` gain these experimental control fields pl
 
 Tool execution is classified by its registered backend. `ToolPolicy.parallelReadCalls` accepts 1–4 and defaults to 1 for serial dispatch; deployments must explicitly enable the parallel performance candidate. Contiguous trusted native `read_file/fs_read/fs_list/fs_stat/search_files` calls may overlap. Writes, process input and cursors, coordination state and externally registered names remain ordered barriers. Global or frozen Turn plugin hooks, a finite output budget or repeated-failure gates force serial dispatch. Each call retains its own admission, durable intent and settlement; partial failure drains admitted work. Cancellation and UNKNOWN results are never automatically replayed.
 
-Rust callers constructing exhaustive `ToolPolicy` literals must supply `parallel_read_calls` or use `..ToolPolicy::default()`. Existing deployment JSON may omit the field and retains serial dispatch.
+Isolated workers inherit the parent deployment’s pure `ToolPolicy`, without external tools, hooks, plugins or credentials. Parent global hooks conservatively reduce read width to 1. The subscription adapter preserves Core’s `parallel_tool_calls` boolean; Core execution barriers still apply.
+
+Rust callers constructing exhaustive `ToolPolicy` literals must supply `parallel_read_calls` and `completion_focus` or use `..ToolPolicy::default()`. Existing deployment JSON may omit the field and retains serial dispatch.
 
 Native Runtime tool results include `turnElapsedSeconds`, the observed elapsed seconds of the current Turn, allowing the model to respect explicit user deadlines. This is not a new task, automatic completion or verification evidence. Core inserts no additional user message and does not decorate coordination receipts, preserving receipt-consumption version checks.
 

@@ -888,11 +888,19 @@ impl Executor for NativeExecutor {
             command_tools_only: self.command_tools_only,
         });
         let result: Result<()> = async {
-            let engine = Engine::open_with_runtime(&root.join("history"), worker_model.clone(),
+            // 隔离引擎只继承纯工具策略；外部工具、hooks、插件和凭据仍不穿透隔离边界。
+            let mut extensions = crate::tools::ToolExtensions::default();
+            if let Some(source) = self.catalog.as_ref().and_then(std::sync::Weak::upgrade) {
+                extensions.policy = source.extensions.policy.clone();
+                if !source.extensions.hooks.is_empty() {
+                    extensions.policy.parallel_read_calls = 1;
+                }
+            }
+            let engine = Engine::open_with_extensions(&root.join("history"), worker_model.clone(),
                 Limits { max_active_turns: 1, max_children_per_turn: 0, max_agent_depth: 0,
                     watchdog_disable: self.watchdog_disable,
                     max_response_tool_calls: self.tool_call_limits.max_calls, max_tool_buffer_bytes: self.tool_call_limits.max_buffer_bytes, ..self.worker_limits.clone() },
-                RuntimeConfig { client: runtime.clone(), workspace: workspace.clone(), writable: true, command_scope: None, command_scratch: Some(workspace.join(".scratch")) })?;
+                Some(RuntimeConfig { client: runtime.clone(), workspace: workspace.clone(), writable: true, command_scope: None, command_scratch: Some(workspace.join(".scratch")) }), extensions)?;
             engine.prepare_worker_instance().await?;
             let execution: Result<()> = async {
                 let thread = if let Some(configuration)=&task.configuration {

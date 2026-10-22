@@ -695,13 +695,31 @@ impl Engine {
         record: &ExecutionRecord,
         offset: usize,
     ) -> Result<Value> {
+        let mut value = self.project_execution_page_inner(record, offset).await?;
+        // 版本只排除轮询瞬时活动与分页位置；来源、交付、清理与错误仍参与版本。
+        let mut version = value.clone();
+        for key in ["activity", "text", "offset", "nextOffset"] {
+            version.as_object_mut().unwrap().remove(key);
+        }
+        value["receiptVersion"] = json!(format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(&version).map_err(invalid)?)
+        ));
+        Ok(value)
+    }
+    async fn project_execution_page_inner(
+        &self,
+        record: &ExecutionRecord,
+        offset: usize,
+    ) -> Result<Value> {
         let mut value = json!({"executionId":record.execution_id,"parentThreadId":parent_id(&record.owner),"owner":record.owner,
             "title":record.title,"strategy":record.strategy,"reason":record.reason,"status":"unknown","settled":false,"resourcesReleased":false,
             "text":"","error":record.error,"stopRequested":record.cancel_requested,"verification":{"status":"notRun","kind":"none"},"delivery":{"status":"notRequired"}});
         value["capabilities"] = json!({
             "sendInput":matches!(record.execution, Some(ExecutionRef::Thread { .. })),
             "readHandoff":true,
-            "readArtifact":matches!(record.execution, Some(ExecutionRef::Workgroup { .. })),
+            "readArtifact":false,
+            "supportsArtifact":matches!(record.execution, Some(ExecutionRef::Workgroup { .. })),
             "contract":if matches!(record.execution, Some(ExecutionRef::Workgroup { .. })) { "frozen" } else { "live" },
         });
         if let Some(error) = &record.error
@@ -795,7 +813,10 @@ impl Engine {
                 } else {
                     "pending"
                 });
-                value["artifact"] = json!({"head":state["head"],"workgroupId":workgroup_id});
+                let artifact_available = group["artifactAvailable"] == true;
+                value["capabilities"]["readArtifact"] = json!(artifact_available);
+                value["artifact"] = json!({"head":state["head"],"workgroupId":workgroup_id,"available":artifact_available,
+                    "nextAction":if artifact_available {"read candidate artifact if needed; applied changes already exist in the parent workspace"} else {"wait for execution, cleanup and required acceptance; do not read candidate bytes yet"}});
                 if let Some(report) = service
                     .handoff(workgroup_id, &owner_key(&record.owner), offset)
                     .await
@@ -1064,6 +1085,13 @@ impl Engine {
         else {
             return Err(invalid("execution has no isolated artifact"));
         };
+        let receipt = self.project_execution(&record).await?;
+        if receipt["artifact"]["available"] != true {
+            return Ok(
+                json!({"ready":false,"execution":crate::agents::model_execution_view(receipt),
+                "nextAction":"wait for this execution to settle; no candidate bytes have been read"}),
+            );
+        }
         self.execution_workgroups(*automatic)?
             .artifact(workgroup_id, Some(&owner_key(&record.owner)), path, offset)
             .await

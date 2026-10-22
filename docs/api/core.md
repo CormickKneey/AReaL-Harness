@@ -218,7 +218,7 @@ success/contentItems 必填；结构化成功结果按 outputSchema 校验，产
 | `agent_spawn` | `{prompt,intent:"inspect"\|"modify",delivery:"report"\|"changes"\|"patch",writes?,independent?,requiresCurrentEnvironment?,requireTrustedChecks?,maxModelRounds?}` |
 | `agent_read` | `{executionId,offset?:0}` |
 | `agent_wait` | `{executionId,timeoutMs?:10000}` |
-| `agent_wait_any` | `{executionIds,timeoutMs?:10000}` |
+| `agent_wait_any` | `{executionIds,timeoutMs?:10000,after?:{executionId:receiptVersion}}` |
 | `agent_artifact` | `{executionId,path?,offset?:0}` |
 | `agent_report` | `{summary,evidence,remaining}` |
 | `agent_send_input` | `{executionId,prompt}` |
@@ -259,7 +259,9 @@ list/read/wait/artifact 需要 observe，delegate/cancel/apply 需要 interact�
 
 隔离 worker 的 Runtime 继承可信父 Runtime 已授予的网络上限；父任务禁网或无可信宿主时仍禁网，只读子 Scope 仍可进一步收窄。网络授权不授予宿主文件、凭据或额外源码写入。
 
-回执包含 `capabilities.{sendInput,readHandoff,readArtifact,contract}`。共享执行支持运行中补充输入，隔离契约保持 frozen，`sendInput=false` 时不得调用补充输入；可在创建时给齐上下文，或取消并确认结算后创建修订任务。能力字段不授予权限，也不恢复已结束的子任务。
+回执包含 `capabilities.{sendInput,readHandoff,readArtifact,supportsArtifact,contract}`。共享执行支持运行中补充输入，隔离契约保持 frozen，`sendInput=false` 时不得调用补充输入；可在创建时给齐上下文，或取消并确认结算后创建修订任务。能力字段不授予权限，也不恢复已结束的子任务。 `supportsArtifact` 表示后端支持，`readArtifact` 与 `artifact.available` 表示当前满足执行、清理和必要验收门禁；同一谓词保护制品字节。提前调用 `agent_artifact` 返回 `ready=false`、当前 execution 回执和等待指引，不读取未结算制品。`delivery.status=applied` 表示变更已在父工作区。
+
+回执新增 `receiptVersion`，绑定来源、执行、清理、错误、验收和交付版本，不包含轮询瞬时活动或分页偏移。`agent_wait_any` 返回 `nextAfter`；下次将其作为 `after` 传回时，相同的已结算回执只列入 `unchanged`，不再次立即唤醒。新版本仍返回 `completed`；未完成项在 `pending`，超时不确认完成。`after` 只允许本次所选执行，不能扩大所有权；省略时保持旧调用行为。
 
 隔离 worker 可调用现有 `agent_report`，但不能递归委派。Core 保存已提交阶段报告与最终回复，正文按 8 KiB UTF-8 页面读取，持久交接序列化上限为 32 MiB；超限明确失败并保留原历史。`sourceItemId` 变化后从第一页重读。运行、失败和取消仍可返回阶段交接，`partial` 不代表完成；报告不能证明检查通过、制品应用或资源释放。隔离 activity 随已提交交接快照更新，不能仅凭未变化的活动计数判断 worker 是否停滞。旧隔离执行没有新增交接文件时返回空正文与 source=none。
 
@@ -451,7 +453,9 @@ Rust `Limits` 与 `ResolvedCoreConfig` 增加上述实验控制字段及 `comman
 
 工具执行按注册后端分类，`ToolPolicy.parallelReadCalls` 范围 1–4，默认 1 保留串行；并发性能候选须通过部署显式开启。连续的可信内置 `read_file/fs_read/fs_list/fs_stat/search_files` 可并行；写入、进程输入与游标、协调状态及外部同名工具形成顺序屏障。存在全局或本 Turn 插件 hooks、有限输出额度或重复失败门禁时回到串行。每个调用独立准入、持久化意图和结算，部分失败先收齐在途结果；取消与 UNKNOWN 不自动重放。
 
-Rust `ToolPolicy` 的穷举结构体字面量调用方需要补上 `parallel_read_calls`，或使用 `..ToolPolicy::default()`；旧部署 JSON 可省略该字段并保持串行。
+隔离 worker 继承父部署的纯 `ToolPolicy`，不复制外部工具、hooks、插件或凭据；父部署存在全局 hooks 时读取宽度保守为 1。订阅适配器保留 Core 的 `parallel_tool_calls` 布尔值，实际执行仍受 Core 屏障约束。
+
+Rust `ToolPolicy` 的穷举结构体字面量调用方需要补上 `parallel_read_calls` 和 `completion_focus`，或使用 `..ToolPolicy::default()`；旧部署 JSON 可省略该字段并保持串行。
 
 原生 Runtime 工具结果提供 `turnElapsedSeconds`，表示当前 Turn 的真实已用秒数，便于模型遵守用户显式时限。该事实不构成新任务、自动完成或验收结论；不额外插入用户消息，也不装饰协调回执，以保持已消费回执的版本判断。
 

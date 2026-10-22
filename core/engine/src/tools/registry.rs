@@ -9,6 +9,8 @@ pub const MAX_ARGUMENT_BYTES: usize = crate::model::MAX_TOOL_ARGUMENT_BYTES;
 pub struct ToolPolicy {
     /// 已知内置只读调用的并发上限；1 保留串行执行。
     pub parallel_read_calls: usize,
+    /// 显式实验：按交付契约收敛验证与协作；不替模型判定任务已完成。
+    pub completion_focus: bool,
     pub result_views: ResultViewPolicy,
     pub command_wait_ms: u64,
     pub pty_wait_ms: u64,
@@ -25,6 +27,7 @@ impl Default for ToolPolicy {
     fn default() -> Self {
         Self {
             parallel_read_calls: 1,
+            completion_focus: false,
             result_views: ResultViewPolicy::default(),
             command_wait_ms: 120_000,
             pty_wait_ms: 1000,
