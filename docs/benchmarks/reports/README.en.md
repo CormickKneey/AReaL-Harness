@@ -6,6 +6,7 @@ Historical records do not define current capabilities. Use the [run guide](../RE
 
 | Report | Evidence scope |
 |---|---|
+| [Complex-workflow concurrency, shared writes and network recovery](complex-workflow-concurrency.en.md) | Generic mechanisms and actual GUI installation; contaminated100, interrupted6 and final20 kept separate, including remaining tails and UNKNOWN usage |
 | [Complex workflow environment, handoff and completion repairs](complex-workflow-repair.en.md) | Eight seen tasks, five repetitions per arm, 80 runs; retained failures, UNKNOWN usage, ambiguous reproduction contract and shared-writer serialization limits |
 | [Standard122 after permission repairs](standard122-permission-rerun.en.md) | Two-model 244-task rerun, five failure retries, historical DSH/Codex comparison; failures and incomplete usage retained |
 | [Inspection permissions and local tools](inspection-permissions-v2.en.md) | Default read-only, explicit inheritance, writer leases and macOS Git/Bash repairs; failures and UNKNOWN retained |

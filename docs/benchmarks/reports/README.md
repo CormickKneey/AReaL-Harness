@@ -6,6 +6,7 @@
 
 | 报告 | 证据范围 |
 |---|---|
+| [复杂任务并发、共享写入与网络恢复](complex-workflow-concurrency.md) | 通用机制与实际 GUI 安装；100次故障污染矩阵、6次中断补充、20次最终确认分别保留，长尾与用量 UNKNOWN 不隐去 |
 | [复杂协作工具链、交接与收尾修复](complex-workflow-repair.md) | 八个已见任务双方各五次，共80次；保留失败、计量UNKNOWN、复算契约待定与共享写入并行限制 |
 | [Standard122 权限修复后复验](standard122-permission-rerun.md) | 双模型244题、失败重试5次，与历史DSH/Codex比较；保留失败与用量缺口 |
 | [分析子任务权限与本地工具验证](inspection-permissions-v2.md) | 默认只读、显式继承、写租约及 macOS Git/Bash 修复；保留失败与 UNKNOWN |
