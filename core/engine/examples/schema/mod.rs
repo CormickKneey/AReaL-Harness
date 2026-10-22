@@ -2,6 +2,7 @@
 use areal_protocol::{desktop::*, *};
 use serde_json::{Value, json};
 pub mod plugins;
+pub(super) mod standalone;
 fn schema<T: schemars::JsonSchema>() -> Value {
     serde_json::to_value(schemars::schema_for!(T)).unwrap()
 }
@@ -607,3 +608,6 @@ pub fn native_messages() -> Value {
     reply["oneOf"] = json!([{"required":["result"],"not":{"required":["error"]}},{"required":["error"],"not":{"required":["result"]}}]);
     json!({"oneOf":[call,reply]})
 }
+
+#[cfg(test)]
+mod tests;

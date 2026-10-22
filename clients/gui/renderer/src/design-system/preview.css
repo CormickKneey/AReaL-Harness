@@ -20,9 +20,32 @@
 .design-preview[data-view="conversation"] > :not(.design-preview-header):not(#conversation-timeline) { display: none; }
 .design-preview[data-view="conversation"] #conversation-timeline { margin-inline: auto; }
 
+/* 仅题目容器尺寸；消息和输入区沿用生产样式。 */
+.design-preview-flow-panel { width: min(100%, 1100px); margin-inline: auto; }
+.design-preview-flow-chat { height: 660px; display: flex; flex-direction: column; min-width: 0; }
+.design-preview-flow-workspace { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); border: var(--border-width-default) solid var(--color-border); border-radius: var(--radius-panel); overflow: hidden; }
+.design-preview-flow-workspace[data-panel-open="true"] { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
+.design-preview-flow-toolbar { display: flex; align-items: center; justify-content: space-between; flex: none; min-height: var(--spacing-control); padding: var(--spacing-inline) var(--spacing-field); border-bottom: var(--border-width-default) solid var(--color-border); font-size: var(--text-ui-sm); color: var(--color-foreground-subtle); }
+.design-preview-flow-context { height: 660px; display: flex; flex-direction: column; min-width: 0; border-left: var(--border-width-default) solid var(--color-border); background: var(--color-background); }
+.design-preview-flow-context > .agent-conversation-pane { flex: 1; min-height: 0; }
+.design-preview-flow-diagnostics { margin-top: var(--spacing-field); font-size: var(--text-ui-sm); color: var(--color-foreground-subtle); }
+.design-preview-flow-diagnostics > div { margin-block: var(--spacing-inline); }
+.design-preview[data-width="narrow"] .design-preview-flow-workspace[data-panel-open="true"] { grid-template-columns: minmax(0, 1fr); }
+.design-preview[data-width="narrow"] .design-preview-flow-context { position: absolute; inset: 0; z-index: 1; border-left: 0; }
+
+/* 对话目录仅组合既有生产消息、输入区与资源查看器。 */
+#conversation-timeline > .design-preview-actions { margin-bottom: var(--spacing-field); }
+.design-preview-timeline-resource { min-height: 0; overflow: auto; padding: var(--spacing-field); }
+
 .design-preview[data-view="settings"] > :not(.design-preview-header):not(.design-settings-preview) { display: none; }
 .design-settings-preview { display: flex; flex-direction: column; gap: var(--spacing-section); }
 .design-settings-preview .settings-workspace { padding: 0; overflow: visible; }
 .design-settings-preview [data-settings-host] { min-width: 0; }
 .design-settings-state { display: flex; flex-wrap: wrap; align-items: center; gap: var(--spacing-inline); }
 .design-settings-state select { color: var(--color-foreground); background: var(--color-background); border: 1px solid var(--color-border); border-radius: var(--radius-control); padding: var(--spacing-inline); }
+
+/* 固定题目的布局容器，内容与面板仍使用生产组件。 */
+.design-shared-workspace { height: 720px; display: flex; min-width: 0; position: relative; }
+.design-shared-workspace .workspace-content, .design-shared-workspace .conversation-column, .design-shared-workspace .conversation-pane { height: 100%; min-height: 0; }
+.design-shared-workspace .conversation-pane { display: flex; flex-direction: column; }
+.design-shared-workspace .active-composer { flex: none; }

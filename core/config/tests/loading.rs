@@ -1343,3 +1343,32 @@ fn experimental_environment_values_enable_and_disable_each_policy() {
         assert!(load_config(&i).is_err());
     }
 }
+
+#[test]
+fn model_capabilities_preserve_explicit_false_and_reasoning_options() {
+    let root = tempfile::tempdir().unwrap();
+    let mut i = inputs(root.path());
+    i.overrides = ConfigOverrides::default();
+    write(
+        &mut i,
+        "schema_version=2\n[model]\nprovider='custom'\nname='opaque'\n[model.providers.custom]\nendpoint='http://127.0.0.1:9/v1/responses'\nprotocol='responses'\nmodels=[{id='opaque',capabilities={tools=false,vision=false,reasoning=true,reasoning_effort_options=['low','max']},parameters={reasoning_effort='max'}}]\n",
+    );
+    let config = load_config(&i).unwrap();
+    let value = serde_json::to_value(&config.model).unwrap();
+    assert_eq!(
+        value["capabilities"],
+        serde_json::json!({"tools":false,"vision":false,"reasoning":true,"reasoningEffortOptions":["low","max"]})
+    );
+    let catalog = serde_json::to_value(&config.model_catalog).unwrap();
+    assert_eq!(catalog[0]["models"][0]["capabilities"]["tools"], false);
+    let text = std::fs::read_to_string(i.config_file.as_ref().unwrap()).unwrap();
+    for invalid in ["['low','low']", "['unknown']", "['low']"] {
+        write(&mut i, &text.replace("['low','max']", invalid));
+        assert!(load_config(&i).is_err());
+    }
+    write(&mut i, &text.replace("['low','max']", "[]"));
+    assert_eq!(
+        load_config(&i).unwrap().model.reasoning_effort.as_deref(),
+        Some("max")
+    );
+}

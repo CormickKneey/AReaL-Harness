@@ -10,6 +10,7 @@ The GUI is distributed under the repository Apache-2.0 license, subject to the f
 - Agent avatars use DiceBear Core and Bottts 9.4.2 locally with the authoritative Thread ID as seed. DiceBear code is MIT licensed (copyright Florian Körner); Bottts artwork is by Pablo Stanley and is free for personal and commercial use. See `licenses/dicebear-core-LICENSE` and `licenses/dicebear-bottts-LICENSE`, https://www.dicebear.com/styles/bottts/ and https://bottts.com/.
 - MCP Apps uses the official MIT-licensed `@modelcontextprotocol/ext-apps` 2.0.3 AppBridge and `@modelcontextprotocol/client/core` 2.0.0. Package versions are locked in `pnpm-lock.yaml`; licenses are retained in `licenses/mcp-ext-apps-LICENSE` and `licenses/mcp-sdk-LICENSE`.
 - The bundled official Skill Creator retains the unmodified Apache-2.0 resource from [openai/skills](https://github.com/openai/skills/tree/49f948faa9258a0c61caceaf225e179651397431/skills/.system/skill-creator). Its license and pinned file inventory are retained under `app/assets/builtin-skills`.
+- Settings localization uses BSD-3-Clause licensed `react-intl` 12.1.5 from [FormatJS](https://github.com/formatjs/formatjs). ICU parsing, plurals and locale formatting use its packaged dependencies. See `licenses/react-intl-LICENSE`. Both languages are bundled; no translation service or remote catalog is used.
 - Runtime dependencies retain their package licenses in the staged application. Core binaries, tools and their licenses come from the repository's Core bundle.
 
 Only the selected runtime icon assets are retained; reference capture archives, private development Skills, signing identities, notarization credentials, and source repository Git history are not part of this module.
@@ -21,3 +22,5 @@ Electron 宿主复用 Caxson 的 MIT 许可项目 [dsh-gui 1.6.2](https://github
 Renderer 的来源修订为 ZCode `872ad960de7ec172591f7e1952f7849229f94521`，Apache-2.0 许可和源码清单保留于 `renderer/ZCODE-LICENSE`、`renderer/source-files.json`。638 个选用 Material Icon Theme SVG 与该修订的 `packages/desktop/src/renderer/public/material-icons` 逐字节一致，以此固定资产来源，不推测原图标语义版本；MIT 许可保留于 `licenses/material-icon-theme-LICENSE`，许可来源修订为 `cb1dfb6d9cb73b15681a93939983d75dbba7bf5b`。
 
 内置官方 Skill Creator 保留 OpenAI Skills 修订 `49f948faa9258a0c61caceaf225e179651397431` 的原始资源。Apache-2.0 许可与固定文件清单位于 `app/assets/builtin-skills`。
+
+设置国际化复用 FormatJS 的 `react-intl` 12.1.5，BSD-3-Clause 许可保留于 `licenses/react-intl-LICENSE`。两种语言随应用打包，不连接翻译服务或远程词库。

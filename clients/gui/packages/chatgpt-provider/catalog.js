@@ -111,6 +111,11 @@ export class ModelCatalog {
           ? m.display_name
           : m.slug,
       source: "account",
+      ...(Number.isSafeInteger(m.context_window) &&
+      m.context_window > 0 &&
+      m.context_window <= 2_000_000
+        ? { parameters: { contextWindowTokens: m.context_window } }
+        : {}),
     }));
     this.revision = revision;
     this.fetchedAt = this.now();

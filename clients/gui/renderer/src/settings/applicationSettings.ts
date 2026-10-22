@@ -1,3 +1,4 @@
+import type { AppLocale } from "../i18n/messages.js";
 export const UI_FONTS = {
   system:
     '-apple-system, system-ui, "Segoe UI", sans-serif',
@@ -44,6 +45,7 @@ export const DEFAULT_PALETTES: Record<"light" | "dark", Palette> = {
   },
 };
 export type ApplicationSettings = {
+  locale: AppLocale;
   contentSize: number;
   pointerCursor: boolean;
   fontSmoothing: boolean;
@@ -57,6 +59,7 @@ export type ApplicationSettings = {
   dark: Palette;
 };
 export const DEFAULT_APPLICATION_SETTINGS: ApplicationSettings = {
+  locale: "zh-CN",
   contentSize: 14,
   pointerCursor: false,
   fontSmoothing: true,
@@ -73,6 +76,7 @@ export const validColor = (value: unknown): value is string =>
 export function normalizeApplicationSettings(raw: any): ApplicationSettings {
   const saved = raw && typeof raw === "object" ? raw : {};
   const result = { ...DEFAULT_APPLICATION_SETTINGS };
+  result.locale = saved.locale === "en" ? "en" : "zh-CN";
   result.contentSize =
     Number.isFinite(saved.contentSize) &&
     saved.contentSize >= 12 &&
@@ -207,9 +211,10 @@ export function paletteVariables(p: Palette, dark = false): Record<string, strin
     "--color-input-focused": p.background,
     "--color-foreground-subtle": mix(69.5 + contrastDelta * 0.15),
     "--color-foreground-subtlest": mix(49.5 + contrastDelta * 0.15),
-    // Active settings metadata must stay readable on light surfaces; dark
-    // keeps the captured lower emphasis without changing disabled controls.
-    "--color-settings-secondary": dark ? ink(50 + contrastDelta * 0.15) : mix(69.5 + contrastDelta * 0.15),
+    // Active settings explanations follow the observed dark 65% layer.
+    // Preserve the existing contrast slope and stronger light role; disabled
+    // controls and settled process metadata keep their separate owners.
+    "--color-settings-secondary": dark ? ink(65 + contrastDelta * 0.15) : mix(69.5 + contrastDelta * 0.15),
     "--color-border": ink((dark ? 8.4 : 7.8) + contrastDelta * 0.08),
     "--color-border-hover": ink(11.7 + contrastDelta * 0.1),
     "--color-hover": ink(5.5 + contrastDelta * 0.04),

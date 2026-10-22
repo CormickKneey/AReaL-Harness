@@ -2,12 +2,23 @@ mod schema;
 use areal_protocol::desktop::*;
 use serde_json::{Value, json};
 fn main() {
-    if std::env::args().any(|arg| arg == "--native-host") {
-        let mut schema = json!({"protocolVersion":2,"ready":schemars::schema_for!(areal_engine::tools::plugins::NativeHostReady),"hostToCore":schemars::schema_for!(areal_engine::tools::plugins::NativeHostMessage),"coreToHost":schema::native_messages(),"toolResponse":schemars::schema_for!(areal_protocol::DynamicToolResponse),"runtimeError":schemars::schema_for!(areal_runtime_protocol::Error)});
-        inline(&mut schema, &Value::Null);
-        println!("{}", serde_json::to_string_pretty(&schema).unwrap());
-        return;
+    let output = if std::env::args().any(|arg| arg == "--native-host") {
+        native_host_schema()
+    } else {
+        desktop_schema()
+    };
+    println!("{}", serde_json::to_string_pretty(&output).unwrap());
+}
+fn native_host_schema() -> Value {
+    let mut output = json!({"protocolVersion":2,"ready":schemars::schema_for!(areal_engine::tools::plugins::NativeHostReady),"hostToCore":schemars::schema_for!(areal_engine::tools::plugins::NativeHostMessage),"coreToHost":schema::native_messages(),"toolResponse":schemars::schema_for!(areal_protocol::DynamicToolResponse),"runtimeError":schemars::schema_for!(areal_runtime_protocol::Error)});
+    for (name, value) in output.as_object_mut().unwrap() {
+        if name != "protocolVersion" {
+            schema::standalone::normalize(value);
+        }
     }
+    output
+}
+fn desktop_schema() -> Value {
     let mut methods = serde_json::Map::new();
     macro_rules! add {
         ($name:expr,$type:ty) => {
@@ -519,41 +530,16 @@ fn main() {
         vec!["taskId", "runId", "threadId", "scheduledAt", "intent"],
     );
     output["serverResponses"] = json!({"item/tool/call":schemars::schema_for!(areal_protocol::DynamicToolResponse),"areal/browser/prepare":{"type":"object"},"areal/task/prepare":{"type":"object"}});
-    inline(&mut output, &Value::Null);
-    println!("{}", serde_json::to_string_pretty(&output).unwrap());
-}
-// 每个生成的 schema 都有自己的定义域；内联后可独立编译嵌套请求。
-fn inline(value: &mut Value, inherited: &Value) {
-    let defs = value
-        .get("$defs")
-        .or_else(|| value.get("$schema").and_then(|_| value.get("definitions")))
-        .cloned()
-        .unwrap_or_else(|| inherited.clone());
-    if let Some(reference) = value.get("$ref").and_then(Value::as_str).and_then(|r| {
-        r.strip_prefix("#/$defs/")
-            .or_else(|| r.strip_prefix("#/definitions/"))
-    }) {
-        *value = defs[reference].clone();
-        assert!(!value.is_null(), "unresolved schema reference");
-        inline(value, &defs);
-        return;
-    }
-    match value {
-        Value::Object(map) => {
-            map.remove("$defs");
-            if map.contains_key("$schema") {
-                map.remove("definitions");
+    for (name, value) in output.as_object_mut().unwrap() {
+        match name.as_str() {
+            "apiVersion" => {}
+            "requests" | "responses" | "notifications" | "serverRequests" | "serverResponses" => {
+                for schema in value.as_object_mut().unwrap().values_mut() {
+                    schema::standalone::normalize(schema);
+                }
             }
-            map.remove("$schema");
-            for child in map.values_mut() {
-                inline(child, &defs);
-            }
+            _ => schema::standalone::normalize(value),
         }
-        Value::Array(items) => {
-            for child in items {
-                inline(child, &defs);
-            }
-        }
-        _ => {}
     }
+    output
 }

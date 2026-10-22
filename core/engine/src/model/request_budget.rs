@@ -134,6 +134,13 @@ impl HttpModel {
                 continue;
             }
             for part in &message.content {
+                anyhow::ensure!(
+                    !matches!(part, ContentPart::Image { .. })
+                        || self
+                            .capabilities()
+                            .supports_input(areal_protocol::Modality::Image),
+                    "selected model does not support image input"
+                );
                 let size = match part {
                     ContentPart::Text(text) => text.len(),
                     ContentPart::Audio {

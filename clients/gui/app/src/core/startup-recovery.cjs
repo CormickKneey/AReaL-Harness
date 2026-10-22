@@ -14,7 +14,7 @@ async function recoverStartupService({ metadata, home }) {
 }
 
 async function recoverConnectedService({ backend, notify, purpose = 'stop', forUpdate = false, migration }) {
-  const observed = await backend.observeLifecycle(true);
+  const observed = await backend.observeLifecycle(true, { purpose: purpose === 'quit' && !forUpdate ? 'quit' : 'manage' });
   const kind = purpose === 'update' || forUpdate ? 'updateDesktop' : 'stopDesktop';
   assertLifecycleSupport(observed.service, kind);
   if (observed.blockers.length) throw Object.assign(new Error(blockerMessage(observed.blockers)), { code: 'LIFECYCLE_BLOCKED' });
@@ -24,7 +24,9 @@ async function recoverConnectedService({ backend, notify, purpose = 'stop', forU
   if (cancel || retainedServices) {
     if (!notify) throw Object.assign(new Error('取消后台任务需要原生确认'), { code: 'LIFECYCLE_CONFIRMATION_REQUIRED' });
     const answer = await notify(purpose === 'quit' ? { type: 'warning', message: '退出 AReaL Harness？',
-      detail: '正在运行的对话和任务将中断。应用关闭期间，定时任务不会运行，手机连接也将断开。',
+      detail: (observed.projects.some(project => project.observation === 'unavailable')
+        ? '部分工作区的任务状态暂时无法读取，退出可能中断其中的工作。\n\n' : '')
+        + '正在运行的对话和任务将中断。应用关闭期间，定时任务不会运行，手机连接也将断开。',
       buttons: ['取消', '退出'], defaultId: 1, cancelId: 0, noLink: true,
     } : { type: 'warning', message: '确认取消后台任务？',
       detail: (cancel ? '将取消所列工作区后台的活动执行，并暂停目标。未完成的资源清理仍可能阻止退出。\n\n' : '')

@@ -1,3 +1,4 @@
+import { useI18n, type UiMessage } from "../i18n/IntlProvider.js";
 import { useState } from "react";
 import { BookOpen, Plug, ChevronDown, Folder, Monitor } from "lucide-react";
 import { Button } from "../components/ui/button.js";
@@ -41,6 +42,7 @@ export function ResourceScope({
   task?: boolean;
   disabled?: boolean;
 }) {
+  const { t } = useI18n();
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -48,22 +50,21 @@ export function ResourceScope({
           <Button
             variant="outline"
             className="resource-scope"
-            aria-label="资源范围"
+            aria-label={t("settings.scopedSkillsSettings.resourceScope")}
             disabled={disabled}
           >
             {value === "user" ? <Monitor size={16} /> : <Folder size={16} />}
-            <span>{value === "user" ? "用户" : value === "task" ? "当前任务" : "当前项目"}</span>
+            <span>{value === "user" ? t("settings.scopedSkillsSettings.user") : value === "task" ? t("settings.scopedSkillsSettings.currentTask") : t("settings.scopedSkillsSettings.currentProject")}</span>
             <ChevronDown size={14} />
           </Button>
         }
       />
       <DropdownMenuContent>
         <DropdownMenuRadioGroup value={value} onValueChange={onChange}>
-          <DropdownMenuRadioItem value="user">用户</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="user">{t("settings.scopedSkillsSettings.user")}</DropdownMenuRadioItem>
           <DropdownMenuRadioItem value="project" disabled={!project}>
-            当前项目
-          </DropdownMenuRadioItem>
-          {task && <DropdownMenuRadioItem value="task">当前任务</DropdownMenuRadioItem>}
+            {t("settings.scopedSkillsSettings.currentProject")}</DropdownMenuRadioItem>
+          {task && <DropdownMenuRadioItem value="task">{t("settings.scopedSkillsSettings.currentTask")}</DropdownMenuRadioItem>}
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -75,33 +76,34 @@ export function CatalogEmpty({
   scope,
   onAdd,
 }: {
-  kind: string;
+  kind: "mcp" | "skill";
   query: string;
   scope: string;
   onAdd?: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <div className="resource-empty">
-      {kind.includes("MCP") ? (
+      {kind === "mcp" ? (
         <Plug size={26} aria-hidden="true" />
       ) : (
         <BookOpen size={26} aria-hidden="true" />
       )}
       <strong>
         {query
-          ? `没有匹配的${kind}`
-          : `暂无${scope === "user" ? "用户" : "项目"}${kind}`}
+          ? t("settings.scopedSkillsSettings.noMatchingResources", { kind })
+          : t("settings.scopedSkillsSettings.noResourcesYet", { scope, kind })}
       </strong>
       <p>
         {query
-          ? "试试其他名称或关键词。"
+          ? t("settings.scopedSkillsSettings.tryAnotherNameOrKeyword")
           : scope === "user"
-            ? `在这里添加的${kind}可供各项目复用。`
-            : `在这里管理仅用于当前项目的${kind}。`}
+            ? t("settings.scopedSkillsSettings.sharedResources", { kind })
+            : t("settings.scopedSkillsSettings.projectResources", { kind })}
       </p>
       {!query && onAdd && (
         <Button variant="outline" onClick={onAdd}>
-          添加{kind}
+          {t("settings.scopedSkillsSettings.addResource", { kind })}
         </Button>
       )}
     </div>
@@ -120,14 +122,16 @@ export function ScopedSkillsSettings({
   onManagePlugin?: (pluginId: string) => void;
   onRefreshPlugins?: () => Promise<void>;
 }) {
+  const { t, intl } = useI18n();
   const [localScope, setLocalScope] = useState("user"),
     [query, setQuery] = useState(""),
     [draft, setDraft] = useState<Data | null>(null),
     [selected, setSelected] = useState<Data | null>(null),
     [content, setContent] = useState(""),
+    [contentTruncated, setContentTruncated] = useState(false),
     [busy, setBusy] = useState(false),
-    [error, setError] = useState(""),
-    [message, setMessage] = useState("");
+    [error, setError] = useState<UiMessage | string>(""),
+    [message, setMessage] = useState<UiMessage | string>("");
   const scope = controlledScope ?? localScope;
   const setScope = (value: string) => {
     setLocalScope(value);
@@ -141,9 +145,9 @@ export function ScopedSkillsSettings({
       ...values,
     });
   const state = useResource(() => api("skills"), `${scope}:${project?.id}`);
-  const source = `独立资源 · ${scope === "user" ? "用户" : "当前项目"}`;
+  const source = t("settings.scopedSkillsSettings.standaloneResourcesValue", { value0: scope === "user" ? t("settings.scopedSkillsSettings.user") : t("settings.scopedSkillsSettings.currentProject") });
   const packageItems = pluginSkills.filter((item) =>
-    `${item.name} ${item.id} ${item.description} ${pluginSourceLabel(item.owner)}`
+    `${item.name} ${item.id} ${item.description} ${pluginSourceLabel(item.owner, t)}`
       .toLowerCase().includes(query.toLowerCase()),
   );
   const items = (state.value?.data ?? []).filter((s: Data) =>
@@ -183,35 +187,35 @@ export function ScopedSkillsSettings({
           }}
         />
         <strong>
-          技能{" "}
+          {t("settings.scopedSkillsSettings.skills")}{" "}
           <small>
-            {state.loading ? "…" : (state.value?.data?.length ?? 0) + pluginSkills.length}
+            {state.loading ? "…" : intl.formatNumber((state.value?.data?.length ?? 0) + pluginSkills.length)}
           </small>
         </strong>
         <SettingsSearchInput
-          aria-label="搜索技能"
-          placeholder="搜索技能…"
+          aria-label={t("settings.scopedSkillsSettings.searchSkills")}
+          placeholder={t("settings.scopedSkillsSettings.searchSkills2")}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onClear={() => setQuery("")}
-          clearLabel="清除搜索"
+          clearLabel={t("settings.scopedSkillsSettings.clearSearch")}
         />
       </div>
       <SettingsToolbar
         description={
           scope === "user"
-            ? "供所有项目使用；同名技能优先使用项目配置。"
-            : "仅用于当前项目；保存后在新任务中生效。"
+            ? t("settings.scopedSkillsSettings.availableToAllProjectsProjectConfigurationTakes")
+            : t("settings.scopedSkillsSettings.onlyForTheCurrentProjectChangesTake")
         }
         loading={state.loading}
         disabled={busy || state.loading}
         onRefresh={() => { void state.refresh(); void onRefreshPlugins?.(); }}
         onAdd={add}
-        addLabel="新建技能"
+        addLabel={t("settings.scopedSkillsSettings.createSkill")}
       />
       <Feedback error={state.error || error} message={message} />
       {state.value?.customDeployment && (
-        <Feedback message="当前使用自定义部署，任务技能仍由部署文件指定。" />
+        <Feedback message={t("settings.scopedSkillsSettings.aCustomDeploymentIsInUseTask")} />
       )}
       <div className="settings-resource-list">
         {!state.loading &&
@@ -219,17 +223,13 @@ export function ScopedSkillsSettings({
             <article className="skill-resource-row" key={`standalone:${scope}:${item.id}`} aria-label={`${item.name || item.id} · ${source}`}>
               <button
                 className="resource-card"
-                aria-label={`查看技能 ${item.id}`}
+                aria-label={t("settings.scopedSkillsSettings.viewSkillValue", { value0: item.id })}
                 disabled={busy || !!item.error}
                 onClick={() =>
                   void run(async () => {
                     const result = await api("skillRead", { id: item.id });
-                    setContent(
-                      result.content +
-                        (result.truncated
-                          ? "\n\n（内容过长，仅预览前 256 KiB）"
-                          : ""),
-                    );
+                    setContent(result.content);
+                    setContentTruncated(!!result.truncated);
                     setSelected(item);
                   })
                 }
@@ -239,13 +239,13 @@ export function ScopedSkillsSettings({
                   <strong>{item.name}</strong>
                   <small>{source}</small>
                   <small title={item.description || item.error}>
-                    {item.error || item.description || "查看技能内容"}
+                    {item.error || item.description || t("settings.scopedSkillsSettings.viewSkillContent")}
                   </small>
                 </span>
               </button>
-              {item.overridden && <SettingsBadge>项目已覆盖</SettingsBadge>}
+              {item.overridden && <SettingsBadge>{t("settings.scopedSkillsSettings.overriddenByProject")}</SettingsBadge>}
               <Switch
-                aria-label={`${item.enabled ? "停用" : "启用"}技能 ${item.id}`}
+                aria-label={t("settings.scopedSkillsSettings.valueSkillValue", { value0: item.enabled ? t("settings.scopedSkillsSettings.disable") : t("settings.scopedSkillsSettings.enable"), value1: item.id })}
                 checked={!!item.enabled}
                 disabled={busy || !!item.error}
                 onCheckedChange={() =>
@@ -255,48 +255,49 @@ export function ScopedSkillsSettings({
                       enabled: !item.enabled,
                       expectedRevision: state.value?.revision,
                     });
-                    setMessage("已保存，将在新任务中生效。");
+                    setMessage({ id: "settings.scopedSkillsSettings.savedChangesTakeEffectInNewTasks" });
                   })
                 }
               />
             </article>
           ))}
         {packageItems.map((item) => (
-          <article className="skill-resource-row" key={item.key} aria-label={`${item.name} · ${pluginSourceLabel(item.owner)}`}>
+          <article className="skill-resource-row" key={item.key} aria-label={`${item.name} · ${pluginSourceLabel(item.owner, t)}`}>
             <div className="resource-card">
               <BookOpen size={20} />
               <span>
                 <strong>{item.name}</strong>
-                <small>{pluginSourceLabel(item.owner)}</small>
+                <small>{pluginSourceLabel(item.owner, t)}</small>
                 <small title={item.description}>{item.description || item.id}</small>
               </span>
             </div>
-            <SettingsBadge>{item.owner.enabled ? "当前项目已启用" : "当前项目已停用"}</SettingsBadge>
-            <Button variant="outline" onClick={() => onManagePlugin?.(item.owner.pluginId)}>管理插件</Button>
+            <SettingsBadge>{item.owner.enabled ? t("settings.scopedSkillsSettings.enabledInCurrentProject") : t("settings.scopedSkillsSettings.disabledInCurrentProject")}</SettingsBadge>
+            <Button variant="outline" onClick={() => onManagePlugin?.(item.owner.pluginId)}>{t("settings.scopedSkillsSettings.managePlugin")}</Button>
           </article>
         ))}
       </div>
       {!state.loading && !items.length && !packageItems.length && !state.error && (
-        <CatalogEmpty kind="技能" scope={scope} query={query} onAdd={add} />
+        <CatalogEmpty kind="skill" scope={scope} query={query} onAdd={add} />
       )}
       {selected && (
         <SettingsDialog
           title={selected.name}
-          description={selected.description || "技能内容预览"}
+          description={selected.description || t("settings.scopedSkillsSettings.skillContentPreview")}
           onClose={() => setSelected(null)}
         >
           <div className="skill-preview">
             <MessageResponse>{content}</MessageResponse>
+            {contentTruncated && <p>{t("settings.scopedSkillsSettings.truncatedContent")}</p>}
           </div>
         </SettingsDialog>
       )}
       {draft && (
         <SettingsDialog
-          title="新建技能"
+          title={t("settings.scopedSkillsSettings.createSkill")}
           description={
             scope === "user"
-              ? "保存为用户技能，所有项目均可使用。"
-              : "保存为项目技能，仅用于当前项目。"
+              ? t("settings.scopedSkillsSettings.saveAsAUserSkillAvailableTo")
+              : t("settings.scopedSkillsSettings.saveAsAProjectSkillForThe")
           }
           busy={busy}
           onClose={() => setDraft(null)}
@@ -311,23 +312,21 @@ export function ScopedSkillsSettings({
                   expectedRevision: state.value?.revision,
                 });
                 setDraft(null);
-                setMessage("技能已保存，将在新任务中生效。");
+                setMessage({ id: "settings.scopedSkillsSettings.skillSavedChangesTakeEffectInNew" });
               });
             }}
           >
             <fieldset disabled={busy}>
               <div className="resource-form-grid">
                 <label>
-                  技能 ID
-                  <Input
+                  {t("settings.scopedSkillsSettings.skillID")}<Input
                     required
                     value={draft.id}
                     onChange={(e) => setDraft({ ...draft, id: e.target.value })}
                   />
                 </label>
                 <label>
-                  显示名称
-                  <Input
+                  {t("settings.scopedSkillsSettings.displayName")}<Input
                     required
                     value={draft.name}
                     onChange={(e) =>
@@ -337,8 +336,7 @@ export function ScopedSkillsSettings({
                 </label>
               </div>
               <label>
-                描述
-                <Input
+                {t("settings.scopedSkillsSettings.description")}<Input
                   required
                   value={draft.description}
                   onChange={(e) =>
@@ -347,8 +345,7 @@ export function ScopedSkillsSettings({
                 />
               </label>
               <label>
-                技能指令
-                <textarea
+                {t("settings.scopedSkillsSettings.skillInstructions")}<textarea
                   required
                   rows={8}
                   value={draft.content}
@@ -366,10 +363,9 @@ export function ScopedSkillsSettings({
                 disabled={busy}
                 onClick={() => setDraft(null)}
               >
-                取消
-              </Button>
+                {t("settings.scopedSkillsSettings.cancel")}</Button>
               <Button type="submit" disabled={busy}>
-                {busy ? "保存中…" : "保存技能"}
+                {busy ? t("settings.scopedSkillsSettings.saving") : t("settings.scopedSkillsSettings.saveSkill")}
               </Button>
             </div>
           </form>

@@ -345,7 +345,40 @@ impl Engine {
                 return Err(Error::Exhausted("provider capacity reached".into()));
             }
             provider.revision = revision + 1;
-            engine.provider_model(&provider, &provider.models[0], &provider.parameters)?;
+            if provider.context_source.is_some_and(|source| {
+                !matches!(
+                    source,
+                    areal_protocol::context::ContextWindowSource::Account
+                        | areal_protocol::context::ContextWindowSource::Provider
+                )
+            }) {
+                return Err(invalid(
+                    "provider context source must be account or provider",
+                ));
+            }
+            for name in provider
+                .model_capabilities
+                .keys()
+                .chain(provider.model_parameters.keys())
+            {
+                if !provider.models.contains(name) {
+                    return Err(invalid("unknown model"));
+                }
+            }
+            let mut unselected = provider.clone();
+            unselected.model_capabilities.clear();
+            engine.provider_model(&unselected, &provider.models[0], &provider.parameters, None)?;
+            for (name, parameters) in &provider.model_parameters {
+                engine.provider_model(&unselected, name, parameters, None)?;
+            }
+            for name in &provider.models {
+                let reference = ModelRef {
+                    provider_id: provider.id.clone(),
+                    model_id: name.clone(),
+                };
+                let parameters = engine.model_parameters(&reference, &provider);
+                engine.provider_model(&provider, name, &parameters, None)?;
+            }
             candidate
                 .providers
                 .insert(provider.id.clone(), provider.clone());
@@ -418,6 +451,7 @@ impl Engine {
         provider: &Provider,
         name: &str,
         parameters: &ModelParameters,
+        context_window: Option<&areal_protocol::context::ContextWindow>,
     ) -> Result<Arc<dyn Model>> {
         let protocol = match provider.protocol.as_str() {
             "chatCompletions" => model::ModelProtocol::ChatCompletions,
@@ -465,6 +499,10 @@ impl Engine {
         .map_err(invalid)?
         .with_audit_directory(self.store.root().join("model-requests"))
         .with_options(model::ModelOptions {
+            capabilities: provider.model_capabilities.get(name).cloned(),
+            context_window: Some(context_window.cloned().unwrap_or_else(|| {
+                self.provider_context_window(provider, name, parameters.context_window_tokens)
+            })),
             context_window_tokens: parameters.context_window_tokens,
             reasoning_effort: parameters.reasoning_effort.clone(),
             reasoning_summary: parameters.reasoning_summary.clone(),
@@ -489,9 +527,12 @@ impl Engine {
             return Ok(self.model.clone());
         }
         match (&configuration.model, &configuration.provider) {
-            (Some(model), Some(provider)) => {
-                self.provider_model(provider, &model.model_id, &configuration.parameters)
-            }
+            (Some(model), Some(provider)) => self.provider_model(
+                provider,
+                &model.model_id,
+                &configuration.parameters,
+                configuration.context_window.as_ref(),
+            ),
             (None, None) => {
                 let model = self.default_model_for(configuration)?;
                 if model.name().is_empty() {
@@ -530,7 +571,7 @@ impl Engine {
             .map(|m| self.provider(&m.provider_id))
             .transpose()?;
         let defaults = match (&model, &provider) {
-            (Some(model), Some(provider)) => self.model_parameters(model, &provider.parameters),
+            (Some(model), Some(provider)) => self.model_parameters(model, provider),
             _ => self
                 .default_model_metadata(None)
                 .map(|(_, parameters)| parameters)
@@ -538,6 +579,14 @@ impl Engine {
         };
         let parameters = merge_model_parameters(parameters, defaults);
         let mut configuration = EffectiveConfig {
+            context_window: match (&model, &provider) {
+                (Some(model), Some(provider)) => Some(self.provider_context_window(
+                    provider,
+                    &model.model_id,
+                    parameters.context_window_tokens,
+                )),
+                _ => None,
+            },
             allow_plugin_skills: false,
             plugin_skills: None,
             default_model_revision: None,
@@ -575,7 +624,7 @@ impl Engine {
     pub(crate) fn model_parameters(
         &self,
         model: &ModelRef,
-        provider: &ModelParameters,
+        provider: &Provider,
     ) -> ModelParameters {
         let configured = self.desktop.configured_models.read().unwrap();
         let parameters = configured
@@ -583,7 +632,14 @@ impl Engine {
             .get(&(model.provider_id.clone(), model.model_id.clone()))
             .cloned()
             .unwrap_or_default();
-        merge_model_parameters(parameters, provider.clone())
+        let mut reported = provider
+            .model_parameters
+            .get(&model.model_id)
+            .cloned()
+            .unwrap_or_default();
+        reported.context_window_tokens = None;
+        let defaults = merge_model_parameters(reported, provider.parameters.clone());
+        merge_model_parameters(parameters, defaults)
     }
     pub(crate) fn update_model_parameters(
         &self,
@@ -592,13 +648,113 @@ impl Engine {
     ) {
         let _configuration = self.desktop.model_configuration.read().unwrap();
         let defaults = match (&configuration.model, &configuration.provider) {
-            (Some(model), Some(provider)) => self.model_parameters(model, &provider.parameters),
+            (Some(model), Some(provider)) => self.model_parameters(model, provider),
             _ => self
                 .default_model_metadata(configuration.default_model_revision.as_deref())
                 .map(|(_, parameters)| parameters)
                 .unwrap_or_default(),
         };
         configuration.parameters = merge_model_parameters(parameters, defaults);
+        configuration.context_window = match (&configuration.model, &configuration.provider) {
+            (Some(model), Some(provider)) => Some(self.provider_context_window(
+                provider,
+                &model.model_id,
+                configuration.parameters.context_window_tokens,
+            )),
+            _ => None,
+        };
+    }
+
+    pub(super) fn provider_context_window(
+        &self,
+        provider: &Provider,
+        name: &str,
+        user_budget_tokens: Option<usize>,
+    ) -> areal_protocol::context::ContextWindow {
+        use areal_protocol::context::{ContextWindow, ContextWindowSource as Source};
+        let reported_window_tokens = provider
+            .model_parameters
+            .get(name)
+            .and_then(|parameters| parameters.context_window_tokens);
+        let reported_source = provider.context_source.unwrap_or(Source::Provider);
+        let (window_tokens, source) = match (reported_window_tokens, user_budget_tokens) {
+            (Some(reported), Some(user)) if user < reported => (user, Source::User),
+            (Some(reported), _) => (reported, reported_source),
+            (None, Some(user)) => (user, Source::User),
+            (None, None) => {
+                if reported_source != Source::Account
+                    && let Some(window) = model::known_context_window(name)
+                {
+                    (window, Source::ModelDefault)
+                } else {
+                    (self.limits.context_window_tokens, Source::Fallback)
+                }
+            }
+        };
+        ContextWindow {
+            window_tokens,
+            source,
+            reported_window_tokens,
+            reported_window_source: reported_window_tokens.map(|_| reported_source),
+            user_budget_tokens,
+        }
+    }
+
+    pub(crate) fn next_request_configuration(
+        &self,
+        mut configuration: EffectiveConfig,
+    ) -> EffectiveConfig {
+        let (Some(model), Some(provider)) = (&configuration.model, &mut configuration.provider)
+        else {
+            return configuration;
+        };
+        let user_budget = configuration
+            .context_window
+            .as_ref()
+            .map(|window| window.user_budget_tokens)
+            .unwrap_or(configuration.parameters.context_window_tokens);
+        if let Some(current) = self
+            .desktop
+            .catalog
+            .read()
+            .unwrap()
+            .providers
+            .get(&model.provider_id)
+            && current.endpoint == provider.endpoint
+            && current.protocol == provider.protocol
+            && current.credential_ref == provider.credential_ref
+            && current.models.contains(&model.model_id)
+        {
+            let reported = current
+                .model_parameters
+                .get(&model.model_id)
+                .and_then(|parameters| parameters.context_window_tokens);
+            if reported.is_some() || provider.model_parameters.contains_key(&model.model_id) {
+                provider
+                    .model_parameters
+                    .entry(model.model_id.clone())
+                    .or_default()
+                    .context_window_tokens = reported;
+                if provider.model_parameters[&model.model_id] == ModelParameters::default() {
+                    provider.model_parameters.remove(&model.model_id);
+                }
+            }
+            match current.model_capabilities.get(&model.model_id) {
+                Some(capabilities) => {
+                    provider
+                        .model_capabilities
+                        .insert(model.model_id.clone(), capabilities.clone());
+                }
+                None => {
+                    provider.model_capabilities.remove(&model.model_id);
+                }
+            }
+            provider.context_source = current.context_source;
+        }
+        configuration.parameters.context_window_tokens = user_budget;
+        configuration.context_window =
+            Some(self.provider_context_window(provider, &model.model_id, user_budget));
+        configuration
     }
     fn selected_skill(
         &self,
@@ -817,9 +973,15 @@ impl Engine {
         use futures_util::StreamExt;
         let provider = self.provider(id)?;
         let name = model.unwrap_or_else(|| provider.models[0].clone());
-        let mut parameters = provider.parameters.clone();
+        let mut parameters = self.model_parameters(
+            &ModelRef {
+                provider_id: provider.id.clone(),
+                model_id: name.clone(),
+            },
+            &provider,
+        );
         parameters.max_output_tokens = Some(32);
-        let adapter = self.provider_model(&provider, &name, &parameters)?;
+        let adapter = self.provider_model(&provider, &name, &parameters, None)?;
         let probe = async {
             let _permit = self.permits.acquire().await.map_err(invalid)?;
             let mut stream = adapter
@@ -1104,7 +1266,7 @@ mod request_audit_tests {
         }))
         .unwrap();
         let selected = engine
-            .provider_model(&provider, "fixture", &ModelParameters::default())
+            .provider_model(&provider, "fixture", &ModelParameters::default(), None)
             .unwrap();
         for purpose in [model::RequestPurpose::Solve, model::RequestPurpose::Summary] {
             let events = model::REQUEST_OWNER

@@ -1,3 +1,4 @@
+import { useI18n, UiMessageError, type UiMessage, type Translate, type MessageId, formatUiMessage } from "../i18n/IntlProvider.js";
 import { SettingsSelect } from "./SettingsPageParts.js";
 import { SettingsDisclosure } from "./SettingsDisclosure.js";
 import { useGuardedNavigation } from "./UnsavedChanges.js";
@@ -112,7 +113,8 @@ const pluginMethods: Record<string, PluginMutation> = {
   "areal/plugin/connector/configure": "connectorConfigure",
 };
 type PluginFailure = {
-  message: string;
+  message: string | UiMessage;
+  context?: MessageId;
   code?: string | number;
   reason?: string;
   submissionUnknown?: boolean;
@@ -139,19 +141,21 @@ function previewFromResult(result: Partial<PluginDetail> | undefined): PluginPre
   };
 }
 function failure(cause: unknown): PluginFailure {
+  if (cause instanceof UiMessageError) return { message: cause.descriptor };
   if (cause instanceof Error) return cause;
-  return { message: "插件操作失败，请刷新目录核对状态。" };
+  return { message: { id: "settings.pluginCenter.pluginOperationFailed" } };
 }
-function failureText(error: PluginFailure | null) {
+function failureText(error: PluginFailure | null, t: Translate) {
+  const text = error ? formatUiMessage(t, error.message) : "";
   if (!error) return "";
   return [
     error.submissionUnknown
-      ? "提交结果待核对，不会自动重发。请核对原请求。"
+      ? t("settings.pluginCenter.submissionResultUnconfirmed")
       : "",
-    error.message,
-    error.code !== undefined ? `错误：${error.code}` : "",
+    error.context ? t(error.context, { value0: text }) : text,
+    error.code !== undefined ? t("settings.pluginCenter.errorCode", { value0: error.code }) : "",
     error.reason,
-    error.requestId ? `请求：${error.requestId}` : "",
+    error.requestId ? t("settings.pluginCenter.requestId", { value0: error.requestId }) : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -177,6 +181,7 @@ const officialMarket = (url?: string) => !!url && /^https:\/\/github\.com\/opena
 export function PluginCenter({ project: selectedProject, projects, thread, action, onOpenThread, apps,
   active: panelActive, surface, marketRequest, initialTab = "plugins", onSettings, onMarket, onChooseProject, onSelectProject, onStartDraft,
 }: PluginCenterProps) {
+  const { t } = useI18n();
   const navigate = useGuardedNavigation();
   const [ownerId, setOwnerId] = useState<string | undefined>(selectedProject?.id);
   const project = projects.find(item => item.id === ownerId);
@@ -189,7 +194,7 @@ export function PluginCenter({ project: selectedProject, projects, thread, actio
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
   const setSelected = (id: string | null) => {
-    if (authPending && id !== selected) { setMessage("原认证配置提交仍待核对，请先完成核对。"); return; }
+    if (authPending && id !== selected) { setMessage({ id: "settings.pluginCenter.theOriginalAuthenticationSubmissionIsStillUnconfirmed" }); return; }
     navigate(() => {
       if (id) updateSelected(id);
       setRoute(id ? { kind: "plugin", id, returnTo: listRoute } : listRoute);
@@ -198,9 +203,9 @@ export function PluginCenter({ project: selectedProject, projects, thread, actio
   const [catalog, setCatalog] = useState<PluginList | null>(null);
   const [supported, setSupported] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
-  const [readError, setReadError] = useState("");
+  const [readError, setReadError] = useState<UiMessage | string>("");
   const [error, setError] = useState<PluginFailure | null>(null);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState<UiMessage | string>("");
   const [setupThreadId, setSetupThreadId] = useState<string | null>(null);
   const [submission, setSubmission] = useState<PluginOperation | null>(null);
   const [activity, setActivity] = useState<PluginActivity | null>(null);
@@ -238,14 +243,14 @@ export function PluginCenter({ project: selectedProject, projects, thread, actio
   const [connectionLoading, setConnectionLoading] = useState(false);
   const [connectionReadKey, setConnectionReadKey] = useState(0);
   const [connections, setConnections] = useState<Data[]>([]);
-  const [connectionError, setConnectionError] = useState("");
+  const [connectionError, setConnectionError] = useState<UiMessage | string>("");
   const [connectorId, setConnectorId] = useState("");
   const [connectorToken, setConnectorToken] = useState("");
   const [credentialRef, setCredentialRef] = useState("");
   const [credentialBusy, setCredentialBusy] = useState(false);
   const [detail, setDetail] = useState<PluginDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [detailError, setDetailError] = useState("");
+  const [detailError, setDetailError] = useState<UiMessage | string>("");
   const [hookSources,setHookSources]=useState<{id:string;digest:string;origin:string;enabled:boolean}[]>([]);
   const active = useRef(false);
   const mounted = useRef(true);
@@ -274,7 +279,7 @@ export function PluginCenter({ project: selectedProject, projects, thread, actio
       const restored = savedRoutes.current[surface];
       if (restored.kind === "plugin" && authPending && restored.id !== selected) {
         setRoute(route);
-        setMessage("原认证配置提交仍待核对，请先完成核对。");
+        setMessage({ id: "settings.pluginCenter.theOriginalAuthenticationSubmissionIsStillUnconfirmed" });
       } else {
         if (restored.kind === "plugin") updateSelected(restored.id);
         setRoute(restored);
@@ -441,7 +446,7 @@ export function PluginCenter({ project: selectedProject, projects, thread, actio
     setReviewed(false);
     if (!next || (operation.pluginId && next.id !== operation.pluginId)) {
       setPreview(null);
-      setError({ message: "来源解析已完成，但返回的预览不完整。请刷新目录后重新解析来源。", operation });
+      setError({ message: { id: "settings.pluginCenter.sourceResolutionCompletedButTheReturnedPreview" }, operation });
       return false;
     }
     setPreview(next);
@@ -487,8 +492,8 @@ export function PluginCenter({ project: selectedProject, projects, thread, actio
       if (operation === "pluginInstall") setInstallReview(false);
       setMessage(
         operation === "pluginAuth" ? "" : operation === "pluginSetup"
-          ? "设置技能已提交，请回到对话查看执行与审批。"
-          : operation === "pluginResolve" || operation === "pluginConnection" || operation === "pluginInstall" ? "" : "操作已完成。",
+          ? { id: "settings.pluginCenter.theSetupSkillWasSubmittedReturnTo" }
+          : operation === "pluginResolve" || operation === "pluginConnection" || operation === "pluginInstall" ? "" : { id: "settings.pluginCenter.operationCompleted" },
       );
       return result;
     } catch (cause) {
@@ -553,8 +558,8 @@ export function PluginCenter({ project: selectedProject, projects, thread, actio
         setError({
           message:
             receipt.state === "accepted"
-              ? "原提交仍在处理中，请稍后再次核对。"
-              : "原提交结果仍未确认，请稍后再次核对。",
+              ? { id: "settings.pluginCenter.theOriginalSubmissionIsStillProcessingCheck" }
+              : { id: "settings.pluginCenter.theOriginalSubmissionResultIsStillUnconfirmed" },
           submissionUnknown: true,
           requestId: recoverable.requestId,
           operation: recoverable,
@@ -564,7 +569,7 @@ export function PluginCenter({ project: selectedProject, projects, thread, actio
       setSubmission(null);
       if (!receipt.accepted) {
         setError({
-          message: receipt.error?.message ?? "原插件操作已确认失败。",
+          message: receipt.error?.message ?? { id: "settings.pluginCenter.theOriginalPluginOperationIsConfirmedFailed" },
           code: receipt.error?.code,
           reason: receipt.error?.reason,
           requestId: recoverable.requestId,
@@ -591,14 +596,14 @@ export function PluginCenter({ project: selectedProject, projects, thread, actio
         setAdding(false);
         setRoot("");
       }
-      setMessage(receipt.warning ?? "原提交已确认完成，未重新执行。");
+      setMessage(receipt.warning ?? { id: "settings.pluginCenter.theOriginalSubmissionIsConfirmedCompleteIt" });
     } catch (cause) {
       if (mounted.current) {
         const error = failure(cause);
         setSubmission(recoverable);
         setError({
           ...error,
-          message: `无法核对原提交：${error.message}`,
+          context: "settings.pluginCenter.couldNotCheckTheOriginalSubmissionValue",
           submissionUnknown: true,
           requestId: recoverable.requestId,
           operation: recoverable,
@@ -619,7 +624,7 @@ export function PluginCenter({ project: selectedProject, projects, thread, actio
       disabled={busy || loading}
       onClick={() => void recoverSubmission()}
     >
-      {recoverable?.mutation === "pluginConnection" ? "核对连接结果" : "核对插件提交"}
+      {recoverable?.mutation === "pluginConnection" ? t("settings.pluginCenter.checkConnectionResult") : t("settings.pluginCenter.checkPluginSubmission")}
     </Button>
   );
   const previewCurrent =
@@ -634,16 +639,16 @@ export function PluginCenter({ project: selectedProject, projects, thread, actio
     ? "unknown" : pending || busy || submissionAwaiting ? "active" : "none";
   const pendingMessage = pendingKind === "unknown"
     ? pendingEntries.some(entry => entry.awaitingResponse !== true && (!pluginMethods[entry.method] || typeof entry.params?.requestId !== "string")) || !recoverable
-      ? "项目中有结果待核对的操作，请回到原操作入口核对后再管理插件。"
-      : "原插件提交结果待核对，不会自动重发。"
+      ? t("settings.pluginCenter.aProjectOperationHasAnUnconfirmedResult")
+      : t("settings.pluginCenter.theOriginalPluginSubmissionResultIsUnconfirmed")
     : pendingKind === "active"
       ? activity?.kind === "submit" && activity.mutation === "marketplaceAddGit" || pendingEntries.some(entry => entry.awaitingResponse === true && entry.method === "areal/marketplace/addGit")
-        ? "正在添加插件市场…"
-        : "项目操作正在处理中，请稍候。"
+        ? t("settings.pluginCenter.addingPluginMarketplace")
+        : t("settings.pluginCenter.aProjectOperationIsProcessingPleaseWait")
       : "";
   const displayedError = error?.submissionUnknown && submissionAwaiting && error.requestId === submission?.requestId ? null : error;
-  const operationError = displayedError?.submissionUnknown ? "" : failureText(displayedError);
-  const operationMessage = displayedError?.submissionUnknown ? failureText(displayedError) : message;
+  const operationError = displayedError?.submissionUnknown ? "" : failureText(displayedError, t);
+  const operationMessage = displayedError?.submissionUnknown ? failureText(displayedError, t) : message;
   const sourceRecovery = isSourceOperation(recoverable, projectId, detail?.id);
   const checkingSource = activity?.kind === "check" && isSourceOperation(activity, projectId, detail?.id);
   const resolvingSource = activity?.kind === "submit" && isSourceOperation(activity, projectId, detail?.id) ||
@@ -651,13 +656,13 @@ export function PluginCenter({ project: selectedProject, projects, thread, actio
     entry => entry.awaitingResponse === true && entry.method === "areal/plugin/resolve" && entry.params?.id === detail?.id,
   );
   const sourceFailure = isSourceOperation(displayedError?.operation, projectId, detail?.id) ? displayedError : null;
-  const sourceError = !checkingSource && !resolvingSource && !sourceRecovery && !sourceFailure?.submissionUnknown ? failureText(sourceFailure) : "";
-  const sourceMessage = checkingSource ? "正在核对原来源解析…"
-    : resolvingSource ? "正在解析来源…"
-    : sourceRecovery ? "来源解析结果待核对，不会自动重发。"
-    : sourceFailure?.submissionUnknown ? failureText(sourceFailure)
+  const sourceError = !checkingSource && !resolvingSource && !sourceRecovery && !sourceFailure?.submissionUnknown ? failureText(sourceFailure, t) : "";
+  const sourceMessage = checkingSource ? t("settings.pluginCenter.checkingTheOriginalSourceResolution")
+    : resolvingSource ? t("settings.pluginCenter.resolvingSource")
+    : sourceRecovery ? t("settings.pluginCenter.theSourceResolutionResultIsUnconfirmedAnd")
+    : sourceFailure?.submissionUnknown ? failureText(sourceFailure, t)
     : sourceError ? ""
-    : pendingMessage || (previewCurrent ? "来源已解析，请核对摘要后安装。" : "");
+    : pendingMessage || (previewCurrent ? t("settings.pluginCenter.sourceResolvedReviewTheDigestBeforeInstalling") : "");
   const install = () => {
     if (!previewCurrent || !reviewed || !preview) return;
     void mutate("pluginInstall", {
@@ -691,9 +696,9 @@ export function PluginCenter({ project: selectedProject, projects, thread, actio
         requestId,
       });
       if (typeof saved.credentialRef !== "string" || !saved.credentialRef)
-        throw new Error("凭据保存未返回受保护引用。");
+        throw new UiMessageError({ id: "settings.pluginCenter.savingCredentialsDidNotReturnAProtected" });
       setCredentialRef(saved.credentialRef);
-      setMessage("GitHub Connector 配置已保存，请明确连接该插件。");
+      setMessage({ id: "settings.pluginCenter.githubConnectorConfigurationSavedConnectThePlugin" });
       window.dispatchEvent(new Event("areal-plugins-changed"));
       await refresh();
     } catch (cause) {
@@ -713,7 +718,7 @@ export function PluginCenter({ project: selectedProject, projects, thread, actio
   const installed = (catalog?.data ?? []).filter(item => item.installed);
   const packageSkills: CenterSkill[] = installed.flatMap(item => item.installedSkills.map(skill => ({
     ...skill, key: `${item.id}:${item.installedDigest}:${skill.id}`, enabled: item.enabled,
-    sourceLabel: `插件 · ${item.displayName || item.name}`, pluginId: item.id, projectId, scope: "plugin",
+    sourceLabel: { id: "settings.pluginCenter.pluginsValue", values: { value0: item.displayName || item.name } }, pluginId: item.id, projectId, scope: "plugin",
   })));
   const pluginServers = allConnections.flatMap(row => {
     const owner = installed.find(item => item.id === row.pluginId && item.installedDigest === row.installedDigest);
@@ -732,7 +737,7 @@ export function PluginCenter({ project: selectedProject, projects, thread, actio
     if (draftBusy) return;
     setDraftBusy(true); setError(null);
     try {
-      if (!project || project.projectless) throw new Error("请先选择要创建 Skill 的项目。");
+      if (!project || project.projectless) throw new UiMessageError({ id: "settings.pluginCenter.selectAProjectInWhichToCreate" });
       await onStartDraft({ kind: "creator", projectId: project.id });
     } catch (cause) { setError(failure(cause)); }
     finally { setDraftBusy(false); }
@@ -741,7 +746,7 @@ export function PluginCenter({ project: selectedProject, projects, thread, actio
     setDraftBusy(true); setError(null);
     const skill = plugin.installedSkills.find(item => !item.onboarding) || plugin.installedSkills[0];
     try {
-      await onStartDraft({ text, ...(skill ? { skill: { ...skill, source: `插件 · ${plugin.displayName || plugin.name}` } } : {}) });
+      await onStartDraft({ text, ...(skill ? { skill: { ...skill, source: t("settings.pluginCenter.pluginsValue", { value0: plugin.displayName || plugin.name }) } } : {}) });
     } catch (cause) { setError(failure(cause)); }
     finally { setDraftBusy(false); }
   };
@@ -753,51 +758,51 @@ export function PluginCenter({ project: selectedProject, projects, thread, actio
     } catch (cause) { setError(failure(cause)); }
   };
   const addMenu = <DropdownMenu>
-    <DropdownMenuTrigger render={<Button variant="outline" disabled={disabled} aria-label="添加资源">添加</Button>} />
+    <DropdownMenuTrigger render={<Button variant="outline" disabled={disabled} aria-label={t("settings.pluginCenter.addResource")}>{t("settings.pluginCenter.add")}</Button>} />
     <DropdownMenuContent align="end">
-      <DropdownMenuItem onClick={() => setAdding(true)}><Store size={16} />添加市场</DropdownMenuItem>
-      <DropdownMenuItem onClick={() => navigate(() => { setRoute({ kind: "installed", tab: "mcp" }); setMcpAddRequest(value => value + 1); })}><Plug size={16} />添加 MCP</DropdownMenuItem>
-      <DropdownMenuItem onClick={() => void pickArchive()}><Upload size={16} />上传插件包</DropdownMenuItem>
+      <DropdownMenuItem onClick={() => setAdding(true)}><Store size={16} />{t("settings.pluginCenter.addMarketplace")}</DropdownMenuItem>
+      <DropdownMenuItem onClick={() => navigate(() => { setRoute({ kind: "installed", tab: "mcp" }); setMcpAddRequest(value => value + 1); })}><Plug size={16} />{t("settings.pluginCenter.addMCP")}</DropdownMenuItem>
+      <DropdownMenuItem onClick={() => void pickArchive()}><Upload size={16} />{t("settings.pluginCenter.uploadPluginPackage")}</DropdownMenuItem>
     </DropdownMenuContent>
   </DropdownMenu>;
   const showPlugins = listRoute.kind === "market" || listRoute.kind === "installed" && listRoute.tab === "plugins";
   const isDetail = route.kind === "plugin" || route.kind === "skill";
-  const title = route.kind === "plugin" ? detail?.displayName || detail?.name || selected : route.kind === "skill" ? route.skill.name : listRoute.kind === "market" ? "插件市场" : listRoute.kind === "skills" ? "Skills" : "插件";
+  const title = route.kind === "plugin" ? detail?.displayName || detail?.name || selected : route.kind === "skill" ? route.skill.name : listRoute.kind === "market" ? t("settings.pluginCenter.pluginMarketplace") : listRoute.kind === "skills" ? "Skills" : t("settings.pluginCenter.plugins");
   return (
     <div className={`plugin-center ${surface === "settings" ? "plugin-center-settings" : "plugin-center-workspace"}`} hidden={!panelActive}>
-      {surface === "workspace" && <aside className="plugin-center-sidebar" aria-label="插件导航">
+      {surface === "workspace" && <aside className="plugin-center-sidebar" aria-label={t("settings.pluginCenter.pluginNavigation")}>
         <div className="plugin-center-sidebar-title">AReaL Harness</div>
-        <small className="plugin-nav-label">扩展</small>
-        <button aria-current={listRoute.kind === "market" && !isDetail ? "page" : undefined} onClick={() => navigateRoute({ kind: "market", audience: "public" })}><SettingsPluginIcon width={15} height={15} />插件市场</button>
+        <small className="plugin-nav-label">{t("settings.pluginCenter.extensions")}</small>
+        <button aria-current={listRoute.kind === "market" && !isDetail ? "page" : undefined} onClick={() => navigateRoute({ kind: "market", audience: "public" })}><SettingsPluginIcon width={15} height={15} />{t("settings.pluginCenter.pluginMarketplace")}</button>
         <button aria-current={listRoute.kind === "skills" && !isDetail ? "page" : undefined} onClick={() => navigateRoute({ kind: "skills" })}><Box size={15} strokeWidth={1.5} />Skills</button>
-        <small className="plugin-nav-label plugin-installed-label">已安装</small>
+        <small className="plugin-nav-label plugin-installed-label">{t("settings.pluginCenter.installed")}</small>
         <div className="plugin-installed-shortcuts">{installed.map(item => <button key={item.id} aria-current={route.kind === "plugin" && selected === item.id ? "page" : undefined} onClick={() => setSelected(item.id)}><Package size={16} /><span>{item.displayName || item.name}</span></button>)}</div>
-        <button className="plugin-center-manage" onClick={() => navigate(onSettings)}>管理已安装</button>
+        <button className="plugin-center-manage" onClick={() => navigate(onSettings)}>{t("settings.pluginCenter.manageInstalled")}</button>
       </aside>}
       <div className="plugin-center-scroll"><div className={`plugin-center-content ${isDetail ? "plugin-center-detail" : ""}`}>
-        {isDetail ? <nav className="plugin-breadcrumb" aria-label="面包屑"><button aria-label="返回插件列表" onClick={closeDetail}><ArrowLeft size={15} />{listRoute.kind === "installed" ? "插件设置" : listRoute.kind === "skills" ? "Skills" : "插件市场"}</button><ChevronRight size={13} /><span>{title}</span></nav> : <>
-          {!(surface === "workspace" && listRoute.kind === "skills") && <header className="plugin-center-header"><div>{project && <p className="plugin-management-context" title={project.root}>管理项目 · {project.name || project.root?.split(/[\\/]/).pop()}</p>}<h1>{title}</h1><p>{listRoute.kind === "market" ? "发现并安装插件，扩展 AReaL Harness 的能力。" : listRoute.kind === "skills" ? "为不同任务添加可复用的专业能力。" : "管理已安装的插件、MCP 和 Skills。"}</p></div>
+        {isDetail ? <nav className="plugin-breadcrumb" aria-label={t("settings.pluginCenter.breadcrumb")}><button aria-label={t("settings.pluginCenter.backToPluginList")} onClick={closeDetail}><ArrowLeft size={15} />{listRoute.kind === "installed" ? t("settings.pluginCenter.pluginSettings") : listRoute.kind === "skills" ? "Skills" : t("settings.pluginCenter.pluginMarketplace")}</button><ChevronRight size={13} /><span>{title}</span></nav> : <>
+          {!(surface === "workspace" && listRoute.kind === "skills") && <header className="plugin-center-header"><div>{project && <p className="plugin-management-context" title={project.root}>{t("settings.pluginCenter.managedProjectName", { name: project.name || project.root?.split(/[\\/]/).pop() })}</p>}<h1>{title}</h1><p>{listRoute.kind === "market" ? t("settings.pluginCenter.discoverAndInstallPluginsToExtendAReaL") : listRoute.kind === "skills" ? t("settings.pluginCenter.addReusableExpertiseForDifferentTasks") : t("settings.pluginCenter.manageInstalledPluginsMCPServersAndSkills")}</p></div>
             <div className="plugin-center-toolbar">
-              {(showPlugins || listRoute.kind === "installed" && listRoute.tab === "markets") && <SettingsSearchInput containerClassName="plugin-center-search" aria-label="搜索插件包" placeholder="搜索插件…" value={query} onChange={event => setQuery(event.target.value)} onClear={() => setQuery("")} clearLabel="清除插件搜索" />}
-              {listRoute.kind === "skills" ? <Button disabled={draftBusy} onClick={() => void createSkill()}>创建 Skill</Button> : <>
-                {surface === "settings" && <Button variant="outline" onClick={() => navigate(onMarket)}>浏览市场</Button>}
-                <Button variant="ghost" size="icon" aria-label="刷新市场" disabled={!connected || busy || loading} onClick={() => void refresh()}><RefreshCw size={16} /></Button>{addMenu}
+              {(showPlugins || listRoute.kind === "installed" && listRoute.tab === "markets") && <SettingsSearchInput containerClassName="plugin-center-search" aria-label={t("settings.pluginCenter.searchPluginPackages")} placeholder={t("settings.pluginCenter.searchPlugins")} value={query} onChange={event => setQuery(event.target.value)} onClear={() => setQuery("")} clearLabel={t("settings.pluginCenter.clearPluginSearch")} />}
+              {listRoute.kind === "skills" ? <Button disabled={draftBusy} onClick={() => void createSkill()}>{t("settings.pluginCenter.createSkill")}</Button> : <>
+                {surface === "settings" && <Button variant="outline" onClick={() => navigate(onMarket)}>{t("settings.pluginCenter.browseMarketplace")}</Button>}
+                <Button variant="ghost" size="icon" aria-label={t("settings.pluginCenter.refreshMarketplace")} disabled={!connected || busy || loading} onClick={() => void refresh()}><RefreshCw size={16} /></Button>{addMenu}
               </>}
             </div>
           </header>}
-          {listRoute.kind === "market" && <SettingsSegmentedTabs ariaLabel="市场范围" items={[{ label: "公共", value: "public" }, { label: "个人", value: "personal" }]} value={audience} onValueChange={value => { setQuery(""); navigateRoute({ kind: "market", audience: value as "public" | "personal" }); }} />}
-          {listRoute.kind === "installed" && <SettingsSegmentedTabs ariaLabel="已安装资源类型" activateOnFocus={false} items={[{ label: "插件", value: "plugins" }, { label: "MCP", value: "mcp" }, { label: "Skills", value: "skills" }, { label: "市场", value: "markets" }]} value={listRoute.tab} onValueChange={value => { setQuery(""); navigateRoute({ kind: "installed", tab: value as "plugins" | "mcp" | "skills" | "markets" }); }} />}
+          {listRoute.kind === "market" && <SettingsSegmentedTabs ariaLabel={t("settings.pluginCenter.marketplaceScope")} items={[{ label: t("settings.pluginCenter.public"), value: "public" }, { label: t("settings.pluginCenter.personal"), value: "personal" }]} value={audience} onValueChange={value => { setQuery(""); navigateRoute({ kind: "market", audience: value as "public" | "personal" }); }} />}
+          {listRoute.kind === "installed" && <SettingsSegmentedTabs ariaLabel={t("settings.pluginCenter.installedResourceType")} activateOnFocus={false} items={[{ label: t("settings.pluginCenter.plugins"), value: "plugins" }, { label: "MCP", value: "mcp" }, { label: "Skills", value: "skills" }, { label: t("settings.pluginCenter.marketplace"), value: "markets" }]} value={listRoute.tab} onValueChange={value => { setQuery(""); navigateRoute({ kind: "installed", tab: value as "plugins" | "mcp" | "skills" | "markets" }); }} />}
         </>}
-        {projectId !== selectedProject?.id && <Feedback message={`正在保留项目 ${project?.name || project?.root || ownerId} 的原提交。核对完成后再切换管理上下文。`} />}
-        {!project && <div className="resource-empty"><Package size={28} /><strong>选择项目后浏览插件</strong><p>插件目录由已打开项目的 Core 管理。</p><div className="plugin-context-actions">{projects.filter(item => !item.projectless).map(item => <Button key={item.id} variant="outline" onClick={() => onSelectProject(item.id)}>{item.name || item.root.split(/[\\/]/).pop()}</Button>)}<Button onClick={onChooseProject}>打开项目</Button></div></div>}
-        {project && !connected && <Feedback message="项目 Core 尚未连接。当前内容和原提交已保留。" />}
+        {projectId !== selectedProject?.id && <Feedback message={t("settings.pluginCenter.preservingTheOriginalSubmissionForProjectValue", { value0: project?.name || project?.root || ownerId })} />}
+        {!project && <div className="resource-empty"><Package size={28} /><strong>{t("settings.pluginCenter.selectAProjectToBrowsePlugins")}</strong><p>{t("settings.pluginCenter.thePluginCatalogIsManagedByThe")}</p><div className="plugin-context-actions">{projects.filter(item => !item.projectless).map(item => <Button key={item.id} variant="outline" onClick={() => onSelectProject(item.id)}>{item.name || item.root.split(/[\\/]/).pop()}</Button>)}<Button onClick={onChooseProject}>{t("settings.pluginCenter.openProject")}</Button></div></div>}
+        {project && !connected && <Feedback message={t("settings.pluginCenter.theProjectSCoreIsDisconnectedCurrent")} />}
       {supported === false && (
-        <Feedback error="当前 Core 不支持插件目录。请升级到支持插件包的 Core 后重新连接项目。" />
+        <Feedback error={t("settings.pluginCenter.thisCoreDoesNotSupportThePlugin")} />
       )}
       {!isDetail && <Feedback error={operationError} message={operationMessage} />}
       <Feedback error={readError} />
-      {surface === "settings" && !isDetail && listRoute.kind === "installed" && listRoute.tab === "plugins" && hookSources.length > 0 && <SettingsDisclosure title={<> 高级 · 独立钩子 </>}>
-        {hookSources.map(source=><SettingsDisclosure key={source.id} className="settings-section" title={<> {source.id==='__hooks_user__'?'用户钩子':'项目钩子'} · {source.enabled?'全局开关已启用':'全局开关已停用'} </>}>
+      {surface === "settings" && !isDetail && listRoute.kind === "installed" && listRoute.tab === "plugins" && hookSources.length > 0 && <SettingsDisclosure title={<> {t("settings.pluginCenter.advancedStandaloneHooks")}</>}>
+        {hookSources.map(source=><SettingsDisclosure key={source.id} className="settings-section" title={<> {source.id==='__hooks_user__'?t("settings.pluginCenter.userHooks"):t("settings.pluginCenter.projectHooks")} · {source.enabled?t("settings.pluginCenter.globalToggleEnabled"):t("settings.pluginCenter.globalToggleDisabled")} </>}>
         <p className="text-ui-sm break-all">{source.origin}</p>
         <PluginHookSettings id={source.id} installedDigest={source.digest} disabled={disabled}
           api={api} refreshKey={catalog?.revision}
@@ -807,8 +812,7 @@ export function PluginCenter({ project: selectedProject, projects, thread, actio
       {!isDetail && !adding && recoveryButton}
       {!isDetail && setupThreadId && onOpenThread && (
         <Button onClick={() => onOpenThread(projectId, setupThreadId)}>
-          打开设置对话
-        </Button>
+          {t("settings.pluginCenter.openSetupConversation")}</Button>
       )}
       {!isDetail && <Feedback message={pendingMessage} />}
       {!!catalog?.errors.length && (
@@ -819,23 +823,23 @@ export function PluginCenter({ project: selectedProject, projects, thread, actio
         </div>
       )}
       {!isDetail && showPlugins && project && <div className={listRoute.kind === "installed" ? "plugin-compact-list" : "plugin-market-groups"}>
-        {(listRoute.kind === "installed" ? ["已安装"] : [...new Set(items.map(item => audience === "personal" ? marketFor(item)?.name || "导入的插件包" : item.interface?.category || "插件"))]).map(group => {
-          const rows = listRoute.kind === "installed" ? items : items.filter(item => (audience === "personal" ? marketFor(item)?.name || "导入的插件包" : item.interface?.category || "插件") === group);
-          return <section className="plugin-market-group" key={group}><h2>{group}</h2><div className={listRoute.kind === "installed" || audience === "personal" ? "plugin-row-list" : "plugin-catalog-grid"}>{rows.map(item => <article className="plugin-catalog-row" key={item.id} aria-label={`${item.displayName || item.name} · 插件 ${item.id}`}>
-            <button className="plugin-row-info" disabled={busy} aria-label={`查看插件 ${item.id}`} onClick={() => setSelected(item.id)}><span className="plugin-resource-icon"><Package size={20} /></span><span><strong>{item.displayName || item.name}</strong><small>{item.description || item.id}</small></span></button>
-            {listRoute.kind === "installed" ? <Switch aria-label={`在当前项目${item.enabled ? "停用" : "启用"}插件 ${item.id}`} checked={item.enabled} disabled={disabled} onCheckedChange={enabled => void mutate("pluginConfigure", { id: item.id, scope: "project", enabled, expectedRevision: catalog?.revision })} /> : <button className="plugin-row-action" aria-label={`${item.installed ? "管理" : "添加"}插件 ${item.id}`} disabled={busy} onClick={() => setSelected(item.id)}>{item.installed ? "已添加" : <Plus size={18} />}</button>}
+        {(listRoute.kind === "installed" ? [{ key: "installed", value: null, label: t("settings.pluginCenter.installed") }] : [...new Set(items.map(item => audience === "personal" ? marketFor(item)?.name || null : item.interface?.category || null))].map(value => ({ key: JSON.stringify([audience, value]), value, label: value || t(audience === "personal" ? "settings.pluginCenter.importedPluginPackage" : "settings.pluginCenter.plugins") }))).map(group => {
+          const rows = listRoute.kind === "installed" ? items : items.filter(item => (audience === "personal" ? marketFor(item)?.name || null : item.interface?.category || null) === group.value);
+          return <section className="plugin-market-group" key={group.key}><h2>{group.label}</h2><div className={listRoute.kind === "installed" || audience === "personal" ? "plugin-row-list" : "plugin-catalog-grid"}>{rows.map(item => <article className="plugin-catalog-row" key={item.id} aria-label={t("settings.pluginCenter.valuePluginValue", { value0: item.displayName || item.name, value1: item.id })}>
+            <button className="plugin-row-info" disabled={busy} aria-label={t("settings.pluginCenter.viewPluginValue", { value0: item.id })} onClick={() => setSelected(item.id)}><span className="plugin-resource-icon"><Package size={20} /></span><span><strong>{item.displayName || item.name}</strong><small>{item.description || item.id}</small></span></button>
+            {listRoute.kind === "installed" ? <Switch aria-label={t("settings.pluginCenter.valuePluginValueInTheCurrentProject", { value0: item.enabled ? t("settings.pluginCenter.disable") : t("settings.pluginCenter.enable"), value1: item.id })} checked={item.enabled} disabled={disabled} onCheckedChange={enabled => void mutate("pluginConfigure", { id: item.id, scope: "project", enabled, expectedRevision: catalog?.revision })} /> : <button className="plugin-row-action" aria-label={t("settings.pluginCenter.valuePluginValue2", { value0: item.installed ? t("settings.pluginCenter.manage") : t("settings.pluginCenter.add"), value1: item.id })} disabled={busy} onClick={() => setSelected(item.id)}>{item.installed ? t("settings.pluginCenter.added") : <Plus size={18} />}</button>}
           </article>)}</div></section>;
         })}
-        {!loading && catalog && !items.length && <div className="resource-empty"><Package size={28} /><strong>{query ? "没有匹配的插件" : listRoute.kind === "installed" ? "尚未安装插件" : audience === "public" ? "尚未添加官方插件市场" : "尚未添加个人插件市场"}</strong><p>{query ? "试试其他名称或关键词。" : "添加市场后，查看真实插件内容并审核安装。"}</p>{!query && listRoute.kind === "market" && <Button variant="outline" disabled={disabled} onClick={() => { setAddKind(audience === "public" ? "git" : "local"); setRoot(audience === "public" ? "https://github.com/openai/plugins.git" : ""); setAdding(true); }}>添加插件市场</Button>}</div>}
+        {!loading && catalog && !items.length && <div className="resource-empty"><Package size={28} /><strong>{query ? t("settings.pluginCenter.noMatchingPlugins") : listRoute.kind === "installed" ? t("settings.pluginCenter.noPluginsInstalled") : audience === "public" ? t("settings.pluginCenter.noOfficialPluginMarketplaceAdded") : t("settings.pluginCenter.noPersonalPluginMarketplaceAdded")}</strong><p>{query ? t("settings.pluginCenter.tryAnotherNameOrKeyword") : t("settings.pluginCenter.addAMarketplaceToViewPluginContents")}</p>{!query && listRoute.kind === "market" && <Button variant="outline" disabled={disabled} onClick={() => { setAddKind(audience === "public" ? "git" : "local"); setRoot(audience === "public" ? "https://github.com/openai/plugins.git" : ""); setAdding(true); }}>{t("settings.pluginCenter.addPluginMarketplace")}</Button>}</div>}
       </div>}
       {(route.kind === "skills" || route.kind === "installed" && route.tab === "skills" || route.kind === "skill") && <PluginSkillsPage action={action} projects={projects} project={project} packageSkills={packageSkills} selected={route.kind === "skill" ? route.skill : null} onOpen={openSkill} onManagePlugin={setSelected} onStartDraft={onStartDraft} compact={listRoute.kind === "installed"} onCreate={() => void createSkill()} createBusy={draftBusy} />}
       {!isDetail && listRoute.kind === "installed" && listRoute.tab === "mcp" && <McpSettings project={project} thread={thread} action={action} scope={mcpScope} onScopeChange={setMcpScope} pluginServers={pluginServers} onManagePlugin={setSelected} onRefreshPlugins={refresh} addRequest={mcpAddRequest} />}
-      {!isDetail && listRoute.kind === "installed" && listRoute.tab === "markets" && <div className="plugin-compact-list">{markets.filter(item => `${item.name} ${item.sourceUrl || item.root}`.toLowerCase().includes(query.toLowerCase())).map(item => <article className="plugin-catalog-row" key={item.root}><span className="plugin-resource-icon"><Store size={19} /></span><div className="plugin-market-info"><strong>{item.name}</strong><small>{item.sourceUrl || item.root}</small>{item.resolvedCommit && <small>{item.resolvedCommit}</small>}</div><Button variant="ghost" disabled={disabled} onClick={() => void mutate("marketplaceRemove", { root: item.root, expectedRevision: catalog?.revision })}>移除来源</Button></article>)}<Button variant="outline" disabled={disabled} onClick={() => void mutate("marketplaceUpdate", { expectedRevision: catalog?.revision })}>刷新 Git 来源快照</Button></div>}
-      {panelActive && archive && <SettingsDialog title="上传插件包" description="先导入并检查 ZIP 插件包，再审核内容摘要与安装范围。" busy={busy} onClose={() => setArchive(null)}><p>{archive.fileName}</p><Feedback error={operationError} message={operationMessage || pendingMessage} />{recoveryButton}<div className="settings-form-actions"><Button variant="outline" disabled={busy} onClick={() => setArchive(null)}>取消</Button><Button disabled={disabled} onClick={() => void mutate("pluginArchiveImport", { selectionToken: archive.selectionToken, expectedRevision: catalog?.revision })}>导入并预览</Button></div></SettingsDialog>}
+      {!isDetail && listRoute.kind === "installed" && listRoute.tab === "markets" && <div className="plugin-compact-list">{markets.filter(item => `${item.name} ${item.sourceUrl || item.root}`.toLowerCase().includes(query.toLowerCase())).map(item => <article className="plugin-catalog-row" key={item.root}><span className="plugin-resource-icon"><Store size={19} /></span><div className="plugin-market-info"><strong>{item.name}</strong><small>{item.sourceUrl || item.root}</small>{item.resolvedCommit && <small>{item.resolvedCommit}</small>}</div><Button variant="ghost" disabled={disabled} onClick={() => void mutate("marketplaceRemove", { root: item.root, expectedRevision: catalog?.revision })}>{t("settings.pluginCenter.removeSource")}</Button></article>)}<Button variant="outline" disabled={disabled} onClick={() => void mutate("marketplaceUpdate", { expectedRevision: catalog?.revision })}>{t("settings.pluginCenter.refreshGitSourceSnapshot")}</Button></div>}
+      {panelActive && archive && <SettingsDialog title={t("settings.pluginCenter.uploadPluginPackage")} description={t("settings.pluginCenter.importAndInspectAZIPPluginPackage")} busy={busy} onClose={() => setArchive(null)}><p>{archive.fileName}</p><Feedback error={operationError} message={operationMessage || pendingMessage} />{recoveryButton}<div className="settings-form-actions"><Button variant="outline" disabled={busy} onClick={() => setArchive(null)}>{t("settings.pluginCenter.cancel")}</Button><Button disabled={disabled} onClick={() => void mutate("pluginArchiveImport", { selectionToken: archive.selectionToken, expectedRevision: catalog?.revision })}>{t("settings.pluginCenter.importAndPreview")}</Button></div></SettingsDialog>}
       {panelActive && adding && (
         <SettingsDialog
-          title="添加插件市场"
-          description="选择本地目录或 Git marketplace。读取来源不会安装插件或启动服务器。"
+          title={t("settings.pluginCenter.addPluginMarketplace")}
+          description={t("settings.pluginCenter.chooseALocalDirectoryOrGitMarketplace")}
           busy={busy}
           onClose={() => setAdding(false)}
         >
@@ -859,15 +863,14 @@ export function PluginCenter({ project: selectedProject, projects, thread, actio
             }}
           >
             <div className="settings-choice-field">
-              来源类型
-              <SettingsSelect value={addKind} onValueChange={selectedValue => {
+              {t("settings.pluginCenter.sourceType")}<SettingsSelect value={addKind} onValueChange={selectedValue => {
                   setAddKind(selectedValue);
                   setRoot("");
-                }} aria-label="来源类型">
-                <option value="local">本地目录</option>
-                <option value="git">Git 仓库</option>
+                }} aria-label={t("settings.pluginCenter.sourceType")}>
+                <option value="local">{t("settings.pluginCenter.localDirectory")}</option>
+                <option value="git">{t("settings.pluginCenter.gitRepository")}</option>
               </SettingsSelect>
-              {addKind === "git" ? "Git URL" : "Marketplace 根目录"}
+              {addKind === "git" ? t("settings.pluginCenter.gitUrl") : t("settings.pluginCenter.marketplaceRootDirectory")}
               <Input
                 autoFocus
                 required
@@ -883,15 +886,14 @@ export function PluginCenter({ project: selectedProject, projects, thread, actio
             </div>
             {addKind === "git" && (
               <label>
-                分支、标签或提交（可选）
-                <Input
+                {t("settings.pluginCenter.branchTagOrCommitOptional")}<Input
                   value={gitRef}
                   onChange={(event) => setGitRef(event.target.value)}
                   disabled={busy}
                 />
               </label>
             )}
-            {addKind === "git" && <label>稀疏检出路径（可选）<textarea rows={3} value={sparsePaths} onChange={event => setSparsePaths(event.target.value)} placeholder="每行一个相对于仓库根目录的路径" /></label>}
+            {addKind === "git" && <label>{t("settings.pluginCenter.sparseCheckoutPathsOptional")}<textarea rows={3} value={sparsePaths} onChange={event => setSparsePaths(event.target.value)} placeholder={t("settings.pluginCenter.onePathRelativeToTheRepositoryRoot")} /></label>}
             <Feedback error={operationError} message={operationMessage || pendingMessage} />
             {recoveryButton}
             <div className="settings-form-actions">
@@ -901,11 +903,9 @@ export function PluginCenter({ project: selectedProject, projects, thread, actio
                 disabled={busy}
                 onClick={() => setAdding(false)}
               >
-                取消
-              </Button>
+                {t("settings.pluginCenter.cancel")}</Button>
               <Button type="submit" disabled={disabled || !root.trim()}>
-                添加目录
-              </Button>
+                {t("settings.pluginCenter.addDirectory")}</Button>
             </div>
           </form>
         </SettingsDialog>
@@ -915,106 +915,106 @@ export function PluginCenter({ project: selectedProject, projects, thread, actio
           <header className="plugin-detail-header">
             <span className="plugin-resource-icon"><Package size={30} /></span>
             <div><h1>{detail?.displayName || detail?.name || selected}</h1><p>{detail?.description}</p>
-              {detail && marketFor(detail) && <p className="plugin-source-label">来源：{officialMarket(marketFor(detail)?.sourceUrl) ? "OpenAI 插件市场" : marketFor(detail)?.name}</p>}
+              {detail && marketFor(detail) && <p className="plugin-source-label">{t("settings.pluginCenter.sourceName", { name: officialMarket(marketFor(detail)?.sourceUrl) ? t("settings.pluginCenter.openaiPluginMarketplace") : marketFor(detail)?.name })}</p>}
             </div>
-            <DropdownMenu><DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label="更多插件操作"><MoreHorizontal size={18} /></Button>} />
-              <DropdownMenuContent align="end"><DropdownMenuItem onClick={() => void navigator.clipboard.writeText(detail?.id || selected)}>复制插件标识</DropdownMenuItem>
-                {detail?.installed && <DropdownMenuItem disabled={disabled} onClick={() => void mutate("pluginUninstall", { id: detail.id, expectedRevision: catalog?.revision })}>卸载插件</DropdownMenuItem>}
+            <DropdownMenu><DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label={t("settings.pluginCenter.morePluginActions")}><MoreHorizontal size={18} /></Button>} />
+              <DropdownMenuContent align="end"><DropdownMenuItem onClick={() => void navigator.clipboard.writeText(detail?.id || selected)}>{t("settings.pluginCenter.copyPluginID")}</DropdownMenuItem>
+                {detail?.installed && <DropdownMenuItem disabled={disabled} onClick={() => void mutate("pluginUninstall", { id: detail.id, expectedRevision: catalog?.revision })}>{t("settings.pluginCenter.uninstallPlugin")}</DropdownMenuItem>}
               </DropdownMenuContent>
             </DropdownMenu>
           </header>
-          {detailLoading && !detail && <p role="status">正在读取插件详情…</p>}
+          {detailLoading && !detail && <p role="status">{t("settings.pluginCenter.loadingPluginDetails")}</p>}
           <Feedback error={detailError || (pendingKind !== "unknown" ? displayedError?.message : "")} />
-          {detailError && <Button variant="outline" onClick={() => void readDetail(selected)}>重试读取详情</Button>}
+          {detailError && <Button variant="outline" onClick={() => void readDetail(selected)}>{t("settings.pluginCenter.retryLoadingDetails")}</Button>}
           {detail && <div className="plugin-detail-body">
-            {pendingKind === "unknown" ? <section className="plugin-status-panel" aria-label="插件提交状态">
-              <h2>{recoverable?.mutation === "pluginConnection" ? "连接结果待核对" : "操作结果待核对"}</h2>
-              <p className="plugin-status-description">尚未确认上次操作是否完成，请先核对原请求。</p>
-              <div className="plugin-service-row"><div><strong>{detail.displayName || detail.name}</strong><p>结果待核对</p></div>
-                <div className="plugin-service-actions">{recoveryButton}<Button variant="outline" aria-expanded={submissionDetails} aria-controls="plugin-submission-details" onClick={() => setSubmissionDetails(value => !value)}>{submissionDetails ? "收起本次提交" : "查看本次提交"}</Button></div>
+            {pendingKind === "unknown" ? <section className="plugin-status-panel" aria-label={t("settings.pluginCenter.pluginSubmissionStatus")}>
+              <h2>{recoverable?.mutation === "pluginConnection" ? t("settings.pluginCenter.connectionResultUnconfirmed") : t("settings.pluginCenter.operationResultUnconfirmed")}</h2>
+              <p className="plugin-status-description">{t("settings.pluginCenter.thePreviousOperationIsNotConfirmedComplete")}</p>
+              <div className="plugin-service-row"><div><strong>{detail.displayName || detail.name}</strong><p>{t("settings.pluginCenter.resultUnconfirmed")}</p></div>
+                <div className="plugin-service-actions">{recoveryButton}<Button variant="outline" aria-expanded={submissionDetails} aria-controls="plugin-submission-details" onClick={() => setSubmissionDetails(value => !value)}>{submissionDetails ? t("settings.pluginCenter.hideThisSubmission") : t("settings.pluginCenter.viewThisSubmission")}</Button></div>
               </div>
-              <p className="plugin-status-note">核对前暂不可重复提交或修改配置。</p>
-              {submissionDetails && <div id="plugin-submission-details"><p>{pendingMessage}</p><pre>{failureText(displayedError) || recoverable?.requestId}</pre></div>}
-            </section> : busy && activity?.mutation !== "pluginAuth" ? <section className="plugin-status-panel" aria-label="插件操作进度" aria-busy="true">
-              <h2>{checkingSource ? "正在核对原来源解析…" : resolvingSource ? "正在解析来源…" : activity?.kind === "check" ? "正在核对原提交…" : activity?.mutation === "pluginConnection" ? "正在更新连接…" : "正在处理…"}</h2>
-              <p className="plugin-status-description">请稍候，不会重复提交。</p>
-            </section> : !detail.installed || installReview ? <section className="plugin-status-panel" aria-label="来源解析与预览">
-              <h2>{detail.installed ? "核对新安装快照" : "尚未安装"}</h2>
-              <p className="plugin-status-description">核对来源后，选择安装范围。</p>
-              {!installReview && preview?.id !== detail.id ? <div className="plugin-service-row"><div><strong>{detail.displayName || detail.name} 插件包</strong><p>安装前需要核对来源。</p></div>
-                <Button disabled={disabled || detailLoading} onClick={() => { setInstallReview(true); void mutate("pluginResolve", { id: detail.id, expectedRevision: catalog?.revision }); }}>核对来源并安装</Button>
+              <p className="plugin-status-note">{t("settings.pluginCenter.checkTheResultBeforeResubmittingOrChanging")}</p>
+              {submissionDetails && <div id="plugin-submission-details"><p>{pendingMessage}</p><pre>{failureText(displayedError, t) || recoverable?.requestId}</pre></div>}
+            </section> : busy && activity?.mutation !== "pluginAuth" ? <section className="plugin-status-panel" aria-label={t("settings.pluginCenter.pluginOperationProgress")} aria-busy="true">
+              <h2>{checkingSource ? t("settings.pluginCenter.checkingTheOriginalSourceResolution") : resolvingSource ? t("settings.pluginCenter.resolvingSource") : activity?.kind === "check" ? t("settings.pluginCenter.checkingOriginalSubmission") : activity?.mutation === "pluginConnection" ? t("settings.pluginCenter.updatingConnection") : t("settings.pluginCenter.processing")}</h2>
+              <p className="plugin-status-description">{t("settings.pluginCenter.pleaseWaitTheSubmissionWillNotBe")}</p>
+            </section> : !detail.installed || installReview ? <section className="plugin-status-panel" aria-label={t("settings.pluginCenter.sourceResolutionAndPreview")}>
+              <h2>{detail.installed ? t("settings.pluginCenter.reviewNewInstallationSnapshot") : t("settings.pluginCenter.notInstalled")}</h2>
+              <p className="plugin-status-description">{t("settings.pluginCenter.reviewTheSourceThenChooseAnInstallation")}</p>
+              {!installReview && preview?.id !== detail.id ? <div className="plugin-service-row"><div><strong>{detail.displayName || detail.name} {t("settings.pluginCenter.pluginPackage")}</strong><p>{t("settings.pluginCenter.reviewTheSourceBeforeInstalling")}</p></div>
+                <Button disabled={disabled || detailLoading} onClick={() => { setInstallReview(true); void mutate("pluginResolve", { id: detail.id, expectedRevision: catalog?.revision }); }}>{t("settings.pluginCenter.reviewSourceAndInstall")}</Button>
               </div> : <div className="plugin-install-review">
                 <Feedback error={sourceError} message={sourceMessage} />
                 {preview?.id === detail.id && <dl className="plugin-metadata">
-                  <dt>来源</dt><dd>{marketFor(detail)?.sourceUrl || detail.catalogSource?.url || detail.source}</dd>
-                  {(preview.packageVersion || preview.version) && <><dt>包版本</dt><dd>{preview.packageVersion || preview.version}</dd></>}
-                  <dt>内容摘要</dt><dd><code>{preview.sourceDigest}</code></dd>
-                  {preview.resolvedCommit && <><dt>固定提交</dt><dd><code>{preview.resolvedCommit}</code></dd></>}
-                  {preview.integrity && <><dt>完整性</dt><dd><code>{preview.integrity}</code></dd></>}
+                  <dt>{t("settings.pluginCenter.source2")}</dt><dd>{marketFor(detail)?.sourceUrl || detail.catalogSource?.url || detail.source}</dd>
+                  {(preview.packageVersion || preview.version) && <><dt>{t("settings.pluginCenter.packageVersion")}</dt><dd>{preview.packageVersion || preview.version}</dd></>}
+                  <dt>{t("settings.pluginCenter.contentDigest")}</dt><dd><code>{preview.sourceDigest}</code></dd>
+                  {preview.resolvedCommit && <><dt>{t("settings.pluginCenter.pinnedCommit")}</dt><dd><code>{preview.resolvedCommit}</code></dd></>}
+                  {preview.integrity && <><dt>{t("settings.pluginCenter.integrity")}</dt><dd><code>{preview.integrity}</code></dd></>}
                 </dl>}
                 {previewCurrent && <>
-                  <div className="plugin-scope-field"><span>安装范围</span><ResourceScope value={scope} onChange={setScope} project={project} disabled={disabled} /></div>
-                  <p className="plugin-status-note">{scope === "user" ? "同一用户目录下的项目可用。" : "保存到当前项目范围。"}</p>
-                  <label className="plugin-consent"><input type="checkbox" checked={reviewed} disabled={disabled} onChange={event => setReviewed(event.target.checked)} /><span>我已核对以上来源、版本和内容摘要</span></label>
+                  <div className="plugin-scope-field"><span>{t("settings.pluginCenter.installationScope")}</span><ResourceScope value={scope} onChange={setScope} project={project} disabled={disabled} /></div>
+                  <p className="plugin-status-note">{scope === "user" ? t("settings.pluginCenter.availableToProjectsUnderTheSameUser") : t("settings.pluginCenter.saveWithinTheCurrentProjectScope")}</p>
+                  <label className="plugin-consent"><input type="checkbox" checked={reviewed} disabled={disabled} onChange={event => setReviewed(event.target.checked)} /><span>{t("settings.pluginCenter.iHaveReviewedTheSourceVersionAnd")}</span></label>
                 </>}
-                {preview && !previewCurrent && <p role="status">目录已变化，请重新解析来源后安装。</p>}
+                {preview && !previewCurrent && <p role="status">{t("settings.pluginCenter.theCatalogChangedResolveTheSourceAgain")}</p>}
                 <div className="plugin-service-actions">
-                  {previewCurrent ? <Button disabled={disabled || !reviewed} onClick={install}>{detail.installed ? "安装已核对的新快照" : `安装到${scope === "user" ? "用户" : "当前项目"}`}</Button> :
-                    <Button disabled={disabled} onClick={() => void mutate("pluginResolve", { id: detail.id, expectedRevision: catalog?.revision })}>重新解析来源</Button>}
-                  <Button variant="outline" disabled={busy} onClick={() => { setInstallReview(false); setPreview(null); setReviewed(false); }}>取消安装</Button>
+                  {previewCurrent ? <Button disabled={disabled || !reviewed} onClick={install}>{detail.installed ? t("settings.pluginCenter.installReviewedSnapshot") : t("settings.pluginCenter.installForValue", { value0: scope === "user" ? t("settings.pluginCenter.user") : t("settings.pluginCenter.currentProject") })}</Button> :
+                    <Button disabled={disabled} onClick={() => void mutate("pluginResolve", { id: detail.id, expectedRevision: catalog?.revision })}>{t("settings.pluginCenter.resolveSourceAgain")}</Button>}
+                  <Button variant="outline" disabled={busy} onClick={() => { setInstallReview(false); setPreview(null); setReviewed(false); }}>{t("settings.pluginCenter.cancelInstallation")}</Button>
                 </div>
               </div>}
-            </section> : !detail.enabled ? <section className="plugin-status-panel"><h2>当前项目已停用</h2><p className="plugin-status-description">管理启用范围后，再使用此插件。</p><Button disabled={disabled} onClick={() => setScopeOpen(true)}>管理启用范围</Button></section> :
+            </section> : !detail.enabled ? <section className="plugin-status-panel"><h2>{t("settings.pluginCenter.disabledInCurrentProject")}</h2><p className="plugin-status-description">{t("settings.pluginCenter.manageTheEnabledScopeBeforeUsingThis")}</p><Button disabled={disabled} onClick={() => setScopeOpen(true)}>{t("settings.pluginCenter.manageEnabledScope")}</Button></section> :
               <PluginConnectionPanel key={`${projectId}:${detail.id}:${detail.installedDigest}`} detail={detail}
                 snapshot={connections.find(row => row.pluginId === detail.id && row.installedDigest === detail.installedDigest)}
                 loading={connectionLoading} error={connectionError} disabled={disabled || authPending} command={api}
                 mutate={mutate} onRefresh={() => { setConnectionReadKey(value => value + 1); void refresh(); void readDetail(detail.id); }} onAuthActivity={onAuthActivity}
-                onStart={() => void startPluginDraft(detail, `请使用 ${detail.displayName || detail.name} 帮助我完成任务。`)} draftBusy={draftBusy}
-                connectorConfiguration={<SettingsDisclosure title="GitHub Connector 配置">
-                  <p>凭据保存在受保护的桌面凭据存储中。修改前请先断开连接。</p>
-                  <label>原始 Connector ID<SettingsSelect value={connectorId} onValueChange={value => { setConnectorId(value); setCredentialRef(""); }} disabled={disabled || credentialBusy} aria-label="原始 Connector ID"><option value="">选择声明的 Connector</option>{connections.flatMap(row => (row.connectors ?? []).map((item: Data) => <option key={item.id} value={item.id}>{item.id}</option>))}</SettingsSelect></label>
-                  <label>GitHub 访问令牌<Input type="password" autoComplete="new-password" value={connectorToken} onChange={event => setConnectorToken(event.target.value)} disabled={disabled || credentialBusy} /></label>
-                  <Button variant="outline" disabled={disabled || credentialBusy || !connectorId || !connectorToken || connections.some(row => row.state === "connected" || row.state === "partial")} onClick={() => void saveConnectorCredential()}>安全保存并配置 GitHub</Button>
-                  {credentialRef && <p role="status">受保护凭据已配置</p>}
+                onStart={() => void startPluginDraft(detail, t("settings.pluginCenter.pleaseUseValueToHelpMeComplete", { value0: detail.displayName || detail.name }))} draftBusy={draftBusy}
+                connectorConfiguration={<SettingsDisclosure title={t("settings.pluginCenter.githubConnectorConfiguration")}>
+                  <p>{t("settings.pluginCenter.credentialsAreSavedInProtectedDesktopCredential")}</p>
+                  <label>{t("settings.pluginCenter.originalConnectorID")}<SettingsSelect value={connectorId} onValueChange={value => { setConnectorId(value); setCredentialRef(""); }} disabled={disabled || credentialBusy} aria-label={t("settings.pluginCenter.originalConnectorID")}><option value="">{t("settings.pluginCenter.selectADeclaredConnector")}</option>{connections.flatMap(row => (row.connectors ?? []).map((item: Data) => <option key={item.id} value={item.id}>{item.id}</option>))}</SettingsSelect></label>
+                  <label>{t("settings.pluginCenter.githubAccessToken")}<Input type="password" autoComplete="new-password" value={connectorToken} onChange={event => setConnectorToken(event.target.value)} disabled={disabled || credentialBusy} /></label>
+                  <Button variant="outline" disabled={disabled || credentialBusy || !connectorId || !connectorToken || connections.some(row => row.state === "connected" || row.state === "partial")} onClick={() => void saveConnectorCredential()}>{t("settings.pluginCenter.saveSecurelyAndConfigureGitHub")}</Button>
+                  {credentialRef && <p role="status">{t("settings.pluginCenter.protectedCredentialsConfigured")}</p>}
                 </SettingsDisclosure>} />}
             {operationMessage && pendingKind !== "unknown" && !busy && <Feedback message={operationMessage} />}
-            {setupThreadId && onOpenThread && <Button onClick={() => onOpenThread(projectId, setupThreadId)}>打开设置对话</Button>}
+            {setupThreadId && onOpenThread && <Button onClick={() => onOpenThread(projectId, setupThreadId)}>{t("settings.pluginCenter.openSetupConversation")}</Button>}
             {detail.installed && <div className="plugin-detail-setting-row" id="plugin-management">
-              <div><h3>启用状态</h3><p>当前项目{detail.enabled ? "已启用" : "已停用"}</p>{detail.installedVersion && <p>已安装版本 {detail.installedVersion}</p>}</div>
-              <Button variant="outline" disabled={disabled || authPending} aria-expanded={scopeOpen} aria-controls="plugin-scope-settings" onClick={() => setScopeOpen(value => !value)}>{scopeOpen ? "收起启用范围" : "管理启用范围"}</Button>
+              <div><h3>{t("settings.pluginCenter.enabledStatus")}</h3><p>{t("settings.pluginCenter.projectEnabledState", { enabled: String(detail.enabled) })}</p>{detail.installedVersion && <p>{t("settings.pluginCenter.installedVersionNumber", { version: detail.installedVersion })}</p>}</div>
+              <Button variant="outline" disabled={disabled || authPending} aria-expanded={scopeOpen} aria-controls="plugin-scope-settings" onClick={() => setScopeOpen(value => !value)}>{scopeOpen ? t("settings.pluginCenter.hideEnabledScope") : t("settings.pluginCenter.manageEnabledScope")}</Button>
             </div>}
             {detail.installed && scopeOpen && <div id="plugin-scope-settings" className="plugin-scope-settings">
-              <div className="plugin-scope-field"><span>修改范围</span><ResourceScope value={scope} onChange={setScope} project={project} disabled={disabled} /></div>
-              <p>项目配置可覆盖用户配置；上方显示当前项目的有效状态。</p>
-              <div className="plugin-service-actions"><Button variant="outline" disabled={disabled} onClick={() => void mutate("pluginConfigure", { id: detail.id, scope, enabled: true, expectedRevision: catalog?.revision })}>在{scope === "user" ? "用户" : "项目"}范围启用</Button>
-                <Button variant="outline" disabled={disabled} onClick={() => void mutate("pluginConfigure", { id: detail.id, scope, enabled: false, expectedRevision: catalog?.revision })}>在{scope === "user" ? "用户" : "项目"}范围停用</Button></div>
+              <div className="plugin-scope-field"><span>{t("settings.pluginCenter.changeScope")}</span><ResourceScope value={scope} onChange={setScope} project={project} disabled={disabled} /></div>
+              <p>{t("settings.pluginCenter.projectConfigurationCanOverrideUserConfigurationThe")}</p>
+              <div className="plugin-service-actions"><Button variant="outline" disabled={disabled} onClick={() => void mutate("pluginConfigure", { id: detail.id, scope, enabled: true, expectedRevision: catalog?.revision })}>{t("settings.pluginCenter.enableForScope", { scope })}</Button>
+                <Button variant="outline" disabled={disabled} onClick={() => void mutate("pluginConfigure", { id: detail.id, scope, enabled: false, expectedRevision: catalog?.revision })}>{t("settings.pluginCenter.disableForScope", { scope })}</Button></div>
             </div>}
-            {detail.installed && detail.installedDigest !== detail.sourceDigest && <div className="plugin-detail-setting-row"><div><h3>目录内容已变化</h3><p>当前运行和设置仍使用已安装快照。</p></div><Button variant="outline" disabled={disabled} onClick={() => { setInstallReview(true); setReviewed(false); void mutate("pluginResolve", { id: detail.id, expectedRevision: catalog?.revision }); }}>核对新快照</Button></div>}
-            <div className="plugin-detail-setting-row"><div><h3>来源与安装详情</h3><p>查看插件的来源、安装信息和技术详情。</p></div>
-              <Button variant="outline" aria-expanded={detailsOpen} aria-controls="plugin-source-details" onClick={() => setDetailsOpen(value => !value)}>{detailsOpen ? "收起详情" : "查看详情"}</Button>
+            {detail.installed && detail.installedDigest !== detail.sourceDigest && <div className="plugin-detail-setting-row"><div><h3>{t("settings.pluginCenter.catalogContentsChanged")}</h3><p>{t("settings.pluginCenter.currentExecutionAndSettingsStillUseThe")}</p></div><Button variant="outline" disabled={disabled} onClick={() => { setInstallReview(true); setReviewed(false); void mutate("pluginResolve", { id: detail.id, expectedRevision: catalog?.revision }); }}>{t("settings.pluginCenter.reviewNewSnapshot")}</Button></div>}
+            <div className="plugin-detail-setting-row"><div><h3>{t("settings.pluginCenter.sourceAndInstallationDetails")}</h3><p>{t("settings.pluginCenter.viewThePluginSSourceInstallationInformation")}</p></div>
+              <Button variant="outline" aria-expanded={detailsOpen} aria-controls="plugin-source-details" onClick={() => setDetailsOpen(value => !value)}>{detailsOpen ? t("settings.pluginCenter.hideDetails") : t("settings.pluginCenter.viewDetails")}</Button>
             </div>
             {detailsOpen && <div id="plugin-source-details" className="plugin-source-details">
               <dl className="plugin-metadata">
-                <dt>来源</dt><dd>{officialMarket(marketFor(detail)?.sourceUrl) ? "OpenAI 插件市场" : marketFor(detail)?.name || detail.sourceKind || "本地插件包"}</dd>
-                {detail.interface?.developerName && <><dt>开发者</dt><dd>{detail.interface.developerName}</dd></>}
-                {detail.installedDigest && <><dt>当前安装快照</dt><dd><code>{detail.installedDigest.slice(0, 8)}…{detail.installedDigest.slice(-8)}</code> <Button variant="link" onClick={async () => { try { await navigator.clipboard.writeText(detail.installedDigest!); setCopiedDigest(true); } catch { setError({ message: "无法复制内容摘要。" }); } }}>{copiedDigest ? "已复制完整摘要" : "复制完整摘要"}</Button></dd></>}
-                {detail.installed && <><dt>目录内容</dt><dd>{detail.installedDigest === detail.sourceDigest ? "与已安装快照一致" : "与已安装快照不同"}</dd></>}
-                {detail.version && <><dt>目录版本</dt><dd>{detail.version}</dd></>}
-                {detail.interface?.websiteUrl && <><dt>网站</dt><dd><a href={detail.interface.websiteUrl} target="_blank" rel="noreferrer">{detail.interface.websiteUrl}</a></dd></>}
+                <dt>{t("settings.pluginCenter.source2")}</dt><dd>{officialMarket(marketFor(detail)?.sourceUrl) ? t("settings.pluginCenter.openaiPluginMarketplace") : marketFor(detail)?.name || detail.sourceKind || t("settings.pluginCenter.localPluginPackage")}</dd>
+                {detail.interface?.developerName && <><dt>{t("settings.pluginCenter.developer")}</dt><dd>{detail.interface.developerName}</dd></>}
+                {detail.installedDigest && <><dt>{t("settings.pluginCenter.currentInstallationSnapshot")}</dt><dd><code>{detail.installedDigest.slice(0, 8)}…{detail.installedDigest.slice(-8)}</code> <Button variant="link" onClick={async () => { try { await navigator.clipboard.writeText(detail.installedDigest!); setCopiedDigest(true); } catch { setError({ message: { id: "settings.pluginCenter.couldNotCopyTheContentDigest" } }); } }}>{copiedDigest ? t("settings.pluginCenter.fullDigestCopied") : t("settings.pluginCenter.copyFullDigest")}</Button></dd></>}
+                {detail.installed && <><dt>{t("settings.pluginCenter.catalogContents")}</dt><dd>{detail.installedDigest === detail.sourceDigest ? t("settings.pluginCenter.matchesInstalledSnapshot") : t("settings.pluginCenter.differsFromInstalledSnapshot")}</dd></>}
+                {detail.version && <><dt>{t("settings.pluginCenter.catalogVersion")}</dt><dd>{detail.version}</dd></>}
+                {detail.interface?.websiteUrl && <><dt>{t("settings.pluginCenter.website")}</dt><dd><a href={detail.interface.websiteUrl} target="_blank" rel="noreferrer">{detail.interface.websiteUrl}</a></dd></>}
               </dl>
               {detail.interface?.longDescription && <p className="plugin-long-description">{detail.interface.longDescription}</p>}
-              {Array.isArray(detail.interface?.capabilities) && detail.interface.capabilities.length > 0 && <><h3>目录声明的能力</h3><ul>{detail.interface.capabilities.map((capability: string) => <li key={capability}>{capability}</li>)}</ul></>}
-              <SettingsDisclosure title="技术详情"><dl className="plugin-metadata"><dt>插件标识</dt><dd>{detail.id}</dd><dt>来源快照路径</dt><dd>{detail.source}</dd><dt>目录组件</dt><dd>{detail.components.join("、") || "无"}</dd><dt>目录内容摘要</dt><dd>{detail.sourceDigest}</dd>{detail.installedDigest && <><dt>已安装内容摘要</dt><dd>{detail.installedDigest}</dd></>}</dl>
+              {Array.isArray(detail.interface?.capabilities) && detail.interface.capabilities.length > 0 && <><h3>{t("settings.pluginCenter.capabilitiesDeclaredByCatalog")}</h3><ul>{detail.interface.capabilities.map((capability: string) => <li key={capability}>{capability}</li>)}</ul></>}
+              <SettingsDisclosure title={t("settings.pluginCenter.technicalDetails")}><dl className="plugin-metadata"><dt>{t("settings.pluginCenter.pluginID")}</dt><dd>{detail.id}</dd><dt>{t("settings.pluginCenter.sourceSnapshotPath")}</dt><dd>{detail.source}</dd><dt>{t("settings.pluginCenter.catalogComponents")}</dt><dd>{detail.components.join("、") || t("settings.pluginCenter.none")}</dd><dt>{t("settings.pluginCenter.catalogContentDigest")}</dt><dd>{detail.sourceDigest}</dd>{detail.installedDigest && <><dt>{t("settings.pluginCenter.installedContentDigest")}</dt><dd>{detail.installedDigest}</dd></>}</dl>
                 {detail.catalogSource !== undefined && <pre>{JSON.stringify(detail.catalogSource, null, 2)}</pre>}
-                {!!detail.diagnostics.length && <><h3>目录包诊断</h3><ul>{detail.diagnostics.map((text, index) => <li key={index}>{text}</li>)}</ul></>}
-                {displayedError && <pre>{failureText(displayedError)}</pre>}
+                {!!detail.diagnostics.length && <><h3>{t("settings.pluginCenter.catalogPackageDiagnostics")}</h3><ul>{detail.diagnostics.map((text, index) => <li key={index}>{text}</li>)}</ul></>}
+                {displayedError && <pre>{failureText(displayedError, t)}</pre>}
               </SettingsDisclosure>
-              {detail.installed && detail.skills.length > 0 && (detail.installedDigest !== detail.sourceDigest) && <SettingsDisclosure title="目录包 Skills"><ul>{detail.skills.map(skill => <li key={skill.id}><strong>{skill.name}</strong><p>{skill.description}</p></li>)}</ul></SettingsDisclosure>}
+              {detail.installed && detail.skills.length > 0 && (detail.installedDigest !== detail.sourceDigest) && <SettingsDisclosure title={t("settings.pluginCenter.catalogPackageSkills")}><ul>{detail.skills.map(skill => <li key={skill.id}><strong>{skill.name}</strong><p>{skill.description}</p></li>)}</ul></SettingsDisclosure>}
             </div>}
-            {(detail.installed ? detail.installedSkills : detail.skills).length > 0 && <section aria-label={detail.installed ? "已安装 Skills" : "目录包 Skills"} className="plugin-detail-resources"><h3>{detail.installed ? "已安装 Skills" : "目录包 Skills"}</h3><ul>{(detail.installed ? detail.installedSkills : detail.skills).map(skill => <li key={skill.id}><button disabled={!detail.installed || !detail.enabled} className="plugin-skill-link" onClick={() => openSkill({ ...skill, key: `${detail.id}:${skill.id}`, sourceLabel: `插件 · ${detail.displayName || detail.name}`, scope: "plugin", pluginId: detail.id, projectId, enabled: detail.enabled })}>{skill.name}</button><p>{skill.description}</p></li>)}</ul></section>}
+            {(detail.installed ? detail.installedSkills : detail.skills).length > 0 && <section aria-label={detail.installed ? t("settings.pluginCenter.installedSkills") : t("settings.pluginCenter.catalogPackageSkills")} className="plugin-detail-resources"><h3>{detail.installed ? t("settings.pluginCenter.installedSkills") : t("settings.pluginCenter.catalogPackageSkills")}</h3><ul>{(detail.installed ? detail.installedSkills : detail.skills).map(skill => <li key={skill.id}><button disabled={!detail.installed || !detail.enabled} className="plugin-skill-link" onClick={() => openSkill({ ...skill, key: `${detail.id}:${skill.id}`, sourceLabel: { id: "settings.pluginCenter.pluginsValue", values: { value0: detail.displayName || detail.name } }, scope: "plugin", pluginId: detail.id, projectId, enabled: detail.enabled })}>{skill.name}</button><p>{skill.description}</p></li>)}</ul></section>}
             {detail.installed && detail.installedDigest && <PluginHookSettings id={detail.id} installedDigest={detail.installedDigest} disabled={disabled || detailLoading} api={api} onConfigure={async parameters => { await mutate("pluginHooksConfigure", parameters); }} refreshKey={catalog?.revision} />}
             {detail.installed && apps?.(detail.id)}
-            {detail.installed && detail.installedOnboardingSkill && <section className="plugin-detail-resources"><h3>插件设置</h3><p>在普通对话中运行设置技能，由对话展示执行与审批。</p><Button disabled={disabled || !detail.enabled} onClick={() => void mutate("pluginSetup", { id: detail.id, ...(thread?.id ? { threadId: thread.id } : {}) })}>运行设置</Button></section>}
+            {detail.installed && detail.installedOnboardingSkill && <section className="plugin-detail-resources"><h3>{t("settings.pluginCenter.pluginSettings")}</h3><p>{t("settings.pluginCenter.runTheSetupSkillInARegular")}</p><Button disabled={disabled || !detail.enabled} onClick={() => void mutate("pluginSetup", { id: detail.id, ...(thread?.id ? { threadId: thread.id } : {}) })}>{t("settings.pluginCenter.runSetup")}</Button></section>}
           </div>}
         </article>
       )}

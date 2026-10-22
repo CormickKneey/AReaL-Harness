@@ -42,11 +42,11 @@ export function ProviderApiFormatSelect({
   value: ProviderApiType;
   onChange: (value: ProviderApiType) => void;
 }) {
-  const { intl } = useZCodeIntl();
+  const { t, intl } = useZCodeIntl();
 
   return (
     <div id={triggerId}>
-      <SettingsSelect aria-label="API 格式" value={value} onValueChange={next => onChange(next as ProviderApiType)}>
+      <SettingsSelect aria-label={t("settings.providerApiFormatSelect.apiFormat")} value={value} onValueChange={next => onChange(next as ProviderApiType)}>
         {apiFormatOptions.map(format => <option key={format} value={format}>{intl.formatMessage({id: PROVIDER_CONNECTION_API_FORMAT_TITLE_IDS[format]})}</option>)}
       </SettingsSelect>
     </div>

@@ -1,7 +1,9 @@
+import { useI18n } from "./i18n/IntlProvider.js";
 // Adapted from ZCode ToolSummaryRow / ToolLayout; Codex reference guides presentation.
 // Core owns all outcomes.
 import { useEffect, useId, useState } from "react";
-import { AgentAvatar, agentName, agentStatus, spawnedAgent } from "./AgentIdentity.js";
+import { Collapsible } from "@base-ui/react/collapsible";
+import { AgentAvatar, agentName, agentStatus, agentTask, spawnedAgent } from "./AgentIdentity.js";
 import { GlobeIcon, ImageIcon } from "lucide-react";
 import { ActivityIcon } from "./ActivityIcon.js";
 import { toolPresentation } from "./conversationPresentation.js";
@@ -19,6 +21,7 @@ export function ToolEvent({ item, onFile, onAgent, agents, turnId, readTurnRevie
   readTurnReview?: (turnId: string, itemId?: string) => Promise<Data>;
   action?: Action; projectId?: string; threadId?: string;
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const toggle = () => { setOpen(!open); onDisclosureChange?.(!open); };
   const [diffOpen, setDiffOpen] = useState(false);
@@ -29,7 +32,9 @@ export function ToolEvent({ item, onFile, onAgent, agents, turnId, readTurnRevie
   const childId = onAgent && spawnedAgent(item);
   const child = childId && agents?.[childId];
   const ownedChild = child?.id === childId && child?.parentThreadId === threadId ? child : undefined;
-  const childTitle = ownedChild?.preview || (childId ? agentName(childId) : "");
+  const childTitle = ownedChild?.preview || agentTask(item) || (childId ? agentName(childId) : "");
+  // The accepted spawn proves creation, not a live running/completed state.
+  const childStatus = ownedChild ? agentStatus(ownedChild.turns?.at(-1)?.status) : "已创建";
   const images: Data[] = item.status === "completed" && item.success === true
     ? (item.contentItems ?? []).filter((part: Data) => part.type === "arealMedia" && part.modality === "image" && part.media?.uri) : [];
   const isCommand = ["run_command", "verify_command", "read_process", "terminate_process"].includes(item.tool);
@@ -51,9 +56,9 @@ export function ToolEvent({ item, onFile, onAgent, agents, turnId, readTurnRevie
   }, [turnId, item.id, file?.path, readOnly, readTurnReview]);
   const current = review?.itemId === item.id ? review : undefined;
   return (
-    <div className="tool-event" data-tool-id={item.id} data-tool-status={view.status}>
+    <Collapsible.Root open={open} className="tool-event" data-tool-id={item.id} data-tool-status={view.status}>
       {childId ? <div className="agent-spawn-row">
-        <button type="button" className="agent-spawn-link" aria-label={`打开 ${childId} 子对话`} title={childTitle} onClick={() => onAgent?.(childId)}><AgentAvatar id={childId} size={14} /><span className="agent-spawn-title">{childTitle}</span><span className="agent-spawn-status">{agentStatus(ownedChild?.turns?.at(-1)?.status)}</span></button>
+        <button type="button" className="agent-spawn-link" aria-label={t("chat.agent.openConversation", { id: childId })} title={childTitle} onClick={() => onAgent?.(childId)}><AgentAvatar id={childId} size={14} /><span className="agent-spawn-kind">{t("chat.agent.kind")}</span><span className="agent-spawn-title">{childTitle}</span><span className="agent-spawn-status">{childStatus}</span><span className="conversation-disclosure-action" aria-hidden="true">{t("chat.agent.view")}</span></button>
         <button type="button" className="agent-spawn-record" aria-label="查看工具原始记录" aria-expanded={open} aria-controls={recordId} onClick={toggle}><ActivityIcon kind="chevron" size={14} className={open ? "tool-chevron open" : "tool-chevron"} /></button>
       </div> : images.length && action && projectId && threadId ? <div className="tool-summary-row tool-image-row">
         <span className="tool-summary-row"><ImageIcon size={16} aria-hidden="true" /><span>已查看 {images.length} 张图片</span></span>
@@ -100,7 +105,7 @@ export function ToolEvent({ item, onFile, onAgent, agents, turnId, readTurnRevie
           options={{ enableLineSelection: false, enableGutterUtility: false, parseDiffOptions: { context: 1 }, collapsedContextThreshold: 0 }} />
           : <p className="p-3 text-ui-sm text-foreground-subtle">本次写入没有文本差异</p>}
       </div>}
-      {open && (isCommand ? <CommandDetails item={item} /> :
+      <Collapsible.Panel keepMounted className="conversation-disclosure command-motion-panel">{isCommand ? <CommandDetails item={item} /> :
         <div className="tool-event-body" id={recordId} role={file ? "region" : undefined} aria-label={file ? "工具原始记录" : undefined}>
           <div className="tool-event-heading tool-record-heading"><span>{item.tool}</span><ToolCallDuration item={item} /></div>
             <pre aria-label="工具参数">{JSON.stringify(item.arguments, null, 2)}</pre>
@@ -108,10 +113,9 @@ export function ToolEvent({ item, onFile, onAgent, agents, turnId, readTurnRevie
             {!images.length && action && projectId && threadId && (item.contentItems ?? []).filter((c: Data) => c.type === 'arealMedia' && c.modality === 'image').map((c: Data) =>
               <SentAttachment key={c.media.uri} part={{ type: 'image', uri: c.media.uri, name: '页面截图' }} projectId={projectId} threadId={threadId} action={action} />)}
             {item.execution?.exitCode != null && <small>退出码 {item.execution.exitCode}</small>}
-        </div>
-      )}
+        </div>}</Collapsible.Panel>
       {open && action && projectId && threadId && item.execution?.resultSnapshot?.uri &&
         <SentAttachment part={{ type: "file", uri: item.execution.resultSnapshot.uri, name: "原始结果" }} projectId={projectId} threadId={threadId} action={action} />}
-    </div>
+    </Collapsible.Root>
   );
 }

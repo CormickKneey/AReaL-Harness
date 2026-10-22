@@ -300,7 +300,6 @@ class LifecycleOperations {
         try {
           await this.backend.library?.writes;
           await Promise.all(this.backend.saves?.values() ?? []);
-          await this.backend.disconnect();
           record.desktopExit = 'requested';
         } catch (error) { record.desktopError = this.error(error); }
       }

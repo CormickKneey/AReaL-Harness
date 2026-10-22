@@ -131,11 +131,21 @@ def prepare(root, output):
                     "--without-bash-malloc",
                 ]
                 environment = os.environ.copy()
-                # 构建工具与 Runtime 助手一样由系统 Python 启动；最终 Bash 保留原生二进制。
                 compiler = work / "host-cc.py"
                 compiler.write_text(HOST_CC)
+                # configure 按词展开 CC，需经 PATH 查找 launcher 后再解释路径引号。
+                launcher = work / "areal-host-cc"
+                launcher.write_text(
+                    "#!/bin/sh\nexec "
+                    + shlex.quote(sys.executable)
+                    + " "
+                    + shlex.quote(str(compiler))
+                    + ' "$@"\n'
+                )
+                launcher.chmod(0o755)
                 environment.update(
-                    CC=shlex.join([sys.executable, str(compiler)]),
+                    CC=launcher.name,
+                    PATH=str(work) + os.pathsep + environment.get("PATH", ""),
                     CFLAGS="-O2",
                     LDFLAGS="",
                     # 与发行包支持的最低系统一致，不能隐式要求构建机器的较新 macOS。

@@ -1607,6 +1607,8 @@ impl Engine {
             duration_ms: None,
             goal: None,
             instruction_snapshot: None,
+            instruction_attribution: None,
+            generation: None,
             configuration: Some(configuration),
             status: TurnStatus::InProgress,
             error: None,

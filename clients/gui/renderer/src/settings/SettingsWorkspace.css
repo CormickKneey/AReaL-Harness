@@ -756,3 +756,9 @@
 .settings-disclosure > summary:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; border-radius: var(--radius-button); }
 
 .settings-choice-field { display: grid; gap: 8px; min-width: 0; }
+
+/* Task-named settings details share the existing disclosure recipe. */
+.settings-section > .settings-disclosure > summary {
+  font-size: var(--text-ui-base);
+  font-weight: 500;
+}

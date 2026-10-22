@@ -396,7 +396,12 @@ max_tool_calls = 32
             summaries = [audit for audit in audits if audit["purpose"] == "Summary"]
             assert len(ordinary) == len(requests), ordinary
             assert len(summaries) == len(naming_requests), summaries
-            assert all(a["outcome"] == "completed" for a in audits), audits
+            assert all(a["outcome"] == "completed" for a in ordinary), ordinary
+            # Session naming is best effort: Engine shutdown cancels its stream
+            # after the foreground turn completes (core/engine/src/session_name.rs).
+            assert all(
+                a["outcome"] in {"completed", "interrupted_or_unfinished"} for a in summaries
+            ), summaries
             assert all(a["toolCount"] == 0 for a in summaries), summaries
             print(
                 json.dumps(

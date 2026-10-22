@@ -386,7 +386,7 @@ async function checkCreationRegression(){
  await call('providers',{operation:'saveAndApply',expectedRevision:catalog.revision,provider:{id:'fixture',name:'Fixture',baseUrl:`http://127.0.0.1:${model.address().port}/v1`,protocol:'chatCompletions',enabled:true,parameters:{},models:[{id:'fixture',enabled:true,parameters:{}},{id:'gpt-6.1-sol',enabled:true,parameters:{}},{id:'gpt-6-sol',enabled:false,parameters:{}}]}});
  await page.getByRole('button',{name:'新建自动化',exact:true}).click();
  const fallback=await assertGlobalCreation();pid=fallback.owner.id;
- await page.getByText('上次使用的模型当前不可用，已显示备用默认模型，请确认后发送。',{exact:true}).waitFor();
+ await page.getByText('上次使用的模型当前不可用，请确认或重新选择模型。',{exact:true}).waitFor();
  await chat.fill('创建体验验收，模型不可用回退。');await page.getByTestId('chat-send-button').click();
  await until(async()=>(await call('tasks',{operation:'list'})).data.some(t=>t.projectId===pid),'fallback model saves task');
  const fallbackRequest=modelRequests.findLast(body=>(body.messages??[]).some(m=>text(m).includes('AREAL_TASK_DRAFT')));

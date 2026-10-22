@@ -82,6 +82,8 @@ See the [release workflow](releasing.en.md) for Homebrew/Linux artifacts, instal
 
 ## Desktop GUI
 
+Before changing pages, components, layout, styling, motion or UI copy, read the [design-system workflow](../../clients/gui/design-system/README.md#开工顺序). GUI `verify` includes the incremental audit; see [audit baselines and limits](../../clients/gui/design-system/automation.md#增量设计检查) and report design choices and evidence under the [delivery criteria](../../clients/gui/design-system/governance.md#完成条件).
+
 The GUI uses a separate pnpm 11.7.0 workspace. Run `make gui-install`, `make gui-build`, and `make gui-smoke`; see the [GUI guide](../../clients/gui/README.en.md) for launch, packaging and isolation.
 
 `make setup-node` installs only locked Node development dependencies for native CI that does not run formatting checks; use `make setup` for full local development.

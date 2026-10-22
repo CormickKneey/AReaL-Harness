@@ -8,6 +8,8 @@ AReaL-Harness 采用 **Clients → Core → Runtime** 分层。Core 是会话、
 
 [draw.io 源文件](diagrams/architecture.drawio) · [PNG](diagrams/architecture.png) · [图表规范](STYLE_GUIDE.md)
 
+Renderer 界面语言由已有 application preferences 保存，仅允许 zh-CN 与 en。React Intl 从随包词条派生显示文案、数字与日期，不改变 Core 状态、配置或会话身份。持续显示的本地提示保存消息描述与原始参数，在渲染时翻译；原始诊断与第三方正文保持原文。开发合同见[GUI 语言说明](../../clients/gui/README.md#界面语言与文案开发)。
+
 ## 模块职责
 
 | 模块 | 职责 |
@@ -95,6 +97,8 @@ Fork 与 Side 的开发预览复用上述 Core/Runtime 所有权：Engine 创建
 
 共享 Browser 的普通网络加载使用 Chromium 的系统代理、DNS 与站点策略；Main 只隔离活动控制端口，网页不取得产品 bridge。适配器把用户新发送绑定到确切 Turn 和 GUI 连接，首次经 Core 审批的工具发现才懒绑定当前原生页；不以 `thread/resume` 抢宿主。人工键鼠事件由 Main 在派发前撤销页面读取与动作代次，排空在途输入后交付首个用户事件。Core 的读取和动作许可绑定页面、控制代次及具体计划，UNKNOWN 不重放。产品流程及局限见 [Browser 契约](../api/browser.md)。
 
+客户端设计规则与页面模式归 [`clients/gui/design-system/`](../../clients/gui/design-system/README.md)，数值、公共组件和开发预览沿用现有 renderer 所有者；规则目录不承载业务执行或另一份 Token 数值源。 [设计系统架构草案](../../clients/gui/design-system/architecture.md)明确架构、Base、独立题目与反馈的阶段准入；当前目录生成原型不代表 Base 或视觉验收完成。
+
 ## 仓库目录
 
 桌面客户端归属见[迁移决策](../adr/0001-desktop-client-module.md)。`clients/gui` 的独立 Electron 适配器保留系统凭据与订阅转发，通过共享服务公共入口连接 Core；退出 GUI 不终止 Core 任务。macOS 安装包中，前台与后台适配器使用不同的应用身份，后台共享主包资源与原有数据目录，避免 Finder 将重开前台的请求交给无窗口后台。GUI 构建、数据隔离与本地包见 [GUI 指南](../../clients/gui/README.md)。移动端源码后续迁移。
@@ -135,7 +139,7 @@ Core `permissions` 负责审批模式、规则优先级与精确请求记忆；C
 
 外部评测平台通过公开契约消费原生 CLI 和标准发布包。输入适配、终态结果投影、产物收集和平台部署由消费平台维护；Core、Runtime、SDK 和独立发行包不依赖平台适配器，见 [CLI 契约](../api/claude-cli.md)。
 
-模型目录的解析、校验、凭据状态诊断和受控文件写入归 `core/config`。`core/server` 在启动和显式热应用时装配 Engine 执行投影，并让文件监听与热应用共用版本状态；Engine 在生命周期准入门内提交配置，保留旧任务的 Provider、参数和凭据引用。Clients 使用公开配置命令，不复制 TOML 解析或凭据规则；桌面安全存储只在可信适配器中提供密钥，由经过认证的本机控制入口追加不可变凭据。Renderer 只接收脱敏状态。“无需认证”复用共享文件中不配置凭据引用的语义，不建立另一份供应商配置。GUI 默认与 CLI 共用用户配置文件；独立服务登记目录由 `core/local-service` 选择，不改变配置查找，运行数据仍按 GUI 部署隔离。普通模型保存通过 Core 版本回执确认，不重启 Core 或 Runtime；非模型部署更新保留安全重启边界。契约见[配置指南](../guides/configuration.md#gui-与-cli-共享模型目录)。
+模型目录的解析、校验、凭据状态诊断和受控文件写入归 `core/config`。`core/server` 在启动和显式热应用时装配 Engine 执行投影，并让文件监听与热应用共用版本状态；Engine 在生命周期准入门内提交配置，保留旧任务的 Provider、参数和凭据引用。Clients 使用公开配置命令，不复制 TOML 解析或凭据规则；桌面安全存储只在可信适配器中提供密钥，由经过认证的本机控制入口追加不可变凭据。Renderer 默认只接收脱敏状态；用户点击模型设置的眼睛时，经认证本机入口按供应商与配置版本临时读取该 AK。查看值不进入配置草稿、状态广播或持久化，隐藏、切换或离开页面即清除；远程控制不提供此能力。“无需认证”复用共享文件中不配置凭据引用的语义，不建立另一份供应商配置。GUI 默认与 CLI 共用用户配置文件；独立服务登记目录由 `core/local-service` 选择，不改变配置查找，运行数据仍按 GUI 部署隔离。普通模型保存通过 Core 版本回执确认，不重启 Core 或 Runtime；非模型部署更新保留安全重启边界。契约见[配置指南](../guides/configuration.md#gui-与-cli-共享模型目录)。
 
 macOS 系统静态代理由 GUI 可信后台适配器读取，转换成标准代理环境后注入 Core；模型设置与订阅的 Node HTTP 请求使用同一快照。SOCKS 的固定上游 TCP 转接由此后台持有，持久监听端口用于后台恢复，不解释模型协议或保存请求内容。Core 和 Runtime 不依赖 Electron 或 GUI 的系统命令适配，运行中的服务保留启动环境；规则与限制见[代理配置](../guides/configuration.md#proxies)。
 

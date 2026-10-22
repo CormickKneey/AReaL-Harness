@@ -49,6 +49,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - name: Select design audit baseline
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BASE: ${{ github.event.before }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            design_base="$(git merge-base "$PR_BASE" HEAD)"
+          elif [ "$GITHUB_EVENT_NAME" = "push" ] && [ -n "$PUSH_BASE" ] && [[ ! "$PUSH_BASE" =~ ^0+$ ]]; then
+            design_base="$PUSH_BASE"
+          else
+            design_base="$(git rev-parse HEAD^)"
+          fi
+          git cat-file -e "$design_base^{commit}"
+          echo "AREAL_DESIGN_BASE=$design_base" >> "$GITHUB_ENV"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: '22'
@@ -60,6 +75,8 @@ jobs:
           rustup show
           if ! command -v cmake; then brew install cmake; fi
           make gui-install
+      - name: Verify design contracts and incremental audit
+        run: pnpm --dir clients/gui verify:design 2>&1 | tee target/ci/gui/design.log
       - name: Verify fast GUI regressions
         run: pnpm --dir clients/gui run test:regressions
       - name: Record tool and cache fingerprints

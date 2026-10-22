@@ -148,6 +148,14 @@ Checkpoint 的 `retainedInputs: [{itemId, content}]` 与 `evidence: string[]` �
 
 `areal/context/read` 的 `budget` 新增 `outputLimitTokens`（自定义模型可为 null）、`historyEstimatedTokens`、`estimatedInputTokens`、`estimateScope:"historyWithRecordedInstructionsAndCurrentTools"` 与 `retentionStrategy:"automatic"|"legacyRecentBoundary"`，保留窗口、输出预留、输入上限、目标与窗口来源。估算包含已记录固定指令与当前工具，不声称包含下一次尚未构造的动态提示。求解与手动压缩复用固定指令装配和计量入口，最终求解额外计入实际动态提示。自动模式在任何输出/工具调用之前遇到明确提供方上下文溢出时，可恢复一次，仍受 Goal 计量约束。
 
+`areal/context/read` 同时提供 `contextUsage` 与 `sessionUsage`。`contextUsage` 的 `basis` 绑定 provider、model、配置 revision、默认模型 revision 和 Turn；运行时使用本轮冻结配置，空闲时使用桌面当前选择。`kind:"ready"` 提供 `budget`、`scope` 和 `estimate:{tokens,parts}`；`scope.kind:"assembledRequest"` 是最后一次完成组装与观察投影的实际请求（仅保存最新数字读数），`recordedHistory` 是保存的指令、历史和当前工具的估算。切换模型后不能复用旧指令估算时，返回 `kind:"unavailable"`、新容量及 `reason:"instructionBasisChanged"`；另有 `awaitingRequest` 和 `modelUnavailable`。此时旧 `budget.estimatedInputTokens` 省略，不能按零处理。旧 budget 的 `estimateScope` 与可用时的 `estimatedInputTokens` 继续表示历史、已保存指令和当前工具，不改为实时请求口径。模型切换省略 parameters 时采用新模型默认值；同模型更新和明确覆盖保留现有规则。
+
+`estimate.parts` 分为 systemPrompt、rules、skills、toolDefinitions、conversation、summary、attachments、toolResults、other，可含命名 children。父分类之和等于已有 Core 请求估算；请求和消息封套仅计一次。工具 schema 由 Registry backend 区分 CLI、MCP 与内置工具；`run_command` 仍是内置工具。Skills 正文只计仍在最终请求中的实际读取文本。已转换而失去来源、重复 call ID 无法唯一归属或旧记录没有来源信息时，只把剩余内容计入 other。估算不是供应商 tokenizer 精确值，也不是累计消费。可选 `Turn.instructionAttribution:{sha256,parts}` 绑定同轮保存的 `instructionSnapshot`，不重新读取当前文件推断旧指令来源。
+
+可选 `Turn.generation:{outputTokens,durationMs,measuredRequests,unmeasuredRequests,usageRequests,missingUsageRequests}` 随 Turn 保存并保留在继承/引用历史投影中；旧记录缺失时速率未知。每个实际 solve、summary 和重试请求只登记一次；取消、错误和超时的尾部用量仍由原消费路径累计。请求在确认正常 EOF、收到 usage、至少两个非空文本/推理事件且时长为正时，才把该请求的 output 和从首内容到 EOF 的时长配对计入 generation。速率为匹配 output 总和除以匹配 duration 总和，不包含首内容前等待，也不平均各请求速率。工具调用事件不算内容事件；单事件响应、无 usage、错误或未到 EOF 的请求保留 unmeasured。所有请求初始属于 unmeasured/missingUsage；观察到 usage 后移到 usageRequests，正常 EOF 再决定速率覆盖，未完成的请求不会被补造为完整计量。
+
+`sessionUsage:{usage,generation,knownTurns,unknownTurns,partialTurns,scope:"ownTurns"}` 由 Core 完整本地历史（含归档）计算，排除 fork 祖先的消费。`usage:null` 表示没有已确认用量；明确返回的零仍是已知零。`unknownTurns` 标出没有 usage 的轮次；已有 usage 但仍存在缺失请求用量、或旧记录无法确认覆盖的轮次计入 `partialTurns`。因此已确认消费可能只是小计。Token 总量为 inputTokens + outputTokens；cachedInputTokens 是输入子集。用量覆盖与速率覆盖独立，工具专用请求可能有完整 usage 而没有可报告的速率。手动压缩成功或失败后，GUI 重新读取权威 Thread 更新原轮次用量，不重放压缩提交。
+
 压缩后的求解上下文还包含 Core 从成功文件操作回执提取的历史路径、完整 SHA-256 与读取范围（最多 24 项、8 KiB）；不复制失效的 fileVersion 句柄，也不把分页读取推断为全文覆盖。摘要模型不再负责复述哈希。
 
 若 checkpoint 覆盖整个已结算尾轮，下一次求解追加明确标记的内部恢复控制，避免把历史摘要误作当前 Turn 的最终答复；该控制不构成新的用户任务，也不要求重读未变化文件或重复已完成验证；证据已满足任务时应报告并收尾。

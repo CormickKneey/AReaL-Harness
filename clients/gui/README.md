@@ -6,6 +6,15 @@
 
 Web/PWA Remote v2 的实施边界见[架构](../../docs/design/remote-control.md)、[API](../../docs/api/remote-control.md)、[连接与部署](../../docs/guides/remote-control.md)及[验收计划](../../docs/development/remote-control-testing.md)。RC-01/RC-02/RC-03 提供默认关闭的本机只读入口、浏览器申请与桌面确认、显式项目范围和设备撤销；有效能力包括 Host/项目观察及有界 Core 工作/待处理概览，覆盖 GUI 从未打开的会话；尚不声明详情和写方法。Relay、手机真机与公网部署仍为后续设计和验收。
 
+新增、修改或评审页面前，Agent 从[设计规则 v1](design-system/README.md)进入[证据驱动设计流程](design-system/structured-flow.md#执行顺序与每步完成条件)：固定合同与参考，视频提名候选，关键帧/日志核查，筛选差异，再复用现有所有者实现、验收并更新规范；Token、交互合同和预览见[客户端设计系统](DESIGN_SYSTEM.md)。
+
+真实Electron对话专项从仓库根运行 `node clients/gui/scripts/migration-smoke.mjs --conversation-journey`；先构建并核对Core/Runtime及renderer。覆盖命令、子代理、图片、阅读/收敛、暂停UNKNOWN核查与GUI历史恢复；外部模型为本地确定性SSE。证据与注入边界见[真实Electron专项](design-system/exercises/conversation-flow.md#真实-electron-专项-e1)。
+连续动效专项沿用同一入口的 `--conversation-motion`，保留原始 CDP 帧、RAF/输入/阅读观测并验证展开反向、资源进退和减少动态效果；边界与复验要求见[E2 专项](design-system/exercises/conversation-flow.md#真实-electron-连续动效专项-e2)。
+
+宿主与新内容专项使用 `--conversation-host`，验证真实窗口尺寸/125%缩放、子代理与设置焦点返回、草稿和快捷键；原生中文输入法通过独立操作步骤取证。见[E3专项](design-system/exercises/conversation-flow.md#真实-electron-宿主与新内容专项-e3)，[E4补充](design-system/exercises/conversation-flow.md#原生宿主补充-e4)通过 `AREAL_E4_NATIVE=1 AREAL_E4_OPERATOR=0` 复验同应用窗口往返、独立原生网页交互/隐藏与焦点返回。人工阶段需省略 `AREAL_E4_OPERATOR=0` 并保留实际操作证据；未触发的候选浮窗不计通过。
+
+现有对话目录入口为 `design-system.html?conversation`，复用生产消息、输入区与可返回的资源面板；`pnpm --dir clients/gui test:design --conversation-demo` 专项检查该样板。迁移与旧新版同状态对照边界见[对话目录迁移](design-system/exercises/conversation-flow.md#现有对话目录迁移样板)。
+
 ## 开发
 
 从仓库根执行，需 Node.js 22.19+、pnpm 11.7.0 及仓库 Rust 工具链；建议构建和验收均使用与 CI 一致的 Node.js 22 LTS：
@@ -32,9 +41,13 @@ macOS GUI 后台自动读取系统静态 HTTP、HTTPS 和 SOCKS 代理，供 Cor
 
 ## Composer
 
+侧栏“项目”标题旁的 `+` 可直接打开已有项目目录，无需先新建聊天。取消目录选择保留当前项目、聊天、面板和草稿；重复打开同一目录不会新增项目副本。
+
 权限审批和 Ask User 共用固定在对话底部的交互卡片。审批默认显示拒绝与允许一次，Core 允许记住授权时才提供任务／项目范围菜单；原有授权条件和状态核对保持不变。问题支持选项、自由回答和逐题填写；“跳过”或关闭仅暂时收起，保留草稿和待回答入口，不提交空答案或停止任务。提问期间输入框保持紧凑，审批期间保留并隐藏普通输入草稿；回答回显来自 Core 已保存的工具历史。`pnpm --dir clients/gui run test:interactions` 使用隔离的真实 Electron/Core/Runtime 和确定性本地模型验证审批、回答及历史恢复，不替代真实供应商或安装包验收。
 
-模型设置采用供应商目录与详情两栏布局，默认展示“模型”标签，搜索位于模型列表上方；地址、协议、认证与供应商参数放在“连接配置”标签。模型行保留启用开关及“更多”菜单，编辑模型使用居中弹窗，保存至供应商草稿后再统一保存生效；切换标签保留草稿。ChatGPT 订阅模型目录只读，账号管理位于连接配置。新会话沿用主会话最后一次受理的模型与思考强度，跨项目和重启保留；未发送修改、历史导航、Side 和后台执行不更新偏好。“会话配置”和模型行菜单提供备用默认模型，供没有记录或上次模型不可用时使用；已有会话保持不变。凭据来源与常驻保存说明不再展示，凭据留空保留和无需认证的保存行为不变。供应商状态仍来自 Core 已保存的目录与凭据诊断；保存完成后刷新 Composer 的模型目录。保存或应用尚未完成时，设置返回与分类按钮暂时禁用，完成后恢复。手机访问配置通过“私人网络／公网／组织网络”切换，只展示当前方式的字段；详情、Relay 与恢复操作按需展开。Serve 方案确认、公网双重确认、组织来源确认及设备指纹、项目范围和权限批准均保留。共享配置接口见[配置指南](../../docs/guides/configuration.md#gui-与-cli-共享模型目录)。
+模型设置采用供应商目录与详情两栏布局，详情按协议、名称、Base URL、认证与 API Key、模型排列。连接填写完整后自动获取模型，使用尚未保存的地址与密钥；可勾选添加或手动输入模型 ID，发现失败不会清空草稿。模型行保留启用开关及“更多”菜单，编辑模型使用居中弹窗，修改先保留在供应商草稿中。API Key 已配置时默认在输入框内显示固定掩码；点击眼睛按需查看已保存的明文，再次点击、切换供应商或离开页面后清除。查看不会产生修改，保存只提交新输入的替换值，留空保留现有凭据。保存允许任务继续运行，也允许暂不添加模型；文件保存后，空闲项目自动应用，页面分别显示已保存、等待生效与应用失败。现有任务保留原模型和凭据，Composer 目录在应用确认后更新。ChatGPT 订阅模型目录只读，账号管理与模型在同页。新会话沿用主会话最后一次受理的模型与思考强度，跨项目和重启保留；未发送修改、历史导航、Side 和后台执行不更新偏好。“会话配置”和模型行菜单提供备用默认模型，供没有记录或上次模型不可用时使用；已有会话保持不变。保存操作期间设置导航暂时禁用，等待后台生效不阻止继续编辑。手机访问配置通过“私人网络／公网／组织网络”切换，只展示当前方式的字段；详情、Relay 与恢复操作按需展开。Serve 方案确认、公网双重确认、组织来源确认及设备指纹、项目范围和权限批准均保留。共享配置接口见[配置指南](../../docs/guides/configuration.md#gui-与-cli-共享模型目录)。
+
+测试连接在收到有效的成功终态和文本后完成，并释放响应流，不再等待网关关闭连接。未完成、失败或空文本回复仍视为测试失败。
 
 新草稿和已有聊天的 `+` 与 `/` 共用功能/Skills 分组目录和搜索；方向键选择，Enter 确认，Esc 关闭。Core 返回可用 Skills 后立即显示可选项，来源标签异步补全；来源读取阻塞或失败不影响选择，旧 Profile 或 Core 连接的来源响应不能覆盖当前目录。打开 `+` 菜单刷新目录，再次点击关闭不刷新。Skill 附加到当前消息，发送前由 Core 读取正文；失败保留草稿和标签。已选可用模型的入口先显示强度，再进入真实模型目录；未选模型或所选模型不可用时直接显示目录。强度值与可用状态取自 Core，缺少凭据的模型保留名称并显示“缺少 API Key”，不可选择。菜单中的“配置模型”打开模型设置；空目录的“请先配置模型”也可点击。`pnpm --dir clients/gui run test:model-selection` 使用隔离 Electron/Core 验证目录、设置入口、凭据保存与应用后的模型执行；远端供应商支持须单独验证。
 
@@ -64,7 +77,7 @@ Browser 工具在每次新用户请求中先 `describe`，再重新观察，拒�
 
 ## Fork 与侧边聊天
 
-每轮完成回复下方的“分支”在窗口中央打开紧凑浮层，仅提供“在当前工作区中创建”，默认继承锚点配置；点击外部或按 Esc 关闭。创建独立聊天并保留所选历史边界；文件保持当前状态，不提供新工作树选项。更多轮次操作仍提供之前/之后的边界检查。未知创建结果先核对受理状态，不重发。
+每轮完成回复下方的“分支”直接在窗口中央打开紧凑浮层，仅提供“在当前工作区中创建”，继承当前轮及之前的历史和当前轮的模型配置；点击外部或按 Esc 关闭。创建独立聊天，不提供之前/之后菜单或三个点入口；文件保持当前状态，不提供新工作树选项。未知创建结果先核对受理状态，不重发。
 
 在主输入框使用 `/side` 打开右侧聊天。两侧复用 `Messages` 和 `ConversationComposer`（Lexical 输入框、工具栏、`ComposerModelMenu`），各自保留草稿与提交状态。Side 首问可选择 Core 目录中的模型和思考强度，后续配置只作用于该 Side；文件访问与只读策略继续由 Core/Runtime 约束。相关讨论、冻结证据与草稿恢复仍可通过侧栏入口访问；带回回复先预览，再追加到主草稿，不自动发送。
 
@@ -112,11 +125,23 @@ Browser 工具在每次新用户请求中先 `describe`，再重新观察，拒�
 
 主聊天、Side 与子对话按 Core 的稳定消息 ID 展示历史。上下文压缩及正常完成、停止或失败不会移除较早的用户消息、追加指令、附件或 Agent 回复；流式 Turn 事件按条目合并，重新打开和断线恢复使用 Core 还原的完整历史。[历史合并契约](../../docs/api/core.md#传输与会话)区分事件更新与权威快照。`verify` 包含历史投影回归；构建 renderer 后运行 `pnpm --dir clients/gui run test:history`，使用 Chrome、真实桌面 backend/Core/Runtime 和确定性本地模型验证同轮压缩、steer、停止、失败、切换聊天及重载后的气泡内容。该检查使用 preload 传输夹具，不替代 Electron IPC 或安装包验收。
 
+Composer 的圆环打开上下文分类与组成占比，面板在整组输入区域上方靠右对齐，外框尺寸在分类展开、收起与滚动时保持固定；空间不足时按可用高度约束，分类列表在内部滚动。面板随 Core 快照自动刷新，不提供刷新或压缩按钮。容量与分类由 Core 提供。Token 总量和可用的平均速率位于回复的分支操作左侧，点击可切换本会话与本轮明细。生成中没有可靠的增量 Token 时只显示状态，不用字符数换算 tok/s；完成后按对应请求的供应商输出用量和生成时长结算，可能包含推理输出。缓存读取属于输入子集，部分或旧记录未确认的消费不会显示为已完整计量；分支会话总量排除来源祖先。切换模型后，若指令估算不能复用，圆环暂不显示占比但仍展示新模型容量。
+
+自定义模型编辑器并排设置上下文工作预算和最大输出，不显示温度。新模型默认开启工具，视觉与推理由用户选择。开启推理后可勾选允许的思考强度，未勾选时沿用现有选项。订阅账号不提供这些能力开关。旧配置省略能力声明时保留原行为；隐藏的温度参数不因打开或保存编辑器而清除。上下文面板分别标出账号或供应商报告容量、用户预算与实际工作窗口；旧会话的新请求采用当前报告，历史和已受理队列不变。
+
+构建 Core 与 renderer 后，设置 `AREAL_CORE_BIN` 指向隔离构建的真实 CLI，运行 `pnpm --dir clients/gui run test:context-usage`。该专项用本地确定性 SSE 与真实 Electron/Core/Runtime，检查未发送的模型容量切换、Skills/CLI 来源、用量与速率覆盖、压缩后自动刷新、运行状态、布局、分支及重开不重发；隔离目录、进程/产物身份、截图和结果保存在脚本打印的 `/private/tmp/acu-*`。它不证明真实供应商、安装包或跨平台行为。
+
 设置中的“数据飞轮”页通过 `areal trajectory status/retry/set-enabled` 读取当前配置、上传进程、积压与最近上传记录，页面可见且连接正常时每 2.5 秒刷新，也可手动刷新和重试。记录分别显示 Turn、模型、Harness 版本、模型调用耗时、Agent 执行耗时与事件/创建/上传时间，汇总范围仅为最近 100 条记录；模型调用耗时包含网络与内部重试。会话可见时另以 15 秒间隔检查，在设置入口标记读取失败或导出异常，恢复后清除。轮询共享一个在途请求，隐藏、离开或断线后停止相应轮询并忽略过期响应，上传信息不进入聊天内容。状态读取不启动 Core 或上传器，也不解密 GUI 凭据；手动重试可能启动上传器，继承 Core 启动的凭据环境。编辑本页显示的配置文件中的 `[trajectory]`，通过 `areal trajectory sync-config` 应用本地上传控制；本页提供启停开关，就绪开启浅绿，关闭或待处理浅橙；只修改 enabled，保留其它配置。已有 Core 的采集参数在空闲后自动安全应用，不取消任务；其它配置变化或失败交由后台服务安全应用，本页不编辑地址或凭据。边界与耗时语义见[配置指南](../../docs/guides/configuration.md#持久轨迹导出)。
 
 `pnpm --dir clients/gui run test:trajectory` 验证命令边界、凭据环境、状态投影，以及轮询时序、单一在途请求、可见性和过期结果隔离。`test:trajectory-config` 使用已构建 CLI，在隔离目录验证配置身份及跨项目一致性，不启动 Core 或上传器。构建 renderer 后，`test:trajectory-ui` 使用本机 Chrome 和隔离桌面服务 fixture 验证真实设置交互、自动刷新、耗时及异常恢复；`AREAL_GUI_TEST_BROWSER` 可指定浏览器。上述检查不替代 Electron/Core 集成验收。 `test:trajectory-native` 使用真实桌面后端、Core、Runtime 和本地模型/接收器，验证关闭启动、运行中启用、空闲安全重启、停用保留与失败副本自动补传，不替代正式远端或 Electron IPC 验收。
 
 macOS 桌面适配器通过系统 `/usr/bin/python3` 保留可信 Core 命令的父进程，与 Runtime 的原生启动方式一致。命令参数、环境和标准输入输出保持原样；超时、取消和强杀作用于真实 Core 子进程，适配器或桥退出时清理其仍运行的直接子进程。该路径不重放写入，也不终止 Core 已建立的持久服务。`pnpm --dir clients/gui run test:core-process` 验证信号退出、超时升级、取消、输出上限及进程清理。
+
+遇到 `Core disconnected` 时，在设置的“后台服务”页或应用菜单点击“导出诊断包…”，选择保存位置。后台离线或主界面渲染进程退出后，应用菜单仍可导出。界面到 Desktop 的连接和 Desktop 到工作区 Core 的连接分别记录；前者已连接不代表后者可用。
+
+诊断包只包含固定结构的进程身份、连接错误码与关闭码、Electron 进程退出原因、未捕获异常类别，以及启动时和每 60 秒一次的内存与定时器延迟样本。项目与 Core 代际使用本次运行内的别名。不会包含对话、凭据、环境变量、命令参数、原始日志、异常消息或堆栈。记录分别保存在 GUI profile 的 `diagnostics/main` 和 GUI Core home 的 `diagnostics/desktop`；每个角色保留最多 8 次运行，每次最多 4 个 256 KiB 事件文件。导出最多读取 16 MiB，报告记录器健康、合并重复事件和文件缺失等遗漏。旧运行缺少退出记录只标为 `termination-unconfirmed`，不推断崩溃原因；观察到的 Core PID 也不证明进程仍存活。写入失败不会改变任务执行或未知提交状态。
+
+Electron Crashpad 在两个主进程中只保存本地转储，禁用上传。默认诊断包仅列转储是否可用和有界计数，不附内存内容；它不捕获 Rust Core 或 Runtime 的原生崩溃。转储目录为各诊断角色目录旁的 `main-crashes` 或 `desktop-crashes`，其磁盘占用不受事件文件上限约束。macOS 源码验收使用仓库 `.local/dev-bin/` 下已部署的固定 Core，运行 `AREAL_CORE_BIN="$PWD/.local/dev-bin/areal" pnpm --dir clients/gui run test:diagnostics` 验证有界存储、隐私筛选、WebSocket 超限以及隔离 Electron 的离线导出与强制退出恢复。
 
 启动日志中的 `[startup]` JSON 记录窗口展示、后台连接、项目 Core 启动、供应商同步、模型目录和历史恢复的阶段耗时。GUI Main 输出到开发控制台，后台输出到 Core home 下原有的 `service.log`。每条记录包含进程、尝试和项目关联信息，使用单调时钟计算耗时，不包含凭据、请求内容或配置正文。阶段开始后没有完成记录表示该阶段尚未结束，不能视为启动成功。并行阶段的耗时不能直接相加。
 
@@ -172,6 +197,8 @@ pnpm --dir clients/gui run sign:mac --app "/absolute/new-package/package/mac-arm
 
 更新恢复与菜单停止共用生命周期观察和停止流程。普通停止仍保护包含 pending 输入的暂停 Queue；明确取消会保留输入与安排，并将 cancel 意图传到最终公共服务宿主。确认后项目范围或 Core generation 变化会要求重新确认；多项目部分退出或未知结果不会显示成恢复正常。`pnpm --dir clients/gui run test:lifecycle` 验证真实 Core 的 Queue 保留、安全退出，以及隔离 Electron 的菜单取消、不同配置路径下接回原后台和更新恢复；普通重开不弹恢复对话框，明确停止的原生确认由 fixture 应答，不进行更新下载或安装。
 
+单轮暂停后，Composer 等待 Main 确认原操作结算才恢复发送和继续执行，不能仅凭 Core 已显示 `interrupted` 开放提交。期间可编辑草稿，结算不会自动发送。未知回执仍通过原请求核查，不重复暂停或重发输入。`test:stop-turn` 使用真实 Core 与回执屏障验证这个顺序、草稿保留和结算后的一次显式发送。
+
 缺少 `cancelStop` 的旧后台只在明确 busy 拒绝后使用兼容取消。取消前，可信 Main 将原启用安排的工作区、任务、时间与运行身份写入私有 `legacy-schedule-recovery.json`；旧 Core 自行暂停或安全停止前临时暂停安排后，新后台先确认旧进程退出，再核对任务修订号，仅恢复安排，不恢复已暂停 Run。未知提交不自动重发，任务变化或恢复失败保留记录并提示人工核对。专项 `test:lifecycle:legacy` 需要 `AREAL_CORE_BIN` 和 `AREAL_LEGACY_CORE_BIN` 分别指向已核对的新旧 Core；使用归档旧 adapter 源码、当前 renderer/依赖与隔离数据，不安装或发布版本。可用 `AREAL_LEGACY_PAUSE_UNKNOWN=1` 注入暂停回执丢失。
 
 Core 构建完成后再启动使用该二进制的桌面 smoke，验收期间不重新链接它。模型专项等待保存完成及 Core 的模型选择状态，再进行下一步操作；GUI CI 运行该专项并上传其日志、截图和 manifest。Core 模型配置子进程失败时，后台服务日志保留操作、退出码、signal 和超时分类，不记录密钥或完整环境。
@@ -181,6 +208,36 @@ Core 构建完成后再启动使用该二进制的桌面 smoke，验收期间不
 `pnpm --dir clients/gui run test:connection` 验证真实 Core 断线恢复、并发操作、旧连接消息隔离及显式关闭；`pnpm --dir clients/gui run test:architecture` 通过真实 Electron IPC 验证契约拒绝、错误码透传及原生预览的驱逐、崩溃重建和归属释放。两者使用隔离目录并输出证据，不替代安装包验收。
 
 第三方归属见 [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES.md)。运行时图标沿用源仓库版本；不迁入采集档案、开发 Skills/AGENTS 或来源 Git 历史。
+
+交互设计从[用户交互模式](design-system/interactions.md)进入，页面是既有模式的组合；[设置页阶段一](design-system/exercises/settings-stage1.md)使用真实隔离Electron验证，第二阶段在审查后选择。
+
+真实对话的发送、命令、子代理及面板返回迁移和同状态验证见[对话阶段二](design-system/exercises/conversation-stage2.md)。
+
+## 界面语言与文案开发
+
+设置 → 常规 → 语言支持简体中文和 English，切换立即生效并在重启后保留。已有安装默认简体中文。语言归 Renderer 现有 application preferences 所有，不进入 Core 模型配置或会话身份。
+
+本次复用固定版本 React Intl 12.1.5，其 BSD-3-Clause 许可保留在 licenses/react-intl-LICENSE。它兼容现有 formatMessage 调用，并提供 ICU、复数、数字与日期格式化。2026-10-21 调研过 react-i18next 17.1.0 与 Lingui 6.10.0；它们均为 MIT 许可，但前者需要迁移既有 Intl 调用，后者增加宏与词库编译工作流。本次只维护语言偏好与产品词条，不自研消息引擎。依据见 [React Intl](https://formatjs.github.io/docs/react-intl/)、[react-i18next](https://react.i18next.com/latest/usetranslation-hook) 和 [Lingui](https://lingui.dev/tutorials/react/) 官方文档。
+
+后续界面文案修改须在同一改动中完成以下工作。
+
+- 在 renderer/src/i18n/messages/ 的同一语义 ID 下提供 zh-CN 和 en，调用 useI18n() 的 t(id, values)。按钮、提示、占位、空态、校验、无障碍名称和展开状态都属于文案。
+- 用完整 ICU 消息表达动态句子和复数，以当前 intl 格式化数字、时间和日期。持续显示的本地提示保存 UiMessage 与原始参数，在渲染时翻译。
+- 保留用户输入、第三方名称与正文、原始诊断。内部路由、配置值、React key、测试 ID 与日历存储键保持稳定，不使用翻译后的文案。
+- 在两种语言下检查受影响路径、窄窗口及必要的草稿保留行为，并运行 typecheck、verify:i18n 和相关验收。
+
+```sh
+pnpm --dir clients/gui typecheck
+pnpm --dir clients/gui verify:i18n
+make gui-build
+AREAL_CORE_BIN=/absolute/path/to/areal pnpm --dir clients/gui test:i18n
+```
+
+普通 verify 已包含 verify:i18n。它验证双语词条完整、ICU 语法和参数一致，检查设置源码和直接共用控件的裸文案，并相对于 Git 基线阻止其他生产 Renderer 新增可见裸文案。CI 沿用 AREAL_DESIGN_BASE，也可设置 AREAL_I18N_BASE。技术示例、品牌和稳定身份有精确例外。provider-ui-state.js 保留纯数据投影合同，由 React 消费者翻译状态。静态检查不追踪任意动态字符串流，仍需实际界面复核。
+
+test:i18n 复用现有隔离 Electron/Core 迁移 smoke，保留截图、ARIA 和 manifest。覆盖双语切换、英文导航、双语搜索、窄窗大字号、草稿返回和重启持久化。原生系统菜单与对话框、外部应用 iframe、原始诊断，以及设置外尚未迁移的界面不属于本次完整翻译范围。
+
+对话增量文案沿用相同门禁。`test:context-usage` 另验上下文、用量详情和执行过程控件的双语切换、窄窗显示及草稿和 Core 历史保留。旧状态、耗时、上下文分类名和原始输出仍属于未迁移范围。
 
 ## 安装与更新
 

@@ -920,3 +920,240 @@ async fn summary_overrides_are_isolated_and_never_raise_the_goal_output_cap() {
     }
     server.abort();
 }
+
+#[test]
+fn known_context_capacities_preserve_explicit_overrides_and_unknown_models() {
+    use areal_engine::model::{Model, ModelOptions};
+    for (name, expected) in [
+        ("gpt-6.1-sol", Some(1_050_000)),
+        ("gpt-6-sol", Some(1_050_000)),
+        ("gpt-6-astra", Some(1_050_000)),
+        ("gpt-6-luna", Some(1_050_000)),
+        ("gpt-5.6-sol", Some(1_050_000)),
+        ("gpt-5.6", Some(1_050_000)),
+        ("deepseek-flash", Some(1_000_000)),
+        ("deepseek-v4-pro", Some(1_000_000)),
+        ("glm-5", Some(200_000)),
+        ("claude-opus-5-5", Some(1_000_000)),
+        ("claude-sonnet-5-5", Some(1_000_000)),
+        ("claude-haiku-5-5", Some(1_000_000)),
+        ("claude-sonnet-4-6", Some(1_000_000)),
+        ("custom-gpt-6.1-sol", None),
+        ("gpt-6.1-sol-unverified", None),
+        ("fixture", None),
+    ] {
+        for protocol in [ModelProtocol::ChatCompletions, ModelProtocol::Responses] {
+            let model =
+                HttpModel::with_protocol("http://127.0.0.1:9/".into(), name.into(), None, protocol)
+                    .unwrap();
+            assert_eq!(
+                model.capabilities().context_window_tokens,
+                expected,
+                "{name}"
+            );
+            let configured = model
+                .with_options(ModelOptions {
+                    context_window_tokens: Some(64000),
+                    ..Default::default()
+                })
+                .unwrap();
+            assert_eq!(configured.capabilities().context_window_tokens, Some(64000));
+            assert_eq!(configured.capabilities().max_output_tokens, Some(16384));
+        }
+    }
+}
+
+#[tokio::test]
+async fn explicit_model_capabilities_control_catalog_admission_and_wire() {
+    async fn request_for(
+        rx: &mut tokio::sync::mpsc::UnboundedReceiver<Value>,
+        prompt: &str,
+    ) -> Value {
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                let body = rx.recv().await.unwrap();
+                if body["messages"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .rev()
+                    .find(|message| message["role"] == "user")
+                    .is_some_and(|message| message["content"] == prompt)
+                {
+                    return body;
+                }
+            }
+        })
+        .await
+        .unwrap()
+    }
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let app=Router::new().route("/",post(move |Json(request):Json<Value>| { let tx=tx.clone(); async move {let tool_disabled=request.get("tools").is_none();tx.send(request).unwrap(); ([("content-type","text/event-stream")],if tool_disabled {"data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"forbidden\",\"type\":\"function\",\"function\":{\"name\":\"shell\",\"arguments\":\"{}\"}}]},\"finish_reason\":null}]}\n\ndata: [DONE]\n\n"} else {"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"})}}));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let data = tempfile::tempdir().unwrap();
+    let engine = Engine::open(
+        data.path(),
+        Arc::new(HttpModel::new(format!("http://{address}/"), "default".into(), None).unwrap()),
+        Limits {
+            watchdog_disable: true,
+            ..Limits::default()
+        },
+    )
+    .unwrap();
+    let mut provider = json!({"id":"custom","revision":0,"endpoint":format!("http://{address}/"),"protocol":"chatCompletions","models":["opaque"],"parameters":{"reasoningEffort":"max"},"modelCapabilities":{"opaque":{"tools":false,"vision":false,"reasoning":false}}});
+    engine
+        .upsert_provider(serde_json::from_value(provider.clone()).unwrap(), 0)
+        .await
+        .unwrap();
+    let catalog = engine.model_catalog().await;
+    let item = catalog["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["providerId"] == "custom")
+        .unwrap();
+    assert_eq!(item["input"], json!(["text", "audio"]));
+    assert_eq!(item["reasoningEffortOptions"], json!([]));
+    assert_eq!(item["capabilities"]["tools"], false);
+    let thread = engine.create("/workspace".into()).await.unwrap();
+    engine.configure_thread(serde_json::from_value(json!({"threadId":thread.id,"expectedRevision":1,"model":{"providerId":"custom","modelId":"opaque"}})).unwrap()).await.unwrap();
+    let image: Vec<Input> =
+        serde_json::from_value(json!([{"type":"image","url":"https://example.invalid/image.png"}]))
+            .unwrap();
+    assert!(engine.start(&thread.id, image).await.is_err());
+    engine
+        .start(&thread.id, vec![Input::text("plain")])
+        .await
+        .unwrap();
+    engine.wait(&thread.id).await.unwrap();
+    let failed = engine.read(&thread.id, true).await.unwrap();
+    assert_eq!(failed.turns[0].status, TurnStatus::Failed);
+    assert!(
+        !failed.turns[0]
+            .items
+            .iter()
+            .any(|item| matches!(item, Item::DynamicToolCall { .. }))
+    );
+    let body = request_for(&mut rx, "plain").await;
+    assert_eq!(body["model"], "opaque");
+    assert!(body.get("tools").is_none());
+    assert!(body.get("reasoning_effort").is_none());
+    assert!(body.get("reasoning").is_none());
+    provider["modelCapabilities"]["opaque"] =
+        json!({"tools":true,"vision":true,"reasoning":true,"reasoningEffortOptions":["low","max"]});
+    engine
+        .upsert_provider(serde_json::from_value(provider.clone()).unwrap(), 1)
+        .await
+        .unwrap();
+    engine
+        .start(&thread.id, vec![Input::text("reason")])
+        .await
+        .unwrap();
+    engine.wait(&thread.id).await.unwrap();
+    let body = request_for(&mut rx, "reason").await;
+    assert_eq!(body["reasoning_effort"], "max");
+    assert!(
+        body["tools"]
+            .as_array()
+            .is_some_and(|tools| !tools.is_empty())
+    );
+    let catalog = engine.model_catalog().await;
+    let item = catalog["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["providerId"] == "custom")
+        .unwrap();
+    assert_eq!(item["reasoningEffortOptions"], json!(["low", "max"]));
+    assert!(item["input"].as_array().unwrap().contains(&json!("image")));
+    let fallback = json!(["none", "minimal", "low", "medium", "high", "xhigh"]);
+    assert_eq!(catalog["data"][0]["reasoningEffortOptions"], fallback);
+    for (revision, options) in [(2, None), (3, Some(json!([])))] {
+        let capabilities = provider["modelCapabilities"]["opaque"]
+            .as_object_mut()
+            .unwrap();
+        capabilities.remove("reasoningEffortOptions");
+        if let Some(options) = options {
+            capabilities.insert("reasoningEffortOptions".into(), options);
+        }
+        engine
+            .upsert_provider(serde_json::from_value(provider.clone()).unwrap(), revision)
+            .await
+            .unwrap();
+        let catalog = engine.model_catalog().await;
+        let item = catalog["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["providerId"] == "custom")
+            .unwrap();
+        assert_eq!(item["reasoningEffortOptions"], fallback);
+        assert_eq!(item["available"], true);
+        let prompt = format!("default efforts {revision}");
+        engine
+            .start(&thread.id, vec![Input::text(&prompt)])
+            .await
+            .unwrap();
+        engine.wait(&thread.id).await.unwrap();
+        assert_eq!(
+            request_for(&mut rx, &prompt).await["reasoning_effort"],
+            "max"
+        );
+    }
+    provider["parameters"]["reasoningEffort"] = json!("high");
+    provider["modelParameters"] = json!({"opaque":{"reasoningEffort":"low"}});
+    provider["modelCapabilities"]["opaque"]["reasoningEffortOptions"] = json!(["low"]);
+    engine
+        .upsert_provider(serde_json::from_value(provider.clone()).unwrap(), 4)
+        .await
+        .unwrap();
+    let selected = engine.create("/workspace".into()).await.unwrap();
+    let configuration = engine.configure_thread(serde_json::from_value(json!({"threadId":selected.id,"expectedRevision":1,"model":{"providerId":"custom","modelId":"opaque"},"parameters":{}})).unwrap()).await.unwrap();
+    assert_eq!(
+        configuration.parameters.reasoning_effort.as_deref(),
+        Some("low")
+    );
+    engine
+        .start(&selected.id, vec![Input::text("model default wins")])
+        .await
+        .unwrap();
+    engine.wait(&selected.id).await.unwrap();
+    assert_eq!(
+        request_for(&mut rx, "model default wins").await["reasoning_effort"],
+        "low"
+    );
+    for (key, invalid) in [
+        ("contextWindowTokens", json!(0)),
+        ("temperature", json!(3.0)),
+        ("reasoningEffort", json!("invalid")),
+    ] {
+        for model_override in [false, true] {
+            let mut invalid_provider = provider.clone();
+            if model_override {
+                invalid_provider["modelParameters"]["opaque"][key] = invalid.clone();
+            } else {
+                invalid_provider["parameters"][key] = invalid.clone();
+            }
+            assert!(
+                engine
+                    .upsert_provider(serde_json::from_value(invalid_provider).unwrap(), 5)
+                    .await
+                    .is_err()
+            );
+        }
+    }
+    for mapping in ["modelParameters", "modelCapabilities"] {
+        let mut invalid_provider = provider.clone();
+        invalid_provider[mapping]["unknown"] = provider[mapping]["opaque"].clone();
+        assert!(
+            engine
+                .upsert_provider(serde_json::from_value(invalid_provider).unwrap(), 5)
+                .await
+                .is_err()
+        );
+    }
+    engine.shutdown().await;
+    server.abort();
+}

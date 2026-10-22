@@ -69,8 +69,8 @@
             "type": "string"
           },
           "error": {
-            "properties": {
-              "code": {
+            "$defs": {
+              "ErrorCode": {
                 "enum": [
                   "INVALID_REQUEST",
                   "INVALID_ARGUMENT",
@@ -86,6 +86,11 @@
                   "CLEANUP_FAILED"
                 ],
                 "type": "string"
+              }
+            },
+            "properties": {
+              "code": {
+                "$ref": "#/oneOf/1/properties/error/$defs/ErrorCode"
               },
               "details": true,
               "message": {
@@ -121,6 +126,652 @@
     ]
   },
   "hostToCore": {
+    "$defs": {
+      "DynamicToolResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "contentItems": {
+            "items": {
+              "$ref": "#/$defs/ToolContent"
+            },
+            "type": "array"
+          },
+          "structuredContent": true,
+          "success": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "contentItems"
+        ],
+        "type": "object"
+      },
+      "ExpectedFile": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "absent",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "sha256",
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "value"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "FileCommand": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "read",
+                "type": "string"
+              },
+              "maxBytes": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "offset": {
+                "default": 0,
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "path",
+              "maxBytes"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Private Core evidence read with the same access and chunk bounds as Read.",
+            "properties": {
+              "kind": {
+                "const": "readForHistory",
+                "type": "string"
+              },
+              "maxBytes": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "offset": {
+                "default": 0,
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "path",
+              "maxBytes"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "const": "stat",
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "path"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "after": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "const": "list",
+                "type": "string"
+              },
+              "limit": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "path",
+              "limit"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "context": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "glob": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "const": "search",
+                "type": "string"
+              },
+              "limit": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "path": {
+                "type": "string"
+              },
+              "pattern": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "path",
+              "pattern",
+              "context",
+              "limit"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "dataBase64": {
+                "type": "string"
+              },
+              "expected": {
+                "$ref": "#/$defs/ExpectedFile"
+              },
+              "kind": {
+                "const": "write",
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "path",
+              "dataBase64",
+              "expected"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "dataBase64": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "stageFileChunk",
+                "type": "string"
+              },
+              "offset": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "path": {
+                "type": "string"
+              },
+              "uploadId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "path",
+              "uploadId",
+              "offset",
+              "dataBase64"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "executable": {
+                "type": "boolean"
+              },
+              "expected": {
+                "$ref": "#/$defs/ExpectedFile"
+              },
+              "expectedExecutable": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "kind": {
+                "const": "commitFile",
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "sha256": {
+                "type": "string"
+              },
+              "uploadId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "path",
+              "uploadId",
+              "expected",
+              "sha256",
+              "executable"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "expectedExecutable": {
+                "type": "boolean"
+              },
+              "expectedSha256": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "removeFile",
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "path",
+              "expectedSha256",
+              "expectedExecutable"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "expectedSha256": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "applyPatch",
+                "type": "string"
+              },
+              "newText": {
+                "type": "string"
+              },
+              "oldText": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "path",
+              "oldText",
+              "newText",
+              "expectedSha256"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "expectedSha256": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "applyPatches",
+                "type": "string"
+              },
+              "patches": {
+                "items": {
+                  "$ref": "#/$defs/TextPatch"
+                },
+                "type": "array"
+              },
+              "path": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "path",
+              "patches",
+              "expectedSha256"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "MediaRef": {
+        "additionalProperties": false,
+        "properties": {
+          "mimeType": {
+            "type": "string"
+          },
+          "sizeBytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "uri": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "uri",
+          "mimeType",
+          "sizeBytes"
+        ],
+        "type": "object"
+      },
+      "Modality": {
+        "enum": [
+          "text",
+          "image",
+          "audio",
+          "file"
+        ],
+        "type": "string"
+      },
+      "ProcessCommand": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "argv": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "cwd": {
+                "type": "string"
+              },
+              "op": {
+                "const": "start",
+                "type": "string"
+              },
+              "timeoutMs": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "tty": {
+                "default": false,
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "op",
+              "argv",
+              "cwd",
+              "timeoutMs"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "op": {
+                "const": "get",
+                "type": "string"
+              },
+              "processId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "op",
+              "processId"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "after": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "maxBytes": {
+                "format": "uint",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "op": {
+                "const": "read",
+                "type": "string"
+              },
+              "processId": {
+                "type": "string"
+              },
+              "waitMs": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "op",
+              "processId",
+              "maxBytes",
+              "waitMs"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "dataBase64": {
+                "type": "string"
+              },
+              "op": {
+                "const": "write",
+                "type": "string"
+              },
+              "processId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "op",
+              "processId",
+              "dataBase64"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "cols": {
+                "format": "uint16",
+                "maximum": 65535,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "op": {
+                "const": "resize",
+                "type": "string"
+              },
+              "processId": {
+                "type": "string"
+              },
+              "rows": {
+                "format": "uint16",
+                "maximum": 65535,
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "op",
+              "processId",
+              "cols",
+              "rows"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "op": {
+                "const": "closeStdin",
+                "type": "string"
+              },
+              "processId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "op",
+              "processId"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "op": {
+                "const": "terminate",
+                "type": "string"
+              },
+              "processId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "op",
+              "processId"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "TextPatch": {
+        "additionalProperties": false,
+        "properties": {
+          "newText": {
+            "type": "string"
+          },
+          "oldText": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "oldText",
+          "newText"
+        ],
+        "type": "object"
+      },
+      "ToolContent": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "type": {
+                "const": "inputText",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "media": {
+                "$ref": "#/$defs/MediaRef"
+              },
+              "modality": {
+                "$ref": "#/$defs/Modality"
+              },
+              "type": {
+                "const": "arealMedia",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "modality",
+              "media"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
     "oneOf": [
       {
         "additionalProperties": false,
@@ -129,180 +780,7 @@
             "type": "string"
           },
           "command": {
-            "oneOf": [
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "argv": {
-                    "items": {
-                      "type": "string"
-                    },
-                    "type": "array"
-                  },
-                  "cwd": {
-                    "type": "string"
-                  },
-                  "op": {
-                    "const": "start",
-                    "type": "string"
-                  },
-                  "timeoutMs": {
-                    "format": "uint64",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "tty": {
-                    "default": false,
-                    "type": "boolean"
-                  }
-                },
-                "required": [
-                  "op",
-                  "argv",
-                  "cwd",
-                  "timeoutMs"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "op": {
-                    "const": "get",
-                    "type": "string"
-                  },
-                  "processId": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "op",
-                  "processId"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "after": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "maxBytes": {
-                    "format": "uint",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "op": {
-                    "const": "read",
-                    "type": "string"
-                  },
-                  "processId": {
-                    "type": "string"
-                  },
-                  "waitMs": {
-                    "format": "uint64",
-                    "minimum": 0,
-                    "type": "integer"
-                  }
-                },
-                "required": [
-                  "op",
-                  "processId",
-                  "maxBytes",
-                  "waitMs"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "dataBase64": {
-                    "type": "string"
-                  },
-                  "op": {
-                    "const": "write",
-                    "type": "string"
-                  },
-                  "processId": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "op",
-                  "processId",
-                  "dataBase64"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "cols": {
-                    "format": "uint16",
-                    "maximum": 65535,
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "op": {
-                    "const": "resize",
-                    "type": "string"
-                  },
-                  "processId": {
-                    "type": "string"
-                  },
-                  "rows": {
-                    "format": "uint16",
-                    "maximum": 65535,
-                    "minimum": 0,
-                    "type": "integer"
-                  }
-                },
-                "required": [
-                  "op",
-                  "processId",
-                  "cols",
-                  "rows"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "op": {
-                    "const": "closeStdin",
-                    "type": "string"
-                  },
-                  "processId": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "op",
-                  "processId"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "op": {
-                    "const": "terminate",
-                    "type": "string"
-                  },
-                  "processId": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "op",
-                  "processId"
-                ],
-                "type": "object"
-              }
-            ]
+            "$ref": "#/$defs/ProcessCommand"
           },
           "requestId": {
             "format": "uint64",
@@ -329,404 +807,7 @@
             "type": "string"
           },
           "command": {
-            "oneOf": [
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "kind": {
-                    "const": "read",
-                    "type": "string"
-                  },
-                  "maxBytes": {
-                    "format": "uint",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "offset": {
-                    "default": 0,
-                    "format": "uint64",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "path": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "path",
-                  "maxBytes"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "description": "Private Core evidence read with the same access and chunk bounds as Read.",
-                "properties": {
-                  "kind": {
-                    "const": "readForHistory",
-                    "type": "string"
-                  },
-                  "maxBytes": {
-                    "format": "uint",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "offset": {
-                    "default": 0,
-                    "format": "uint64",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "path": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "path",
-                  "maxBytes"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "kind": {
-                    "const": "stat",
-                    "type": "string"
-                  },
-                  "path": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "path"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "after": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "kind": {
-                    "const": "list",
-                    "type": "string"
-                  },
-                  "limit": {
-                    "format": "uint",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "path": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "path",
-                  "limit"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "context": {
-                    "format": "uint",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "glob": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "kind": {
-                    "const": "search",
-                    "type": "string"
-                  },
-                  "limit": {
-                    "format": "uint",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "path": {
-                    "type": "string"
-                  },
-                  "pattern": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "path",
-                  "pattern",
-                  "context",
-                  "limit"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "dataBase64": {
-                    "type": "string"
-                  },
-                  "expected": {
-                    "oneOf": [
-                      {
-                        "additionalProperties": false,
-                        "properties": {
-                          "kind": {
-                            "const": "absent",
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "kind"
-                        ],
-                        "type": "object"
-                      },
-                      {
-                        "additionalProperties": false,
-                        "properties": {
-                          "kind": {
-                            "const": "sha256",
-                            "type": "string"
-                          },
-                          "value": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "kind",
-                          "value"
-                        ],
-                        "type": "object"
-                      }
-                    ]
-                  },
-                  "kind": {
-                    "const": "write",
-                    "type": "string"
-                  },
-                  "path": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "path",
-                  "dataBase64",
-                  "expected"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "dataBase64": {
-                    "type": "string"
-                  },
-                  "kind": {
-                    "const": "stageFileChunk",
-                    "type": "string"
-                  },
-                  "offset": {
-                    "format": "uint64",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "path": {
-                    "type": "string"
-                  },
-                  "uploadId": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "path",
-                  "uploadId",
-                  "offset",
-                  "dataBase64"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "executable": {
-                    "type": "boolean"
-                  },
-                  "expected": {
-                    "oneOf": [
-                      {
-                        "additionalProperties": false,
-                        "properties": {
-                          "kind": {
-                            "const": "absent",
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "kind"
-                        ],
-                        "type": "object"
-                      },
-                      {
-                        "additionalProperties": false,
-                        "properties": {
-                          "kind": {
-                            "const": "sha256",
-                            "type": "string"
-                          },
-                          "value": {
-                            "type": "string"
-                          }
-                        },
-                        "required": [
-                          "kind",
-                          "value"
-                        ],
-                        "type": "object"
-                      }
-                    ]
-                  },
-                  "expectedExecutable": {
-                    "type": [
-                      "boolean",
-                      "null"
-                    ]
-                  },
-                  "kind": {
-                    "const": "commitFile",
-                    "type": "string"
-                  },
-                  "path": {
-                    "type": "string"
-                  },
-                  "sha256": {
-                    "type": "string"
-                  },
-                  "uploadId": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "path",
-                  "uploadId",
-                  "expected",
-                  "sha256",
-                  "executable"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "expectedExecutable": {
-                    "type": "boolean"
-                  },
-                  "expectedSha256": {
-                    "type": "string"
-                  },
-                  "kind": {
-                    "const": "removeFile",
-                    "type": "string"
-                  },
-                  "path": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "path",
-                  "expectedSha256",
-                  "expectedExecutable"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "expectedSha256": {
-                    "type": "string"
-                  },
-                  "kind": {
-                    "const": "applyPatch",
-                    "type": "string"
-                  },
-                  "newText": {
-                    "type": "string"
-                  },
-                  "oldText": {
-                    "type": "string"
-                  },
-                  "path": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "path",
-                  "oldText",
-                  "newText",
-                  "expectedSha256"
-                ],
-                "type": "object"
-              },
-              {
-                "additionalProperties": false,
-                "properties": {
-                  "expectedSha256": {
-                    "type": "string"
-                  },
-                  "kind": {
-                    "const": "applyPatches",
-                    "type": "string"
-                  },
-                  "patches": {
-                    "items": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "newText": {
-                          "type": "string"
-                        },
-                        "oldText": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "oldText",
-                        "newText"
-                      ],
-                      "type": "object"
-                    },
-                    "type": "array"
-                  },
-                  "path": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "path",
-                  "patches",
-                  "expectedSha256"
-                ],
-                "type": "object"
-              }
-            ]
+            "$ref": "#/$defs/FileCommand"
           },
           "requestId": {
             "format": "uint64",
@@ -753,88 +834,7 @@
             "type": "string"
           },
           "response": {
-            "additionalProperties": false,
-            "properties": {
-              "contentItems": {
-                "items": {
-                  "oneOf": [
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "text": {
-                          "type": "string"
-                        },
-                        "type": {
-                          "const": "inputText",
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "type",
-                        "text"
-                      ],
-                      "type": "object"
-                    },
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "media": {
-                          "additionalProperties": false,
-                          "properties": {
-                            "mimeType": {
-                              "type": "string"
-                            },
-                            "sizeBytes": {
-                              "format": "uint64",
-                              "minimum": 0,
-                              "type": "integer"
-                            },
-                            "uri": {
-                              "type": "string"
-                            }
-                          },
-                          "required": [
-                            "uri",
-                            "mimeType",
-                            "sizeBytes"
-                          ],
-                          "type": "object"
-                        },
-                        "modality": {
-                          "enum": [
-                            "text",
-                            "image",
-                            "audio",
-                            "file"
-                          ],
-                          "type": "string"
-                        },
-                        "type": {
-                          "const": "arealMedia",
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "type",
-                        "modality",
-                        "media"
-                      ],
-                      "type": "object"
-                    }
-                  ]
-                },
-                "type": "array"
-              },
-              "structuredContent": true,
-              "success": {
-                "type": "boolean"
-              }
-            },
-            "required": [
-              "success",
-              "contentItems"
-            ],
-            "type": "object"
+            "$ref": "#/$defs/DynamicToolResponse"
           },
           "type": {
             "const": "result",
@@ -853,6 +853,27 @@
   },
   "protocolVersion": 2,
   "ready": {
+    "$defs": {
+      "ToolDefinition": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "inputSchema": true,
+          "name": {
+            "type": "string"
+          },
+          "outputSchema": true
+        },
+        "required": [
+          "name",
+          "description",
+          "inputSchema"
+        ],
+        "type": "object"
+      }
+    },
     "additionalProperties": false,
     "properties": {
       "protocolVersion": {
@@ -862,23 +883,7 @@
       },
       "tools": {
         "items": {
-          "additionalProperties": false,
-          "properties": {
-            "description": {
-              "type": "string"
-            },
-            "inputSchema": true,
-            "name": {
-              "type": "string"
-            },
-            "outputSchema": true
-          },
-          "required": [
-            "name",
-            "description",
-            "inputSchema"
-          ],
-          "type": "object"
+          "$ref": "#/$defs/ToolDefinition"
         },
         "type": "array"
       }
@@ -891,8 +896,8 @@
     "type": "object"
   },
   "runtimeError": {
-    "properties": {
-      "code": {
+    "$defs": {
+      "ErrorCode": {
         "enum": [
           "INVALID_REQUEST",
           "INVALID_ARGUMENT",
@@ -908,6 +913,11 @@
           "CLEANUP_FAILED"
         ],
         "type": "string"
+      }
+    },
+    "properties": {
+      "code": {
+        "$ref": "#/$defs/ErrorCode"
       },
       "details": true,
       "message": {
@@ -922,75 +932,86 @@
     "type": "object"
   },
   "toolResponse": {
+    "$defs": {
+      "MediaRef": {
+        "additionalProperties": false,
+        "properties": {
+          "mimeType": {
+            "type": "string"
+          },
+          "sizeBytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "uri": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "uri",
+          "mimeType",
+          "sizeBytes"
+        ],
+        "type": "object"
+      },
+      "Modality": {
+        "enum": [
+          "text",
+          "image",
+          "audio",
+          "file"
+        ],
+        "type": "string"
+      },
+      "ToolContent": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "type": {
+                "const": "inputText",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "media": {
+                "$ref": "#/$defs/MediaRef"
+              },
+              "modality": {
+                "$ref": "#/$defs/Modality"
+              },
+              "type": {
+                "const": "arealMedia",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "modality",
+              "media"
+            ],
+            "type": "object"
+          }
+        ]
+      }
+    },
     "additionalProperties": false,
     "properties": {
       "contentItems": {
         "items": {
-          "oneOf": [
-            {
-              "additionalProperties": false,
-              "properties": {
-                "text": {
-                  "type": "string"
-                },
-                "type": {
-                  "const": "inputText",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "text"
-              ],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "properties": {
-                "media": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "mimeType": {
-                      "type": "string"
-                    },
-                    "sizeBytes": {
-                      "format": "uint64",
-                      "minimum": 0,
-                      "type": "integer"
-                    },
-                    "uri": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "uri",
-                    "mimeType",
-                    "sizeBytes"
-                  ],
-                  "type": "object"
-                },
-                "modality": {
-                  "enum": [
-                    "text",
-                    "image",
-                    "audio",
-                    "file"
-                  ],
-                  "type": "string"
-                },
-                "type": {
-                  "const": "arealMedia",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type",
-                "modality",
-                "media"
-              ],
-              "type": "object"
-            }
-          ]
+          "$ref": "#/$defs/ToolContent"
         },
         "type": "array"
       },

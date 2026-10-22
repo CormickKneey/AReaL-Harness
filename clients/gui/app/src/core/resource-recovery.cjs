@@ -3,64 +3,82 @@ const { randomUUID } = require('node:crypto');
 const blocked = message => Object.assign(new Error(message), { code: 'CORE_RESOURCES' });
 const { coreLifecycle } = require('./lifecycle.cjs');
 const restartSafe = status => coreLifecycle(status).ifIdle.allowed;
+const QUIT_INSPECTION_TIMEOUT_MS = 5000;
+const unavailableRead = error => ['DISCONNECTED', 'RESPONSE_UNKNOWN', 'ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EPIPE'].includes(error.code);
 
 // Observe every connected Workspace before touching any of them. No drain here:
 // drain closes Core admission and cannot be undone by the GUI.
-async function inspectResources(backend, { includeTasks = false } = {}) {
+async function inspectResources(backend, { includeTasks = false, purpose } = {}) {
   await backend.refreshOwnedEngines?.();
+  const deadline = purpose === 'quit' ? Date.now() + QUIT_INSPECTION_TIMEOUT_MS : null;
   const projects = [];
   const engines = new Map(backend.projects);
   for (const [projectId, owned] of backend.ownedEngines ?? []) engines.set(projectId, owned.project);
   for (const [projectId, project] of engines) {
-    if (project.service && !project.client?.ready && backend.applicationOwner) await backend.reconnectProject(project);
+    if (project.service && !project.client?.ready && backend.applicationOwner && purpose !== 'quit') await backend.reconnectProject(project);
+    const identity = { projectId, root: project.root, serviceId: project.service?.serviceId, generation: project.service?.generation };
     if (!project.client?.ready) {
+      if (project.service && purpose === 'quit') {
+        projects.push({ ...identity, observation: 'unavailable' });
+        continue;
+      }
       if (project.service) throw new Error('Core 连接未恢复，无法确认是否可安全停止');
       continue;
     }
-    const status = await project.client.request('areal/server/status');
-    const resources = [];
-    const resourceThreads = (status.resources ?? []).map(resource => resource.threadId).filter(id => typeof id === 'string' && id.length > 0);
-    for (const threadId of new Set(resourceThreads)) {
-      const processes = await project.client.request('areal/process/list', { threadId });
-      for (const p of processes.data ?? []) if (!p.cleanupConfirmed) resources.push({
-        projectId, threadId, id: p.id, epoch: p.runtimeEpoch, state: p.state,
-        // No command arguments: they can contain credentials.
-        executable: p.argv?.[0] ?? '',
-        stale: typeof (status.runtime?.runtimeEpoch ?? status.runtime?.epoch) === 'string' && p.runtimeEpoch !== (status.runtime?.runtimeEpoch ?? status.runtime?.epoch),
+    const client = project.client;
+    const request = (method, params) => {
+      const timeoutMs = deadline === null ? undefined : deadline - Date.now();
+      if (timeoutMs !== undefined && timeoutMs <= 0)
+        throw Object.assign(new Error('后台状态读取超时'), { code: 'RESPONSE_UNKNOWN' });
+      return client.request(method, params, timeoutMs === undefined ? {} : { timeoutMs });
+    };
+    try {
+      const status = await request('areal/server/status');
+      const resources = [];
+      const resourceThreads = (status.resources ?? []).map(resource => resource.threadId).filter(id => typeof id === 'string' && id.length > 0);
+      for (const threadId of new Set(resourceThreads)) {
+        const processes = await request('areal/process/list', { threadId });
+        for (const p of processes.data ?? []) if (!p.cleanupConfirmed) resources.push({
+          projectId, threadId, id: p.id, epoch: p.runtimeEpoch, state: p.state,
+          // No command arguments: they can contain credentials.
+          executable: p.argv?.[0] ?? '',
+          stale: typeof (status.runtime?.runtimeEpoch ?? status.runtime?.epoch) === 'string' && p.runtimeEpoch !== (status.runtime?.runtimeEpoch ?? status.runtime?.epoch),
+        });
+      }
+      const tasks = [], goals = [];
+      if (includeTasks) {
+        let after; const cursors = new Set();
+        do {
+          const page = await request('areal/task/list', { limit: 100, ...(after ? { after } : {}) });
+          for (const task of page.data) {
+            if (task.mode === 'foreground') {
+              const { goal } = await request('areal/goal/get', { threadId: task.threadId });
+              if (goal && !['completed', 'cancelled'].includes(goal.status)) goals.push({ threadId: task.threadId, status: goal.status, objective: goal.objective });
+            } else if (!task.cancelled) tasks.push({ id: task.id, threadId: task.threadId, mode: task.mode, objective: task.objective, paused: task.paused,
+              nextRunAt: task.nextRunAt, running: task.runs.some(run => run.status === 'running') });
+          }
+          after = page.nextCursor;
+          if (after && cursors.has(after)) throw new Error('任务列表分页未前进，请刷新后台状态');
+          cursors.add(after);
+        } while (after);
+      }
+      projects.push({ ...identity, observation: 'known',
+        lifecycle: coreLifecycle(status), restartSafe: restartSafe(status), resources,
+        activeTurns: status.activeTurns?.length ?? 0, unresolvedTools: status.unresolvedTools?.length ?? 0,
+        compactions: status.compactions?.length ?? 0,
+        workgroups: (status.workgroups ?? []).filter(g => g.status === 'running' || !g.cleanupConfirmed).length,
+        activeThreads: (status.activeTurns ?? []).map(t => ({ threadId: t.threadId, turnId: t.turnId })),
+        goalThreads: status.activeGoals ?? [], activeTasks: status.activeTasks ?? 0, ...(includeTasks ? { tasks, goals } : {}),
+        waitingMessages: status.pendingQueueItems ?? 0,
+        queues: Object.entries(project.model?.state.queues ?? {}).map(([threadId, queue]) => ({ threadId, paused: queue.paused === true,
+          pending: queue.items.filter(item => item.status === 'pending').length, running: queue.items.filter(item => item.status === 'running').length,
+        })).filter(queue => queue.pending || queue.running),
+        pendingRequests: (project.pending ?? []).map(entry => ({ threadId: entry.params.threadId, awaitingResponse: backend.awaitingResponses?.has(entry) === true })),
       });
+    } catch (error) {
+      if (purpose !== 'quit' || !project.service || !unavailableRead(error)) throw error;
+      projects.push({ ...identity, observation: 'unavailable' });
     }
-    // Only the status page requests this projection. Stop admission keeps its
-    // existing Core safety contract and never depends on a GUI task catalog.
-    const tasks = [], goals = [];
-    if (includeTasks) {
-      let after; const cursors = new Set();
-      do {
-        const page = await project.client.request('areal/task/list', { limit: 100, ...(after ? { after } : {}) });
-        for (const task of page.data) {
-          if (task.mode === 'foreground') {
-            const { goal } = await project.client.request('areal/goal/get', { threadId: task.threadId });
-            if (goal && !['completed', 'cancelled'].includes(goal.status)) goals.push({ threadId: task.threadId, status: goal.status, objective: goal.objective });
-          } else if (!task.cancelled) tasks.push({ id: task.id, threadId: task.threadId, mode: task.mode, objective: task.objective, paused: task.paused,
-            nextRunAt: task.nextRunAt, running: task.runs.some(run => run.status === 'running') });
-        }
-        after = page.nextCursor;
-        if (after && cursors.has(after)) throw new Error('任务列表分页未前进，请刷新后台状态');
-        cursors.add(after);
-      } while (after);
-    }
-    projects.push({ projectId, root: project.root, serviceId: project.service?.serviceId, generation: project.service?.generation,
-      lifecycle: coreLifecycle(status), restartSafe: restartSafe(status), resources,
-      activeTurns: status.activeTurns?.length ?? 0, unresolvedTools: status.unresolvedTools?.length ?? 0,
-      compactions: status.compactions?.length ?? 0,
-      workgroups: (status.workgroups ?? []).filter(g => g.status === 'running' || !g.cleanupConfirmed).length,
-      activeThreads: (status.activeTurns ?? []).map(t => ({ threadId: t.threadId, turnId: t.turnId })),
-      goalThreads: status.activeGoals ?? [], activeTasks: status.activeTasks ?? 0, ...(includeTasks ? { tasks, goals } : {}),
-      waitingMessages: status.pendingQueueItems ?? 0,
-      queues: Object.entries(project.model?.state.queues ?? {}).map(([threadId, queue]) => ({ threadId, paused: queue.paused === true,
-        pending: queue.items.filter(item => item.status === 'pending').length, running: queue.items.filter(item => item.status === 'running').length,
-      })).filter(queue => queue.pending || queue.running),
-      pendingRequests: (project.pending ?? []).map(entry => ({ threadId: entry.params.threadId, awaitingResponse: backend.awaitingResponses?.has(entry) === true })),
-    });
   }
   return projects;
 }

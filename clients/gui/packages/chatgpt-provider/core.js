@@ -85,7 +85,9 @@ export class CoreSubscription {
     this.id = kind === 'openai' ? 'areal_openai' : CORE_PROVIDER_ID
     this.onRequest = onRequest
     this.network = customFetch ? { fetch: customFetch, close() {} } : subscriptionNetwork()
-    this.models = models ?? openaiCodexProvider().getModels().filter(m => m.input.includes('text')).map(m => ({ id: m.id, name: m.name }))
+    this.models = models ?? openaiCodexProvider().getModels().filter(m => m.input.includes('text')).map(m => ({ id: m.id, name: m.name,
+      ...(Number.isSafeInteger(m.contextWindow) && m.contextWindow > 0 && m.contextWindow <= 2_000_000
+        ? { parameters: { contextWindowTokens: m.contextWindow } } : {}) }))
     this.account = kind === 'openai' ? new OpenAIAccount(store, { fetch: (...args) => this.network.fetch(...args) }) : new ChatGPTAccount(store, { oauth })
     if (kind === 'openai') this.catalog = new ModelCatalog(this.account, (...args) => this.network.fetch(...args))
     this.account.models = async () => kind === 'openai' ? this.discover() : this.models

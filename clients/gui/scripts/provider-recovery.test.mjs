@@ -116,7 +116,7 @@ test("locked storage is diagnosable without reporting logout", async () => {
 });
 
 function providers() {
-  const service = new AppProviders({ onChange() {} }, {});
+  const service = new AppProviders({ projects: new Map(), onChange() {} }, {});
   service.config.value = {
     revision: "fixture",
     data: [
@@ -132,12 +132,13 @@ function providers() {
     ],
   };
   service.config.current = async () => service.config.value;
-  service.config.execute = async (_op, next) => ({ ...next, revision: "next" });
+  service.config.execute = async (_op, next) => ({ ...next, projects: [], revision: "next" });
   service.config.public = () => service.config.value;
   return service;
 }
-test("provider save preserves Core context budgets and rejects unknown parameters", async () => {
+test("provider save preserves Core context budgets and rejects unknown parameters", async (t) => {
   const service = providers();
+  t.after(() => service.close());
   const provider = {
     ...service.value.data[0],
     name: "Renamed",
@@ -148,6 +149,7 @@ test("provider save preserves Core context budgets and rejects unknown parameter
   assert.equal(service.value.data[0].parameters.contextWindowTokens, 200000);
   assert.equal(service.value.data[0].models[0].parameters.contextWindowTokens, 131072);
   const invalid = providers();
+  t.after(() => invalid.close());
   await assert.rejects(
     invalid.command({
       operation: "save",
@@ -566,7 +568,7 @@ test("startup prepares the real catalog before Core sync and waits before upsert
   assert.equal(f.gets, 1);
   assert.deepEqual(f.mutations, [{ method: "areal/provider/upsert", params: {
     expectedRevision: 7, provider: { id: "areal_openai", revision: 7, protocol: "responses",
-      endpoint: f.service.endpoint, credentialRef: "areal_openai", models: ["fixture-model"], parameters: {} },
+      endpoint: f.service.endpoint, credentialRef: "areal_openai", contextSource: "account", models: ["fixture-model"], parameters: {} },
   } }]);
 });
 

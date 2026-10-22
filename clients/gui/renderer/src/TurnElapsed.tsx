@@ -1,3 +1,4 @@
+import { useI18n } from "./i18n/IntlProvider.js";
 import { useEffect, useState } from "react";
 import type { Data } from "./services.js";
 import { ActivityIcon } from "./ActivityIcon.js";
@@ -14,7 +15,8 @@ export function completedTimeLabel(turn: Data): string | undefined {
 }
 
 /** Refresh only the display. History and reconnect retain Core's original start. */
-export function TurnElapsed({ turn, connected, disclosure }: { turn: Data; connected: boolean; disclosure?: { expanded: boolean; controls: string; onToggle: () => void } }) {
+export function TurnElapsed({ turn, connected, disclosure }: { turn: Data; connected: boolean; disclosure?: { expanded: boolean; controls: string; failures?: number; unfinished?: boolean; onToggle: () => void } }) {
+  const { t } = useI18n();
   const [now, setNow] = useState(Date.now);
   const running = turn.status === "inProgress";
   const hasStart = Number.isSafeInteger(turn.startedAt) && turn.startedAt > 0;
@@ -30,8 +32,8 @@ export function TurnElapsed({ turn, connected, disclosure }: { turn: Data; conne
     : completedTimeLabel(turn);
   if (!label && !disclosure) return null;
   return <div className="turn-elapsed turn-progress-heading" data-testid="turn-elapsed">
-    <div className="turn-progress-label">{disclosure ? <button type="button" className="turn-progress-summary" aria-label={label ?? "本轮过程"} aria-expanded={disclosure.expanded} aria-controls={disclosure.controls} onClick={disclosure.onToggle}>
-      <span>{label ?? "本轮过程"}</span><ActivityIcon kind="chevron" size={14} className={disclosure.expanded ? "open" : ""} />
+    <div className="turn-progress-label">{disclosure ? <button type="button" className="turn-progress-summary" aria-label={t("chat.progress.accessibleLabel", { label: label ?? t("chat.progress.defaultLabel") })} aria-expanded={disclosure.expanded} aria-controls={disclosure.controls} onClick={disclosure.onToggle}>
+      <span>{t("chat.progress.title")}</span><span>{label ?? t("chat.progress.defaultLabel")}</span>{!!disclosure.failures && <span className="execution-failures">{t("chat.progress.toolFailures", { count: disclosure.failures })}</span>}{disclosure.unfinished && <span>{t("chat.progress.unconfirmed")}</span>}<span className="conversation-disclosure-action" aria-hidden="true">{disclosure.expanded ? t("chat.progress.collapse") : t("chat.progress.expand")}</span><ActivityIcon kind="chevron" size={14} className={disclosure.expanded ? "open" : ""} />
     </button> : <span className="turn-progress-summary">{label}</span>}</div>
     <div className="turn-progress-divider" />
   </div>;

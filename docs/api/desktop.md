@@ -4,7 +4,7 @@
 
 本契约扩展 [Core WebSocket](core.md)，与 Runtime JSONL 和 [CLI stdio](claude-cli.md) 分开。完整请求、响应、通知和持久类型见 [areal-core-v1.json](../../schemas/areal-core-v1.json)；强类型 AReaL 请求拒绝未知字段，Codex 兼容方法保留固定版本的 wire 契约。
 
-`make desktop-schemas` 从 Rust 类型导出插件和 Hook DTO，并纳入[固定 Codex 0.162.1 插件契约](../../upstream/schemas/codex-plugins-0.162.1/methods.json)，各契约来源见[溯源记录](../../upstream/schemas/codex-plugins-0.162.1/provenance.json)。生成时要求请求与响应 schema 成对且覆盖全部广告通知；示例客户端进一步对照运行中 Core 的 capabilities 检查覆盖率。
+`make desktop-schemas` 从 Rust 类型导出插件和 Hook DTO，并纳入[固定 Codex 0.162.1 插件契约](../../upstream/schemas/codex-plugins-0.162.1/methods.json)，各契约来源见[溯源记录](../../upstream/schemas/codex-plugins-0.162.1/provenance.json)。生成时要求请求与响应 schema 成对且覆盖全部广告通知；示例客户端进一步对照运行中 Core 的 capabilities 检查覆盖率。每个方法和命名类型 schema 都可单独提取并编译。生成器保留递归定义，并将本地 `$ref` 绑定到该导出内的原始定义域；生成时拒绝无法解析的本地引用。
 
 Web/PWA Remote 使用独立的受限 [areal.remote.v2 契约](remote-control.md)，由桌面后台代理并重新检查设备授权。它不向浏览器提供本契约的通用调用入口或本地 Bearer；Remote 的设计与已实现范围分别标注。
 
@@ -90,11 +90,15 @@ thread/configure 使用 expectedRevision，仅空闲且不压缩时生效。rese
 
 `areal/thread/start` 使用 `{requestId,agentProfile:{id,revision},cwd?,model?,parameters?,dynamicTools?}` 创建按指定 Profile 冻结配置的 Thread。客户端可以用 `--agent id@revision` 传入同一引用；不需要再指定 Workflow。Profile 的 `workflow` 字段是 Agent 属性，创建 Thread 时自动启动一次并在快照 `desktop.workflowRun` 中记录 Workgroup ID 与启动状态；实时状态通过 Workgroup API 查询。相同 requestId 重试和恢复 Thread 不会重复启动；绑定 Workflow 的 Profile 只能在创建 Thread 时选择，不能通过 `thread/configure` 切换。没有 Workflow 的 Profile 不要求 Workgroup policy，仍可使用其 `toolAllowlist` 允许的工具。
 
+`areal/provider/upsert` 接受可选 `Provider.modelParameters`，以目录中的模型 ID 映射既有 `ModelParameters`。原 `models` 仍为字符串数组。未知映射键或无效参数拒绝整次更新。生成参数依次采用显式 Thread 配置、已配置模型默认、Provider 模型元数据、Provider 全局默认；上下文报告与用户预算按下文单独解析。选定的 Provider 快照保留该元数据；省略映射保持原契约。端点 `context_window` 表示默认容量，`max_context_window` 不会自动启用更大窗口。 `contextSource:"account"` 标明账号目录，其余报告默认为 `provider`。
+
+自定义模型可声明可选 `capabilities:{tools,vision,reasoning,reasoningEffortOptions?}`，经 `Provider.modelCapabilities` 按模型 ID 传入；未知模型键或无效声明拒绝更新。省略声明保留原协议行为。关闭工具后不发送工具定义，也不受理返回的工具调用；关闭视觉后拒绝图片输入；关闭推理后不发送推理参数。`reasoningEffortOptions` 为不重复的允许值子集，可选 `none/minimal/low/medium/high/xhigh/max`。空列表或省略采用原有六档，关闭推理时目录选项为空。
+
 `areal/model/list` 的每项 `parameters` 是 Core 按模型默认、Provider 默认合并的参数；`isDefault` 标识新会话的服务默认选择。显式 Profile 模型仍优先于全局默认。Composer 在发送前显示具体模型与有效思考强度，完全未设置强度时显示“供应商默认”，显式 `none` 显示“无”。“使用模型默认”只清除当前强度覆盖，不绕过模型或 Provider 已保存的默认值。新会话只保留本次未发送草稿的选择，创建成功后清除；历史使用会话当前已保存的选择，已有 Turn 快照不变。
 
 `areal/model/list` 还返回本实例的 `lastAcceptedModel`（无记录时为 null）：`{acceptedAt,model,modelId,reasoningEffort}`。`acceptedAt` 为 Core 受理时间（Unix 微秒），`model` 为供应商模型引用或隐式服务默认的 null，`modelId` 为实际模型名；`reasoningEffort=null` 与显式 `"none"` 不同。用户主会话的 `areal/turn/submit` 及显式 `areal/turn/start|enqueue` 将记录与受理收据写入同一 Thread 快照，并在响应/原收据中返回该字段。重复查询不刷新时间，后台执行不更新。桌面服务按时间汇总各项目的记录，持久保存新会话偏好；它不是已有会话配置的所有者。
 
-可选 `parameters.reasoningSummary` 接受 `auto` / `concise` / `detailed`，仅用于 Responses，按 Provider 默认 → Thread 参数合并；Provider/服务默认与 Thread 都未配置时不启用摘要请求。`areal/model/list.parameterCapabilities` 只在 Responses Provider 下包含 `reasoningSummary`，表示适配器支持传参，不保证供应商的每个模型都支持所选模式。`areal/model/list.reasoningEffortOptions` 返回现有 HTTP 适配器允许的 `none/minimal/low/medium/high/xhigh`（其他适配器为空），同样不保证远端每个模型都支持。Composer 从目录读取这些选项，通过原会话配置提交参数。事件与分段规则见 [Core 思考进度](core.md#思考进度)。
+可选 `parameters.reasoningSummary` 接受 `auto` / `concise` / `detailed`，仅用于 Responses，按 Provider 默认 → Thread 参数合并；Provider/服务默认与 Thread 都未配置时不启用摘要请求。`areal/model/list.parameterCapabilities` 只在 Responses Provider 下包含 `reasoningSummary`，表示适配器支持传参，不保证供应商的每个模型都支持所选模式。`areal/model/list.reasoningEffortOptions` 返回自定义能力声明的允许值，未声明时返回现有 HTTP 适配器允许的 `none/minimal/low/medium/high/xhigh`（其他适配器为空），同样不保证远端每个模型都支持。Composer 从目录读取这些选项，通过原会话配置提交参数。事件与分段规则见 [Core 思考进度](core.md#思考进度)。
 
 options.readOnly 收窄 Scope 写根和网络；toolAllowlist 收窄 Profile；preapprovedTools 不能取消部署强制审批，且只匹配当前工具名；预批准读取工具不会豁免它触发的 hook。maxModelRounds 为 1–1024，最后一轮仅交接，不等于团队请求预算。Profile/Workflow 定义使用不可变 id/revision；Skill 引用不冻结资源内容，见下文。
 
@@ -114,7 +118,7 @@ options.readOnly 收窄 Scope 写根和网络；toolAllowlist 收窄 Profile；p
 
 `operation` 使用原 `requestId`，状态为 `running`、`applied`、`rejected` 或 `unknown`，终态可带脱敏的 `result` 或 `error`。受理后的操作由 Core 持有，断线不取消提交。重复请求返回原结果，不重复发布配置；响应丢失先读取原请求。进程内回执有容量边界，代际改变或记录不可用不证明原请求失败，不能自动重发。客户端可核对新实例的当前就绪状态，但不能将其当成旧请求的回执。
 
-多个 Core 各自应用并确认。已知部分失败可按文件 CAS 补偿，再应用恢复产生的实际版本；未知请求未查清前不得回滚。外部写入或新任务可能阻止补偿，此时必须保留实际应用版本与待应用状态。只有所有项目确认、且权威文件仍为目标版本时，GUI 才报告保存完成。文件监听与显式应用共享已应用基线，非模型配置继续遵循安全重启边界。
+多个 Core 各自应用并确认。GUI 的供应商“保存”使用已有持久化命令，按文件 CAS 保存后即可完成；运行中的任务不阻止保存，应用失败也不撤销已经保存的修改。桌面服务在任务结束或重连后尝试应用，忙碌时每两秒核对一次；明确的非忙碌失败停止自动重试，结果未知时只查询原请求。页面区分保存和生效状态，并保留新草稿的原始 CAS 版本。备用默认模型和删除供应商继续使用严格协调操作；已知部分失败可按文件 CAS 补偿，再应用恢复产生的实际版本，未知请求未查清前不得回滚。外部写入或新任务可能阻止补偿，此时保留实际应用版本与待应用状态。文件监听与显式应用共享已应用基线，非模型配置继续遵循安全重启边界。
 
 ## Skill 元信息与资源
 
@@ -172,6 +176,10 @@ features.goals=true 表示服务支持 Goal，无需单独配置开关；Goal �
 
 Desktop owner 在副作用前保存持久回执，记录逐目标 Host requestId 与状态。整体 phase 为 acceptedPending、blocked、partial、admissionUnconfirmed、settlementIncomplete 或 completed。Desktop 停止的目标全部完成后，仅记录 desktopExit=requested；Main 核验原 Desktop 确实退出才显示完成。Main 在写入前持久保存原请求引用，不维护另一份执行权威。响应丢失或换代后读取原回执，已完成目标不重做；未知目标限制相关项目，其他项目保留可用。
 
+应用退出前的资源观察使用 `purpose="quit"`。Desktop 保留完整所属目标范围，状态读取共享 5 秒预算，断连目标不先重连。连接不可用或读取超时的目标返回 `observation="unavailable"`，不填充空闲状态或空任务列表，并要求原生确认后提交原代际的 cancel 请求。确认后再次核对目标、代际和影响，观察可用性变化也会使确认失效。登记、归属、Core 明确返回的 RPC 错误和无效结果结构仍阻止操作。连接关闭仅表示观察不可用；Host 仍独立核验原身份和清理回执。更新与资源管理保留严格观察。
+
+所有 Host 目标完成后，Desktop 等待库与配置写入并保存 `desktopExit=requested`，再关闭连接。Desktop 的 `before-quit`、SIGTERM、SIGINT 和已完成生命周期共用一个 5 秒收尾期限，覆盖连接关闭和连接元数据清理。超时记录退出原因与阶段，以非零状态退出并关闭所属生命期管道，不改写 Host 清理回执。外部退出和 owner 丢失只触发既有监督清理，不证明资源已完成结算。
+
 普通启动只连接；GUI Main 的 serviceLifecycle 入口只接受 `{operation:update|stop|check}`。check 不改变执行状态。显式 update 先结算原目标并确认原 Desktop 退出，再启动替代部署；失败保留引用。旧适配器缺少上述能力时只读观察，不探测新写入、不跨层代取消。
 
 ## Task Mode 接入
@@ -180,7 +188,7 @@ GUI 的 `tasks` 只读命令支持 `operation: list | inbox`、可选 `projectId
 
 `task/create/list/read/pause/resume/cancel/subscribe/unsubscribe`、`channel/read/reply`、`inbox/list` 构成独立于 Thread 的任务控制与通信 API，详见 [Task 契约](tasks.md)。task/updated 通知携带 Task 投影和 channelSequence；客户端通过分页频道读取维护消息。server/status 与 drain 的 activeTasks 统计需要结算的任务工作：定时任务只在 Run 排队、执行、等待输入或子任务时计入，不计仅等待下一次触发的安排；暂停后仍在运行的定时 Run 继续计入。空闲定时安排可安全重启，保留时间、启用状态和历史。GUI/TUI/WebUI 可共享同一 Inbox；现有会话交互面板仍处理同步问题和审批。
 
-可选 `parameters.contextWindowTokens`（1–2000000）声明模型容量，保存在模型默认参数与 Thread 覆盖中。`areal/model/list.contextWindowTokens` 未声明时仍为 null，`effectiveContextWindowTokens` 包含全局兜底。上下文检查增加 budget 字段 windowTokens、outputReserveTokens、inputLimitTokens、targetTokens、windowSource（model/fallback）。模型配置或凭据不可用时仍可查看上下文，budget 返回 null。这些元数据控制本地预检，不改变供应商模型容量。
+可选 `parameters.contextWindowTokens`（1–2000000）设置用户工作预算。Provider 模型元数据保留服务报告窗口，实际工作窗口取两者较小值。上下文 budget 返回 `windowTokens`、`outputReserveTokens`、`inputLimitTokens`、`windowSource`，以及可选的 `reportedWindowTokens`、`reportedWindowSource`、`userBudgetTokens`。实际来源为 `account/provider/user/modelDefault/fallback`；报告来源仅为 `account/provider`。用户预算较小时仍保留原报告来源。订阅缺少报告时使用系统兜底，不采用公开 API 型号默认值。旧记录缺少新增字段时仍可读取。模型配置或凭据不可用时仍可查看上下文，budget 返回 null。这些值控制本地预检，不扩大供应商能力。
 
 <a id="turn-fork-开发预览"></a>
 
@@ -296,6 +304,28 @@ MCP 清理失败保持 cleanupFailed，并持久保存 cleanupUnconfirmed。无�
 ## 桌面轨迹开关
 
 GUI 服务的窄命令 `trajectory` 支持 `{operation:"status"}`、`{operation:"retry"}` 和 `{operation:"setEnabled",enabled:boolean,expectedRevision:string}`。启停要求当前文件的 64 位小写 SHA-256，不接受配置路径、目的地址或认证覆盖；桌面适配器固定使用与 Core 相同的配置和凭据环境。状态读取不解密凭据，也不进入任务准入计数。启停立即应用上传控制；采集设置只在 Core 空闲、无排队任务且没有其它配置变化时，复用安全应用的 `ifIdle` 排空与重启。响应的可选 `capture_apply_pending` 和 `capture_apply_error` 分别表示等待应用及应用问题；客户端不能把它们显示为就绪开启。远端分析和归档状态不由该开关推断。
+
+## 桌面供应商连接诊断
+
+桌面 `providers` 命令的 `discover` 与 `probe` 在网络初始化或请求失败时返回固定的 `error.code` 和操作提示。
+
+| `error.code` | 诊断 |
+| --- | --- |
+| `PROVIDER_NETWORK_DNS` | 域名解析失败 |
+| `PROVIDER_NETWORK_REFUSED` | 服务或代理连接被拒绝 |
+| `PROVIDER_NETWORK_TLS` | TLS 证书验证失败 |
+| `PROVIDER_NETWORK_TIMEOUT` | 请求超时或取消 |
+| `PROVIDER_NETWORK_PROXY` | 代理设置不可用 |
+| `PROVIDER_NETWORK_REDIRECT` | 服务返回被禁止的重定向 |
+| `PROVIDER_NETWORK_UNAVAILABLE` | 其他网络或初始化失败 |
+
+诊断不包含原始异常、上游文本、地址查询参数或凭据。HTTP 401/403 继续返回认证提示，其他 HTTP 错误保留状态码；无效流式回复继续返回模型与协议提示。Responses 探测仍向已保存端点发送 `input`、`store:false` 和 `stream:true`，并要求有效文本及成功终态。
+
+模型设置的 API Key 默认依据 `credentialStates` 显示固定掩码。点击眼睛通过认证的本机桌面入口请求 `providers {operation:"revealKey",id,expectedRevision}`；后台校验供应商和当前配置版本，只返回该供应商的 `{apiKey}`，不接受凭据引用或路径。远程控制不支持此操作。查看值只在当前表单短暂显示，隐藏、切换供应商、配置版本变化或离开页面后清除；迟到响应不能恢复显示。查看不产生草稿或写入，保存只包含用户新输入的替换值，成功保存后清空。目录、状态广播和持久化回执不包含查看明文，读取失败只返回固定提示。留空保留现有凭据，输入新值替换。保存成功后按实际回执显示已保存、等待生效或已保存并应用；连接成功仍由单独的探测确认。
+
+`providers` 的 `discover` 支持尚未保存的 `connection:{protocol,baseUrl,credential}`。`credential` 可以是 `{kind:"none"}`、`{kind:"draft",value}` 或 `{kind:"saved",providerId,expectedRevision}`。已保存凭据按供应商与当前文件版本解析，草稿密钥仅用于该次请求；获取模型不写配置或凭据，原有按供应商 ID 获取的入口保留。
+
+供应商目录返回整体及各项目的 `application`，其 `kind` 为 `saved`、`applied`、`deferred`、`unknown` 或 `failed`，并携带目标 `revision`。`deferred.reason` 区分 `busy` 与 `disconnected`；`failed.message` 是脱敏错误。`pendingApply` 继续表示尚有项目未确认当前保存版本。明确失败按目标版本及服务代际保留，显式重试、新版本或新服务代际才能再次尝试。
 
 ## Desktop 后台命令兼容
 

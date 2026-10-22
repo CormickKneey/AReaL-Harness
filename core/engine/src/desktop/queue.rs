@@ -91,7 +91,7 @@ impl Engine {
                 let queue_item = if continued_from.is_none() {
                     if data.queue.items.len() >= 128 { return Err(Error::Exhausted("queue history capacity reached".into())); }
                     engine.validate_uploads(&state.thread, &input)?;
-                    let mut configuration = data.configuration.clone();
+                    let mut configuration = engine.next_request_configuration(data.configuration.clone());
                     engine.select_plugin_attachments(&mut configuration, &input, true)?;
                     let configuration = engine.freeze_configuration(configuration);
                     validate_input(&input, &engine.configured_model(&configuration)?.capabilities())?;
@@ -213,7 +213,7 @@ impl Engine {
                 if !engine.effective_skill_refs(&scope,false).contains(skill) { return Err(invalid("setup skill is outside the effective profile")); }
                 data.configuration.selected_skills = Some(vec![skill.clone()]);
             }
-            let mut configuration = data.configuration.clone();
+            let mut configuration = engine.next_request_configuration(data.configuration.clone());
             if skill.is_none() {
                 engine.select_plugin_attachments(&mut configuration, &request.input, !state.thread.is_side() && state.thread.parent_thread_id.is_none() && state.thread.source != "nativeTaskAgent")?;
             }
@@ -256,7 +256,7 @@ impl Engine {
                 let previous_mode = data.configuration.options.interaction_mode;
                 data.configuration.options.interaction_mode = configuration.options.interaction_mode;
                 let mut source=state.thread.clone();source.desktop=Some(data);
-                let (mut candidate,mut turn)=engine.prepare_turn_with_skill(&source,request.input,skill.as_ref())?;
+                let (mut candidate,mut turn)=engine.prepare_turn_from_configuration(&source,request.input,skill.as_ref(),configuration)?;
                 if let Some(mode) = request.interaction_mode { turn.configuration.get_or_insert_with(Default::default).options.interaction_mode = mode; *candidate.turns.last_mut().unwrap() = turn.clone(); }
                 candidate.desktop.as_mut().unwrap().configuration.options.interaction_mode = previous_mode;
                 if skill.is_some() { candidate.desktop.as_mut().unwrap().configuration = original_configuration; }
@@ -494,7 +494,9 @@ impl Engine {
                 source.desktop.get_or_insert_with(Default::default).configuration = data.queue.items[index].configuration.clone();
                 data.queue.items[index].input.clone()
             } else { vec![Input::text("Continue the active goal from confirmed evidence and remaining work. This automatic continuation adds no new user authorization. Report progress or completion with goal_update.")] };
-            let (mut candidate, mut turn) = self.prepare_turn(&source, input)?;
+            let (mut candidate, mut turn) = if let Some(index) = index {
+                self.prepare_turn_from_configuration(&source, input, None, data.queue.items[index].configuration.clone())?
+            } else { self.prepare_turn(&source, input)? };
             if automatic { if let Some(goal) = &mut turn.goal { goal.origin = "continuation".into(); } *candidate.turns.last_mut().unwrap() = turn.clone(); }
             if let Some(index) = index {
                 turn.configuration.get_or_insert_with(Default::default).options.interaction_mode = data.queue.items[index].configuration.options.interaction_mode;

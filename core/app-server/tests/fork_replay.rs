@@ -29,6 +29,8 @@ impl Model for ImageModel {
     }
     fn capabilities(&self) -> ModelCapabilities {
         ModelCapabilities {
+            declared: None,
+            context_window: None,
             input: vec![Modality::Text, Modality::Image],
             output: vec![Modality::Text, Modality::Image],
             context_window_tokens: None,

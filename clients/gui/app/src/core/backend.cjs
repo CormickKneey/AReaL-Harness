@@ -1,4 +1,5 @@
 'use strict';
+const diagnostics = require('./diagnostics.cjs');
 const { startupTrace } = require('./startup-timing.cjs');
 
 const { connectService } = require('./local-service.cjs');
@@ -421,9 +422,15 @@ class CoreBackend {
     project.client = null;
     previous?.close();
     project.summariesLoaded = false;
-    const client = new CoreClient({ createSocket: () => new WebSocket(project.endpoint, {
-      headers: { Authorization: `Bearer ${project.token}` }, followRedirects: false, maxPayload: 4 * 1024 * 1024,
-    }), onServerRequest: async (method, params, context) => {
+    const client = new CoreClient({ createSocket: () => {
+      const target = Object.freeze({ boundary: 'desktop-core', projectId: project.id, coreGeneration: project.service?.generation,
+        connectionGeneration: project.connectionGeneration, hostPid: project.service?.hostPid, corePid: project.service?.corePid, serviceId: project.service?.serviceId });
+      const socket = new WebSocket(project.endpoint, { headers: { Authorization: `Bearer ${project.token}` }, followRedirects: false, maxPayload: 4 * 1024 * 1024 });
+      socket.on('open', () => diagnostics.record({ type: 'socket-open', ...target }));
+      socket.on('error', error => diagnostics.record({ type: 'socket-error', ...target, code: error.code }));
+      socket.on('close', closeCode => diagnostics.record({ type: 'socket-close', ...target, closeCode }));
+      return socket;
+    }, onServerRequest: async (method, params, context) => {
       if (method === 'areal/task/prepare') {
         this.requireConnection(project, client);
         if (params.intent === 'resume') return {};
@@ -467,6 +474,9 @@ class CoreBackend {
         if (method === 'areal/mcp/app/notification') this.onMcpAppNotification?.({ projectId: project.id, ...params });
         this.analytics.observe(project.id, method, params);
         project.model.event(method, params);
+        if (method === 'areal/context/compacted' && params?.threadId) {
+          void this.openThread(project, params.threadId).catch(() => {});
+        }
         if (!isTaskDraftConfiguration(project.configurations?.[params.threadId])) this.notifications.observe(project, method, params, this.library.value);
         if (method === 'thread/started' || method === 'turn/started' || method === 'turn/completed') {
           void this.library.recordThreadActivity(project.id, params.threadId ?? params.thread?.id,
@@ -477,6 +487,7 @@ class CoreBackend {
         if (method === 'turn/started' || method === 'turn/completed') {
           void this.listThreads(project).catch(() => {});
         }
+        if (method === 'turn/completed') this.providers.requestReconciliation();
       });
       client.onClose(() => { if (project.client === client) {
         project.taskNotificationMonitor?.stop();
@@ -1039,16 +1050,24 @@ class CoreBackend {
         }
         return [...pending, entry];
       });
-      let result;
+      let result, dispatchStarted = false;
       try {
         if (this.closing) throw new Error('应用正在退出');
+        if (['areal/turn/start', 'areal/turn/enqueue', 'areal/turn/submit'].includes(method)
+          && project.configurations?.[params.threadId]?.model?.providerId === 'areal_openai'
+          && this.providers.openaiPromise) {
+          await this.providers.syncSubscription(project, await this.providers.openaiPromise);
+        }
+        dispatchStarted = true;
         result = await this.requestSubmission(project, method, params);
       }
       catch (error) {
-        if (!error.submissionUnknown) {
+        if (!dispatchStarted || !error.submissionUnknown) {
           try { await this.changePending(project, pending => pending.filter(value => value !== entry)); }
           catch { throw Object.assign(new Error('提交被拒绝，但恢复日志更新失败；请检查本机存储'), { submissionUnknown: true }); }
         }
+        if (!dispatchStarted && error.submissionUnknown)
+          throw new Error('订阅模型目录更新未确认，本条消息尚未发送。请先核对受理结果，再重试。', { cause: error });
         if (error.submissionUnknown) error.requestId = params.requestId;
         throw error;
       }

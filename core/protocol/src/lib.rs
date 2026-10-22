@@ -1,3 +1,4 @@
+pub mod context;
 pub mod delegation;
 pub mod goals;
 pub mod plugin_runtime;
@@ -447,6 +448,10 @@ pub struct Turn {
     pub goal: Option<goals::GoalTurn>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instruction_snapshot: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instruction_attribution: Option<context::InstructionAttribution>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<context::GenerationStats>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub configuration: Option<desktop::EffectiveConfig>,
     pub id: String,

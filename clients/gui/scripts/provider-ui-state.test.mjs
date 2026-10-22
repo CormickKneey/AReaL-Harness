@@ -71,6 +71,8 @@ test("service definition identity never becomes a saved connection identity", ()
     models: [{ id: "fixture-model" }],
   };
   const draft = newConnectionDraft(definition, "apiKey", "revision");
+  assert.deepEqual(draft.models[0].capabilities, { tools: true, vision: false, reasoning: true, reasoningEffortOptions: ["low", "medium", "high", "xhigh"] });
+  assert.equal(definition.models[0].capabilities, undefined, "defaults must not mutate the shared provider template");
   assert.equal(draft.id, undefined);
   assert.equal(draft.definitionId, "fixture-definition");
   assert.equal(
@@ -80,4 +82,22 @@ test("service definition identity never becomes a saved connection identity", ()
   );
   draft.models[0].id = "edited";
   assert.equal(definition.models[0].id, "fixture-model");
+});
+
+
+test("new provider models retain declared capabilities and provider/model effort defaults", () => {
+  const capabilities = { tools: true, vision: true, reasoning: true, reasoningEffortOptions: ["low", "max"] };
+  const definition = { parameters: { reasoningEffort: "max" }, models: [
+    { id: "known", capabilities, parameters: { reasoningEffort: "low" } },
+    { id: "off", capabilities: { tools: true, vision: false, reasoning: false } },
+    { id: "unknown" },
+  ] };
+  const draft = newConnectionDraft(definition, "none", "revision");
+  assert.deepEqual(draft.parameters, { reasoningEffort: "max" });
+  assert.deepEqual(draft.models[0].capabilities, capabilities);
+  assert.equal(draft.models[0].parameters.reasoningEffort, "low");
+  assert.equal(draft.models[1].capabilities.reasoning, false);
+  assert.deepEqual(draft.models[2].capabilities.reasoningEffortOptions, ["low", "medium", "high", "xhigh", "max"]);
+  assert.equal(draft.models[2].parameters?.reasoningEffort, undefined, "An inherited supplier default must not become a forced per-model override");
+  assert.equal(definition.models[2].capabilities, undefined);
 });

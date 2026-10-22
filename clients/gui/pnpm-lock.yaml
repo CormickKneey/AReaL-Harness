@@ -121,6 +121,9 @@ importers:
 
   renderer:
     dependencies:
+      '@areal/provider-config':
+        specifier: workspace:*
+        version: link:../packages/provider-config
       '@areal/workbench':
         specifier: workspace:*
         version: link:../packages/workbench
@@ -217,6 +220,9 @@ importers:
       react-dom:
         specifier: 19.2.8
         version: 19.2.8(react@19.2.8)
+      react-intl:
+        specifier: 12.1.5
+        version: 12.1.5(@types/react@19.3.0)(react@19.2.8)
       remark-breaks:
         specifier: 4.0.0
         version: 4.0.0
@@ -236,6 +242,9 @@ importers:
         specifier: 4.2.0
         version: 4.2.0
     devDependencies:
+      '@formatjs/icu-messageformat-parser':
+        specifier: 3.5.22
+        version: 3.5.22
       '@tailwindcss/typography':
         specifier: 0.5.19
         version: 0.5.19(tailwindcss@4.2.2)
@@ -801,6 +810,18 @@ packages:
 
   '@floating-ui/utils@0.2.12':
     resolution: {integrity: sha512-HpCo8tmWzLVad5s2d19EhAz5zqrrQ6s69qd6moPMQvkOuSwDT1YgRfWSVuc4ennqrgv3OHppiOGMQ7oC13yIww==}
+
+  '@formatjs/fast-memoize@3.1.7':
+    resolution: {integrity: sha512-zXfhLpvA6T7+efdt9JLbBwZ00tT7NsBMDVnDu8rpHeNNv8KfRZAMo2gkG0k9lK/Nzc//3kJ9pImsfuJxk3KhUA==}
+
+  '@formatjs/icu-messageformat-parser@3.5.22':
+    resolution: {integrity: sha512-YuwN+dDKgssfuYwtOyGQD0CSn7K46g9cv1Fp0VgKpjZDDFvv8b8crzP990IcJhRPWHhKzCGsbUSJVIguyyFA5A==}
+
+  '@formatjs/icu-skeleton-parser@2.1.12':
+    resolution: {integrity: sha512-ca7tZMLpfHX3sUD7hP6gE/qr6Iq89EDd3ZLeRhbsB7r0UD55DGJq+tmFLzrGrnx5StahUevQmQQVtbDRHsfDHA==}
+
+  '@formatjs/intl@6.1.4':
+    resolution: {integrity: sha512-udBTb6Heg/sleurLkUdPq+T9B7FvhiZ+8EyauSpqkqKPF+S5TUplO/tZmok7JC86Zk+OKhP8rIGi8bYRF9WJaA==}
 
   '@google/genai@1.52.0':
     resolution: {integrity: sha512-gwSvbpiN/17O9TbsqSsE/OzZcpv5Fo4RQjdngGgogtuB9RsyJ8ZHhX5KjHj1bp5N9snN2eK8LDGXSaWW2hof8Q==}
@@ -2736,6 +2757,9 @@ packages:
     resolution: {integrity: sha512-5Hh7Y1wQbvY5ooGgPbDaL5iYLAPzMTUrjMulskHLH6wnv/A+1q5rgEaiuqEjB+oxGXIVZs1FF+R/KPN3ZSQYYg==}
     engines: {node: '>=12'}
 
+  intl-messageformat@12.1.4:
+    resolution: {integrity: sha512-JUkmv3cAEyijN3oiRiV3ctel7yVMuUCgfh7Pu8pj1/z6L1DSEPRyhuMaLjVw3pGmGJ5RDH54WVFxfMHZWTwyHw==}
+
   ip-address@10.7.3:
     resolution: {integrity: sha512-A1kdq/tSb5QjvKvAMgIoEvDBIgL7qaqVP/jkvSwYYRZ9iEzvPpopxp2wQfu3SuZRHtpHNxMn8Fs0bS+gf5Xmwg==}
     engines: {node: '>= 12'}
@@ -3568,6 +3592,12 @@ packages:
     peerDependenciesMeta:
       '@types/react':
         optional: true
+
+  react-intl@12.1.5:
+    resolution: {integrity: sha512-nlyc4qcORgNTUmSHM9ZBoYhuK57yzPlV1oqlo7mwhHDrUDNC+wUzGZufwMjayXo7xqmQyQywAlYllaEBbbfqew==}
+    peerDependencies:
+      '@types/react': '>=18.0.0'
+      react: '>=18.0.0'
 
   react-refresh@0.18.0:
     resolution: {integrity: sha512-QgT5//D3jfjJb6Gsjxv0Slpj23ip+HtOpnNgnb2S5zU3CB26G/IDPGoy4RJB42wzFE46DRsstbW6tKHoKbhAxw==}
@@ -4931,6 +4961,20 @@ snapshots:
       tabbable: 6.5.0
 
   '@floating-ui/utils@0.2.12': {}
+
+  '@formatjs/fast-memoize@3.1.7': {}
+
+  '@formatjs/icu-messageformat-parser@3.5.22':
+    dependencies:
+      '@formatjs/icu-skeleton-parser': 2.1.12
+
+  '@formatjs/icu-skeleton-parser@2.1.12': {}
+
+  '@formatjs/intl@6.1.4':
+    dependencies:
+      '@formatjs/fast-memoize': 3.1.7
+      '@formatjs/icu-messageformat-parser': 3.5.22
+      intl-messageformat: 12.1.4
 
   '@google/genai@1.52.0':
     dependencies:
@@ -7181,6 +7225,11 @@ snapshots:
 
   internmap@2.0.3: {}
 
+  intl-messageformat@12.1.4:
+    dependencies:
+      '@formatjs/fast-memoize': 3.1.7
+      '@formatjs/icu-messageformat-parser': 3.5.22
+
   ip-address@10.7.3: {}
 
   is-alphabetical@2.0.1: {}
@@ -8228,6 +8277,14 @@ snapshots:
       react: 19.2.8
     optionalDependencies:
       '@types/react': 19.3.0
+
+  react-intl@12.1.5(@types/react@19.3.0)(react@19.2.8):
+    dependencies:
+      '@formatjs/icu-messageformat-parser': 3.5.22
+      '@formatjs/intl': 6.1.4
+      '@types/react': 19.3.0
+      intl-messageformat: 12.1.4
+      react: 19.2.8
 
   react-refresh@0.18.0: {}
 

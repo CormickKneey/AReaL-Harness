@@ -1,3 +1,8 @@
+import { runSharedWorkspace } from "./design-system-shared-workspace.mjs";
+import { runConversationExercise } from "./design-system-conversation-exercise.mjs";
+import { runConversationDemo } from "./design-system-conversation-demo.mjs";
+import { runDecisionExercise } from "./design-system-decision-exercise.mjs";
+import { runSettingsExercise, runSettingsContrast } from "./design-system-settings-exercise.mjs";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { createServer } from "node:http";
@@ -15,6 +20,14 @@ const { chromium } = require("playwright-core");
 const dist = join(gui, "dist/design-system");
 const scratch = await mkdtemp(join(tmpdir(), "areal-design-system-"));
 const baseline = process.argv.includes("--baseline");
+const conversationExercise = process.argv.includes("--conversation-exercise");
+const conversationDemo = process.argv.includes("--conversation-demo");
+const decisionExercise = process.argv.includes("--decision-exercise");
+const settingsContrast = process.argv.includes("--settings-contrast");
+const settingsExercise = process.argv.includes("--settings-exercise") || settingsContrast;
+const sharedWorkspace = process.argv.includes("--shared-workspace");
+const namedExercise = sharedWorkspace || conversationExercise || conversationDemo || decisionExercise || settingsExercise;
+const exercise = { steps: [], checks: [] };
 const settingsOnly = process.argv.includes("--settings-only");
 const html = await readFile(join(dist, "design-system.html"), "utf8");
 const buildDigest = createHash("sha256").update(html);
@@ -240,9 +253,18 @@ try {
       }
     };
   });
-  await page.goto(`${origin}/design-system.html${settingsOnly ? "?settings" : ""}`);
+  await page.goto(`${origin}/design-system.html${sharedWorkspace ? "?shared-workspace" : conversationExercise ? "?conversation-exercise" : conversationDemo ? "?conversation" : decisionExercise ? "?decision-exercise" : settingsExercise ? "?settings-exercise" : settingsOnly ? "?settings" : ""}`);
   await page.getByRole("heading", { name: "客户端设计系统", exact: true }).waitFor();
   assert.equal(await page.evaluate(() => typeof window.arealDesktop), "undefined");
+  if (namedExercise) {
+    if (sharedWorkspace) await runSharedWorkspace(page, scratch, exercise, baseline);
+    else if (conversationExercise) await runConversationExercise(page, scratch, gui, exercise);
+    else if (conversationDemo) await runConversationDemo(page, scratch, exercise.checks);
+    else if (decisionExercise) await runDecisionExercise(page, scratch, gui, exercise);
+    else if (settingsContrast) await runSettingsContrast(page, scratch, gui, exercise);
+    else await runSettingsExercise(page, scratch, gui, exercise);
+    checks.push(...exercise.checks);
+  } else {
   if (!settingsOnly) {
   const input = page.getByTestId("preview-composer");
   const timeline = page.getByRole("region", { name: "对话时间线预览", exact: true });
@@ -250,7 +272,11 @@ try {
   const reading = page.getByRole("region", { name: "活动与阅读预览", exact: true });
   const transcript = reading.locator(".messages");
   const liveTurn = reading.locator('[data-turn-id="reading-turn"]');
-  const settleLayout = () => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)))));
+  const settleLayout = () => page.evaluate(async () => {
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    await Promise.all(document.getAnimations().filter(animation => animation.playState === 'running' && Number.isFinite(animation.effect?.getComputedTiming().endTime)).map(animation => animation.finished.catch(() => {})));
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  });
   const position = control => control.evaluate(el => {
     const container = el.closest(".messages");
     return { y: el.getBoundingClientRect().top - container.getBoundingClientRect().top, top: container.scrollTop, max: container.scrollHeight - container.clientHeight };
@@ -334,6 +360,7 @@ try {
     await reading.getByLabel("活动形状", { exact: true }).selectOption(shape);
     const status = liveTurn.getByTestId("turn-activity");
     assert.equal(await status.count(), 1, `${shape} has exactly one live turn status`);
+    assert.equal(await liveTurn.getByTestId("turn-usage").count(), 0, `${shape} has no duplicate usage status`);
     assert.equal(await status.getAttribute("role"), "status");
     assert.equal(await status.evaluate(el => !!el.closest("button, summary, .turn-progress, .turn-execution")), false, `${shape} status is outside every disclosure`);
     assert.ok((await status.innerText()).startsWith(expected), `${shape} status describes the whole turn`);
@@ -353,6 +380,7 @@ try {
     await reading.getByLabel("活动状态", { exact: true }).selectOption(state);
     const status = liveTurn.getByTestId("turn-activity");
     assert.equal(await status.innerText(), expected);
+    assert.equal(await liveTurn.getByTestId("turn-usage").count(), 0, `${state} has no conflicting usage status`);
     assert.equal(await status.evaluate(el => el.getAnimations().length), 0, `${state} status does not animate`);
   }
   await reading.getByLabel("活动状态", { exact: true }).selectOption("running");
@@ -374,7 +402,7 @@ try {
   await updating.screenshot({ path: join(scratch, "retained-tool-disclosures.png"), animations: "disabled" });
   checks.push("both tool disclosure levels retain manual expansion when earlier commentary arrives, activities append and the turn completes");
   const earlier = timeline.locator('[data-side-item-id="timeline-progress"]');
-  const durationToggle = timeline.getByRole("button", { name: "用时 19秒", exact: true });
+  const durationToggle = timeline.getByRole("button", { name: "执行过程：用时 19秒", exact: true });
   assert.equal(await durationToggle.getAttribute("aria-expanded"), "false");
   assert.equal(await earlier.isVisible(), false, "completed progress starts folded under the duration heading");
   assert.ok(await durationToggle.evaluate(el => !!(el.compareDocumentPosition(document.querySelector('[data-side-item-id="timeline-progress"]')) & Node.DOCUMENT_POSITION_FOLLOWING)), "duration precedes the process content");
@@ -389,7 +417,7 @@ try {
   await timeline.getByRole("status").filter({ hasText: "预览打开：https://example.com/report" }).waitFor();
   await finalOutput.getByRole("button", { name: "打开网页 对话交互预览", exact: true }).click();
   await timeline.getByRole("status").filter({ hasText: "预览打开：http://127.0.0.1:4198/design-system.html?conversation" }).waitFor();
-  await durationToggle.click();
+  await durationToggle.click(); await settleLayout();
   assert.equal(await earlier.isVisible(), true);
   const longProgress = timeline.locator('[data-side-item-id="timeline-long-progress"]');
   const progressText = longProgress.locator(".conversation-markdown");
@@ -443,11 +471,11 @@ try {
   assert.equal(await timeline.getByLabel("合计新增 7 行，删除 7 行", { exact: true }).count(), 1);
   await timeline.getByRole("button", { name: "查看变更", exact: true }).click();
   await timeline.getByRole("status").filter({ hasText: "预览打开：本轮文件变更" }).waitFor();
-  await durationToggle.click();
+  await durationToggle.click(); await settleLayout();
   assert.equal(await earlier.isVisible(), false);
   assert.equal(await finalOutput.isVisible(), true);
   assert.equal(await fileList.isVisible(), true);
-  await durationToggle.click();
+  await durationToggle.click(); await settleLayout();
   assert.equal(await activityToggle.getAttribute("aria-expanded"), "true", "folding the duration retains the reader's tool expansion");
   await activityToggle.click();
   assert.equal(await activity.isVisible(), false);
@@ -656,6 +684,7 @@ try {
   checks.push("real approval component shows busy/failure/unknown and blocks duplicate decisions");
   }
   await settingsChecks();
+  }
   assert.deepEqual(errors, []); assert.deepEqual(external, []);
   passed = true;
 } catch (error) {
@@ -664,6 +693,6 @@ try {
   process.exitCode = 1;
 } finally {
   await browser?.close(); await new Promise(resolve => server.close(resolve));
-  await writeFile(join(scratch, "manifest.json"), JSON.stringify({ passed, baseline, settingsOnly, commit, buildSha256, checks, errors, external, samples, scope: "production renderer components with local fixture actions; no Electron/Core acceptance" }, null, 2));
+  await writeFile(join(scratch, "manifest.json"), JSON.stringify({ passed, baseline, settingsOnly, exercise, commit, buildSha256, checks, errors, external, samples, scope: "production renderer components with local fixture actions; no Electron/Core acceptance" }, null, 2));
   console.log(JSON.stringify({ passed, scratch, checks, errors }));
 }

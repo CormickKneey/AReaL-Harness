@@ -632,10 +632,31 @@ async fn screenshot_request_survives_failed_summary_then_successful_archival_and
         1,
         "HTTP 400 is not a summary validation retry"
     );
+    let mut after = serde_json::to_value(engine.read(&thread.id, true).await.unwrap()).unwrap();
+    let last = after["turns"].as_array().unwrap().len() - 1;
     assert_eq!(
-        before,
-        serde_json::to_value(engine.read(&thread.id, true).await.unwrap()).unwrap()
+        after["turns"][last]["generation"]["unmeasuredRequests"]
+            .as_u64()
+            .unwrap(),
+        before["turns"][last]["generation"]["unmeasuredRequests"]
+            .as_u64()
+            .unwrap()
+            + 1
     );
+    assert_eq!(
+        after["turns"][last]["generation"]["missingUsageRequests"]
+            .as_u64()
+            .unwrap(),
+        before["turns"][last]["generation"]["missingUsageRequests"]
+            .as_u64()
+            .unwrap()
+            + 1
+    );
+    after["turns"][last]["generation"]["unmeasuredRequests"] =
+        before["turns"][last]["generation"]["unmeasuredRequests"].clone();
+    after["turns"][last]["generation"]["missingUsageRequests"] =
+        before["turns"][last]["generation"]["missingUsageRequests"].clone();
+    assert_eq!(before, after);
     model
         .fail_summary
         .store(false, std::sync::atomic::Ordering::SeqCst);
@@ -703,10 +724,32 @@ async fn screenshot_request_survives_failed_summary_then_successful_archival_and
         model.summaries.load(std::sync::atomic::Ordering::SeqCst),
         attempts + 1
     );
+    let mut after_failure =
+        serde_json::to_value(engine.read(&thread.id, true).await.unwrap()).unwrap();
+    let last = after_failure["turns"].as_array().unwrap().len() - 1;
     assert_eq!(
-        before_failure,
-        serde_json::to_value(engine.read(&thread.id, true).await.unwrap()).unwrap()
+        after_failure["turns"][last]["generation"]["unmeasuredRequests"]
+            .as_u64()
+            .unwrap(),
+        before_failure["turns"][last]["generation"]["unmeasuredRequests"]
+            .as_u64()
+            .unwrap()
+            + 1
     );
+    assert_eq!(
+        after_failure["turns"][last]["generation"]["missingUsageRequests"]
+            .as_u64()
+            .unwrap(),
+        before_failure["turns"][last]["generation"]["missingUsageRequests"]
+            .as_u64()
+            .unwrap()
+            + 1
+    );
+    after_failure["turns"][last]["generation"]["unmeasuredRequests"] =
+        before_failure["turns"][last]["generation"]["unmeasuredRequests"].clone();
+    after_failure["turns"][last]["generation"]["missingUsageRequests"] =
+        before_failure["turns"][last]["generation"]["missingUsageRequests"].clone();
+    assert_eq!(before_failure, after_failure);
     // 模型投影不改写权威原文及其附件。
     let full = engine.read(&thread.id, true).await.unwrap();
     assert!(full.turns.iter().flat_map(|t| &t.items).any(|item| {

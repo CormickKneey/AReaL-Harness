@@ -1,3 +1,4 @@
+import { useI18n } from "../i18n/IntlProvider.js";
 import { useLayoutEffect, useRef, useState, type ComponentProps, type CSSProperties, type ReactNode } from "react";
 import { cn } from "../components/lib/utils.js";
 import { useReducedMotion } from "../settings/applicationPreferences.js";
@@ -64,6 +65,7 @@ export function NavigationSidebar({ chrome, footer, rail, railOnly = false, widt
   width?: number;
   onWidthChange?: (width: number) => void;
 }) {
+  const { t } = useI18n();
   const ref = useRef<HTMLElement>(null);
   const drag = useRef<{ x: number; width: number } | null>(null);
   const [maximum, setMaximum] = useState(520);
@@ -83,7 +85,7 @@ export function NavigationSidebar({ chrome, footer, rail, railOnly = false, widt
       {!railOnly && <div className="sidebar-content">{children}{footer != null && <div className="sidebar-footer">{footer}</div>}</div>}
     </div> : <>{children}{footer != null && <div className="sidebar-footer">{footer}</div>}</>}
     {onWidthChange && !railOnly && <div
-      role="separator" aria-label="侧栏宽度" aria-orientation="vertical"
+      role="separator" aria-label={t("common.resizeSidebar")} aria-orientation="vertical"
       aria-valuemin={240} aria-valuemax={maximum} aria-valuenow={actual}
       tabIndex={0} className="sidebar-resize"
       onPointerDown={event => {
