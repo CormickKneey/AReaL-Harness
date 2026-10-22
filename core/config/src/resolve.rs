@@ -101,6 +101,7 @@ const ENV: &[(&str, &str, &str)] = &[
         "model.repetition_penalty",
     ),
     ("AREAL_HARNESS_MODEL_MAX_RETRIES", "", "model.max_retries"),
+    ("AREAL_HARNESS_NETWORK_RETRY_MODE", "", "network.retry_mode"),
     (
         "AREAL_HARNESS_MODEL_MAX_REQUEST_BYTES",
         "",
@@ -418,6 +419,11 @@ pub(crate) fn valid(field: &str, entry: &Entry) -> Result<()> {
                 return Err(reject("context mode must be auto, manual or disabled"));
             }
         }
+        "retry_mode" => {
+            if !matches!(value.as_str(), "persistent" | "bounded") {
+                return Err(reject("retry mode must be persistent or bounded"));
+            }
+        }
         "watchdog_disable"
         | "context_compaction_enabled"
         | "responses_websocket"
@@ -670,6 +676,7 @@ pub(crate) fn load_mode(
         ("limits.max_repeated_tool_failures", "0"),
         ("limits.command_stdin_closed", "true"),
         ("limits.watchdog_disable", "false"),
+        ("network.retry_mode", "persistent"),
         ("logging.filter", "info"),
     ] {
         insert(
@@ -1106,6 +1113,10 @@ pub(crate) fn load_mode(
             values["limits.watchdog_disable"].value.as_str(),
             "1" | "true"
         ),
+        network_retry_mode: match values["network.retry_mode"].value.as_str() {
+            "bounded" => crate::NetworkRetryMode::Bounded,
+            _ => crate::NetworkRetryMode::Persistent,
+        },
         log_filter: values["logging.filter"].value.clone(),
         sources,
         warnings,

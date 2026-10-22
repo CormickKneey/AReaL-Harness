@@ -54,6 +54,7 @@ fn engine_limits(config: &ResolvedCoreConfig) -> Limits {
         max_repeated_tool_failures: config.max_repeated_tool_failures,
         command_stdin_closed: config.command_stdin_closed,
         watchdog_disable: config.watchdog_disable,
+        network_retry_mode: config.network_retry_mode,
         ..Limits::default()
     }
 }

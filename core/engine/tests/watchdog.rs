@@ -87,6 +87,67 @@ fn flaky(faults: Vec<Fault>, write_first: bool) -> Arc<Flaky> {
         history: Mutex::new(vec![]),
     })
 }
+
+#[tokio::test]
+async fn bounded_network_recovery_preserves_tools_and_usage_then_stops() {
+    for failures in [2, 6] {
+        let data = tempfile::tempdir().unwrap();
+        let model = flaky(vec![Fault::Error(ModelFailure::Transport); failures], true);
+        let writes = Arc::new(Writes::default());
+        let engine = Engine::open(
+            data.path(),
+            model.clone(),
+            Limits {
+                network_retry_mode: areal_config::NetworkRetryMode::Bounded,
+                max_completion_retries: 2,
+                ..Limits::default()
+            },
+        )
+        .unwrap();
+        let thread = engine
+            .create_with_tools(
+                "/workspace".into(),
+                vec![areal_protocol::ToolDefinition {
+                    name: "write_once".into(),
+                    description: "fixture mutation".into(),
+                    input_schema: json!({"type":"object"}),
+                    output_schema: None,
+                }],
+                writes.clone(),
+            )
+            .await
+            .unwrap();
+        engine
+            .start(&thread.id, vec![Input::text("Implement once")])
+            .await
+            .unwrap();
+        let result = settled(&engine, &thread.id).await;
+        assert_eq!(
+            result.turns[0].status,
+            if failures == 2 {
+                TurnStatus::Completed
+            } else {
+                TurnStatus::Failed
+            }
+        );
+        assert_eq!(
+            model.requests.load(Ordering::SeqCst),
+            if failures == 2 { 4 } else { 7 }
+        );
+        assert_eq!(
+            writes.0.load(Ordering::SeqCst),
+            1,
+            "accepted mutation must never be replayed"
+        );
+        assert_eq!(
+            result.turns[0].usage.as_ref().unwrap().input_tokens,
+            failures as u64 * 10
+        );
+        let history = model.history.lock().unwrap().clone();
+        assert!(history[2..].iter().all(|request| request == &history[1]));
+        engine.shutdown().await;
+    }
+}
 #[derive(Default)]
 struct Writes(AtomicUsize);
 #[async_trait]
@@ -447,46 +508,52 @@ impl Model for SummaryNetwork {
 }
 #[tokio::test]
 async fn summary_network_retries_do_not_consume_semantic_attempts_or_change_input() {
-    let data = tempfile::tempdir().unwrap();
-    let model = Arc::new(SummaryNetwork {
-        attempts: AtomicUsize::new(0),
-        requests: Mutex::new(vec![]),
-    });
-    let engine = Engine::open(
-        data.path(),
-        model.clone(),
-        Limits {
-            context_window_bytes: 2200,
-            context_recent_bytes: 256,
-            ..Limits::default()
-        },
-    )
-    .unwrap();
-    let thread = engine.create("/workspace".into()).await.unwrap();
-    for prompt in ["Original", "Continue", "Verify"] {
-        engine
-            .start(&thread.id, vec![Input::text(prompt)])
-            .await
-            .unwrap();
-        assert_eq!(
-            settled(&engine, &thread.id)
+    for mode in [
+        areal_config::NetworkRetryMode::Persistent,
+        areal_config::NetworkRetryMode::Bounded,
+    ] {
+        let data = tempfile::tempdir().unwrap();
+        let model = Arc::new(SummaryNetwork {
+            attempts: AtomicUsize::new(0),
+            requests: Mutex::new(vec![]),
+        });
+        let engine = Engine::open(
+            data.path(),
+            model.clone(),
+            Limits {
+                network_retry_mode: mode,
+                context_window_bytes: 2200,
+                context_recent_bytes: 256,
+                ..Limits::default()
+            },
+        )
+        .unwrap();
+        let thread = engine.create("/workspace".into()).await.unwrap();
+        for prompt in ["Original", "Continue", "Verify"] {
+            engine
+                .start(&thread.id, vec![Input::text(prompt)])
                 .await
-                .turns
-                .last()
-                .unwrap()
-                .status,
-            TurnStatus::Completed
-        );
+                .unwrap();
+            assert_eq!(
+                settled(&engine, &thread.id)
+                    .await
+                    .turns
+                    .last()
+                    .unwrap()
+                    .status,
+                TurnStatus::Completed
+            );
+        }
+        let result = engine.read(&thread.id, true).await.unwrap();
+        let checkpoint = result.context_checkpoint.unwrap();
+        assert!(checkpoint.summary.starts_with("Confirmed"));
+        assert_eq!(checkpoint.usage.input_tokens, 9);
+        assert_eq!(model.attempts.load(Ordering::SeqCst), 4);
+        let history = model.requests.lock().unwrap().clone();
+        assert!(history[1..].iter().all(|request| request == &history[0]));
+        drop(history);
+        engine.shutdown().await;
     }
-    let result = engine.read(&thread.id, true).await.unwrap();
-    let checkpoint = result.context_checkpoint.unwrap();
-    assert!(checkpoint.summary.starts_with("Confirmed"));
-    assert_eq!(checkpoint.usage.input_tokens, 9);
-    assert_eq!(model.attempts.load(Ordering::SeqCst), 4);
-    let history = model.requests.lock().unwrap().clone();
-    assert!(history[1..].iter().all(|request| request == &history[0]));
-    drop(history);
-    engine.shutdown().await;
 }
 
 #[tokio::test]

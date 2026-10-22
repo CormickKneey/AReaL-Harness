@@ -1093,7 +1093,7 @@ impl Engine {
                     return Err(error.context(diagnostic));
                 }
                 if let Some(delay) =
-                    watchdog::retry_delay(self.limits.watchdog_disable, &error, network_retries)
+                    watchdog::retry_delay(self.limits.watchdog_disable, self.limits.network_retry_mode, &error, network_retries)
                 {
                     network_retries = network_retries.saturating_add(1);
                     cell.emit("areal/model/watchdogRetry", json!({"threadId":snapshot.id,"turnId":snapshot.turns.last().map(|t| &t.id),"purpose":"summary","retry":network_retries,"delayMs":delay.as_millis() as u64}));
@@ -1107,6 +1107,9 @@ impl Engine {
                         _ = tokio::time::sleep(delay) => {},
                     }
                     continue;
+                }
+                if watchdog::exhausted(self.limits.network_retry_mode, &error, network_retries) {
+                    return Err(error.context(CompactionFailure("bounded Core network recovery exhausted after 5 retries")));
                 }
                 if !validation_failed {
                     return Err(error.context(CompactionFailure("summary request failed")));

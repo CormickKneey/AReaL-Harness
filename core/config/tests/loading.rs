@@ -55,7 +55,11 @@ fn grouped_configuration_keeps_explicit_budgets_and_model_window() {
     assert_eq!(c.max_output_bytes, 0);
     assert_eq!(c.max_response_tool_calls, 64);
     assert!(c.context_compaction_enabled && !c.context_auto_compaction);
-    assert!(c.watchdog_disable);
+    assert!(!c.watchdog_disable);
+    assert_eq!(
+        c.network_retry_mode,
+        areal_config::NetworkRetryMode::Bounded
+    );
     assert_eq!(c.context_target_tokens, 90000);
     assert_eq!(c.goals.max_turns, 0);
     assert_eq!(c.goals.turn_model_rounds, 0);
@@ -64,7 +68,6 @@ fn grouped_configuration_keeps_explicit_budgets_and_model_window() {
     for text in [
         "schema_version=2\n[budget]\nmax_tool_calls=2\n[limits]\nmax_tool_calls=3\n",
         "schema_version=2\n[context]\nmode='manual'\n[limits]\ncontext_compaction_enabled=false\n",
-        "schema_version=2\n[network]\nretry_mode='persistent'\n[limits]\nwatchdog_disable=false\n",
     ] {
         write(&mut i, text);
         assert_eq!(failure(&i).kind, ConfigErrorKind::Conflict);
@@ -72,6 +75,35 @@ fn grouped_configuration_keeps_explicit_budgets_and_model_window() {
 }
 fn set(i: &mut ConfigInputs, name: &str, value: &str) {
     i.env.insert(name.into(), value.into());
+}
+
+#[test]
+fn bounded_network_mode_keeps_recovery_and_explicit_disable_is_independent() {
+    let root = tempfile::tempdir().unwrap();
+    let mut i = inputs(root.path());
+    assert_eq!(
+        load_config(&i).unwrap().network_retry_mode,
+        NetworkRetryMode::Persistent
+    );
+    write(
+        &mut i,
+        "schema_version=2\n[network]\nretry_mode='bounded'\n[limits]\nwatchdog_disable=true\n",
+    );
+    let config = load_config(&i).unwrap();
+    assert_eq!(config.network_retry_mode, NetworkRetryMode::Bounded);
+    assert!(config.watchdog_disable);
+    assert_eq!(config.diagnostic(false)["network"]["retry_mode"], "bounded");
+    set(&mut i, "AREAL_HARNESS_WATCHDOG_DISABLE", "false");
+    let config = load_config(&i).unwrap();
+    assert_eq!(config.network_retry_mode, NetworkRetryMode::Bounded);
+    assert!(!config.watchdog_disable);
+    set(&mut i, "AREAL_HARNESS_NETWORK_RETRY_MODE", "persistent");
+    assert_eq!(
+        load_config(&i).unwrap().network_retry_mode,
+        NetworkRetryMode::Persistent
+    );
+    set(&mut i, "AREAL_HARNESS_NETWORK_RETRY_MODE", "invalid");
+    assert_eq!(failure(&i).field, "network.retry_mode");
 }
 fn write(i: &mut ConfigInputs, text: &str) {
     let path = i.cwd.join("config.toml");

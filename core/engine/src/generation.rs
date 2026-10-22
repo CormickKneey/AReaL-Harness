@@ -1119,6 +1119,7 @@ impl Engine {
                             }
                             if let Some(delay) = watchdog::retry_delay(
                                 self.limits.watchdog_disable,
+                                self.limits.network_retry_mode,
                                 &error,
                                 network_retries,
                             ) {
@@ -1149,6 +1150,15 @@ impl Engine {
                                     _ = tokio::time::sleep(delay) => {},
                                 }
                                 continue 'request;
+                            }
+                            if watchdog::exhausted(
+                                self.limits.network_retry_mode,
+                                &error,
+                                network_retries,
+                            ) {
+                                return Err(error.context(
+                                    "bounded Core network recovery exhausted after 5 retries",
+                                ));
                             }
                             if self
                                 .recover_completion(

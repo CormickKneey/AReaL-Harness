@@ -153,13 +153,18 @@ endpoint 是完整 HTTP(S) 请求 URL；Core 只支持 `chat-completions` / `res
 
 网络 watchdog 默认启用，网络错误没有重试次数上限。设置 `AREAL_HARNESS_WATCHDOG_DISABLE=1` 关闭，删除该变量或设为 `0` 恢复默认；也接受 `true`/`false`，对应 TOML `limits.watchdog_disable`。环境变量覆盖 TOML。watchdog 覆盖连接/传输失败、请求与流空闲超时、提前断流、HTTP 408/429/5xx，以及 SSE 明确报告的限流/服务不可用。求解、子 Agent 与上下文摘要采用同一策略，250 ms 指数退避、最长 30 秒；取消、显式 Goal/研究 worker 时间预算及显式 Workgroup 实际请求预算仍有效。401/403、无效请求、额度不足、长度上限和空回复不进入无限重试。
 
+求解和摘要的 HTTP 请求共用 Engine 与共享模型池容量；外层恢复和 HTTP 内部重试均先释放失败请求的全部许可，再退避、排队并重新计入请求额度。退避不计入模型池活动占用，活跃流仍持有许可。已准入但在取消时未观察到最终用量的尝试保持 UNKNOWN，不假设为零。`network.retry_mode="bounded"` 对每个当前求解或摘要请求最多执行五次 Core 网络恢复，再报告失败；`persistent` 仍保留持续恢复。五次额度耗尽后不借 `max_completion_retries` 继续网络重放；接受完整响应后新的逻辑请求重新计数。HTTP `model.max_retries` 仍独立存在，所有实际准入都参与原请求/任务预算。未知用量和已执行工具不因恢复而清零或重放。本地部署可以显式选择 bounded；这不宣称其在所有可用性条件下优于 persistent。
+
+`bounded` 不再等价于 `limits.watchdog_disable=true`：前者有限恢复断流和暂时网络失败，后者保留显式关闭 Core 网络恢复的旧语义。两者可以分别配置；关闭开关优先，环境变量 `AREAL_HARNESS_WATCHDOG_DISABLE=0` 恢复所选模式，而 `AREAL_HARNESS_NETWORK_RETRY_MODE` 可覆盖模式。默认仍为 persistent。持续模式和有限模式都在退避前释放求解/摘要容量，取消、Goal 未知用量及未结算工具仍禁止自动重放；次数上限不等于整个任务的墙钟期限。
+
+
 Goal 的共享预算与未知用量约束优先于重试配置。Goal 请求禁用 HTTP 内部重试；失败或超时产生未知消费时保留预算预留并停止自动推进，watchdog 与有限重试额度均不能绕过此限制。
 
 `limits.max_completion_retries` 默认为 0、范围 0–8，是每 Turn 的有限未完成响应恢复额度，与 HTTP `max_retries` 和网络 watchdog 分开；关闭 watchdog 不关闭已有的有限重试。恢复条件与审计见 [Core API](../api/core.md#recovery)。HTTPS 使用公开根证书和宿主系统信任库；私有 CA 应安装到信任库。工具调用仅来自协议结构化字段，正文中的 XML/JSON 不作为调用执行。
 
 `resources.max_tool_buffer_bytes` 默认 4 MiB，约束每个响应缓冲的工具 id、name、arguments；单调用参数仍最多 64 KiB。`resources.max_response_tool_calls` 默认 128，有效值取该保护与显式 Turn 剩余调用预算的较小者。`resources.max_response_bytes` 默认 4 MiB，约束单响应的文本、推理、provider context 和模型二进制输出。这些保护独立于累计执行预算。Chat/Responses 共用工具缓冲检查，重复的 Responses 终态条目不重复计数。新增环境变量后缀为 `MAX_RESPONSE_TOOL_CALLS`、`MAX_RESPONSE_BYTES`、`CONTEXT_MODE`、`CONTEXT_RECENT_TOKENS`、`CONTEXT_TARGET_TOKENS`、`MODEL_CONTEXT_WINDOW_TOKENS`；旧环境变量保留。
 
-`[budget]` 中 `max_tool_calls`、`max_output_bytes`、`max_history_bytes` 默认 0（无限）；正数分别显式限制每 Turn 调用数/累计输出和每 Thread 存储历史，压缩不会重置这些预算。历史计入热快照和引用的冷分段。旧配置中的显式有限值保持原意，两个 schema 版本中省略字段均采用新的无限默认。资源容量仍需正数，子任务数/深度可为 0。`max_threads=20000` 是部署会话容量，不是单会话长度预算。空闲超时用于检测停滞请求，不是整个任务的运行时长。`[network] retry_mode` 默认 persistent，也可为 bounded（对应关闭旧 watchdog）。`config show` 展示新分组并保留旧 `limits` 诊断对象；来源键仍使用归一化的旧名称。
+`[budget]` 中 `max_tool_calls`、`max_output_bytes`、`max_history_bytes` 默认 0（无限）；正数分别显式限制每 Turn 调用数/累计输出和每 Thread 存储历史，压缩不会重置这些预算。历史计入热快照和引用的冷分段。旧配置中的显式有限值保持原意，两个 schema 版本中省略字段均采用新的无限默认。资源容量仍需正数，子任务数/深度可为 0。`max_threads=20000` 是部署会话容量，不是单会话长度预算。空闲超时用于检测停滞请求，不是整个任务的运行时长。`[network] retry_mode` 默认 persistent，也可为 bounded（当前请求最多五次 Core 网络恢复）。`config show` 展示新分组并保留旧 `limits` 诊断对象；旧别名来源键继续归一化，`network.retry_mode` 保留独立来源。
 
 | 环境变量（前缀 `AREAL_HARNESS_`） | 对应配置 |
 |---|---|
@@ -170,6 +175,7 @@ Goal 的共享预算与未知用量约束优先于重试配置。Goal 请求禁�
 | `LISTEN`, `DATA_DIR`, `TOOL_EXTENSIONS`, `LOG_FILTER` | server、扩展文件与日志 |
 | `MODEL_CONCURRENCY`, `MAX_THREADS`, `MAX_ACTIVE_TURNS`, `MAX_CHILDREN_PER_TURN`, `MAX_AGENT_DEPTH` | 并发与任务容量 |
 | `STREAM_IDLE_TIMEOUT_SECONDS` | 时限 |
+| `NETWORK_RETRY_MODE` | `network.retry_mode`；persistent 或 bounded，默认 persistent |
 | `WATCHDOG_DISABLE` | `limits.watchdog_disable`；`1` 关闭，默认 `0` |
 | `MAX_HISTORY_BYTES`, `MAX_OUTPUT_BYTES`, `MAX_TOOL_CALLS`, `MAX_TOOL_BUFFER_BYTES`, `CONTEXT_WINDOW_BYTES`, `CONTEXT_RECENT_BYTES` | 历史、工具与上下文预算 |
 
@@ -520,5 +526,3 @@ hooks = [{ type = "command", command = "python3 /absolute/path/hook.py", timeout
 ```
 
 有效来源、显式审阅、执行与剩余限制见 [插件指南](plugins.md)。
-
-求解和摘要的 HTTP 请求共用 Engine 与共享模型池容量；外层恢复和 HTTP 内部重试均先释放失败请求的全部许可，再退避、排队并重新计入请求额度。退避不计入模型池活动占用，活跃流仍持有许可。已准入但在取消时未观察到最终用量的尝试保持 UNKNOWN，不假设为零。`network.retry_mode="bounded"` 关闭 Core 的持续恢复，仍保留既有有限 HTTP/响应恢复；`persistent` 仍可显式保留长期恢复。未知用量和已执行工具不因恢复而清零或重放。本地部署可以显式选择 bounded；这不宣称其在所有可用性条件下优于 persistent。

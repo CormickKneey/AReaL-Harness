@@ -81,6 +81,24 @@ pub enum InspectionPermissions {
     Inherit,
 }
 
+/// 持续恢复与有限恢复分开；显式 watchdog_disable 仍可完全关闭 Core 恢复。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NetworkRetryMode {
+    #[default]
+    Persistent,
+    Bounded,
+}
+
+impl NetworkRetryMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Persistent => "persistent",
+            Self::Bounded => "bounded",
+        }
+    }
+}
+
 impl InspectionPermissions {
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -293,6 +311,7 @@ pub struct ResolvedCoreConfig {
     pub max_empty_completion_retries: usize,
     pub max_completion_retries: usize,
     pub watchdog_disable: bool,
+    pub network_retry_mode: NetworkRetryMode,
     pub log_filter: String,
     pub sources: BTreeMap<String, ConfigSource>,
     pub warnings: Vec<String>,
@@ -337,7 +356,7 @@ impl ResolvedCoreConfig {
                 "max_output_tokens": self.model.max_output_tokens, "context_window_tokens": self.model.context_window_tokens, "max_request_bytes": self.model.max_request_bytes, "max_retries": self.model.max_retries },
             "budget": {"max_history_bytes":self.max_history_bytes,"max_output_bytes":self.max_output_bytes,"max_tool_calls":self.max_tool_calls},
             "resources": {"model_concurrency":self.model_concurrency,"max_threads":self.max_threads,"max_active_turns":self.max_active_turns,"max_children_per_turn":self.max_children_per_turn,"max_agent_depth":self.max_agent_depth,"max_response_tool_calls":self.max_response_tool_calls,"max_response_bytes":self.max_response_bytes,"max_tool_buffer_bytes":self.max_tool_buffer_bytes},
-            "network": {"stream_idle_timeout_seconds":self.stream_idle_timeout_seconds,"retry_mode":if self.watchdog_disable {"bounded"} else {"persistent"}},
+            "network": {"stream_idle_timeout_seconds":self.stream_idle_timeout_seconds,"retry_mode":self.network_retry_mode.as_str()},
             "context": {"mode":if !self.context_compaction_enabled {"disabled"} else if self.context_auto_compaction {"auto"} else {"manual"},"recent_tokens":self.context_recent_tokens,"target_tokens":self.context_target_tokens,"output_reserve_tokens":self.context_output_reserve_tokens},
             "limits": { "max_active_turns": self.max_active_turns, "max_side_turns_per_source": self.max_side_turns_per_source, "max_side_turns_per_deployment": self.max_side_turns_per_deployment, "max_side_model_rounds": self.max_side_model_rounds, "max_side_tool_calls": self.max_side_tool_calls, "max_side_turn_seconds": self.max_side_turn_seconds, "max_children_per_turn": self.max_children_per_turn, "max_agent_depth": self.max_agent_depth, "model_concurrency": self.model_concurrency, "max_threads": self.max_threads,
                 "stream_idle_timeout_seconds": self.stream_idle_timeout_seconds,

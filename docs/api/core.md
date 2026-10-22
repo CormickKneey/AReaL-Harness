@@ -113,6 +113,9 @@ Responses 摘要通过可选 `reasoning_summary` / `reasoningSummary` 显式开�
 
 `Limits.watchdog_disable` 默认 false，Core 对已分类的网络故障无限次重试当前模型请求，包含传输错误、HTTP 408/429/5xx、提前断流、请求/流空闲超时与明确的 SSE 限流/不可用；不把长度、空回复、鉴权、额度或参数错误当成网络故障。启动配置与关闭方式见[配置指南](../guides/configuration.md)。主 Agent、子 Agent 与独立 Workgroup Engine 继承宿主开关；嵌入式调用方显式传入 Limits，Engine 不读取进程环境。Rust `Limits`、`NativeFactory` 和 `NativeExecutor` 新增 `watchdog_disable` 字段，显式结构体初始化需同步更新；`Limits::default()` 与 `NativeExecutor::new()` 默认启用。
 
+`Limits.network_retry_mode` 新增 `areal_config::NetworkRetryMode`，默认 `Persistent`；`Bounded` 对当前求解和摘要请求最多恢复五次，不改已确认工具和用量。显式 `watchdog_disable=true` 仍关闭网络 watchdog。子 Engine 通过宿主 Limits 继承该模式；Rust 显式构造 Limits 的调用方需增加字段或使用默认展开。公开通知形状与持久化状态版本不变。
+
+
 隔离 worker 的模型失败状态只保留当前调用的结果；Engine 已恢复的旧网络错误不能在最终成功后触发新一代执行。恢复请求仍完整计量，历史 UNKNOWN 不会因恢复成功而清零。
 
 watchdog 保留同一请求的 messages、tools、采样参数与模型轮次，不消耗 `max_completion_retries`；重试不会再次预留 Agent 逻辑请求额度，Workgroup 仍计入每次实际请求及部署预算。250 ms 指数退避封顶 30 秒，释放失败流持有的共享模型许可后等待；取消与显式任务预算仍能结束等待，求解请求还响应 steer。Core 审计并丢弃失败响应的文本、上下文与未执行工具调用，恢复该响应占用的输出字节额度，保留此前已执行工具和已观测 usage。发布 `areal/model/completionDiscarded`（新增 `retryKind=network|completion`）及 `areal/model/watchdogRetry {threadId,turnId,purpose:solve|summary,retry,delayMs}`。这里的丢弃不回滚已执行工具，也不重启整个 Turn。 这两个事件也包含在 `areal/capabilities.notifications` 与公开 JSON Schema 中；摘要重试的 `turnId` 可为 null。
