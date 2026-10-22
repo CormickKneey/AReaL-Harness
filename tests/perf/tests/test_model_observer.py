@@ -81,29 +81,29 @@ class ObserverTests(unittest.TestCase):
     def test_partial_usage_is_not_zero_and_overlapping_time_is_not_double_counted(self):
         reader = observer.UsageReader(True)
         reader.feed(
-            b'data: {"type":"message_start","message":{"usage":{"input_tokens":3,"cache_read_input_tokens":4,"cache_creation_input_tokens":2}}}\n'
+            b'data: {"type":"message_start","message":{"usage":{"input_tokens":3,"cache_read_input_tokens":4,"cache_creation_input_tokens":2}}}\n\n'
         )
         self.assertEqual(reader.usage, {"input_tokens": 9, "cached_input_tokens": 4})
-        reader.feed(b'data: {"type":"message_delta","usage":{"output_tokens":7}}\n')
+        reader.feed(b'data: {"type":"message_delta","usage":{"output_tokens":7}}\n\n')
         self.assertEqual(reader.usage["output_tokens"], 7)
         self.assertEqual(observer.union_ms([[2, 8], [3, 4], [7, 11], [15, 18]]), 12)
 
     def test_anthropic_nullable_deltas_preserve_input_components(self):
         reader = observer.UsageReader(True)
         reader.feed(
-            b'data: {"type":"message_start","message":{"usage":{"input_tokens":3,"cache_read_input_tokens":4,"cache_creation_input_tokens":2}}}\n'
+            b'data: {"type":"message_start","message":{"usage":{"input_tokens":3,"cache_read_input_tokens":4,"cache_creation_input_tokens":2}}}\n\n'
         )
         reader.feed(
-            b'data: {"type":"message_delta","usage":{"input_tokens":5,"output_tokens":7,"cache_read_input_tokens":null,"cache_creation_input_tokens":null}}\n'
+            b'data: {"type":"message_delta","usage":{"input_tokens":5,"output_tokens":7,"cache_read_input_tokens":null,"cache_creation_input_tokens":null}}\n\n'
         )
         self.assertEqual(
             reader.usage,
             {"input_tokens": 11, "output_tokens": 7, "cached_input_tokens": 4},
         )
         reader.feed(
-            b'data: {"type":"message_delta","usage":{"input_tokens":null,"output_tokens":8,"cache_read_input_tokens":null,"cache_creation_input_tokens":null}}\n'
+            b'data: {"type":"message_delta","usage":{"input_tokens":null,"output_tokens":8,"cache_read_input_tokens":null,"cache_creation_input_tokens":null}}\n\n'
         )
-        reader.feed(b'data: {"type":"message_stop"}\n')
+        reader.feed(b'data: {"type":"message_stop"}\n\n')
         self.assertEqual(
             reader.usage,
             {"input_tokens": 11, "output_tokens": 8, "cached_input_tokens": 4},
@@ -114,12 +114,12 @@ class ObserverTests(unittest.TestCase):
     def test_anthropic_partial_or_invalid_counters_do_not_invent_input_usage(self):
         reader = observer.UsageReader(True)
         reader.feed(
-            b'data: {"type":"message_delta","usage":{"input_tokens":null,"output_tokens":7,"cache_read_input_tokens":4,"cache_creation_input_tokens":null}}\n'
+            b'data: {"type":"message_delta","usage":{"input_tokens":null,"output_tokens":7,"cache_read_input_tokens":4,"cache_creation_input_tokens":null}}\n\n'
         )
         self.assertNotIn("input_tokens", reader.usage)
         self.assertEqual(reader.usage["output_tokens"], 7)
         reader.feed(
-            b'data: {"type":"message_delta","usage":{"input_tokens":3,"cache_read_input_tokens":true}}\n'
+            b'data: {"type":"message_delta","usage":{"input_tokens":3,"cache_read_input_tokens":true}}\n\n'
         )
         self.assertEqual(reader.parse_errors, 1)
 
@@ -186,12 +186,12 @@ class ObserverTests(unittest.TestCase):
 class ObservationFailureTests(unittest.TestCase):
     def test_metrics_parser_does_not_interrupt_forwarding_on_malformed_usage(self):
         reader = observer.UsageReader(True)
-        reader.feed(b'data: {"choices":null,"usage":{"input_tokens":12}}\n')
-        reader.feed(b'data: {"usage":{"prompt_tokens":2,"prompt_tokens_details":null}}\n')
-        reader.feed(b"data: [DONE]\n")
+        reader.feed(b'data: {"choices":null,"usage":{"input_tokens":12}}\n\n')
+        reader.feed(b'data: {"usage":{"prompt_tokens":2,"prompt_tokens_details":null}}\n\n')
+        reader.feed(b"data: [DONE]\n\n")
         self.assertEqual(reader.parse_errors, 2)
         reader.feed(
-            b'data: {"type":"response.completed","response":{"usage":{"input_tokens":9,"output_tokens":3}}}\n'
+            b'data: {"type":"response.completed","response":{"usage":{"input_tokens":9,"output_tokens":3}}}\n\n'
         )
         self.assertTrue(reader.terminal)
         self.assertEqual(reader.usage, {"input_tokens": 9, "output_tokens": 3})
