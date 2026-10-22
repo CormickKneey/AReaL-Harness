@@ -225,15 +225,15 @@ fn walk(
             layer,
         );
     }
-    if names.as_slice() == ["network", "retry_mode"] {
-        if !matches!(item.as_str(), Some("persistent" | "bounded")) {
-            return Err(error(
-                Kind::InvalidValue,
-                &key,
-                &at,
-                "retry mode must be persistent or bounded",
-            ));
-        }
+    if names.as_slice() == ["network", "retry_mode"]
+        && !matches!(item.as_str(), Some("persistent" | "bounded"))
+    {
+        return Err(error(
+            Kind::InvalidValue,
+            &key,
+            &at,
+            "retry mode must be persistent or bounded",
+        ));
     }
     // 扩展目录字段由共享模型配置所有者做结构和语义校验。
     if matches!(
