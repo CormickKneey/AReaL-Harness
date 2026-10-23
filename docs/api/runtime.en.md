@@ -68,7 +68,7 @@ The native backend selects admission, command sandbox and syscall policy from th
 | scope.createParticipant | `{authorityScopeId,scope,participation}` |
 | scope.get / revoke / waitClosed | `{scopeId}` |
 | owner.revoke | `{pluginInstanceId}` |
-| process.start | `{operationId,scopeId,argv,cwd,env?,tty?,pipeStdin?,limits?}` |
+| process.start / startQueued | `{operationId,scopeId,argv,cwd,env?,tty?,pipeStdin?,limits?}` |
 | process.get / terminate / wait | `{processId}` |
 | process.write | `{operationId,processId,dataBase64}` |
 | process.resize / closeStdin | `{operationId,processId,cols,rows}` / `{operationId,processId}` |
@@ -92,6 +92,8 @@ With `fullAccess=true`, `workspace://host[/absolute-path-without-leading-slash]`
 Side-effecting methods use `${runtimeEpoch}:op:${UUID}` operationId. Identical keys and normalized request digests share the same operation; changed digests return CONFLICT. Records remain through the epoch and exhaustion rejects new operations. Old epochs return STALE_HANDLE. Successful process start means a handle was obtained, not command success. Lost responses never justify replay with a new key.
 
 Defaults are 30 seconds per process, 8 MiB cumulative descendant output and 4 concurrent processes per Scope, with 256 Scopes/4096 operations retained per connection. Deadlines include write-path queuing and startup. Process quota remains until cleanup. Deployment may configure limits; children can only narrow them.
+
+`fs.execute` helper processes and explicit `process.startQueued` wait when an ancestor has no free process slots. Waiting counts against the original process deadline; capacity checks and reservations are atomic and never raise the concurrency limit. An epoch-local operation receipt is retained before waiting. Duplicate IDs share the same wait and result; Scope revocation ends the wait. Exhausted cumulative output, permissions, or operation-record capacity still reject immediately, without replaying effects. `process.start` retains immediate admission or rejection. Core negotiates queued starts for short file reads and searches; older Runtimes retain the original entry point without retry after failure.
 
 The Runtime daemon accepts `--cumulative-output-bytes` to set cumulative deployment/descendant-Scope output independently. Omitted values equal `--output-bytes` and explicit values cannot be smaller than the per-process cap. Each process remains bounded by `--output-bytes`; retained windows are separately bounded by `--output-window-bytes`. Accepted stdout/stderr bytes are charged once to each ancestor; rereading retained output does not charge again. File-helper JSON/base64 responses are process output too.
 

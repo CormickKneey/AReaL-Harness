@@ -129,6 +129,8 @@ read_process 省略 after 接续本 Turn 最近返回的游标，显式 null 从
 
 ## Task 通信与后台 worker
 
+普通交互聊天的 `ask_user_question` 仅展示 `mode=wait`；`mode=async` 需要当前 Task/Goal 的持久频道，不会隐式创建 Task 或改成阻塞等待。
+
 Goal/Task 中 ask_user_question 支持 mode=async；提问持久写入独立频道并立即返回，模型可继续其他工作。task_channel_read 查看消息，task_wait 在无其他工作时释放协调 Turn，task_spawn 创建跨协调 Turn 存活、共享 Goal 预算的 worker。普通 agent_spawn 仍属于父 Turn。headless 不等待用户或人工审批，但可等待 worker。参数、权限和生命周期见 [Task 契约](../api/tasks.md)。
 
 ### 验证回收与 Goal 收尾

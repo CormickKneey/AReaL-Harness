@@ -24,7 +24,6 @@ async function fixture(handle, capabilities = {}) {
           rootScopeId: "root",
           connectionId: "connection",
           capabilities: {
-            ...capabilities,
             methods: [
               "connection.close",
               "process.start",
@@ -36,6 +35,7 @@ async function fixture(handle, capabilities = {}) {
               "fs.execute",
               "process.write",
             ],
+            ...capabilities,
           },
         });
       else if (request.method === "connection.close") reply(request.id, { closed: true });
@@ -299,4 +299,33 @@ test("file and input mutations preserve caller operation IDs and gate unsupporte
   assert.equal(f.requests.at(-1).params.operationId, "fixed-input-id");
   await assert.rejects(f.client.owners.revoke("owner"), (error) => error.code === "UNSUPPORTED");
   await f.client.close();
+});
+
+test("queued starts negotiate before submission and never retry a rejected start", async () => {
+  for (const supported of [false, true]) {
+    const method = supported ? "process.startQueued" : "process.start";
+    const f = await fixture(
+      (request) => {
+        assert.equal(request.method, method);
+        f.read.write(
+          JSON.stringify({
+            id: request.id,
+            error: { code: "RESOURCE_EXHAUSTED", message: "fixture" },
+          }) + "\n",
+        );
+      },
+      { methods: ["connection.close", method] },
+    );
+    await assert.rejects(
+      f.client.processes.startQueued({
+        operationId: "queued",
+        scopeId: "root",
+        argv: ["fixture"],
+        cwd: "workspace://repo",
+      }),
+      { code: "RESOURCE_EXHAUSTED" },
+    );
+    assert.equal(f.requests.filter((request) => request.method !== "connection.open").length, 1);
+    await f.client.close();
+  }
 });

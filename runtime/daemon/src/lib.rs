@@ -394,8 +394,15 @@ fn immediate(runtime: &Supervisor, method: &str, params: Value) -> Option<Result
         "operation.get" => parse::<OperationId>(params)
             .and_then(|p| runtime.operation(&p.operation_id))
             .map(|v| json!(v)),
-        "process.start" | "process.write" | "process.resize" | "process.closeStdin"
-        | "scope.waitClosed" | "process.wait" | "output.read" | "fs.execute" => {
+        "process.start"
+        | "process.startQueued"
+        | "process.write"
+        | "process.resize"
+        | "process.closeStdin"
+        | "scope.waitClosed"
+        | "process.wait"
+        | "output.read"
+        | "fs.execute" => {
             return None;
         }
         _ => Err(Error::new(
@@ -411,6 +418,7 @@ async fn dispatch(runtime: Arc<Supervisor>, method: &str, params: Value) -> Resu
         "process.resize" => runtime.resize(parse(params)?).await,
         "process.closeStdin" => runtime.close_stdin(parse(params)?).await,
         "process.start" => Ok(json!(runtime.start(parse(params)?).await?)),
+        "process.startQueued" => Ok(json!(runtime.start_queued(parse(params)?).await?)),
         "scope.waitClosed" => Ok(json!(
             runtime
                 .wait_closed(&parse::<ScopeId>(params)?.scope_id)

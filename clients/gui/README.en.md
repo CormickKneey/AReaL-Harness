@@ -170,6 +170,8 @@ For an existing subscription account, the status check starts after the local re
 
 Validated local HTTP service probes skip unused TLS root loading. Remote HTTPS certificate verification is unchanged.
 
+Constructing and closing a subscription network adapter does not read system certificates. The first actual request creates the TLS/proxy transport, retaining default and system roots with certificate and hostname verification. Offline metadata reads and tests therefore do not exit from premature macOS Keychain access. Actual requests that need system roots remain subject to execution-environment permissions.
+
 Project connection reads the local model catalog after configuration receipts and credentials are checked. Background subscription synchronization publishes its models separately. Core reuses one HTTP client within each catalog request and validates each model's credentials, endpoint, and parameters. Later catalog requests and execution-model constructors create independent clients. The factory stores only the current request's client, with no catalog, model, or credential cache.
 
 The development profile used by `make build` optimizes only the `sha2` dependency to reduce the cost of checking large debug binaries during service startup. Core and Runtime still hash complete file contents on each check. Path or modification-time caches do not replace content fingerprints. Application code retains development debugging behavior, and the release profile is unchanged.

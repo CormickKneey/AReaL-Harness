@@ -68,7 +68,7 @@ Rust Client 的 `launch_with_limits` 投影可信 PATH 并向 Runtime 传递上�
 | scope.createParticipant | `{authorityScopeId,scope,participation}` |
 | scope.get / revoke / waitClosed | `{scopeId}` |
 | owner.revoke | `{pluginInstanceId}` |
-| process.start | `{operationId,scopeId,argv,cwd,env?,tty?,pipeStdin?,limits?}` |
+| process.start / startQueued | `{operationId,scopeId,argv,cwd,env?,tty?,pipeStdin?,limits?}` |
 | process.get / terminate / wait | `{processId}` |
 | process.write | `{operationId,processId,dataBase64}` |
 | process.resize / closeStdin | `{operationId,processId,cols,rows}` / `{operationId,processId}` |
@@ -92,6 +92,8 @@ Rust Client 的 `launch_with_limits` 投影可信 PATH 并向 Runtime 传递上�
 有副作用的方法使用 `${runtimeEpoch}:op:${UUID}` operationId。相同键和规范请求摘要共享同次操作，不同摘要 CONFLICT。记录保留至 epoch 结束，容量满拒绝；旧 epoch 为 STALE_HANDLE。进程 start 的 succeeded 仅表示获得句柄，不表示命令成功；丢失响应不能换新键重放。
 
 默认每进程期限 30 秒，整个 Scope 后代累计 8 MiB 输出、4 个并发进程；连接保留 256 Scope/4096 操作。期限含写路径排队和启动，清理前不释放进程额度。部署可以配置，子 Scope 只能收窄。
+
+`fs.execute` 的内部文件进程和显式 `process.startQueued` 在祖先并发名额耗尽时等待释放；排队计入原进程期限，预留名额与检查在同一临界区完成，不提高并发上限。等待前登记并保留本 epoch 的操作回执；重复 ID 复用同一等待与结果，撤销 Scope 会终止等待。累计输出、权限或操作记录容量耗尽仍立即拒绝，不重试已有副作用。`process.start` 保持立即准入或拒绝的行为。Core 的短文件读取与搜索协商使用排队入口；旧 Runtime 未公布该方法时仍使用原入口，不在失败后重放。
 
 Runtime daemon 可用 `--cumulative-output-bytes` 独立设置部署及 Scope 后代累计输出上限；省略时等于 `--output-bytes`，且不得小于单进程上限。进程仍受 `--output-bytes` 限制，输出窗口另由 `--output-window-bytes` 约束。stdout/stderr 的真实接受字节对每个祖先累计一次；重复读取保留输出不再收费。文件助手的 JSON/base64 响应也是进程输出。
 

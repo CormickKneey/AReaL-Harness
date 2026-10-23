@@ -35,6 +35,8 @@ make build
 
 macOS 的 `make build/release` 还按 SHA-256 锁定的源码和补丁构建独立 Bash，并缓存到 `target/runtime-shell`、复制到 `target/<profile>/shells`；首次构建需要网络、C 编译器和 Python 3.11+（支持 tar 数据过滤器的补丁版本）。仅运行 `cargo build` 不生成这部分完整 Runtime 资源。运行任务时不下载 shell，不替换系统程序。该独立组件保留 GPL-3.0-or-later 许可证与完整对应源码，项目 Rust 代码继续采用 Apache-2.0；见[发行要求](releasing.md)。
 
+`python3 scripts/tool-capacity-smoke.py --report /tmp/tool-capacity.json` 用真实原生 Runtime 在两个后台进程占满名额后提交 16 个文件操作，并检查受限 Node 创建/关闭订阅适配器。先运行 `make build` 和 `make gui-install`。`node scripts/permission-presets-smoke.mjs` 同时覆盖带 `AGENTS.md` 的审批隔离，以及同一 Turn 的并发 `read_file`/`search_files`。均为确定性机制回归，不代表整体 Agent 收益。
+
 ## 验证入口
 
 | 修改范围 | 命令 |

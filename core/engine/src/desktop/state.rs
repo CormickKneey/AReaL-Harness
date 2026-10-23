@@ -1152,6 +1152,20 @@ impl Engine {
                 }
             }
         }
+        if !goal_enabled {
+            for definition in &mut definitions {
+                if definition["function"]["name"] == "ask_user_question"
+                    && bindings
+                        .registry
+                        .get("ask_user_question")
+                        .is_ok_and(|entry| matches!(entry.backend, crate::tools::Backend::Core))
+                {
+                    // 普通会话没有持久 Task 通道，不向模型声明无法履行的异步契约。
+                    definition["function"]["parameters"]["properties"]["mode"]["enum"] =
+                        json!(["wait"]);
+                }
+            }
+        }
         let trusted_checks = self
             .workgroups
             .get()

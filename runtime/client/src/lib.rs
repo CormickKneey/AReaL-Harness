@@ -298,8 +298,10 @@ impl Client {
         let params = serde_json::to_value(params)
             .map_err(|_| Error::new(ErrorCode::InvalidArgument, "invalid RPC arguments"))?;
         let mut timeout = rpc_timeout(method);
-        if matches!(method, "fs.execute" | "process.start" | "process.wait")
-            && let Some(wall) = self.info.capabilities["processLimits"]["wallTimeMs"].as_u64()
+        if matches!(
+            method,
+            "fs.execute" | "process.start" | "process.startQueued" | "process.wait"
+        ) && let Some(wall) = self.info.capabilities["processLimits"]["wallTimeMs"].as_u64()
         {
             // A queued write/start and process.wait can last the full process
             // lifetime. The transport must not fence a valid long command.
@@ -352,6 +354,18 @@ impl Client {
     }
     pub async fn start(&self, request: StartProcess) -> Result<ProcessRef> {
         self.call("process.start", request).await
+    }
+    /// 可选排队能力按握手协商；旧 Runtime 维持原准入行为，不失败后重放。
+    pub async fn start_queued(&self, request: StartProcess) -> Result<ProcessRef> {
+        let method = if self.info.capabilities["methods"]
+            .as_array()
+            .is_some_and(|methods| methods.iter().any(|method| method == "process.startQueued"))
+        {
+            "process.startQueued"
+        } else {
+            "process.start"
+        };
+        self.call(method, request).await
     }
     pub async fn output(&self, request: ReadOutput) -> Result<OutputPage> {
         self.call("output.read", request).await
@@ -463,7 +477,7 @@ async fn rpc(transport: &Transport, method: &str, params: Value) -> Result<Value
 fn rpc_timeout(method: &str) -> Duration {
     if matches!(
         method,
-        "fs.execute" | "process.start" | "process.wait" | "output.read"
+        "fs.execute" | "process.start" | "process.startQueued" | "process.wait" | "output.read"
     ) {
         TIMEOUT
     } else {

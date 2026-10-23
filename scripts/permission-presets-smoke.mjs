@@ -17,8 +17,12 @@ const evidence = await mkdtemp(join(evidenceRoot, "run-"));
 const root = await mkdtemp(join(tmpdir(), "areal-permission-presets-"));
 const workspace = join(root, "workspace");
 await mkdir(workspace);
+// 项目规则的预读取不能收窄后续单次权限审批的可信上限。
+await writeFile(join(workspace, "AGENTS.md"), "Preserve unrelated files.\n");
+const toolConfig = join(root, "tools.json");
+await writeFile(toolConfig, JSON.stringify({ policy: { parallelReadCalls: 4 } }));
 const config = join(root, "config.toml");
-await writeFile(config, "schema_version = 1\n");
+await writeFile(config, 'schema_version = 1\n[tools]\nextensions_file = "tools.json"\n');
 const reviews = [];
 const requests = [];
 let reviewDecision = "allow";
@@ -103,19 +107,23 @@ const fixture = createServer(async (request, response) => {
     const results = body.messages.slice(index + 1).filter((message) => message.role === "tool");
     if (results.length < calls.length) {
       const call = calls[results.length];
+      const batch = call.parallel
+        ? calls.slice(results.length).filter((entry) => entry.parallel)
+        : [call];
       const args = structuredClone(call.args);
       if (call.name === "agent_wait" && args.executionId === "previousExecution") {
         args.executionId = JSON.parse(results.at(-1).content).executionId;
       }
       event(response, {
-        tool_calls: [
-          {
-            index: 0,
-            id: `call_${results.length}`,
-            type: "function",
-            function: { name: call.name, arguments: JSON.stringify(args) },
+        tool_calls: batch.map((entry, index) => ({
+          index,
+          id: `call_${results.length + index}`,
+          type: "function",
+          function: {
+            name: entry.name,
+            arguments: JSON.stringify(index === 0 ? args : entry.args),
           },
-        ],
+        })),
       });
       event(response, {}, "tool_calls");
     } else {
@@ -154,6 +162,9 @@ async function start() {
       join(root, "data"),
       "--config",
       config,
+      "--runtime-max-processes",
+      "2",
+      "--allow-concurrent-writes",
       "--listen",
       "127.0.0.1:0",
       "--model",
@@ -261,6 +272,37 @@ try {
     );
     checks.push({ preset, workspaceWrite: true, outsideWrite: await exists(outside) });
   }
+  const parallelId = await thread("autoReview");
+  await writeFile(join(workspace, "read-fixture.txt"), "fixture content\n".repeat(32));
+  const parallelTurn = await turn(parallelId, [
+    command("sleep 0.5", { yieldMs: 0 }),
+    ...Array.from({ length: 16 }, (_, index) => ({
+      name: index % 2 ? "search_files" : "read_file",
+      parallel: true,
+      args:
+        index % 2
+          ? { path: "read-fixture.txt", pattern: "fixture", limit: 4 }
+          : { path: "read-fixture.txt", limit: 4 },
+    })),
+  ]);
+  await complete(parallelId, parallelTurn);
+  const parallelHistory = (
+    await rpc.call("thread/read", { threadId: parallelId, includeTurns: true })
+  ).thread;
+  const parallelCalls = parallelHistory.turns
+    .at(-1)
+    .items.filter((item) => item.type === "dynamicToolCall");
+  assert.equal(parallelCalls.length, 17);
+  assert.ok(
+    parallelCalls.every((call) => call.success === true),
+    JSON.stringify(parallelCalls),
+  );
+  checks.push({
+    sameTurnParallelNavigation: 16,
+    concurrentBackgroundCommand: true,
+    processLimit: 2,
+  });
+
   const additional = (path, network = false) => ({
     readRoots: [],
     writeRoots: [dirname(path)],

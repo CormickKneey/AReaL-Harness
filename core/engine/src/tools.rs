@@ -1230,7 +1230,7 @@ impl Engine {
             emit_item(cell, "item/started", &thread_id, &turn_id, &item);
         }
         if runtime.is_some() {
-            match self.ensure_turn_scope(cell, &call.id).await {
+            match self.ensure_turn_scope(cell, Some(&call.id)).await {
                 Ok(created) => scope = created,
                 Err(error)
                     if matches!(
