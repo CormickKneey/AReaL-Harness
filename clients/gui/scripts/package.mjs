@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import { stageCoreApp } from "./stage-app.mjs";
 import { stageMacOSService } from "./stage-macos-service.mjs";
 import { buildMacOSDmg } from "./macos-dmg.mjs";
+import { signLocalMacOSApp } from "./macos-signing-paths.mjs";
 const gui = fileURLToPath(new URL("..", import.meta.url));
 const root = resolve(gui, "../..");
 const require = createRequire(join(gui, "app/package.json"));
@@ -16,7 +17,10 @@ if (process.platform !== "darwin" || process.arch !== "arm64")
 const release = process.env.AREAL_GUI_RELEASE === "1";
 const unsignedLocal = process.env.AREAL_GUI_UNSIGNED_LOCAL === "1";
 const dmgOnly = process.argv.includes("--dmg-only");
-assert.ok(!dmgOnly || (!release && !unsignedLocal), "DMG-only packaging requires local ad-hoc mode");
+assert.ok(
+  !dmgOnly || (!release && !unsignedLocal),
+  "DMG-only packaging requires local ad-hoc mode",
+);
 assert.ok(!(release && unsignedLocal), "Unsigned local packaging cannot enable release mode");
 const output = resolve(
   process.env.AREAL_GUI_PACKAGE_DIR || join(gui, "dist", `local-${Date.now()}`),
@@ -37,25 +41,46 @@ if (release) {
     JSON.stringify({ engine: "electron", feedUrl: githubFeedUrl }) + "\n",
   );
   // dir 目标不会生成原生更新元数据；在签名前写入同一权威更新源与稳定缓存名。
-  await writeFile(nativeUpdateConfig, require("yaml").stringify({
-    provider: "generic", url: githubFeedUrl, updaterCacheDirName: "areal-harness-gui-updater",
-    useMultipleRangeRequest: false,
-  }));
+  await writeFile(
+    nativeUpdateConfig,
+    require("yaml").stringify({
+      provider: "generic",
+      url: githubFeedUrl,
+      updaterCacheDirName: "areal-harness-gui-updater",
+      useMultipleRangeRequest: false,
+    }),
+  );
 }
 const bundle = join(output, "areal-core");
 // 验收可固定已校验的 Core bundle，避免并行 Cargo 构建切换输入字节。
 if (process.env.AREAL_GUI_CORE_BUNDLE) {
-  await cp(resolve(process.env.AREAL_GUI_CORE_BUNDLE), bundle, { recursive: true, errorOnExist: true, force: false });
+  await cp(resolve(process.env.AREAL_GUI_CORE_BUNDLE), bundle, {
+    recursive: true,
+    errorOnExist: true,
+    force: false,
+  });
 } else {
   execFileSync(
     "python3",
-    [join(root, "scripts/package.py"), "--profile", process.env.AREAL_CORE_PROFILE || (release ? "release" : "debug"), "--output", bundle, ...(unsignedLocal ? ["--unsigned-local"] : [])],
+    [
+      join(root, "scripts/package.py"),
+      "--profile",
+      process.env.AREAL_CORE_PROFILE || (release ? "release" : "debug"),
+      "--output",
+      bundle,
+      ...(unsignedLocal ? ["--unsigned-local"] : []),
+    ],
     { cwd: root, stdio: "inherit" },
   );
 }
 const { verifyCoreBundle } = require(join(gui, "app/src/core/bundle.cjs"));
 const coreBundle = verifyCoreBundle(output, { hashes: true });
-if (release) assert.equal(coreBundle.manifest.profile, "release", "GUI release requires a release Core bundle");
+if (release)
+  assert.equal(
+    coreBundle.manifest.profile,
+    "release",
+    "GUI release requires a release Core bundle",
+  );
 const iconset = join(staged, "app.iconset");
 await mkdir(iconset);
 for (const size of [16, 32, 128, 256, 512]) {
@@ -94,10 +119,12 @@ await build({
     extraResources: [
       { from: bundle, to: "areal-core" },
       { from: join(gui, "renderer/dist"), to: "areal-gui" },
-      ...(release ? [
-        { from: updateConfig, to: "areal-update.json" },
-        { from: nativeUpdateConfig, to: "app-update.yml" },
-      ] : []),
+      ...(release
+        ? [
+            { from: updateConfig, to: "areal-update.json" },
+            { from: nativeUpdateConfig, to: "app-update.yml" },
+          ]
+        : []),
     ],
     mac: { icon, identity: null, notarize: false, category: "public.app-category.developer-tools" },
     publish: null,
@@ -106,32 +133,46 @@ await build({
 const app = join(output, "package/mac-arm64/AReaL Harness GUI.app");
 const backgroundService = await stageMacOSService(app);
 if (release) {
-  const native = require("yaml").parse(await readFile(join(app, "Contents/Resources/app-update.yml"), "utf8"));
+  const native = require("yaml").parse(
+    await readFile(join(app, "Contents/Resources/app-update.yml"), "utf8"),
+  );
   assert.equal(native.provider, "generic");
   assert.equal(native.url, githubFeedUrl);
-  assert.ok(typeof native.updaterCacheDirName === "string" && native.updaterCacheDirName.length > 0);
+  assert.ok(
+    typeof native.updaterCacheDirName === "string" && native.updaterCacheDirName.length > 0,
+  );
 }
 // 本机无新增签名模式保留输入签名；不能把拼装后的 bundle 宣称为签名有效。
 let signatureVerification;
 if (!unsignedLocal) {
-  execFileSync("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", app], { stdio: "inherit" });
-  execFileSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", app]);
+  await signLocalMacOSApp(app, (command, args) =>
+    execFileSync(command, args, { stdio: "inherit" }),
+  );
   signatureVerification = { valid: true };
 } else {
   try {
     execFileSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", app], { stdio: "pipe" });
     signatureVerification = { valid: true };
   } catch (error) {
-    signatureVerification = { valid: false, exitCode: error.status,
-      detail: String(error.stderr ?? error.message).trim() };
+    signatureVerification = {
+      valid: false,
+      exitCode: error.status,
+      detail: String(error.stderr ?? error.message).trim(),
+    };
   }
 }
 verifyCoreBundle(join(app, "Contents/Resources"), { hashes: true });
 const archive = dmgOnly ? undefined : join(output, "AReaL-Harness-GUI-mac-arm64.zip");
-if (archive) execFileSync("/usr/bin/ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", app, archive]);
-const dmg = !unsignedLocal && !release ? await buildMacOSDmg({
-  app, destination: join(output, "AReaL-Harness-GUI-mac-arm64.dmg"), volumeName: "AReaL Harness Preview",
-}) : undefined;
+if (archive)
+  execFileSync("/usr/bin/ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", app, archive]);
+const dmg =
+  !unsignedLocal && !release
+    ? await buildMacOSDmg({
+        app,
+        destination: join(output, "AReaL-Harness-GUI-mac-arm64.dmg"),
+        volumeName: "AReaL Harness Preview",
+      })
+    : undefined;
 await writeFile(
   join(output, "package-evidence.json"),
   JSON.stringify(
@@ -144,7 +185,9 @@ await writeFile(
       builder: {
         node: process.version,
         executable: process.execPath,
-        sha256: createHash("sha256").update(await readFile(process.execPath)).digest("hex"),
+        sha256: createHash("sha256")
+          .update(await readFile(process.execPath))
+          .digest("hex"),
       },
       core: JSON.parse(await readFile(join(bundle, "manifest.json"), "utf8")),
       signing: unsignedLocal
