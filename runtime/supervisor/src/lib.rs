@@ -244,7 +244,7 @@ impl Supervisor {
                 "processLimits": self.config.limits,
                 "fullAccess":self.config.full_access,"readOnlyPaths":self.config.read_only_paths.iter().map(|p| self.workspace.uri(p)).collect::<Vec<_>>(),"rootNetwork": if self.config.allow_network { NetworkRequest::Inherit } else { NetworkRequest::Deny },
                 "methods": ["runtime.status", "connection.open", "connection.close", "scope.check", "scope.create", "scope.createParticipant", "scope.get", "scope.revoke",
-                    "scope.waitClosed", "owner.revoke", "process.start", "process.get", "process.terminate", "process.wait", "output.read", "operation.get"]
+                    "scope.waitClosed", "owner.revoke", "process.start", "process.startQueued", "process.get", "process.terminate", "process.wait", "output.read", "operation.get"]
             }),
         };
         info.capabilities["restrictedScopes"] = match restricted {
@@ -583,12 +583,83 @@ impl Supervisor {
     }
 
     pub async fn start(self: &Arc<Self>, request: StartProcess) -> Result<ProcessRef> {
-        self.start_inner(request, None).await
+        self.start_inner(request, None, false).await
+    }
+
+    /// 显式排队入口在等待名额前登记操作；丢弃调用方或重复请求不会重放执行。
+    pub async fn start_queued(self: &Arc<Self>, request: StartProcess) -> Result<ProcessRef> {
+        self.validate_operation(&request.operation_id)?;
+        self.check_handle(&request.scope_id, "scope")?;
+        let digest = digest("process.startQueued", &request)?;
+        let mut completion = {
+            let mut state = self.registry.lock().unwrap();
+            if let Some(existing) = replay(&state, &request.operation_id, digest)? {
+                existing
+            } else {
+                self.admit_operation(&state)?;
+                validate_process(&request)?;
+                ensure_active(state.scopes.get(&request.scope_id).ok_or_else(not_found)?)?;
+                let operation = new_operation(request.operation_id.clone(), digest);
+                let receiver = operation.complete.subscribe();
+                state
+                    .operations
+                    .insert(request.operation_id.clone(), operation);
+                let runtime = self.clone();
+                self.tasks.spawn(async move {
+                    let operation_id = request.operation_id.clone();
+                    let mut process = request;
+                    process.operation_id = handle(&runtime.epoch, "op");
+                    let result =
+                        std::panic::AssertUnwindSafe(runtime.start_inner(process, None, true))
+                            .catch_unwind()
+                            .await
+                            .unwrap_or_else(|_| {
+                                Err(unavailable(
+                                    "queued process supervisor panicked; do not replay",
+                                ))
+                            })
+                            .map(|process| json!(process));
+                    let status = match &result {
+                        Ok(_) => OperationState::Succeeded,
+                        Err(error)
+                            if matches!(
+                                error.code,
+                                ErrorCode::Unavailable | ErrorCode::CleanupFailed
+                            ) =>
+                        {
+                            OperationState::Unknown
+                        }
+                        Err(error) if error.code == ErrorCode::ScopeClosed => {
+                            OperationState::Cancelled
+                        }
+                        Err(_) => OperationState::Failed,
+                    };
+                    complete_operation(
+                        &mut runtime.registry.lock().unwrap(),
+                        &operation_id,
+                        result,
+                        status,
+                    );
+                    runtime.changed();
+                });
+                receiver
+            }
+        };
+        loop {
+            if let Some(result) = completion.borrow().clone() {
+                return decode(result?);
+            }
+            completion
+                .changed()
+                .await
+                .map_err(|_| unavailable("queued process result channel closed"))?;
+        }
     }
     async fn start_inner(
         self: &Arc<Self>,
         request: StartProcess,
         helper: Option<FileHelper>,
+        wait_for_capacity: bool,
     ) -> Result<ProcessRef> {
         self.validate_operation(&request.operation_id)?;
         self.check_handle(&request.scope_id, "scope")?;
@@ -599,13 +670,53 @@ impl Supervisor {
         } else {
             digest("process.start", &request)?
         };
-        let mut completion = {
+        let deadline = if wait_for_capacity {
+            let limits = narrow(&self.scope(&request.scope_id)?.limits, &request.limits)?;
+            Some(tokio::time::Instant::now() + Duration::from_millis(limits.wall_time_ms))
+        } else {
+            None
+        };
+        let mut updates = self.updates.subscribe();
+        let mut completion = loop {
+            updates.borrow_and_update();
+            if let Some(completion) = self.admit_process(&request, &helper, digest, deadline)? {
+                break completion;
+            }
+            // 先订阅再检查，防止检查与等待之间释放名额造成漏唤醒。
+            tokio::select! {
+                _ = tokio::time::sleep_until(deadline.expect("only queued starts wait")) => {
+                    return Err(exhausted("process admission deadline exceeded"));
+                }
+                result = updates.changed() => {
+                    result.map_err(|_| unavailable("process admission channel closed"))?;
+                }
+            }
+        };
+        loop {
+            if let Some(result) = completion.borrow().clone() {
+                return decode(result?);
+            }
+            completion
+                .changed()
+                .await
+                .map_err(|_| unavailable("operation result channel closed"))?;
+        }
+    }
+
+    fn admit_process(
+        self: &Arc<Self>,
+        request: &StartProcess,
+        helper: &Option<FileHelper>,
+        digest: [u8; 32],
+        deadline: Option<tokio::time::Instant>,
+    ) -> Result<Option<CompletionReceiver>> {
+        let completion = {
             let mut state = self.registry.lock().unwrap();
             if let Some(existing) = replay(&state, &request.operation_id, digest)? {
                 existing
             } else {
                 self.admit_operation(&state)?;
-                validate_process(&request)?;
+                validate_process(request)?;
                 if (request.tty || request.pipe_stdin) && !self.backend.supports_input() {
                     return Err(Error::new(
                         ErrorCode::Unsupported,
@@ -628,7 +739,15 @@ impl Supervisor {
                 } else {
                     filesystem::MAX_HELPER_RESPONSE_BYTES as u64
                 };
-                let limits = narrow(&ceiling, &request.limits)?;
+                let mut limits = narrow(&ceiling, &request.limits)?;
+                if let Some(deadline) = deadline {
+                    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                    if remaining.is_zero() {
+                        return Err(exhausted("process admission deadline exceeded"));
+                    }
+                    limits.wall_time_ms =
+                        limits.wall_time_ms.min(remaining.as_millis().max(1) as u64);
+                }
                 let task_program = (helper.is_none()
                     && !self.config.task_credential_commands.is_empty()
                     && PathBuf::from(&request.argv[0]).is_absolute())
@@ -644,9 +763,9 @@ impl Supervisor {
                     self.scope_access(&scope.reads, &scope.writes, scope.info.network);
                 let mut execution = Execution {
                     process_id: handle(&self.epoch, "process"),
-                    argv: request.argv,
+                    argv: request.argv.clone(),
                     cwd,
-                    env: request.env,
+                    env: request.env.clone(),
                     read_roots: scope.reads.clone(),
                     write_roots: scope.writes.clone(),
                     read_only_paths: self.config.read_only_paths.clone(),
@@ -753,20 +872,24 @@ impl Supervisor {
                 };
                 let participant = scope.participant.clone();
                 let ancestors = ancestors(&state, &request.scope_id);
+                let mut at_capacity = false;
                 for ancestor in &ancestors {
                     let scope = &state.scopes[ancestor];
                     ensure_active(scope)?;
-                    if scope.info.active_processes >= scope.info.limits.max_processes
-                        || (charge_output
-                            && scope.info.output_bytes >= scope.info.limits.output_bytes)
-                    {
-                        return Err(exhausted(
-                            "ancestor process or cumulative output budget exhausted",
-                        ));
+                    if charge_output && scope.info.output_bytes >= scope.info.limits.output_bytes {
+                        return Err(exhausted("ancestor cumulative output budget exhausted"));
                     }
+                    at_capacity |= scope.info.active_processes >= scope.info.limits.max_processes;
                 }
                 if limits.max_processes == 0 || limits.output_bytes == 0 {
                     return Err(exhausted("process budget is zero"));
+                }
+                if at_capacity {
+                    // 请求尚未执行；只等待名额释放，不重放进程，也不扩充预算。
+                    if deadline.is_some() {
+                        return Ok(None);
+                    }
+                    return Err(exhausted("ancestor process budget exhausted"));
                 }
                 for ancestor in &ancestors {
                     state
@@ -783,7 +906,7 @@ impl Supervisor {
                     Process {
                         info: ProcessInfo {
                             process_id: process_id.clone(),
-                            scope_id: request.scope_id,
+                            scope_id: request.scope_id.clone(),
                             state: ProcessState::Starting,
                             exit_code: None,
                             signal: None,
@@ -815,9 +938,10 @@ impl Supervisor {
                     .insert(request.operation_id.clone(), operation);
                 // 在同一个准入临界区登记资源和任务。调用方丢弃 future 不会丢掉创建任务。
                 let runtime = self.clone();
+                let operation_id = request.operation_id.clone();
                 self.tasks.spawn(async move {
                     let result = std::panic::AssertUnwindSafe(runtime.run(
-                        &request.operation_id,
+                        &operation_id,
                         execution,
                         write_paths,
                         participant,
@@ -827,7 +951,7 @@ impl Supervisor {
                     if result.is_err() {
                         runtime.unknown(
                             &process_id,
-                            &request.operation_id,
+                            &operation_id,
                             "execution supervisor panicked",
                         );
                         runtime.fence_backend().await;
@@ -837,15 +961,7 @@ impl Supervisor {
                 receiver
             }
         };
-        loop {
-            if let Some(result) = completion.borrow().clone() {
-                return decode(result?);
-            }
-            completion
-                .changed()
-                .await
-                .map_err(|_| unavailable("operation result channel closed"))?;
-        }
+        Ok(Some(completion))
     }
 
     async fn run(

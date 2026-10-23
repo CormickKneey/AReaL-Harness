@@ -60,7 +60,7 @@ impl Engine {
     async fn permission_scope(
         &self,
         cell: &Cell,
-        call_id: &str,
+        call_id: Option<&str>,
         kind: &str,
         parent: String,
         permissions: rt::PermissionRequest,
@@ -71,9 +71,11 @@ impl Engine {
             .as_ref()
             .ok_or_else(|| unknown("Runtime unavailable"))?;
         let operation = runtime.client.operation_id();
-        self.permission_journal(cell, call_id, |execution| execution.permission_scopes.push(
-            json!({"kind":kind,"operationId":operation,"parentScopeId":parent,"permissions":permissions})
-        )).await?;
+        if let Some(call_id) = call_id {
+            self.permission_journal(cell, call_id, |execution| execution.permission_scopes.push(
+                json!({"kind":kind,"operationId":operation,"parentScopeId":parent,"permissions":permissions})
+            )).await?;
+        }
         let owner = {
             let state = cell.state.lock().await;
             format!("{}/{}", cell.id, state.active.as_ref().unwrap().id)
@@ -97,19 +99,21 @@ impl Engine {
                     cell.state.lock().await.active.as_mut().unwrap().scope =
                         Some(scope.scope_id.clone());
                 }
-                self.permission_journal(cell, call_id, |execution| {
-                    if let Some(record) = execution
-                        .permission_scopes
-                        .iter_mut()
-                        .find(|r| r["operationId"] == operation)
-                    {
-                        record["scopeId"] = json!(scope.scope_id);
-                    }
-                    if kind != "authority" {
-                        execution.scope_id = scope.scope_id.clone();
-                    }
-                })
-                .await?;
+                if let Some(call_id) = call_id {
+                    self.permission_journal(cell, call_id, |execution| {
+                        if let Some(record) = execution
+                            .permission_scopes
+                            .iter_mut()
+                            .find(|r| r["operationId"] == operation)
+                        {
+                            record["scopeId"] = json!(scope.scope_id);
+                        }
+                        if kind != "authority" {
+                            execution.scope_id = scope.scope_id.clone();
+                        }
+                    })
+                    .await?;
+                }
                 Ok(scope.scope_id)
             }
             Err(error) => {
@@ -126,7 +130,11 @@ impl Engine {
         }
     }
 
-    pub(crate) async fn ensure_turn_scope(&self, cell: &Cell, call_id: &str) -> rt::Result<String> {
+    pub(crate) async fn ensure_turn_scope(
+        &self,
+        cell: &Cell,
+        call_id: Option<&str>,
+    ) -> rt::Result<String> {
         let _guard = cell.resource_gate.lock().await;
         let (base, authority, elapsed) = {
             let state = cell.state.lock().await;
@@ -138,8 +146,12 @@ impl Engine {
             )
         };
         if let Some(base) = base {
-            self.permission_journal(cell, call_id, |execution| execution.scope_id = base.clone())
+            if let Some(call_id) = call_id {
+                self.permission_journal(cell, call_id, |execution| {
+                    execution.scope_id = base.clone()
+                })
                 .await?;
+            }
             return Ok(base);
         }
         let runtime = self
@@ -331,7 +343,7 @@ impl Engine {
             .ok_or_else(|| unknown("Turn authority unavailable"))?;
         self.permission_scope(
             cell,
-            call_id,
+            Some(call_id),
             "operation",
             authority,
             permissions,

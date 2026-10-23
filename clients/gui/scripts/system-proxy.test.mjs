@@ -5,7 +5,7 @@ import { createServer as httpsServer } from "node:https";
 import { createServer as tcpServer, connect } from "node:net";
 import { once } from "node:events";
 import { readFile } from "node:fs/promises";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { proxyForUrl, subscriptionNetwork } from "../packages/chatgpt-provider/network.js";
@@ -16,6 +16,24 @@ const { AppHooks } = require("../app/src/core/hooks.cjs");
 const { proxyRelay } = require("../app/src/core/proxy-relay.cjs");
 const { AppProviders } = require("../app/src/core/providers.cjs");
 const settings = (entries) => `<dictionary> {\n${entries}\n}\n`;
+
+test("constructing and closing an unused transport never loads system certificates", () => {
+  // 独立子进程替换 TLS 探针，避免改动其他并行用例的全局绑定。
+  const networkUrl = new URL("../packages/chatgpt-provider/network.js", import.meta.url).href;
+  const child = spawnSync(process.execPath, ["--input-type=module", "-e", `
+    import tls from 'node:tls';
+    import { syncBuiltinESMExports } from 'node:module';
+    tls.getCACertificates = () => { throw Error('unexpected system certificate access'); };
+    syncBuiltinESMExports();
+    const { subscriptionNetwork } = await import(${JSON.stringify(networkUrl)});
+    const network = subscriptionNetwork({ AREAL_CHATGPT_PROXY_ERROR: 'unavailable' });
+    network.close();
+    try { await network.fetch('https://example.invalid'); throw Error('unexpected request'); }
+    catch (error) { if (error.message !== 'ChatGPT proxy unavailable') throw error; }
+    network.close();
+  `], { encoding: "utf8", timeout: 5000 });
+  assert.equal(child.status, 0, child.stderr || String(child.error));
+});
 
 test("active macOS settings map HTTP, HTTPS CONNECT and SOCKS with explicit environment precedence", async () => {
   const text = settings(

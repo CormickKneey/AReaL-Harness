@@ -129,6 +129,8 @@ The model chooses delegation timing, count and content without fixed phases or c
 
 ## Task communication and background workers
 
+Ordinary interactive chats expose only `mode=wait` for `ask_user_question`. `mode=async` requires the current Task/Goal channel; it never implicitly creates a Task or changes into a blocking wait.
+
 Inside Goals/Tasks, ask_user_question supports mode=async: it persists a question in the independent Channel and returns immediately so the model can continue other work. task_channel_read reads messages; task_wait releases the coordinator Turn when no independent work remains; task_spawn creates a worker that survives coordinator Turns and shares the Goal budget. Ordinary agent_spawn remains parent-Turn-owned. Headless never awaits users or human approval, but may wait for workers. See the [Task contract](../api/tasks.en.md) for parameters, permissions and lifecycle.
 
 ### Verification observation and Goal finalization

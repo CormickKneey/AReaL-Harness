@@ -149,7 +149,7 @@ impl Supervisor {
         process: StartProcess,
         helper: FileHelper,
     ) -> Result<Value> {
-        let process = self.start_inner(process, Some(helper)).await?;
+        let process = self.start_inner(process, Some(helper), true).await?;
         let mut cursor = None;
         let mut bytes = Vec::new();
         let mut stderr = Vec::new();

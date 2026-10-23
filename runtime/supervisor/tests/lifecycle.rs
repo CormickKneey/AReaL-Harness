@@ -491,6 +491,288 @@ async fn file_responses_preserve_full_chunks_with_small_command_windows() {
 }
 
 #[tokio::test]
+async fn queued_process_start_retains_identity_and_runs_once_after_capacity_is_freed() {
+    let directory = tempfile::tempdir().unwrap();
+    let executor = Executor::new(false);
+    let mut config = Config::read_only(directory.path().into());
+    config.limits.max_processes = 1;
+    let runtime = Supervisor::new(config, executor.clone()).unwrap();
+    let root = runtime.connection_info().root_scope_id;
+    let background = runtime.start(process(&runtime, &root)).await.unwrap();
+    bounded(executor.entered()).await;
+    let request = process(&runtime, &root);
+    let first = {
+        let runtime = runtime.clone();
+        let request = request.clone();
+        tokio::spawn(async move { runtime.start_queued(request).await })
+    };
+    bounded(async {
+        while runtime.operation(&request.operation_id).is_err() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    assert_eq!(
+        runtime.operation(&request.operation_id).unwrap().state,
+        OperationState::Accepted
+    );
+    first.abort();
+    let replay = {
+        let runtime = runtime.clone();
+        let request = request.clone();
+        tokio::spawn(async move { runtime.start_queued(request).await })
+    };
+    let mut conflict = request.clone();
+    conflict.argv.push("different".into());
+    assert_eq!(
+        runtime.start_queued(conflict).await.unwrap_err().code,
+        ErrorCode::Conflict
+    );
+    assert_eq!(executor.starts.load(Ordering::SeqCst), 1);
+    executor.finish(&background.process_id, b"").await;
+    let started = bounded(replay).await.unwrap().unwrap();
+    assert_eq!(
+        runtime
+            .start_queued(request.clone())
+            .await
+            .unwrap()
+            .process_id,
+        started.process_id
+    );
+    assert_eq!(executor.starts.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        runtime.operation(&request.operation_id).unwrap().state,
+        OperationState::Succeeded
+    );
+    assert_eq!(runtime.scope(&root).unwrap().active_processes, 1);
+    executor.finish(&started.process_id, b"").await;
+    bounded(runtime.shutdown()).await.unwrap();
+}
+
+#[tokio::test]
+async fn queued_start_keeps_unknown_outcome_without_replaying_the_backend() {
+    let directory = tempfile::tempdir().unwrap();
+    let executor = Executor::new(false);
+    executor.lose_start_reply.store(true, Ordering::SeqCst);
+    let runtime =
+        Supervisor::new(Config::read_only(directory.path().into()), executor.clone()).unwrap();
+    let request = process(&runtime, &runtime.connection_info().root_scope_id);
+    for _ in 0..2 {
+        let error = bounded(runtime.start_queued(request.clone()))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::Unavailable);
+        assert_eq!(
+            runtime.operation(&request.operation_id).unwrap().state,
+            OperationState::Unknown
+        );
+    }
+    assert_eq!(executor.starts.load(Ordering::SeqCst), 1);
+    let _ = bounded(runtime.shutdown()).await;
+}
+
+#[tokio::test]
+async fn queued_process_start_records_cancellation_before_any_execution() {
+    let directory = tempfile::tempdir().unwrap();
+    let executor = Executor::new(false);
+    let mut config = Config::read_only(directory.path().into());
+    config.limits.max_processes = 1;
+    let runtime = Supervisor::new(config, executor.clone()).unwrap();
+    let root = runtime.connection_info().root_scope_id;
+    runtime.start(process(&runtime, &root)).await.unwrap();
+    let scope = runtime.create_scope(child(&runtime, &root)).unwrap();
+    let request = process(&runtime, &scope.scope_id);
+    let queued = {
+        let runtime = runtime.clone();
+        let request = request.clone();
+        tokio::spawn(async move { runtime.start_queued(request).await })
+    };
+    bounded(async {
+        while runtime.operation(&request.operation_id).is_err() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    runtime.revoke(&scope.scope_id).unwrap();
+    assert_eq!(
+        bounded(queued).await.unwrap().unwrap_err().code,
+        ErrorCode::ScopeClosed
+    );
+    assert_eq!(
+        runtime.operation(&request.operation_id).unwrap().state,
+        OperationState::Cancelled
+    );
+    assert_eq!(executor.starts.load(Ordering::SeqCst), 1);
+    bounded(runtime.shutdown()).await.unwrap();
+}
+
+// 单个祖先名额被后台命令占用时，所有文件操作排队且每个 operation 只执行一次。
+#[tokio::test]
+async fn file_helpers_wait_for_shared_process_capacity_without_replay() {
+    let directory = tempfile::tempdir().unwrap();
+    let executor = Executor::new(false);
+    let mut config = Config::read_only(directory.path().into());
+    config.limits.max_processes = 1;
+    config.file_helper = Some(std::env::current_exe().unwrap());
+    let runtime = Supervisor::new(config, executor.clone()).unwrap();
+    let root = runtime.connection_info().root_scope_id;
+    let background = runtime.start(process(&runtime, &root)).await.unwrap();
+    bounded(executor.entered()).await;
+    let scope = runtime.create_scope(child(&runtime, &root)).unwrap();
+    let mut calls = Vec::new();
+    let mut requests = Vec::new();
+    for n in 0..8 {
+        let request = FileRequest {
+            operation_id: op(&runtime),
+            scope_id: scope.scope_id.clone(),
+            command: FileCommand::Read {
+                path: format!("workspace://repo/file-{n}"),
+                offset: 0,
+                max_bytes: 64,
+            },
+        };
+        // 并发重放相同 ID 必须复用等待和结果。
+        for _ in 0..2 {
+            let runtime = runtime.clone();
+            let request = request.clone();
+            calls.push(tokio::spawn(
+                async move { runtime.filesystem(request).await },
+            ));
+        }
+        requests.push(request);
+    }
+    bounded(async {
+        while requests
+            .iter()
+            .any(|request| runtime.operation(&request.operation_id).is_err())
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert!(calls.iter().all(|call| !call.is_finished()));
+    assert_eq!(executor.starts.load(Ordering::SeqCst), 1);
+    // 显式命令保持原来的资源拒绝语义。
+    assert_eq!(
+        runtime
+            .start(process(&runtime, &root))
+            .await
+            .unwrap_err()
+            .code,
+        ErrorCode::ResourceExhausted
+    );
+    executor.finish(&background.process_id, b"").await;
+    let result = serde_json::json!({"dataBase64":STANDARD.encode("value"),"eof":true});
+    let envelope = serde_json::to_vec(&serde_json::json!({"result":result})).unwrap();
+    for n in 1..=8 {
+        bounded(executor.entered()).await;
+        assert_eq!(executor.starts.load(Ordering::SeqCst), n + 1);
+        assert_eq!(runtime.scope(&root).unwrap().active_processes, 1);
+        let id = executor.executions.lock().unwrap()[n].process_id.clone();
+        executor.finish(&id, &envelope).await;
+    }
+    for call in calls {
+        assert_eq!(bounded(call).await.unwrap().unwrap(), result);
+    }
+    for request in requests {
+        assert_eq!(runtime.filesystem(request).await.unwrap(), result);
+    }
+    assert_eq!(executor.starts.load(Ordering::SeqCst), 9);
+    bounded(runtime.shutdown()).await.unwrap();
+}
+
+#[tokio::test]
+async fn queued_files_stop_on_scope_revocation_and_admission_deadline() {
+    for revoke in [true, false] {
+        let directory = tempfile::tempdir().unwrap();
+        let executor = Executor::new(false);
+        let mut config = Config::read_only(directory.path().into());
+        config.limits.max_processes = 1;
+        config.file_helper = Some(std::env::current_exe().unwrap());
+        let runtime = Supervisor::new(config, executor.clone()).unwrap();
+        let root = runtime.connection_info().root_scope_id;
+        runtime.start(process(&runtime, &root)).await.unwrap();
+        bounded(executor.entered()).await;
+        let mut request = child(&runtime, &root);
+        request.limits.wall_time_ms = Some(if revoke { 5000 } else { 80 });
+        let scope = runtime.create_scope(request).unwrap();
+        let request = FileRequest {
+            operation_id: op(&runtime),
+            scope_id: scope.scope_id.clone(),
+            command: FileCommand::Stat {
+                path: "workspace://repo/file".into(),
+            },
+        };
+        let call = {
+            let runtime = runtime.clone();
+            let request = request.clone();
+            tokio::spawn(async move { runtime.filesystem(request).await })
+        };
+        bounded(async {
+            while runtime.operation(&request.operation_id).is_err() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        if revoke {
+            runtime.revoke(&scope.scope_id).unwrap();
+        }
+        let error = bounded(call).await.unwrap().unwrap_err();
+        assert_eq!(
+            error.code,
+            if revoke {
+                ErrorCode::ScopeClosed
+            } else {
+                ErrorCode::ResourceExhausted
+            }
+        );
+        assert_eq!(
+            runtime.operation(&request.operation_id).unwrap().state,
+            if revoke {
+                OperationState::Cancelled
+            } else {
+                OperationState::Failed
+            }
+        );
+        assert_eq!(executor.starts.load(Ordering::SeqCst), 1);
+        bounded(runtime.shutdown()).await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn exhausted_output_is_not_treated_as_temporary_file_capacity() {
+    let directory = tempfile::tempdir().unwrap();
+    let executor = Executor::new(false);
+    let mut config = Config::read_only(directory.path().into());
+    config.limits.output_bytes = 1;
+    config.file_helper = Some(std::env::current_exe().unwrap());
+    let runtime = Supervisor::new(config, executor.clone()).unwrap();
+    let root = runtime.connection_info().root_scope_id;
+    let background = runtime.start(process(&runtime, &root)).await.unwrap();
+    executor.finish(&background.process_id, b"x").await;
+    bounded(async {
+        while runtime.scope(&root).unwrap().active_processes != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    let error = bounded(runtime.filesystem(FileRequest {
+        operation_id: op(&runtime),
+        scope_id: root,
+        command: FileCommand::Stat {
+            path: "workspace://repo/file".into(),
+        },
+    }))
+    .await
+    .unwrap_err();
+    assert_eq!(error.code, ErrorCode::ResourceExhausted);
+    assert!(error.message.contains("cumulative output"));
+    assert_eq!(executor.starts.load(Ordering::SeqCst), 1);
+    bounded(runtime.shutdown()).await.unwrap();
+}
+
+#[tokio::test]
 async fn handshake_reports_the_effective_root_network_grant() {
     for allow in [false, true] {
         let directory = tempfile::tempdir().unwrap();

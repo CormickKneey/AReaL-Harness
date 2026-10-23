@@ -638,34 +638,37 @@ impl Engine {
         use areal_runtime_protocol as rt;
         use base64::Engine as _;
         let client = &self.runtime.as_ref().unwrap().client;
-        let task = cell.state.lock().await.thread.id.clone();
-        let scope = client
-            .create_scope(rt::CreateScope {
-                operation_id: client.operation_id(),
-                parent_scope_id: self.runtime_task_parent(cell).await?,
-                owner: rt::Owner {
-                    task_id: task,
-                    plugin_instance_id: None,
-                },
-                permissions: self.active_permissions(cell).await?,
-                limits: rt::LimitRequest::default(),
-            })
-            .await?;
-        cell.state.lock().await.active.as_mut().unwrap().scope = Some(scope.scope_id.clone());
+        // 规则文件也使用本轮受限 base；不能把它误作追加权限审批的 authority。
+        // Scope 的创建、取消和清理与后续工具共用同一个生命周期。
+        let scope = self.ensure_turn_scope(cell, None).await?;
+        let cancel = cell
+            .state
+            .lock()
+            .await
+            .active
+            .as_ref()
+            .unwrap()
+            .cancel
+            .clone();
         let mut content = String::new();
         let mut remaining = PROJECT_INSTRUCTION_LIMIT;
         for path in paths {
-            let value = client
-                .filesystem(rt::FileRequest {
+            let value = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => {
+                    client.close_scope(&scope).await?;
+                    anyhow::bail!("project instruction read cancelled");
+                }
+                result = client.filesystem(rt::FileRequest {
                     operation_id: client.operation_id(),
-                    scope_id: scope.scope_id.clone(),
+                    scope_id: scope.clone(),
                     command: rt::FileCommand::Read {
                         path: format!("workspace://repo/{path}"),
                         offset: 0,
                         max_bytes: remaining + 1,
                     },
-                })
-                .await?;
+                }) => result?,
+            };
             let bytes = base64::engine::general_purpose::STANDARD.decode(
                 value["dataBase64"]
                     .as_str()

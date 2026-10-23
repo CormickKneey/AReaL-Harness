@@ -35,6 +35,8 @@ Binary-only changes automatically restart an idle shared service, so manual rest
 
 On macOS, `make build/release` also builds standalone Bash from SHA-256-pinned sources and patches, caching it under `target/runtime-shell` and copying it to `target/<profile>/shells`. The first build requires network access, a C compiler and Python 3.11+ with tar data-filter support. `cargo build` alone does not produce these complete Runtime assets. Tasks never download a shell or replace system programs. This separate component retains GPL-3.0-or-later licensing and complete corresponding source; the project Rust code remains Apache-2.0. See [release requirements](releasing.en.md).
 
+`python3 scripts/tool-capacity-smoke.py --report /tmp/tool-capacity.json` submits 16 file operations to a real native Runtime after two background processes occupy all slots, and checks subscription-adapter construction/closure in restricted Node. Run `make build` and `make gui-install` first. `node scripts/permission-presets-smoke.mjs` covers approval isolation with `AGENTS.md` present and concurrent `read_file`/`search_files` within one Turn. These are deterministic mechanism regressions, not evidence of overall Agent improvement.
+
 ## Checks
 
 | Change | Command |

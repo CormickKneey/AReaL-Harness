@@ -72,8 +72,17 @@ impl Model for Fixture {
     ) -> anyhow::Result<ModelStream> {
         self.chat(m, t).await
     }
-    async fn chat(&self, m: Vec<Message>, _: Vec<Value>) -> anyhow::Result<ModelStream> {
+    async fn chat(&self, m: Vec<Message>, tools: Vec<Value>) -> anyhow::Result<ModelStream> {
         let n = self.calls.fetch_add(1, Ordering::SeqCst);
+        if let Some(question) = tools
+            .iter()
+            .find(|t| t["function"]["name"] == "ask_user_question")
+        {
+            assert_eq!(
+                question["function"]["parameters"]["properties"]["mode"]["enum"],
+                json!(["wait", "async"])
+            );
+        }
         let text = m
             .iter()
             .map(Message::text_content)
@@ -851,4 +860,99 @@ async fn recurring_schedule_keeps_channel_identity_and_uses_distinct_runs_and_go
     );
     assert!(e.task_read(id).await.unwrap().next_run_at.is_none());
     e.shutdown().await;
+}
+
+struct OrdinaryQuestion(AtomicUsize);
+#[async_trait]
+impl Model for OrdinaryQuestion {
+    fn name(&self) -> &str {
+        "ordinary-question"
+    }
+    async fn stream(&self, messages: Vec<Message>) -> anyhow::Result<ModelStream> {
+        self.chat(messages, vec![]).await
+    }
+    async fn chat(&self, messages: Vec<Message>, tools: Vec<Value>) -> anyhow::Result<ModelStream> {
+        let definition = tools
+            .iter()
+            .find(|t| t["function"]["name"] == "ask_user_question")
+            .unwrap();
+        assert_eq!(
+            definition["function"]["parameters"]["properties"]["mode"]["enum"],
+            json!(["wait"])
+        );
+        let event = if self.0.fetch_add(1, Ordering::SeqCst) == 0 {
+            tool(
+                "ask_user_question",
+                json!({"questions":[{"id":"choice","title":"Choose","options":["A","B"]}],"mode":"wait"}),
+                0,
+            )
+        } else {
+            assert!(
+                messages
+                    .iter()
+                    .any(|m| m.text_content().contains("\"choice\":\"B\""))
+            );
+            ModelEvent::TextDelta("received B".into())
+        };
+        Ok(Box::pin(stream::iter([Ok(event)])))
+    }
+}
+
+#[tokio::test]
+async fn ordinary_turn_advertises_wait_and_completes_after_an_answer() {
+    let directory = tempfile::tempdir().unwrap();
+    let engine = Engine::open(
+        directory.path(),
+        Arc::new(OrdinaryQuestion(AtomicUsize::new(0))),
+        Limits::default(),
+    )
+    .unwrap();
+    let thread = engine.create(engine.default_cwd()).await.unwrap();
+    engine
+        .configure_thread(
+            serde_json::from_value(json!({"threadId":thread.id,"expectedRevision":1,"options":{}}))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    engine
+        .start(
+            &thread.id,
+            vec![areal_protocol::Input::text("Ask for a choice")],
+        )
+        .await
+        .unwrap();
+    let question = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let questions = engine.interactions(&thread.id).await.unwrap();
+            if let Some(question) = questions["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|q| q["status"] == "pending")
+            {
+                break question.clone();
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    engine.respond(serde_json::from_value(json!({"threadId":thread.id,"turnId":question["turnId"],"requestId":question["requestId"],"answers":{"choice":"B"}})).unwrap()).await.unwrap();
+    let done = tokio::time::timeout(Duration::from_secs(5), engine.wait(&thread.id))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        done.turns.last().unwrap().status,
+        areal_protocol::TurnStatus::Completed
+    );
+    assert!(done.turns.last().unwrap().items.iter().any(|item| matches!(
+        item,
+        areal_protocol::Item::DynamicToolCall {
+            success: Some(true),
+            ..
+        }
+    )));
+    engine.shutdown().await;
 }

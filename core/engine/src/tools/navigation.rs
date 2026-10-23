@@ -35,7 +35,7 @@ pub(super) async fn invoke(
     };
     let started = runtime
         .client
-        .start(rt::StartProcess {
+        .start_queued(rt::StartProcess {
             operation_id: operation.into(),
             scope_id: scope.into(),
             argv,
