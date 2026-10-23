@@ -18,7 +18,7 @@ SPEC.loader.exec_module(runtime_smoke)
 REPO = Path(__file__).resolve().parent.parent
 
 
-def parallel_files(binary, root):
+def parallel_files(binary, root, wall_time_ms):
     source = b"fixture content\n"
     (root / "source.txt").write_bytes(source)
     for index in range(2):
@@ -26,7 +26,7 @@ def parallel_files(binary, root):
     runtime = runtime_smoke.Runtime(
         binary,
         root,
-        ["--max-processes", "2", "--wall-time-ms", "5000", "--allow-concurrent-writes"],
+        ["--max-processes", "2", "--wall-time-ms", str(wall_time_ms), "--allow-concurrent-writes"],
     )
     started = time.monotonic()
     results = []
@@ -95,6 +95,7 @@ def parallel_files(binary, root):
         return {
             "concurrency": 16,
             "processLimit": 2,
+            "wallTimeMs": wall_time_ms,
             "observedPeak": peak,
             "durationMs": round((time.monotonic() - started) * 1000),
             "calls": results,
@@ -136,6 +137,7 @@ def main():
         type=Path,
         default=REPO / "clients/gui/packages/chatgpt-provider/network.js",
     )
+    parser.add_argument("--wall-time-ms", type=int, default=15000)
     parser.add_argument("--report", type=Path, required=True)
     args = parser.parse_args()
     binary = (args.bin_dir / "areal-runtime").resolve()
@@ -143,7 +145,7 @@ def main():
     report = {"runtimeSha256": hashlib.sha256(binary.read_bytes()).hexdigest(), "attempts": []}
     try:
         with tempfile.TemporaryDirectory(prefix="areal-tool-capacity-") as directory:
-            report["files"] = parallel_files(binary, Path(directory).resolve())
+            report["files"] = parallel_files(binary, Path(directory).resolve(), args.wall_time_ms)
         report["node"] = node_initialization(binary, args.network_module.resolve())
         report["success"] = (
             all(call["success"] for call in report["files"]["calls"])
