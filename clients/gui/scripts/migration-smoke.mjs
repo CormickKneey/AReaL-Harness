@@ -713,6 +713,8 @@ try {
   await button("返回应用").click();
   checks.push("settings navigation and appearance");
   await input().fill("保留未发送草稿");
+  // Turn 可先进入 inProgress；必须等本次请求抵达，不能复用之前 Goal 的完成回调。
+  finishBackground = undefined;
   await call("send", { projectId: pid, threadId: tid, text: "后台持续执行" });
   await waitForSnapshot(
     (s) => current(s).turns.at(-1)?.status === "inProgress" && finishBackground,
