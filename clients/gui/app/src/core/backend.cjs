@@ -645,6 +645,8 @@ class CoreBackend {
         if (method === 'areal/mcp/app/notification') this.onMcpAppNotification?.({ projectId: project.id, ...params });
         this.analytics.observe(project.id, method, params);
         if (method === 'areal/thread/edited' && this.supportsBoundedHistory(client)) {
+          const window = this.historyWindow(project, threadId);
+          if (window) { window.invalidated = true; window.epoch++; }
           void this.openThread(project, threadId).catch(() => {});
           return;
         }
@@ -694,7 +696,7 @@ class CoreBackend {
       this.requireConnection(project, client);
       if (!observeOnly) {
         trace.advance('providers');
-        await this.providers.sync(project, correlation);
+        await this.providers.syncLocal(project);
         this.requireConnection(project, client);
         trace.advance('mcp');
         await this.resources.syncMcp(project);
@@ -764,6 +766,7 @@ class CoreBackend {
       this.scheduleReconciliation(project);
       this.onChange();
       trace.finish('ok');
+      void this.providers.refreshSubscription(project, correlation, { observeOnly });
     } catch (error) { trace.finish('error', error); throw error; }
   }
 
@@ -887,7 +890,8 @@ class CoreBackend {
     const thread = project.model.state.threads[window.threadId];
     if (!thread) return;
     project.model.replace({ ...thread, displayHistory: { supported: true, complete: window.complete,
-      omitted: window.omitted, loadingOlder: !!window.olderRead, loadingItems: Object.fromEntries(window.loading),
+      omitted: window.omitted, loadingOlder: !!window.olderRead, loadingLatest: !!window.latestTurn.read,
+      latestTurnComplete: window.latestTurn.complete, loadingItems: Object.fromEntries(window.loading),
       baselineFirstItemId: window.baselineFirstItemId, viewGeneration: window.viewGeneration } });
   }
 
@@ -912,12 +916,26 @@ class CoreBackend {
         const { [threadId]: queue, ...queues } = owner.model.state.queues;
         owner.model.publish({ threads, interactions: otherInteractions, queues });
       }
+      const latestId = thread.turns?.at(-1)?.id;
+      const latestComplete = result.history.complete || !result.history.nextCursor || !latestId
+        || thread.turns.some(turn => turn.id !== latestId);
+      const preserve = !latestComplete && previous && !previous.invalidated && previous.client === project.client
+        && previous.generation === project.connectionGeneration && previousThread?.turns?.at(-1)?.id === latestId;
+      const prefix = preserve ? previousThread.turns.at(-1).items.map(item => previous.loaded.get(item.id)?.placeholder ?? item) : [];
+      const seen = new Set(thread.turns?.flatMap(turn => turn.items ?? []).map(item => item.id));
+      const knownUsers = new Map(prefix.filter(item => item.type === 'userMessage').map(item => [item.id, item]));
+      const observed = { ...thread, turns: (thread.turns ?? []).map(turn => ({ ...turn, items: turn.items.map(item =>
+        item.type === 'historyDeferred' && item.originalType === 'userMessage' && knownUsers.has(item.id) ? knownUsers.get(item.id) : item) })) };
       const window = { project, threadId: thread.id, ...result.history, views: previous?.views ?? new Set(), viewGeneration: randomUUID(),
+        client: project.client, generation: project.connectionGeneration, latestTurn: { id: latestId, complete: latestComplete, read: null },
+        preservedLatestItems: new Map(prefix.filter(item => !seen.has(item.id)).map(item => [item.id, item])), latestSeen: seen,
         pages: [], loaded: new Map(), loading: new Map(), omitted: false, epoch: 0, baselineCursor: result.history.nextCursor,
         baselineComplete: result.history.complete, baselineFirstItemId: thread.turns?.flatMap(turn => turn.items ?? [])[0]?.id };
       this.historyWindows.delete(key); this.historyWindows.set(key, window);
-      project.model.replace({ ...thread, displayHistory: { supported: true, complete: window.complete, omitted: false,
-        baselineFirstItemId: window.baselineFirstItemId, viewGeneration: window.viewGeneration, loadingItems: {} } });
+      project.model.replace(mergeHistory(observed, prefix.map(item => ({ sourceTurnId: latestId, sourceItemId: item.id,
+        sourceTurnStatus: thread.turns.at(-1).status, turn: thread.turns.at(-1), item }))));
+      this.publishHistory(project, window);
+      if (window.views.size && !previous?.invalidated) void this.hydrateLatest(project, window).catch(() => {});
     }
     for (const turn of thread.turns ?? []) {
       if (turn.id && ['completed', 'failed', 'interrupted'].includes(turn.status)
@@ -944,6 +962,67 @@ class CoreBackend {
     }
   }
 
+  hydrateLatest(project, window) {
+    if (window.invalidated) return Promise.reject(historyFailure('历史视图已变化，请重新加载。'));
+    if (window.latestTurn.read) return window.latestTurn.read;
+    if (window.latestTurn.complete) return Promise.resolve();
+    const { client, generation, epoch, threadId } = window;
+    const current = () => this.currentConnection(project, client) && project.connectionGeneration === generation
+      && this.historyWindow(project, threadId) === window && window.epoch === epoch && window.views.size > 0;
+    const loading = Promise.resolve().then(async () => {
+      try {
+        while (!window.latestTurn.complete) {
+          if (!current()) throw historyFailure('历史视图已变化，请重新加载。');
+          const cursor = window.baselineCursor;
+          const page = await client.request('areal/conversation/history', { threadId, view: 'own', cursor, maxBytes: historyPageBytes }, { maxResponseBytes: historyPageBytes });
+          if (!current()) throw historyFailure('历史视图已变化，请重新加载。');
+          this.validateHistoryPage(window, page, cursor);
+          for (const entry of page.data) window.latestSeen.add(entry.sourceItemId);
+          const authoritative = new Map(page.data.map(entry => [entry.sourceItemId, entry.item]));
+          const displayed = project.model.state.threads[threadId];
+          const reconciled = { ...displayed, turns: displayed.turns.map(turn => ({ ...turn, items: turn.items.map(item =>
+            item.type !== 'userMessage' && window.preservedLatestItems.get(item.id) === item
+              ? authoritative.get(item.id) ?? item : item) })) };
+          let thread = mergeHistory(reconciled, page.data);
+          window.latestTurn.complete = page.complete || page.data.some(entry => entry.sourceTurnId !== window.latestTurn.id);
+          window.baselineCursor = window.nextCursor = page.nextCursor;
+          window.baselineComplete = window.complete = page.complete;
+          if (window.latestTurn.complete && window.preservedLatestItems.size) {
+            thread = { ...thread, turns: thread.turns.map(turn => ({ ...turn, items: turn.items.filter(item =>
+              !window.preservedLatestItems.has(item.id) || window.latestSeen.has(item.id)) })) };
+            window.preservedLatestItems.clear();
+          }
+          window.baselineFirstItemId = thread.turns.flatMap(turn => turn.items)[0]?.id;
+          project.model.replace(thread);
+          this.publishHistory(project, window);
+        }
+      } catch (error) {
+        if (current() && historyReason(error) === 'HISTORY_CURSOR_STALE') { window.invalidated = true; window.epoch++; }
+        throw error;
+      } finally {
+        if (window.latestTurn.read === loading) { window.latestTurn.read = null; this.publishHistory(project, window); }
+      }
+    });
+    window.latestTurn.read = loading;
+    this.publishHistory(project, window);
+    return loading;
+  }
+
+  async refreshHistory(project, window) {
+    window.invalidated = true; window.epoch++;
+    await project.observationReads?.get(window.threadId)?.promise.catch(() => {});
+    if (this.historyWindow(project, window.threadId) === window && this.currentConnection(project, window.client)
+      && project.connectionGeneration === window.generation) await this.openThread(project, window.threadId);
+  }
+
+  validateHistoryPage(window, page, cursor) {
+    if (page.snapshotId !== window.snapshotId || !Array.isArray(page.data) || page.nextCursor === cursor
+      || !page.complete && (!page.nextCursor || !page.data.length))
+      throw historyFailure('历史页的版本或游标无效，请重新打开聊天。');
+    if (page.data.some(entry => entry.sourceThreadId !== window.threadId || entry.fragment || entry.item?.id !== entry.sourceItemId))
+      throw historyFailure('历史页与当前聊天不匹配。');
+  }
+
   async historyCommand(project, request) {
     const { threadId, viewId, operation } = request;
     let window = this.historyWindow(project, threadId);
@@ -957,7 +1036,7 @@ class CoreBackend {
         if (thread) project.model.replace({ ...thread, turns: thread.turns.map(turn => ({ ...turn,
           items: turn.items.filter(item => !drop.has(item.id)).map(item => window.loaded.get(item.id)?.placeholder ?? item),
         })).filter(turn => turn.items.length || turn.status === 'inProgress') });
-        window.pages = []; window.loaded.clear(); window.loading.clear(); window.olderRead = null;
+        window.pages = []; window.loaded.clear(); window.loading.clear(); window.olderRead = null; window.latestTurn.read = null;
         window.nextCursor = window.baselineCursor; window.complete = window.baselineComplete; window.omitted = false;
         this.publishHistory(project, window);
       }
@@ -966,12 +1045,23 @@ class CoreBackend {
     if (!this.supportsBoundedHistory(project.client)) return { supported: false, message: '当前 Core 使用完整历史读取，不支持分页；请更新 Core。' };
     if (!window) { await this.openThread(project, threadId); window = this.historyWindow(project, threadId); }
     if (!window) throw historyFailure('历史视图尚未就绪，请重新打开聊天。');
-    if (operation === 'acquire') { window.views.add(viewId); return { supported: true, complete: window.complete }; }
+    if (operation === 'acquire') {
+      window.views.add(viewId);
+      await this.hydrateLatest(project, window);
+      return { supported: true, complete: window.complete };
+    }
     if (!window.views.has(viewId)) throw historyFailure('历史视图已关闭，请重新打开聊天。');
+    if (operation === 'loadOlder' && window.invalidated) {
+      await this.refreshHistory(project, window);
+      window = this.historyWindow(project, threadId);
+      if (!window?.views.has(viewId)) throw historyFailure('历史视图已关闭，请重新打开聊天。');
+    }
     const client = project.client, epoch = window.epoch;
     const current = () => this.currentConnection(project, client) && this.historyWindow(project, threadId) === window && window.epoch === epoch && window.views.has(viewId);
     const read = (cursor, maxBytes = historyPageBytes) => client.request('areal/conversation/history', { threadId, view: 'own', cursor, maxBytes }, { maxResponseBytes: maxBytes });
     if (operation === 'loadOlder') {
+      await this.hydrateLatest(project, window);
+      if (!current()) throw historyFailure('历史视图已变化，请重新加载。');
       if (window.olderRead) return window.olderRead;
       if (!window.nextCursor) return { data: [], complete: true, nextCursor: null };
       const cursor = window.nextCursor;
@@ -979,10 +1069,7 @@ class CoreBackend {
         try {
           const page = await read(cursor);
           if (!current()) throw historyFailure('历史视图已变化，请重新加载。');
-          if (page.snapshotId !== window.snapshotId || !Array.isArray(page.data) || page.nextCursor === cursor)
-            throw historyFailure('历史页的版本或游标无效，请重新打开聊天。');
-          if (page.data.some(entry => entry.sourceThreadId !== threadId || entry.fragment || entry.item?.id !== entry.sourceItemId))
-            throw historyFailure('历史页与当前聊天不匹配。');
+          this.validateHistoryPage(window, page, cursor);
           window.pages.push(page); window.nextCursor = page.nextCursor; window.complete = page.complete;
           let thread = mergeHistory(project.model.state.threads[threadId], page.data);
           if (window.pages.length > historyPageLimit) {
@@ -993,9 +1080,9 @@ class CoreBackend {
           }
           project.model.replace(thread); return page;
         } catch (error) {
-          if (current() && historyReason(error) === 'HISTORY_CURSOR_STALE') await this.openThread(project, threadId);
+          if (current() && historyReason(error) === 'HISTORY_CURSOR_STALE') await this.refreshHistory(project, window);
           throw error;
-        } finally { if (this.historyWindow(project, threadId) === window) { window.olderRead = null; this.publishHistory(project, window); } }
+        } finally { if (window.olderRead === loading) { window.olderRead = null; this.publishHistory(project, window); } }
       });
       window.olderRead = loading; this.publishHistory(project, window); return loading;
     }
@@ -1022,7 +1109,7 @@ class CoreBackend {
           if (historyReason(error) === 'HISTORY_ITEM_CHANGED' && error.data?.restartCursor && !restarted) {
             cursor = error.data.restartCursor; offset = 0; chunks = []; version = undefined; restarted = true; continue;
           }
-          if (current() && historyReason(error) === 'HISTORY_CURSOR_STALE') await this.openThread(project, threadId);
+          if (current() && historyReason(error) === 'HISTORY_CURSOR_STALE') await this.refreshHistory(project, window);
           throw error;
         }
         if (!current()) throw historyFailure('历史视图已关闭或变化。');
@@ -1487,7 +1574,7 @@ class CoreBackend {
     }
   }
 
-  async submit(project, method, parameters, { requestId, remote, dispatch } = {}) {
+  async submit(project, method, parameters, { requestId, remote, dispatch, preDispatch } = {}) {
     const observationError = project.observationErrors?.[parameters.threadId];
     if (observationError && ['areal/turn/start', 'areal/turn/enqueue', 'areal/turn/submit', 'turn/start', 'turn/steer', 'areal/queue/resume', 'areal/queue/steer', 'areal/goal/create', 'areal/goal/resume'].includes(method)) {
       throw Object.assign(new Error(observationError.message), { code: observationError.code, submissionUnknown: false });
@@ -1522,6 +1609,7 @@ class CoreBackend {
       let result, dispatchStarted = false;
       try {
         if (this.closing) throw new Error('应用正在退出');
+        if (preDispatch && !preDispatch()) throw Object.assign(new Error('订阅模型同步目标已变化'), { submissionUnknown: false });
         dispatchStarted = true;
         result = await this.requestSubmission(project, method, params);
       }
@@ -1831,8 +1919,19 @@ class CoreBackend {
     const { projectId, threadId } = request;
     const project = await this.start(projectId);
     if (this.closing) throw new Error('应用正在退出');
+    if (['send', 'editMessage', 'continue', 'steer'].includes(name) || name === 'side' && ['start', 'send'].includes(request.operation)) {
+      const configured = name === 'side' && request.operation === 'start' ? request.model : project.configurations?.[threadId]?.model;
+      const model = configured?.providerId === 'areal_openai'
+        ? project.models?.find(item => item.providerId === configured.providerId && item.modelId === configured.modelId) : null;
+      if (configured?.providerId === 'areal_openai' && (!model || model.available === false || !this.providers.subscriptionAvailable(model, project)))
+        throw Object.assign(new Error('当前 ChatGPT 模型不可用，请在模型设置中刷新登录状态或选择其他模型'), { submissionUnknown: false });
+    }
     switch (name) {
       case 'connect': return this.snapshot();
+      case 'prediction': {
+        if (!project.client?.capabilities?.methods?.includes('areal/thread/prediction')) return null;
+        return project.client.request('areal/thread/prediction', { threadId, sourceTurnId: request.sourceTurnId, operation: request.operation });
+      }
       case 'prepareCreator': return this.resources.prepareCreator(project, request.profile);
       case 'dismissRecovery': {
         await this.changeOutcomes(project, previous => { const outcomes = { ...previous }; if (!outcomes[request.requestId]?.remote) delete outcomes[request.requestId]; return outcomes; }); break;

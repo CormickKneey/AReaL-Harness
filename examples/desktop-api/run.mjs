@@ -258,6 +258,10 @@ try {
       "--bin-dir",
       process.env.AREAL_TEST_BIN_DIR || join(repo, "target/debug"),
       "--desktop",
+      "--command-timeout-ms",
+      "300000",
+      "--desktop-process-timeout-ms",
+      "900000",
       "--auth-file",
       join(directory, "auth.json"),
       "--config",
@@ -816,7 +820,8 @@ try {
           "-e",
           'my $s=IO::Socket::INET->new(LocalAddr=>"127.0.0.1",LocalPort=>0,Listen=>4,ReuseAddr=>1) or die $!; $|=1; print "PORT=".$s->sockport."\\n"; while(my $c=$s->accept){ my $line=<$c>; print $c "HTTP/1.1 200 OK\\r\\nContent-Length: 7\\r\\nConnection: close\\r\\n\\r\\npreview"; close $c; }',
         ],
-        timeoutMs: 15000,
+        // 服务期限高于普通命令上限；旧的命令 Scope 继承会在这里拒绝启动。
+        timeoutMs: 600000,
       });
       const servicePage = await c.call("areal/process/read", {
         threadId,

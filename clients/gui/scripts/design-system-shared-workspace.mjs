@@ -18,6 +18,19 @@ export async function runSharedWorkspace(page, scratch, report, baseline) {
   };
   for (const [input,text] of [[main,'主草稿：检查面板返回'],[side(),'Side草稿：保留独立问题']]) { await input.click(); await input.press('Meta+A'); await page.keyboard.insertText(text); }
   await page.waitForFunction(() => Object.values(localStorage).some(v => v === 'Side草稿：保留独立问题'));
+  if (!baseline) {
+    const mainModel = scope.locator('.work-surface').getByRole('button', { name: '模型', exact: true });
+    const sideModel = scope.locator('.side-chat-pane').getByRole('button', { name: '模型', exact: true });
+    assert.equal(await sideModel.innerText(), await mainModel.innerText(), 'new Side uses the same model name and effort as main');
+    await sideModel.click();
+    await page.getByRole('button', { name: '选择模型', exact: true }).click();
+    const models = page.getByRole('radiogroup', { name: '模型列表', exact: true });
+    await models.waitFor();
+    assert.equal(await models.getByRole('radio', { name: /继承/ }).count(), 0, 'model menu has no separate inheritance copy');
+    assert.equal(await models.getByRole('radio', { checked: true }).count(), 1, 'source model is selected in the shared catalog');
+    await page.keyboard.press('Escape');
+    report.checks.push('New Side model name and effort match main, without a separate inheritance menu entry');
+  }
   const split=await capture('01-split');
   await scope.getByRole('button',{name:'进入完整视图',exact:true}).click();
   const full=await capture('02-side-full');

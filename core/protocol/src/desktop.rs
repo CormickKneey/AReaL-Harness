@@ -310,6 +310,7 @@ pub const NOTIFICATIONS: &[&str] = &[
     "areal/tool/cancelled",
     "areal/thread/configured",
     "areal/thread/edited",
+    "areal/thread/predictionChanged",
     "areal/thread/archived",
     "areal/thread/unarchived",
     "areal/plan/updated",
@@ -626,9 +627,49 @@ pub struct AcceptedModelSelection {
     pub reasoning_effort: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(
+    tag = "status",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum PromptPrediction {
+    Pending {
+        source_turn_id: String,
+        configuration_revision: u64,
+    },
+    Ready {
+        source_turn_id: String,
+        configuration_revision: u64,
+        text: String,
+    },
+    Unavailable {
+        source_turn_id: String,
+        configuration_revision: u64,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PromptPredictionRequest {
+    pub thread_id: String,
+    pub source_turn_id: String,
+    pub operation: PromptPredictionOperation,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum PromptPredictionOperation {
+    Request,
+    Cancel,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DesktopState {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_prediction: Option<PromptPrediction>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_accepted_model: Option<AcceptedModelSelection>,
     /// 只在读取活跃 Side 时由 Core 投影；历史快照不承载模型等待状态。

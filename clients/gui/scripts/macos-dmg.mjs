@@ -20,6 +20,7 @@ import { createRequire } from "node:module";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { checkDmgSize } from "./dmg-size.mjs";
 
 const require = createRequire(import.meta.url);
 const { serviceName } = require("../app/src/core/desktop-executables.cjs");
@@ -161,12 +162,12 @@ async function provePayload(pair, scratch) {
   }
 }
 
-async function planFramework(app, scratch) {
+async function planFramework(app, scratch, verifySignatures = true) {
   const outer = await localDirectory(app, frameworkRelative);
   const service = await localDirectory(app, serviceRelative);
   const trees = [await frameworkTree(outer), await frameworkTree(service)];
   assert.deepEqual([...trees[0].keys()], [...trees[1].keys()], "Framework layout differs");
-  assert.deepEqual(
+  if (verifySignatures) assert.deepEqual(
     signingPolicy(outer),
     signingPolicy(service),
     "Framework signing policy differs",
@@ -180,7 +181,8 @@ async function planFramework(app, scratch) {
       assert.equal(entry.target, other.target, `Framework symlink differs: ${rel}`);
     if (entry.type === "file") {
       const pair = { relative: rel, outer: entry.file, service: other.file };
-      if (rel !== envelope) await provePayload(pair, scratch);
+      if (!verifySignatures) assert.equal(pair.outer.sha256, pair.service.sha256, `Unsigned framework bytes differ: ${rel}`);
+      else if (rel !== envelope) await provePayload(pair, scratch);
       pairs.push(pair);
     }
   }
@@ -188,7 +190,7 @@ async function planFramework(app, scratch) {
     pairs.some((pair) => pair.relative === "Versions/A/Electron Framework"),
     "Missing framework executable",
   );
-  assert.ok(
+  if (verifySignatures) assert.ok(
     pairs.some((pair) => pair.relative === envelope),
     "Missing framework signature envelope",
   );
@@ -225,8 +227,10 @@ async function sharedPairs(app, pairs) {
   }
 }
 
-/** Export a verified HFS+ UDZO image without changing or signing the source app. */
-export async function buildMacOSDmg({ app, destination, volumeName }) {
+/** Export HFS+ UDZO without changing or signing the source app.
+ * No-new-signatures mode requires byte-identical framework copies, including envelopes.
+ */
+export async function buildMacOSDmg({ app, destination, volumeName, verifySignatures = true }) {
   assert.equal(process.platform, "darwin", "macOS is required for DMG export");
   assert.ok(typeof app === "string" && app.endsWith(".app"), "app must be an application bundle");
   assert.ok(
@@ -247,7 +251,7 @@ export async function buildMacOSDmg({ app, destination, volumeName }) {
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
-  run("/usr/bin/codesign", ["--verify", "--deep", "--strict", source]);
+  if (verifySignatures) run("/usr/bin/codesign", ["--verify", "--deep", "--strict", source]);
   const temporary = await mkdtemp(join(dirname(destination), ".areal-dmg-"));
   const staging = join(temporary, "root"),
     scratch = join(temporary, "signature-copies");
@@ -258,8 +262,8 @@ export async function buildMacOSDmg({ app, destination, volumeName }) {
     for (const path of [staging, scratch, mount]) await mkdir(path);
     const stagedApp = join(staging, basename(source));
     run("/usr/bin/ditto", [source, stagedApp]);
-    run("/usr/bin/codesign", ["--verify", "--deep", "--strict", stagedApp]);
-    const pairs = await planFramework(stagedApp, scratch);
+    if (verifySignatures) run("/usr/bin/codesign", ["--verify", "--deep", "--strict", stagedApp]);
+    const pairs = await planFramework(stagedApp, scratch, verifySignatures);
     for (const pair of pairs) {
       await unchanged(pair.outer);
       await unchanged(pair.service);
@@ -270,7 +274,7 @@ export async function buildMacOSDmg({ app, destination, volumeName }) {
       await rename(temporaryLink, pair.service.path);
     }
     await sharedPairs(stagedApp, pairs);
-    run("/usr/bin/codesign", ["--verify", "--deep", "--strict", stagedApp]);
+    if (verifySignatures) run("/usr/bin/codesign", ["--verify", "--deep", "--strict", stagedApp]);
     await symlink("/Applications", join(staging, "Applications"));
     run("/usr/bin/hdiutil", [
       "create",
@@ -287,18 +291,18 @@ export async function buildMacOSDmg({ app, destination, volumeName }) {
     run("/usr/bin/hdiutil", ["attach", image, "-readonly", "-nobrowse", "-mountpoint", mount]);
     mounted = true;
     const mountedApp = join(mount, basename(source));
-    const mountedPlan = await planFramework(mountedApp, scratch);
+    const mountedPlan = await planFramework(mountedApp, scratch, verifySignatures);
     assert.deepEqual(
       mountedPlan.map((pair) => pair.relative),
       pairs.map((pair) => pair.relative),
       "Mounted framework layout changed",
     );
     await sharedPairs(mountedApp, pairs);
-    run("/usr/bin/codesign", ["--verify", "--deep", "--strict", mountedApp]);
+    if (verifySignatures) run("/usr/bin/codesign", ["--verify", "--deep", "--strict", mountedApp]);
     assert.equal(await readlink(join(mount, "Applications")), "/Applications");
     run("/usr/bin/hdiutil", ["detach", mount]);
     mounted = false;
-    run("/usr/bin/codesign", ["--verify", "--deep", "--strict", source]);
+    if (verifySignatures) run("/usr/bin/codesign", ["--verify", "--deep", "--strict", source]);
     const evidence = {
       path: destination,
       bytes: (await lstat(image)).size,
@@ -307,6 +311,7 @@ export async function buildMacOSDmg({ app, destination, volumeName }) {
       linkedBytes: pairs.reduce((bytes, pair) => bytes + pair.service.bytes, 0),
       verifiedInodePairs: pairs.length,
     };
+    await checkDmgSize(image);
     await link(image, destination);
     return evidence;
   } finally {

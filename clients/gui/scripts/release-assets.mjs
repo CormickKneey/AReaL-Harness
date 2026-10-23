@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
 import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve, join } from "node:path";
+import { checkDmgSize } from "./dmg-size.mjs";
 const require = createRequire(new URL("../app/package.json", import.meta.url));
 const { stringify } = require("yaml");
 const {
@@ -28,6 +29,7 @@ assert.equal(
 );
 assert.ok(stableVersion(state.version));
 const version = state.version;
+await checkDmgSize(join(input, `AReaLHarness-${version}-macos-arm64.dmg`));
 const resources = join(input, state.appName, "Contents/Resources");
 const config = JSON.parse(await readFile(join(resources, "areal-update.json"), "utf8"));
 assert.deepEqual(config, { engine: "electron", feedUrl: githubFeedUrl });

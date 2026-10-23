@@ -182,8 +182,9 @@ export function ChannelQuestion({ row, projectId, action, disabled, onReplied, s
   </article>;
 }
 
-export function TaskCenter({ projects, connected, initialProjectId, defaultProjectId, action, onOpenThread, onOpenModelSettings, navigation, target, renderConversation, renderResources }: Props & { navigation: ReactNode; renderConversation: TaskConversationRenderer; renderResources: (project: Data, thread: Data, task: Data, history: ReactNode, revealKey?: string) => ReactNode; target?: { projectId: string; taskId: string; runId?: string; questionId?: string; eventId?: string } }) {
+export function TaskCenter({ projects: allProjects, connected, initialProjectId, defaultProjectId, action, onOpenThread, onOpenModelSettings, navigation, target, renderConversation, renderResources }: Props & { navigation: ReactNode; renderConversation: TaskConversationRenderer; renderResources: (project: Data, thread: Data, task: Data, history: ReactNode, revealKey?: string) => ReactNode; target?: { projectId: string; taskId: string; runId?: string; questionId?: string; eventId?: string } }) {
   const { t } = useI18n();
+  const projects = allProjects.filter(project => project.projectless === true);
   const layout = useRef<HTMLElement>(null);
   const [narrow, setNarrow] = useState(false);
   useLayoutEffect(() => {
@@ -212,12 +213,12 @@ export function TaskCenter({ projects, connected, initialProjectId, defaultProje
   const [history, setHistory] = useState<RunHistory>(() => emptyRunHistory());
   const historyEpoch = useRef(0);
   const readRuns = useRef<(mode?: HistoryReadMode) => Promise<void>>(async () => {});
-  const rows = Object.values(catalog).flatMap(read => ownerRows(read)?.data ?? []);
+  const rows = projects.flatMap(project => ownerRows(catalog[project.id])?.data ?? []);
   const failedProjects = projects.filter(project => catalog[project.id]?.status === "error").map(project => project.id);
   const loading = connected && projects.some(project => !catalog[project.id] || catalog[project.id].status === "pending");
   const initialLoading = connected && projects.some(project => !catalog[project.id] || catalog[project.id].status === "pending" && !ownerRows(catalog[project.id]));
   const fresh = connected && projects.every(project => catalog[project.id]?.status === "ready");
-  const hasMore = Object.values(catalog).some(read => ownerRows(read)?.hasMore);
+  const hasMore = projects.some(project => ownerRows(catalog[project.id])?.hasMore);
   const [selected, setSelected] = useState(() => sessionStorage.getItem("areal-gui:selected-global-task") ?? ""), [creating, setCreating] = useState(false);
   const selection = useRef({ selected, projects, target });
   selection.current = { selected, projects, target };

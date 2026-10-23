@@ -561,15 +561,18 @@ async function checkCreationRegression(){
  await page.screenshot({path:join(scratch,'creation-model.png')});assert.deepEqual(errors,[]);
 }
 async function checkLoadingRegression(){
+ const primary=await call('projectless',{operation:'prepare',requestId:randomUUID(),directory:independentDirectory});
+ await call('connect',{projectId:primary.projectId});
+ pid=(await until(async()=>(await snapshot()).projects.find(p=>p.id===primary.projectId&&p.state?.connected),'primary independent owner ready')).id;
  const slow=join(scratch,'slow-workspace');await mkdir(slow);
- await app.evaluate(({dialog},path)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[path]});},slow);
- await page.evaluate(()=>window.arealDesktop.chooseProject());
- const slowProject=await until(async()=>(await snapshot()).projects.find(p=>p.root===slow&&p.state?.connected),'second project ready');
+ const slowPrepared=await call('projectless',{operation:'prepare',requestId:randomUUID(),directory:slow});
+ await call('connect',{projectId:slowPrepared.projectId});
+ const slowProject=await until(async()=>(await snapshot()).projects.find(p=>p.id===slowPrepared.projectId&&p.state?.connected),'second project ready');
  for(let index=0;index<3;index++){
   const root=join(scratch,`ready-workspace-${index}`);await mkdir(root);
-  await app.evaluate(({dialog},path)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[path]});},root);
-  await page.evaluate(()=>window.arealDesktop.chooseProject());
-  const owner=await until(async()=>(await snapshot()).projects.find(p=>p.root===root&&p.state?.connected),'healthy owner ready');
+  const prepared=await call('projectless',{operation:'prepare',requestId:randomUUID(),directory:root});
+  await call('connect',{projectId:prepared.projectId});
+  const owner=await until(async()=>(await snapshot()).projects.find(p=>p.id===prepared.projectId&&p.state?.connected),'healthy owner ready');
   await call('manage',{projectId:owner.id,operation:'taskCreate',mode:'scheduled',objective:`READY_TASK_OWNER_${index}`,interactionMode:'interactive',schedule:{at:Math.floor(Date.now()/1000)+86400,timeZone:'Asia/Shanghai'}});
  }
  const create=objective=>call('manage',{projectId:pid,operation:'taskCreate',mode:'scheduled',objective,interactionMode:'interactive',schedule:{at:Math.floor(Date.now()/1000)+86400,timeZone:'Asia/Shanghai'}});
@@ -607,7 +610,7 @@ async function checkLoadingRegression(){
  await chat.fill('检查现有任务，没有时间。');await page.getByTestId('chat-send-button').click();
  await page.getByText('你希望什么时候执行？',{exact:true}).waitFor();
  const management=await page.evaluate(key=>JSON.parse(localStorage.getItem(key)),`areal-gui:task-edit:${pid}:${second.id}`);
- assert.equal((await call('manage',{projectId:pid,operation:'taskDraftRead',threadId:management.threadId})).thread.cwd,workspace);
+ assert.equal((await call('manage',{projectId:pid,operation:'taskDraftRead',threadId:management.threadId})).thread.cwd,independentDirectory);
  await until(()=>Date.now()-startupPendingAt>=6500,'startup readiness remains pending beyond the catalog RPC deadline',10000);
  const startupPending={elapsedMs:Date.now()-startupPendingAt,pending:await page.getByText('其余任务仍在读取…',{exact:true}).count(),errors:await page.getByRole('alert').allTextContents()};
  await writeFile(join(scratch,'catalog-startup-pending.json'),JSON.stringify(startupPending,null,2));

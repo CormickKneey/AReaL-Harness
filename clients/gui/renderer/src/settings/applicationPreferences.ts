@@ -16,22 +16,27 @@ try {
   value = normalizeApplicationSettings(null);
 }
 const listeners = new Set<() => void>();
+window.addEventListener("storage", event => {
+  if (event.key !== key && event.key !== null) return;
+  try { value = normalizeApplicationSettings(JSON.parse(event.newValue ?? "{}")); }
+  catch { value = normalizeApplicationSettings(null); }
+  listeners.forEach(listener => listener());
+});
 export function setApplicationPreferences(patch: Partial<ApplicationSettings>) {
   const next = normalizeApplicationSettings({ ...value, ...patch });
   localStorage.setItem(key, JSON.stringify(next));
   value = next;
   listeners.forEach((listener) => listener());
 }
+export function getApplicationPreferences(): ApplicationSettings {
+  return value;
+}
+export function subscribeApplicationPreferences(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+}
 export function useApplicationPreferences() {
-  return useSyncExternalStore(
-    (listener) => {
-      listeners.add(listener);
-      return () => {
-        listeners.delete(listener);
-      };
-    },
-    () => value,
-  );
+  return useSyncExternalStore(subscribeApplicationPreferences, getApplicationPreferences);
 }
 // One effective motion preference serves CSS and Web Animations/scrolling.
 const motionQuery = typeof window !== "undefined" && typeof window.matchMedia === "function"

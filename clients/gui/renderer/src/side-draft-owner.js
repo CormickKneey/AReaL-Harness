@@ -69,7 +69,7 @@ export class SideDraftWorkspace {
   pendingDrafts() { return this.drafts().filter(id => this.storage.getItem(this.pendingKey({ kind: 'draft', id }))).map(id => ({ kind: 'draft', id })); }
   availableDrafts() { return this.drafts().filter(id => {
     const draft = { kind: 'draft', id };
-    return this.storage.getItem(this.draftKey(draft)) || this.storage.getItem(this.pendingKey(draft));
+    return this.storage.getItem(this.draftKey(draft)) || this.storage.getItem(this.pendingKey(draft)) || this.storage.getItem(`${this.owner(draft)}:selection`);
   }).map(id => ({ kind: 'draft', id })); }
 
   capture(connectionGeneration) {

@@ -37,6 +37,7 @@ pub enum RequestPurpose {
     #[default]
     Solve,
     Summary,
+    PromptPrediction,
     PermissionReview,
 }
 
@@ -1114,7 +1115,10 @@ impl Model for HttpModel {
         if let Some(summary) = &self.options.reasoning_summary {
             body["reasoning"] = json!({"summary":summary});
         }
-        if let Some(effort) = if purpose == RequestPurpose::Summary {
+        if let Some(effort) = if matches!(
+            purpose,
+            RequestPurpose::Summary | RequestPurpose::PromptPrediction
+        ) {
             self.options
                 .summary_reasoning_effort
                 .as_ref()
@@ -1131,7 +1135,10 @@ impl Model for HttpModel {
             (Some(configured), Some(cap)) => Some(configured.min(cap)),
             (configured, cap) => configured.or(cap),
         };
-        let output_tokens = if purpose == RequestPurpose::Summary {
+        let output_tokens = if matches!(
+            purpose,
+            RequestPurpose::Summary | RequestPurpose::PromptPrediction
+        ) {
             Some(
                 output_tokens
                     .unwrap_or(16384)
@@ -1229,6 +1236,7 @@ impl Model for HttpModel {
                         match purpose {
                             RequestPurpose::Solve => "solve",
                             RequestPurpose::Summary => "summary",
+                            RequestPurpose::PromptPrediction => "promptPrediction",
                             RequestPurpose::PermissionReview => "permissionReview",
                         },
                     );

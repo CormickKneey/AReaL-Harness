@@ -27,8 +27,8 @@ const baselineSha256 = baselineSource ? createHash('sha256').update(await readFi
 const testSha256 = createHash('sha256').update(await readFile(fileURLToPath(import.meta.url))).digest('hex');
 const command = [process.execPath, ...process.argv.slice(1)];
 const startedAt = new Date().toISOString();
-const errors = [], checks = [], catalogEvents = [], cleanup = [];
-let app, page, projectId, primaryProjectId, savedTask, startupObservation, heldObservation, eventualObservation, failure, passed = false;
+const errors = [], checks = [], catalogEvents = [], cleanup = [], navigationObservations = [];
+let app, page, projectId, primaryProjectId, savedTask, workspaceTask, startupObservation, heldObservation, eventualObservation, failure, passed = false;
 await Promise.all([mkdir(workspace), mkdir(primaryWorkspace), mkdir(join(userHome, '.areal'), { recursive: true }), mkdir(launchApp)]);
 execFileSync('git', ['init', '-b', 'main'], { cwd: workspace, stdio: 'ignore' });
 await writeFile(traceFile, '');
@@ -141,8 +141,8 @@ async function capture(name) {
 }
 try {
   await launch();
-  await app.evaluate(({ dialog }, directory) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [directory] }); }, workspace);
-  await page.evaluate(() => window.arealDesktop.chooseProject());
+  const prepared = await call('projectless', { operation: 'prepare', requestId: randomUUID(), directory: workspace });
+  await call('connect', { projectId: prepared.projectId });
   const project = await until(async () => (await snapshot()).projects.find(owner => owner.root === workspace && owner.state?.connected), 'fixture project fully ready');
   projectId = project.id;
   savedTask = await call('manage', { projectId, operation: 'taskCreate', requestId: randomUUID(), mode: 'scheduled', objective,
@@ -152,6 +152,7 @@ try {
   await app.evaluate(({ dialog }, directory) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [directory] }); }, primaryWorkspace);
   await page.evaluate(() => window.arealDesktop.chooseProject());
   primaryProjectId = (await until(async () => (await snapshot()).projects.find(owner => owner.root === primaryWorkspace && owner.state?.connected), 'primary owner fully ready')).id;
+  workspaceTask = await call('manage', { projectId: primaryProjectId, operation: 'taskCreate', requestId: randomUUID(), mode: 'scheduled', objective: 'WORKSPACE_TASK_OUTSIDE_GLOBAL_CATALOG', interactionMode: 'interactive', schedule: { at: Math.floor(Date.now() / 1000) + 86400 } });
   await page.evaluate(id => localStorage.setItem('areal-gui:project', id), primaryProjectId);
   await closeApplication();
   await writeFile(traceFile, '');
@@ -159,9 +160,7 @@ try {
   await writeFile(gate, 'hold unrelated provider configuration after authenticated handshake');
   await writeFile(handshakeGate, 'start catalog read before handshake completes');
   await launch();
-  for (const owner of (await snapshot()).projects) {
-    if (owner.id !== projectId) await call('connect', { projectId: owner.id });
-  }
+  await call('connect', { projectId: primaryProjectId });
   await until(async () => (await snapshot()).projects.find(owner => owner.id === primaryProjectId)?.state?.connected, 'primary owner ready independently of cold task owner');
   await page.evaluate(projectId => { void window.arealDesktop.command('connect', { projectId }); }, projectId);
   await until(async () => (await trace()).find(event => event.kind === 'handshake_held' && event.projectId === projectId), 'task owner launch completes before catalog measurement');
@@ -206,6 +205,13 @@ try {
     assert.equal(startupObservation.events.some(event => event.kind === 'catalog_command_end' && event.projectId === projectId), false, 'Catalog waits for authentication before its page deadline begins');
     checks.push('Startup exceeding five seconds stays pending and recovers without catalog timeout');
   }
+  const independentOwners = (await snapshot()).projects.filter(owner => owner.projectless === true).map(owner => owner.id).sort();
+  assert.ok(independentOwners.includes(projectId));
+  assert.ok(!independentOwners.includes(primaryProjectId));
+  const queriedOwners = [...new Set(heldObservation.events.filter(event => event.kind === 'catalog_command_begin').map(event => event.projectId))].sort();
+  assert.deepEqual(queriedOwners, independentOwners, 'Global scheduled-task navigation queries only independent owners');
+  assert.equal(await page.getByRole('button', { name: `打开自动化 ${workspaceTask.objective}`, exact: true }).count(), 0, 'Global scheduled-task navigation excludes workspace-owned rows');
+  checks.push('Global catalog excludes workspace owners from both requests and projected rows');
   assert.equal(heldObservation.visible, true, 'Saved task row must appear before unrelated startup warmup releases');
   assert.equal(heldObservation.disabled, true, 'Task management remains disabled before full owner readiness');
   assert.equal(heldObservation.projectConnected, false, 'Catalog reads must not mark execution ready');
@@ -215,6 +221,22 @@ try {
   assert.deepEqual(errors, [], 'No renderer errors');
   assert.equal((await trace()).some(event => event.kind === 'uncaught' || event.kind === 'bootstrap_error'), false, 'No fixture or Main process errors');
   checks.push('Real catalog response and visible disabled row precede unrelated startup completion');
+  for (let index = 0; index < 5; index++) {
+    await page.getByRole('button', { name: '首页', exact: true }).click();
+    const offset = (await trace()).length;
+    const openedAt = Date.now();
+    await page.getByRole('button', { name: '定时任务', exact: true }).click();
+    await until(async () => (await trace()).slice(offset).some(event => event.kind === 'catalog_command_end' && event.projectId === projectId), 'independent catalog response after reopening');
+    await row.waitFor();
+    assert.equal(await page.getByRole('button', { name: `打开自动化 ${workspaceTask.objective}`, exact: true }).count(), 0, 'Workspace live snapshots stay outside the global catalog');
+    const events = (await trace()).slice(offset);
+    assert.deepEqual([...new Set(events.filter(event => event.kind === 'catalog_command_begin').map(event => event.projectId))].sort(), independentOwners);
+    navigationObservations.push({ index, openedAt, visibleAt: Date.now(), visibleLatencyMs: Date.now() - openedAt, queryCount: events.filter(event => event.kind === 'catalog_command_begin').length });
+  }
+  checks.push('Five global catalog reopens query only independent owners and exclude workspace live rows');
+  await capture('scoped-navigation');
+  assert.deepEqual(errors, [], 'No renderer errors after repeated navigation');
+  assert.equal((await trace()).some(event => event.kind === 'uncaught' || event.kind === 'bootstrap_error'), false, 'No Main errors after repeated navigation');
   passed = true;
 } catch (error) {
   failure = error.stack;
@@ -226,8 +248,8 @@ try {
   try { await closeApplication(); } catch (error) { cleanup.push({ stopped: false, error: error.stack }); passed = false; }
   await writeFile(join(scratch, 'catalog-events.json'), JSON.stringify(catalogEvents, null, 2));
   await writeFile(join(scratch, 'manifest.json'), JSON.stringify({ passed, startedAt, finishedAt: new Date().toISOString(), command, cwd: process.cwd(), testSha256, sourceCommit, sourceDiff, sourceDiffSha256,
-    binary, binarySha256, baselineSource, baselineSha256, primaryProjectId, projectId, savedTask, checks, slowHandshake, startupObservation, heldObservation, eventualObservation, failure, cleanup, errors,
-    boundaries: ['Real isolated source Electron, preload, Desktop adapter and Core', 'Production bridge creates one future task; no model response or task list is mocked',
+    binary, binarySha256, baselineSource, baselineSha256, primaryProjectId, projectId, savedTask, workspaceTask, checks, navigationObservations, slowHandshake, startupObservation, heldObservation, eventualObservation, failure, cleanup, errors,
+    boundaries: ['Real isolated source Electron, preload, Desktop adapter and Core', 'Production bridge creates independent and workspace future tasks; no model response or task list is mocked',
       'Native folder picker selects only the isolated workspace', 'Filesystem barrier holds AppProviders.sync after authenticated Core handshake for at least 6.5 seconds',
       'Controlled startup delay verifies catalog responsiveness and does not predict real-account latency', 'Not an installed app or real provider acceptance'] }, null, 2));
   console.log(JSON.stringify({ passed, scratch, checks, eventualObservation: eventualObservation && { visibleLatencyMs: eventualObservation.visibleLatencyMs, earlyVisibleLatencyMs: eventualObservation.earlyVisibleLatencyMs, alertCountWhileHeld: eventualObservation.alertCountWhileHeld }, failure, cleanup }));

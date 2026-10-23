@@ -1,6 +1,7 @@
 // The renderer consumes only the narrow preload contract. Execution facts remain in Core.
 import { validateCommand, validateCommandResponse } from '@areal/workbench/desktop-contract';
 import type { CommandName, CommandParams, DesktopResult, PreviewRequest } from '@areal/workbench/desktop-contract';
+import type { McpAppCommand, McpAppDeepLink, McpAppEvent, McpFormResourceCommand } from "./mcp-app-services.js";
 export type { CommandName };
 export type Data = Record<string, any>;
 export type FileOpenTargets = { targets: { id: string; label: string }[]; preferred: string; preferredLabel: string };
@@ -34,6 +35,10 @@ export interface UpdateState {
 export type NotificationTarget = { projectId: string } & ({ threadId: string; taskId?: never } | { taskId: string; runId?: string; questionId?: string });
 export type QuitProgress = { state: 'idle' } | { state: 'quitting'; phase: 'checking' | 'stopping' | 'finishing' };
 export interface PlatformServices {
+    mcpApp?: McpAppCommand;
+    onMcpAppEvent?(listener: (event: McpAppEvent) => void): () => void;
+    onMcpAppDeepLink?(listener: (link: McpAppDeepLink) => Promise<void> | void): () => void;
+    mcpFormResource?: McpFormResourceCommand;
     /** The themed initial window has painted; desktop may reveal before backend or history restoration. */
     presentReady?(): Promise<void>;
     onQuitRequested?(listener: () => Promise<boolean>): () => void;

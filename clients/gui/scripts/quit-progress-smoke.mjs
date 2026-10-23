@@ -53,9 +53,12 @@ const { SharedCoreBackend } = require(${JSON.stringify(join(gui, 'app/src/core/s
 const { appendFileSync, existsSync } = require('node:fs');
 const record = value => appendFileSync(${JSON.stringify(eventsPath)}, JSON.stringify({ time: Date.now(), ...value }) + '\\n');
 globalThis.quitFixtureResponse = 0;
+globalThis.quitFixtureHold = true;
 require('electron').dialog.showMessageBox = async (...args) => {
   if (args.at(-1).title === '允许本地开发站点') return { response: 1 };
   record({ event: 'native-confirmation', message: args.at(-1).message, response: globalThis.quitFixtureResponse });
+  while (globalThis.quitFixtureHold) await new Promise(resolve => setTimeout(resolve, 20));
+  record({ event: 'native-decision', response: globalThis.quitFixtureResponse });
   return { response: globalThis.quitFixtureResponse };
 };
 const stop = SharedCoreBackend.prototype.stopService;
@@ -85,7 +88,7 @@ SharedCoreBackend.prototype.prepareQuit = async function(...args) {
 };
 `;
 const sha = value => createHash('sha256').update(value).digest('hex');
-const sourceFiles = ['app/src/core/main.cjs', 'app/src/core/preload.cjs', 'renderer/src/App.tsx',
+const sourceFiles = ['app/src/core/main.cjs', 'app/src/core/startup-recovery.cjs', 'app/src/core/preload.cjs', 'renderer/src/App.tsx',
   'renderer/src/services.ts', 'scripts/quit-progress-smoke.mjs', 'renderer/dist/index.html'];
 const sourceHashes = Object.fromEntries(await Promise.all(sourceFiles.map(async file => [file, sha(await readFile(join(gui, file)))])));
 const coreHashes = Object.fromEntries(await Promise.all(['areal', 'areal-runtime', 'areal-runtime-fs'].map(async name => [name, sha(await readFile(join(dirname(binary), name)))])));
@@ -155,6 +158,17 @@ try {
   await page.getByTestId('areal-workbench').waitFor({ timeout: 120000 });
   await until(async () => (await snapshot()).connection?.state === 'ready', 'Desktop ready');
   metadata = JSON.parse(await readFile(join(env.AREAL_CORE_HOME, 'service.json'), 'utf8'));
+  await quit();
+  await until(async () => await count('native-confirmation') === 1, 'Idle quit asks for confirmation');
+  assert.equal(await progress('zh-CN').isVisible(), false, 'Idle quit progress waits for confirmation');
+  assert.equal(await count('stop-held'), 0, 'Idle quit does not stop before confirmation');
+  await quit();
+  assert.equal(await count('native-confirmation'), 1, 'Repeated idle quit shares the pending confirmation');
+  await app.evaluate(() => { globalThis.quitFixtureHold = false; });
+  await until(async () => await count('native-decision') === 1, 'Idle cancellation decision returns');
+  await until(async () => (await command('providers', { operation: 'list' })).data, 'Idle quit cancellation keeps IPC usable');
+  assert.equal(child.exitCode, null, 'Canceling idle quit keeps the application alive');
+  checks.push('Idle quit asks once before progress or shutdown; cancellation keeps the application usable');
   await app.evaluate(({ dialog }, workspace) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [workspace] });
   }, workspace);
@@ -179,8 +193,14 @@ try {
     url: previewUrl, visible: true, bounds: { x: 700, y: 400, width: 300, height: 200 } });
   nativeId = await until(async () => app.evaluate(({ BrowserWindow }, url) => BrowserWindow.getAllWindows()[0].contentView.children.find(view => view.webContents?.getURL() === url && view.getVisible())?.webContents.id, previewUrl), 'Native preview visible before quit');
 
+  await app.evaluate(() => { globalThis.quitFixtureHold = true; });
   await quit();
-  await until(async () => await count('native-confirmation') === 1, 'Native quit confirmation canceled');
+  await until(async () => await count('native-confirmation') === 2, 'Native quit confirmation is awaiting a decision');
+  await page.screenshot({ path: join(scratch, 'quit-awaiting-confirmation.png') });
+  assert.equal(await progress('zh-CN').isVisible(), false, 'Quit progress stays hidden while confirmation is pending');
+  assert.equal(await count('stop-held'), 0, 'Backend stop waits for confirmation');
+  await app.evaluate(() => { globalThis.quitFixtureHold = false; });
+  await until(async () => await count('native-decision') === 2, 'Native quit confirmation canceled');
   await until(async () => (await command('providers', { operation: 'list' })).data, 'IPC usable after native cancellation');
   assert.equal(child.exitCode, null);
   await progress('zh-CN').waitFor({ state: 'hidden' });
@@ -193,8 +213,12 @@ try {
   await app.evaluate(({ webContents }, id) => webContents.fromId(id).focus(), nativeId);
   await writeFile(stopGate, 'held');
   await writeFile(failStop, 'known failure before original stop');
-  await app.evaluate(() => { globalThis.quitFixtureResponse = 1; });
+  await app.evaluate(() => { globalThis.quitFixtureResponse = 1; globalThis.quitFixtureHold = true; });
   await quit();
+  await until(async () => await count('native-confirmation') === 3, 'Quit confirmation awaits approval');
+  assert.equal(await progress('zh-CN').isVisible(), false, 'Quit progress remains hidden before approval');
+  assert.equal(await count('stop-held'), 0, 'Shutdown remains pending before approval');
+  await app.evaluate(() => { globalThis.quitFixtureHold = false; });
   await until(async () => await count('stop-held') === 1, 'Confirmed quit reaches controlled stop boundary');
   await assertProgress('zh-CN', 'quit-progress-zh.png');
   await rm(stopGate);
@@ -252,7 +276,7 @@ try {
   await rm(finishGate, { force: true });
   await rm(failStop, { force: true });
   if (app) {
-    await app.evaluate(() => { globalThis.quitFixtureResponse = 1; }).catch(() => {});
+    await app.evaluate(() => { globalThis.quitFixtureResponse = 1; globalThis.quitFixtureHold = false; }).catch(() => {});
     await app.evaluate(({ app }) => app.quit()).catch(() => {});
     await until(() => child.exitCode !== null || child.signalCode !== null, 'Owned GUI exits during cleanup').catch(error => { errors.push(error.message); });
   }
@@ -264,7 +288,7 @@ try {
   for (const [name, hash] of Object.entries(coreHashes)) assert.equal(sha(await readFile(join(dirname(binary), name))), hash, `Core stays unchanged: ${name}`);
   await writeFile(join(scratch, 'manifest.json'), JSON.stringify({ passed, source, diffSha256, sourceHashes, coreHashes, binary, checks, failure, cleanup, errors,
     gui: { pid: child?.pid, exitCode: child?.exitCode, signalCode: child?.signalCode },
-    boundaries: 'Isolated source Electron with real fixed Core and deterministic loopback SSE model. UI send and pause; real bridge creates a future scheduled task and visible native preview. Native WebContentsView identity/visibility observed through Main. Native folder picker and quit confirmation responses injected. Stop gate delays before original stopService, with one known pre-stop failure. Final gate delays real prepareQuit after backend stop. Application-menu quit callback and native window close callback, no physical Command+Q. No packaged app or real provider.' }, null, 2));
+    boundaries: 'Isolated source Electron with real fixed Core and deterministic loopback SSE model. UI send and pause; real bridge creates a future scheduled task and visible native preview. Native WebContentsView identity/visibility observed through Main. Native folder picker and quit confirmation responses injected; confirmation is held to inspect the pre-approval UI. Stop gate delays before original stopService, with one known pre-stop failure. Final gate delays real prepareQuit after backend stop. Application-menu quit callback and native window close callback, no physical Command+Q. No packaged app or real provider.' }, null, 2));
   console.log('Quit progress result:', passed ? 'PASS' : 'FAIL', checks);
   if (!passed) process.exitCode = 1;
 }

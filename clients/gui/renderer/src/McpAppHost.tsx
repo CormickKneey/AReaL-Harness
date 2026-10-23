@@ -20,33 +20,10 @@ const pageReplySchema = z.record(z.string(), z.unknown()).superRefine((value, ct
     catch { ctx.addIssue({ code: "custom", message: "Invalid page tool reply" }); }
 });
 import { McpAppIcon } from "./McpAppIcon.js";
+import type { PlatformServices } from "./services.js";
+import type { McpAppDescriptor, McpMetadataImageLoader } from "./mcp-app-services.js";
 
 export type McpAppPlacement = { left: number; top: number; width: number; height: number };
-export type McpAppDescriptor = {
-    token: string;
-    frameUrl: string;
-    instanceId: string;
-    serverId: string;
-    generation: string | number;
-    projectId: string;
-    threadId: string;
-    toolMetadata?: {
-        name?: string;
-        title?: string;
-        annotations?: { title?: string };
-        icons?: { src: string }[];
-    };
-    initialArguments: Record<string, unknown>;
-    initialResult?: CallToolResult;
-    hostContext: McpUiHostContext;
-    resourceMeta?: Record<string, unknown>;
-    fileResource?: boolean;
-    resultSource?: McpResultSource;
-};
-export type McpResultSource = { projectId: string; threadId: string; turnId: string; itemId: string };
-export type McpResultState = { opening?: boolean; message?: string };
-export const mcpResultKey = (source: McpResultSource) => JSON.stringify([source.projectId, source.threadId, source.turnId, source.itemId]);
-export type McpResultReply = { status: "open"; app: McpAppDescriptor } | { status: "closed" } | { status: "unavailable"; reason: string };
 export type McpAppMessage = {
     instanceId: string;
     projectId: string;
@@ -62,36 +39,6 @@ export type McpAppModelContext = {
     content?: ContentBlock[];
     structuredContent?: Record<string, unknown>;
 };
-export type McpAppDesktop = {
-    onMcpAppDeepLink(
-        listener: (link: {
-            id: number;
-            pluginId: string;
-            marketplace?: string;
-            toolName: string;
-            path: string;
-        }) => Promise<void> | void,
-    ): () => void;
-    mcpApp(request: Record<string, unknown>): Promise<unknown>;
-    onMcpAppEvent(
-        listener: (event: { token: string; notification: JSONRPCMessage }) => void,
-    ): () => void;
-};
-export function mcpAppDesktop(): McpAppDesktop {
-    return (window as unknown as { arealDesktop: McpAppDesktop }).arealDesktop;
-}
-export async function openMcpApp(request: {
-    projectId: string;
-    threadId: string;
-    serverId: string;
-    expectedGeneration: string | number;
-    toolName: string;
-    arguments?: Record<string, unknown>;
-    deepLink?: string;
-    filePath?: string;
-}): Promise<McpAppDescriptor> {
-    return (await mcpAppDesktop().mcpApp({ operation: "open", ...request })) as McpAppDescriptor;
-}
 /** Source-bound SDK transport with a stricter initialization gate than MCP's generic transport. */
 class AppTransport extends PostMessageTransport {
     ready = false;
@@ -185,6 +132,8 @@ function supported(content: ContentBlock[] | undefined) {
 }
 export function McpAppHost({
     app,
+    services,
+    loadMetadataImage,
     onMessage,
     onModelContext,
     onClose,
@@ -194,6 +143,8 @@ export function McpAppHost({
     placement,
 }: {
     app: McpAppDescriptor;
+    services: Pick<PlatformServices, "mcpApp" | "onMcpAppEvent">;
+    loadMetadataImage?: McpMetadataImageLoader;
     placement?: McpAppPlacement | null;
     onMessage?: (message: McpAppMessage) => Promise<void>;
     onModelContext?: (context: McpAppModelContext) => Promise<void>;
@@ -215,14 +166,15 @@ export function McpAppHost({
         [failure, setFailure] = useState("");
     useEffect(() => {
         const target = frame.current?.contentWindow;
-        if (!target) return;
+        const { mcpApp: appCommand, onMcpAppEvent } = services;
+        if (!target || !appCommand || !onMcpAppEvent) return;
+        const mcpApp = appCommand;
         let active = true,
             sequence = 0;
         const mountId = crypto.randomUUID();
         const pageCalls = new Map<string, AbortController>();
         let pageToolsEnabled = false;
-        const desktop = mcpAppDesktop(),
-            transport = new AppTransport(target, target);
+        const transport = new AppTransport(target, target);
         const error = (cause: unknown) => {
             if (active) {
                 setFailure("应用请求失败，请关闭后重新打开。");
@@ -259,15 +211,11 @@ export function McpAppHost({
         bridgeRef.current = bridge;
         async function request(method: string, params: unknown): Promise<Record<string, unknown>> {
             if (!active) throw Error("App is closed");
-            const reply = (await desktop.mcpApp({
+            const reply = await mcpApp({
                 operation: "request",
                 token: app.token,
                 request: { jsonrpc: "2.0", id: `${mountId}:${++sequence}`, method, params },
-            })) as {
-                result?: Record<string, unknown>;
-                error?: { message?: string };
-                notifications?: JSONRPCMessage[];
-            };
+            });
             if (!active) throw Error("App is closed");
             if (reply.error) throw Error("App request was rejected or could not be completed");
             for (const notification of reply.notifications ?? [])
@@ -367,7 +315,7 @@ export function McpAppHost({
                 if (pageDeclaration !== undefined) {
                     validateMcpPageDeclaration(pageDeclaration);
                     pageToolsEnabled = active;
-                    await desktop.mcpApp({ operation: "pageToolsReady", token: app.token, mountId, declaration: pageDeclaration });
+                    await mcpApp({ operation: "pageToolsReady", token: app.token, mountId, declaration: pageDeclaration });
                 }
             })().catch(error);
         };
@@ -404,10 +352,10 @@ export function McpAppHost({
                 // An aborted SDK request does not prove that the page made no edit.
                 reply = { status: "unknown" };
             }
-            try { await desktop.mcpApp({ operation: "pageToolResult", token: app.token, mountId, callId, reply }); }
+            try { await mcpApp({ operation: "pageToolResult", token: app.token, mountId, callId, reply }); }
             finally { pageCalls.delete(callId); }
         }
-        const unsubscribe = desktop.onMcpAppEvent((event) => {
+        const unsubscribe = onMcpAppEvent((event) => {
             if (!active || event.token !== app.token || !("method" in event.notification)) return;
             const { method, params } = event.notification;
             if (method === "areal/notifications/page-tool-call") {
@@ -430,19 +378,19 @@ export function McpAppHost({
             active = false;
             pageToolsEnabled = false;
             for (const abort of pageCalls.values()) abort.abort();
-            void desktop.mcpApp({ operation: "pageToolsUnmount", token: app.token, mountId }).catch(() => {});
+            void mcpApp({ operation: "pageToolsUnmount", token: app.token, mountId }).catch(() => {});
             clearTimeout(readyTimeout);
             initializedRef.current = false;
             unsubscribe();
             bridgeRef.current = null;
             // Revoke immediately; teardown responses cannot authorize new effects.
-            if (closeOnUnmount) void desktop.mcpApp({ operation: "close", token: app.token }).catch(() => {});
+            if (closeOnUnmount) void mcpApp({ operation: "close", token: app.token }).catch(() => {});
             void bridge
                 .teardownResource({}, { timeout: 1000 })
                 .catch(() => {})
                 .finally(() => bridge.close());
         };
-    }, [app.token]);
+    }, [app.token, services.mcpApp, services.onMcpAppEvent]);
     useEffect(() => {
         contextRef.current = { ...(context ?? contextRef.current), displayMode: mode };
         if (initializedRef.current) bridgeRef.current?.setHostContext(contextRef.current);
@@ -464,7 +412,7 @@ export function McpAppHost({
             }}
         >
             <header style={{ display: "flex", alignItems: "center", gap: 12, padding: 10 }}>
-                <McpAppIcon icon={app.toolMetadata?.icons?.[0]} />
+                <McpAppIcon icon={app.toolMetadata?.icons?.[0]} loadMetadataImage={loadMetadataImage} />
                 <strong style={{ flex: 1 }}>
                     {app.toolMetadata?.title ??
                         app.toolMetadata?.annotations?.title ??

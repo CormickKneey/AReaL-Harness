@@ -182,11 +182,31 @@ try {
   assert.deepEqual((await records(peer.env)).map(service => service.generation), peerBefore.map(service => service.generation));
   assert.ok(peerBefore.every(service => alive(service.hostPid) && alive(service.corePid)));
   checks.push('normal quit preserves another GUI profile using the same executable');
+  await peer.app.evaluate(() => { globalThis.__quitConfirm = true; });
   await quit(peer); await gone(peer);
   checks.push('confirmed quit cleans hidden-project engines and the whole owned process chain; persistent CLI remains ready');
 
   const restarted = await fixture(scratch, config, 'idle'); entries.push(restarted); await launch(restarted); await choose(restarted, workspace);
-  await quit(restarted); await gone(restarted); checks.push('idle application quit completes physical cleanup without a cancellation dialog');
+  await quit(restarted);
+  await until(() => restarted.app.evaluate(() => globalThis.__quitDialogs.length === 1), 'idle quit confirmation');
+  assert.equal(restarted.process.exitCode, null, 'Canceling idle quit preserves the application');
+  await until(async () => (await restarted.page.evaluate(() => window.arealDesktop.command('providers', { operation: 'list' }))).ok, 'idle quit cancellation preserves IPC');
+  await restarted.app.evaluate(() => { globalThis.__quitConfirm = true; });
+  await quit(restarted); await gone(restarted); checks.push('idle application quit asks for confirmation; cancel preserves the application and approval completes physical cleanup');
+  const stopped = await fixture(scratch, config, 'stopped'); entries.push(stopped); await launch(stopped);
+  await until(async () => {
+    const status = await stopped.page.evaluate(() => window.arealDesktop.command('serviceStatus', {}));
+    return status.ok && status.value.canStop;
+  }, 'backend is idle before the explicit stop');
+  const stopResult = await stopped.page.evaluate(() => window.arealDesktop.command('serviceLifecycle', { operation: 'stop' }));
+  assert.equal(stopResult.ok, true, JSON.stringify(stopResult));
+  assert.equal(stopResult.value.stopped, true, JSON.stringify(stopResult));
+  await quit(stopped);
+  await until(() => stopped.app.evaluate(() => globalThis.__quitDialogs.length === 1), 'quit confirms with the backend already stopped');
+  assert.equal(stopped.process.exitCode, null, 'Canceling local-only quit preserves the window');
+  await stopped.app.evaluate(() => { globalThis.__quitConfirm = true; });
+  await quit(stopped); await gone(stopped);
+  checks.push('quit still confirms and supports cancellation after the owned backend has stopped');
   const scheduled = await fixture(scratch, config, 'scheduled'); entries.push(scheduled); await launch(scheduled);
   const scheduledProject = await choose(scheduled, workspace);
   const task = await scheduled.page.evaluate(projectId => window.arealDesktop.command('manage', { projectId, operation: 'taskCreate', mode: 'scheduled', objective: 'FUTURE_APPLICATION_SCHEDULE', interactionMode: 'interactive', schedule: { at: Math.floor(Date.now() / 1000) + 3600, timeZone: 'UTC' } }), scheduledProject.id);
@@ -202,6 +222,7 @@ try {
   for (const signal of ['SIGTERM', 'SIGKILL']) for (const target of ['Main', 'Desktop']) {
     const entry = await fixture(scratch, config, `${signal}-${target}`); entries.push(entry); await launch(entry); await choose(entry, workspace);
     const old = await records(entry.env);
+    if (signal === 'SIGTERM' && target === 'Main') await entry.app.evaluate(() => { globalThis.__quitConfirm = true; });
     process.kill(target === 'Main' ? entry.process.pid : entry.metadata.pid, signal);
     if (target === 'Main') await gone(entry);
     else {
@@ -210,7 +231,9 @@ try {
       await cleanupEntry(entry); entry.cleaned = true;
     }
     assert.ok(old.every(service => !alive(service.hostPid) && !alive(service.corePid)));
-    checks.push(`${target} ${signal} closes owner lifetime and reclaims the owned engines`);
+    checks.push(signal === 'SIGTERM' && target === 'Main'
+      ? 'Main SIGTERM follows confirmed quit and releases the owned engines'
+      : `${target} ${signal} closes owner lifetime and reclaims the owned engines`);
   }
 
   if (!packaged) for (const ending of ['failure', 'SIGTERM', 'SIGKILL']) {

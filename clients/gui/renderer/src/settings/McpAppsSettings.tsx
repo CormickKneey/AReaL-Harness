@@ -5,6 +5,7 @@ import { Input } from "../components/ui/input.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 import { McpAppIcon } from "../McpAppIcon.js";
+import type { McpMetadataImageLoader } from "../mcp-app-services.js";
 export type McpAppTool = {
     name: string;
     title?: string;
@@ -303,11 +304,13 @@ export function McpAppEntrypoints({
     servers,
     kind,
     fileName,
+    loadMetadataImage,
     onOpen,
 }: {
     servers: McpAppServer[];
     kind: "global" | "thread" | "file";
     fileName?: string;
+    loadMetadataImage?: McpMetadataImageLoader;
     onOpen: (server: McpAppServer, tool: McpAppTool) => void;
 }) {
   const { t } = useI18n();
@@ -319,7 +322,7 @@ export function McpAppEntrypoints({
                     key={`${server.serverId}:${tool.name}`}
                     onClick={() => onOpen(server, tool)}
                 >
-                    <McpAppIcon icon={tool.icons?.[0] ?? server.icons?.[0]} />
+                    <McpAppIcon icon={tool.icons?.[0] ?? server.icons?.[0]} loadMetadataImage={loadMetadataImage} />
                     {toolTitle(tool)}
                 </button>
             ))}

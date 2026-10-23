@@ -5543,6 +5543,13 @@
             },
             "ContextCheckpoint": {
               "properties": {
+                "appReferenceSeen": {
+                  "description": "压缩前缀是否包含 App 引用；缺省时从原始历史恢复并保存。",
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
                 "compactions": {
                   "format": "uint64",
                   "minimum": 0,
@@ -5887,6 +5894,16 @@
                     "$ref": "#/properties/thread/$defs/ManagedProcess"
                   },
                   "type": "array"
+                },
+                "promptPrediction": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/properties/thread/$defs/PromptPrediction"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "queue": {
                   "$ref": "#/properties/thread/$defs/Queue"
@@ -7723,6 +7740,83 @@
               ],
               "type": "object"
             },
+            "PromptPrediction": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configurationRevision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sourceTurnId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "pending",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "sourceTurnId",
+                    "configurationRevision"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configurationRevision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sourceTurnId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "ready",
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "sourceTurnId",
+                    "configurationRevision",
+                    "text"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configurationRevision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sourceTurnId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "unavailable",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "sourceTurnId",
+                    "configurationRevision"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
             "Provider": {
               "additionalProperties": false,
               "properties": {
@@ -8601,6 +8695,97 @@
       },
       "required": [
         "thread",
+        "threadId"
+      ],
+      "type": "object"
+    },
+    "areal/thread/predictionChanged": {
+      "additionalProperties": true,
+      "properties": {
+        "promptPrediction": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "configurationRevision": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "sourceTurnId": {
+                  "type": "string"
+                },
+                "status": {
+                  "const": "pending",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "status",
+                "sourceTurnId",
+                "configurationRevision"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "configurationRevision": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "sourceTurnId": {
+                  "type": "string"
+                },
+                "status": {
+                  "const": "ready",
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "status",
+                "sourceTurnId",
+                "configurationRevision",
+                "text"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "configurationRevision": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "sourceTurnId": {
+                  "type": "string"
+                },
+                "status": {
+                  "const": "unavailable",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "status",
+                "sourceTurnId",
+                "configurationRevision"
+              ],
+              "type": "object"
+            }
+          ],
+          "title": "PromptPrediction"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "promptPrediction",
         "threadId"
       ],
       "type": "object"
@@ -10538,6 +10723,13 @@
             },
             "ContextCheckpoint": {
               "properties": {
+                "appReferenceSeen": {
+                  "description": "压缩前缀是否包含 App 引用；缺省时从原始历史恢复并保存。",
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
                 "compactions": {
                   "format": "uint64",
                   "minimum": 0,
@@ -10882,6 +11074,16 @@
                     "$ref": "#/properties/thread/$defs/ManagedProcess"
                   },
                   "type": "array"
+                },
+                "promptPrediction": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/properties/thread/$defs/PromptPrediction"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "queue": {
                   "$ref": "#/properties/thread/$defs/Queue"
@@ -12717,6 +12919,83 @@
                 "outcome"
               ],
               "type": "object"
+            },
+            "PromptPrediction": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configurationRevision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sourceTurnId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "pending",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "sourceTurnId",
+                    "configurationRevision"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configurationRevision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sourceTurnId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "ready",
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "sourceTurnId",
+                    "configurationRevision",
+                    "text"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configurationRevision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sourceTurnId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "unavailable",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "sourceTurnId",
+                    "configurationRevision"
+                  ],
+                  "type": "object"
+                }
+              ]
             },
             "Provider": {
               "additionalProperties": false,
@@ -25145,6 +25424,36 @@
       "title": "ObserveThread",
       "type": "object"
     },
+    "areal/thread/prediction": {
+      "$defs": {
+        "PromptPredictionOperation": {
+          "enum": [
+            "request",
+            "cancel"
+          ],
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "properties": {
+        "operation": {
+          "$ref": "#/$defs/PromptPredictionOperation"
+        },
+        "sourceTurnId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "sourceTurnId",
+        "operation"
+      ],
+      "title": "PromptPredictionRequest",
+      "type": "object"
+    },
     "areal/thread/start": {
       "$defs": {
         "ClientOptions": {
@@ -28375,6 +28684,13 @@
               },
               "ContextCheckpoint": {
                 "properties": {
+                  "appReferenceSeen": {
+                    "description": "压缩前缀是否包含 App 引用；缺省时从原始历史恢复并保存。",
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
                   "compactions": {
                     "format": "uint64",
                     "minimum": 0,
@@ -28719,6 +29035,16 @@
                       "$ref": "#/properties/data/items/$defs/ManagedProcess"
                     },
                     "type": "array"
+                  },
+                  "promptPrediction": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/properties/data/items/$defs/PromptPrediction"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "queue": {
                     "$ref": "#/properties/data/items/$defs/Queue"
@@ -30555,6 +30881,83 @@
                 ],
                 "type": "object"
               },
+              "PromptPrediction": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "configurationRevision": {
+                        "format": "uint64",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "sourceTurnId": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "pending",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "status",
+                      "sourceTurnId",
+                      "configurationRevision"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "configurationRevision": {
+                        "format": "uint64",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "sourceTurnId": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "ready",
+                        "type": "string"
+                      },
+                      "text": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "status",
+                      "sourceTurnId",
+                      "configurationRevision",
+                      "text"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "configurationRevision": {
+                        "format": "uint64",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "sourceTurnId": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "unavailable",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "status",
+                      "sourceTurnId",
+                      "configurationRevision"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
               "Provider": {
                 "additionalProperties": false,
                 "properties": {
@@ -31705,6 +32108,13 @@
                 },
                 "ContextCheckpoint": {
                   "properties": {
+                    "appReferenceSeen": {
+                      "description": "压缩前缀是否包含 App 引用；缺省时从原始历史恢复并保存。",
+                      "type": [
+                        "boolean",
+                        "null"
+                      ]
+                    },
                     "compactions": {
                       "format": "uint64",
                       "minimum": 0,
@@ -32049,6 +32459,16 @@
                         "$ref": "#/oneOf/0/properties/thread/$defs/ManagedProcess"
                       },
                       "type": "array"
+                    },
+                    "promptPrediction": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/oneOf/0/properties/thread/$defs/PromptPrediction"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
                     },
                     "queue": {
                       "$ref": "#/oneOf/0/properties/thread/$defs/Queue"
@@ -33884,6 +34304,83 @@
                     "outcome"
                   ],
                   "type": "object"
+                },
+                "PromptPrediction": {
+                  "oneOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "configurationRevision": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "sourceTurnId": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "const": "pending",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "sourceTurnId",
+                        "configurationRevision"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "configurationRevision": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "sourceTurnId": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "const": "ready",
+                          "type": "string"
+                        },
+                        "text": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "sourceTurnId",
+                        "configurationRevision",
+                        "text"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "configurationRevision": {
+                          "format": "uint64",
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "sourceTurnId": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "const": "unavailable",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "status",
+                        "sourceTurnId",
+                        "configurationRevision"
+                      ],
+                      "type": "object"
+                    }
+                  ]
                 },
                 "Provider": {
                   "additionalProperties": false,
@@ -37304,6 +37801,13 @@
                 }
               },
               "properties": {
+                "appReferenceSeen": {
+                  "description": "压缩前缀是否包含 App 引用；缺省时从原始历史恢复并保存。",
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
                 "compactions": {
                   "format": "uint64",
                   "minimum": 0,
@@ -37743,6 +38247,13 @@
                 }
               },
               "properties": {
+                "appReferenceSeen": {
+                  "description": "压缩前缀是否包含 App 引用；缺省时从原始历史恢复并保存。",
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
                 "compactions": {
                   "format": "uint64",
                   "minimum": 0,
@@ -39069,6 +39580,13 @@
               },
               "ContextCheckpoint": {
                 "properties": {
+                  "appReferenceSeen": {
+                    "description": "压缩前缀是否包含 App 引用；缺省时从原始历史恢复并保存。",
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
                   "compactions": {
                     "format": "uint64",
                     "minimum": 0,
@@ -39413,6 +39931,16 @@
                       "$ref": "#/properties/data/items/$defs/ManagedProcess"
                     },
                     "type": "array"
+                  },
+                  "promptPrediction": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/properties/data/items/$defs/PromptPrediction"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "queue": {
                     "$ref": "#/properties/data/items/$defs/Queue"
@@ -41248,6 +41776,83 @@
                   "outcome"
                 ],
                 "type": "object"
+              },
+              "PromptPrediction": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "configurationRevision": {
+                        "format": "uint64",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "sourceTurnId": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "pending",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "status",
+                      "sourceTurnId",
+                      "configurationRevision"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "configurationRevision": {
+                        "format": "uint64",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "sourceTurnId": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "ready",
+                        "type": "string"
+                      },
+                      "text": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "status",
+                      "sourceTurnId",
+                      "configurationRevision",
+                      "text"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "configurationRevision": {
+                        "format": "uint64",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "sourceTurnId": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "unavailable",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "status",
+                      "sourceTurnId",
+                      "configurationRevision"
+                    ],
+                    "type": "object"
+                  }
+                ]
               },
               "Provider": {
                 "additionalProperties": false,
@@ -52789,6 +53394,13 @@
             },
             "ContextCheckpoint": {
               "properties": {
+                "appReferenceSeen": {
+                  "description": "压缩前缀是否包含 App 引用；缺省时从原始历史恢复并保存。",
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
                 "compactions": {
                   "format": "uint64",
                   "minimum": 0,
@@ -53133,6 +53745,16 @@
                     "$ref": "#/properties/thread/$defs/ManagedProcess"
                   },
                   "type": "array"
+                },
+                "promptPrediction": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/properties/thread/$defs/PromptPrediction"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "queue": {
                   "$ref": "#/properties/thread/$defs/Queue"
@@ -54968,6 +55590,83 @@
                 "outcome"
               ],
               "type": "object"
+            },
+            "PromptPrediction": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configurationRevision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sourceTurnId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "pending",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "sourceTurnId",
+                    "configurationRevision"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configurationRevision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sourceTurnId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "ready",
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "sourceTurnId",
+                    "configurationRevision",
+                    "text"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configurationRevision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sourceTurnId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "unavailable",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "sourceTurnId",
+                    "configurationRevision"
+                  ],
+                  "type": "object"
+                }
+              ]
             },
             "Provider": {
               "additionalProperties": false,
@@ -66126,6 +66825,13 @@
             },
             "ContextCheckpoint": {
               "properties": {
+                "appReferenceSeen": {
+                  "description": "压缩前缀是否包含 App 引用；缺省时从原始历史恢复并保存。",
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
                 "compactions": {
                   "format": "uint64",
                   "minimum": 0,
@@ -66470,6 +67176,16 @@
                     "$ref": "#/properties/thread/$defs/ManagedProcess"
                   },
                   "type": "array"
+                },
+                "promptPrediction": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/properties/thread/$defs/PromptPrediction"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "queue": {
                   "$ref": "#/properties/thread/$defs/Queue"
@@ -68305,6 +69021,83 @@
                 "outcome"
               ],
               "type": "object"
+            },
+            "PromptPrediction": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configurationRevision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sourceTurnId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "pending",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "sourceTurnId",
+                    "configurationRevision"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configurationRevision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sourceTurnId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "ready",
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "sourceTurnId",
+                    "configurationRevision",
+                    "text"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configurationRevision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sourceTurnId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "unavailable",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "sourceTurnId",
+                    "configurationRevision"
+                  ],
+                  "type": "object"
+                }
+              ]
             },
             "Provider": {
               "additionalProperties": false,
@@ -82371,6 +83164,13 @@
             },
             "ContextCheckpoint": {
               "properties": {
+                "appReferenceSeen": {
+                  "description": "压缩前缀是否包含 App 引用；缺省时从原始历史恢复并保存。",
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
                 "compactions": {
                   "format": "uint64",
                   "minimum": 0,
@@ -82715,6 +83515,16 @@
                     "$ref": "#/properties/thread/$defs/ManagedProcess"
                   },
                   "type": "array"
+                },
+                "promptPrediction": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/properties/thread/$defs/PromptPrediction"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "queue": {
                   "$ref": "#/properties/thread/$defs/Queue"
@@ -84551,6 +85361,83 @@
               ],
               "type": "object"
             },
+            "PromptPrediction": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configurationRevision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sourceTurnId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "pending",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "sourceTurnId",
+                    "configurationRevision"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configurationRevision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sourceTurnId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "ready",
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "sourceTurnId",
+                    "configurationRevision",
+                    "text"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configurationRevision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sourceTurnId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "unavailable",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "sourceTurnId",
+                    "configurationRevision"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
             "Provider": {
               "additionalProperties": false,
               "properties": {
@@ -86230,6 +87117,13 @@
                 }
               },
               "properties": {
+                "appReferenceSeen": {
+                  "description": "压缩前缀是否包含 App 引用；缺省时从原始历史恢复并保存。",
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
                 "compactions": {
                   "format": "uint64",
                   "minimum": 0,
@@ -86739,6 +87633,13 @@
             },
             "ContextCheckpoint": {
               "properties": {
+                "appReferenceSeen": {
+                  "description": "压缩前缀是否包含 App 引用；缺省时从原始历史恢复并保存。",
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
                 "compactions": {
                   "format": "uint64",
                   "minimum": 0,
@@ -87083,6 +87984,16 @@
                     "$ref": "#/properties/thread/$defs/ManagedProcess"
                   },
                   "type": "array"
+                },
+                "promptPrediction": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/properties/thread/$defs/PromptPrediction"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "queue": {
                   "$ref": "#/properties/thread/$defs/Queue"
@@ -88958,6 +89869,83 @@
               ],
               "type": "object"
             },
+            "PromptPrediction": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configurationRevision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sourceTurnId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "pending",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "sourceTurnId",
+                    "configurationRevision"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configurationRevision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sourceTurnId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "ready",
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "sourceTurnId",
+                    "configurationRevision",
+                    "text"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configurationRevision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sourceTurnId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "unavailable",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "sourceTurnId",
+                    "configurationRevision"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
             "Provider": {
               "additionalProperties": false,
               "properties": {
@@ -89837,6 +90825,96 @@
       ],
       "type": "object"
     },
+    "areal/thread/prediction": {
+      "$defs": {
+        "PromptPrediction": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "configurationRevision": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "sourceTurnId": {
+                  "type": "string"
+                },
+                "status": {
+                  "const": "pending",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "status",
+                "sourceTurnId",
+                "configurationRevision"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "configurationRevision": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "sourceTurnId": {
+                  "type": "string"
+                },
+                "status": {
+                  "const": "ready",
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "status",
+                "sourceTurnId",
+                "configurationRevision",
+                "text"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "configurationRevision": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "sourceTurnId": {
+                  "type": "string"
+                },
+                "status": {
+                  "const": "unavailable",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "status",
+                "sourceTurnId",
+                "configurationRevision"
+              ],
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PromptPrediction"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Nullable_PromptPrediction"
+    },
     "areal/thread/start": {
       "additionalProperties": true,
       "properties": {
@@ -90084,6 +91162,13 @@
             },
             "ContextCheckpoint": {
               "properties": {
+                "appReferenceSeen": {
+                  "description": "压缩前缀是否包含 App 引用；缺省时从原始历史恢复并保存。",
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
                 "compactions": {
                   "format": "uint64",
                   "minimum": 0,
@@ -90428,6 +91513,16 @@
                     "$ref": "#/properties/thread/$defs/ManagedProcess"
                   },
                   "type": "array"
+                },
+                "promptPrediction": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/properties/thread/$defs/PromptPrediction"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "queue": {
                   "$ref": "#/properties/thread/$defs/Queue"
@@ -92263,6 +93358,83 @@
                 "outcome"
               ],
               "type": "object"
+            },
+            "PromptPrediction": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configurationRevision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sourceTurnId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "pending",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "sourceTurnId",
+                    "configurationRevision"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configurationRevision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sourceTurnId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "ready",
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "sourceTurnId",
+                    "configurationRevision",
+                    "text"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configurationRevision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sourceTurnId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "unavailable",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "sourceTurnId",
+                    "configurationRevision"
+                  ],
+                  "type": "object"
+                }
+              ]
             },
             "Provider": {
               "additionalProperties": false,
@@ -106551,6 +107723,13 @@
               },
               "ContextCheckpoint": {
                 "properties": {
+                  "appReferenceSeen": {
+                    "description": "压缩前缀是否包含 App 引用；缺省时从原始历史恢复并保存。",
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
                   "compactions": {
                     "format": "uint64",
                     "minimum": 0,
@@ -106895,6 +108074,16 @@
                       "$ref": "#/properties/data/items/$defs/ManagedProcess"
                     },
                     "type": "array"
+                  },
+                  "promptPrediction": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/properties/data/items/$defs/PromptPrediction"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "queue": {
                     "$ref": "#/properties/data/items/$defs/Queue"
@@ -108731,6 +109920,83 @@
                 ],
                 "type": "object"
               },
+              "PromptPrediction": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "configurationRevision": {
+                        "format": "uint64",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "sourceTurnId": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "pending",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "status",
+                      "sourceTurnId",
+                      "configurationRevision"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "configurationRevision": {
+                        "format": "uint64",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "sourceTurnId": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "ready",
+                        "type": "string"
+                      },
+                      "text": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "status",
+                      "sourceTurnId",
+                      "configurationRevision",
+                      "text"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "configurationRevision": {
+                        "format": "uint64",
+                        "minimum": 0,
+                        "type": "integer"
+                      },
+                      "sourceTurnId": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "const": "unavailable",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "status",
+                      "sourceTurnId",
+                      "configurationRevision"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
               "Provider": {
                 "additionalProperties": false,
                 "properties": {
@@ -109869,6 +111135,13 @@
             },
             "ContextCheckpoint": {
               "properties": {
+                "appReferenceSeen": {
+                  "description": "压缩前缀是否包含 App 引用；缺省时从原始历史恢复并保存。",
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
                 "compactions": {
                   "format": "uint64",
                   "minimum": 0,
@@ -110213,6 +111486,16 @@
                     "$ref": "#/properties/thread/$defs/ManagedProcess"
                   },
                   "type": "array"
+                },
+                "promptPrediction": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/properties/thread/$defs/PromptPrediction"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "queue": {
                   "$ref": "#/properties/thread/$defs/Queue"
@@ -112049,6 +113332,83 @@
               ],
               "type": "object"
             },
+            "PromptPrediction": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configurationRevision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sourceTurnId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "pending",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "sourceTurnId",
+                    "configurationRevision"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configurationRevision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sourceTurnId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "ready",
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "sourceTurnId",
+                    "configurationRevision",
+                    "text"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configurationRevision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sourceTurnId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "unavailable",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "sourceTurnId",
+                    "configurationRevision"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
             "Provider": {
               "additionalProperties": false,
               "properties": {
@@ -113279,6 +114639,13 @@
             },
             "ContextCheckpoint": {
               "properties": {
+                "appReferenceSeen": {
+                  "description": "压缩前缀是否包含 App 引用；缺省时从原始历史恢复并保存。",
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
                 "compactions": {
                   "format": "uint64",
                   "minimum": 0,
@@ -113623,6 +114990,16 @@
                     "$ref": "#/properties/thread/$defs/ManagedProcess"
                   },
                   "type": "array"
+                },
+                "promptPrediction": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/properties/thread/$defs/PromptPrediction"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "queue": {
                   "$ref": "#/properties/thread/$defs/Queue"
@@ -115498,6 +116875,83 @@
               ],
               "type": "object"
             },
+            "PromptPrediction": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configurationRevision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sourceTurnId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "pending",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "sourceTurnId",
+                    "configurationRevision"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configurationRevision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sourceTurnId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "ready",
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "sourceTurnId",
+                    "configurationRevision",
+                    "text"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configurationRevision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sourceTurnId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "unavailable",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "sourceTurnId",
+                    "configurationRevision"
+                  ],
+                  "type": "object"
+                }
+              ]
+            },
             "Provider": {
               "additionalProperties": false,
               "properties": {
@@ -116665,6 +118119,13 @@
             },
             "ContextCheckpoint": {
               "properties": {
+                "appReferenceSeen": {
+                  "description": "压缩前缀是否包含 App 引用；缺省时从原始历史恢复并保存。",
+                  "type": [
+                    "boolean",
+                    "null"
+                  ]
+                },
                 "compactions": {
                   "format": "uint64",
                   "minimum": 0,
@@ -117009,6 +118470,16 @@
                     "$ref": "#/properties/thread/$defs/ManagedProcess"
                   },
                   "type": "array"
+                },
+                "promptPrediction": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/properties/thread/$defs/PromptPrediction"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
                 "queue": {
                   "$ref": "#/properties/thread/$defs/Queue"
@@ -118844,6 +120315,83 @@
                 "outcome"
               ],
               "type": "object"
+            },
+            "PromptPrediction": {
+              "oneOf": [
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configurationRevision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sourceTurnId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "pending",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "sourceTurnId",
+                    "configurationRevision"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configurationRevision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sourceTurnId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "ready",
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "sourceTurnId",
+                    "configurationRevision",
+                    "text"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "configurationRevision": {
+                      "format": "uint64",
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "sourceTurnId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "const": "unavailable",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "sourceTurnId",
+                    "configurationRevision"
+                  ],
+                  "type": "object"
+                }
+              ]
             },
             "Provider": {
               "additionalProperties": false,
@@ -121873,6 +123421,13 @@
       },
       "ContextCheckpoint": {
         "properties": {
+          "appReferenceSeen": {
+            "description": "压缩前缀是否包含 App 引用；缺省时从原始历史恢复并保存。",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "compactions": {
             "format": "uint64",
             "minimum": 0,
@@ -122217,6 +123772,16 @@
               "$ref": "#/$defs/ManagedProcess"
             },
             "type": "array"
+          },
+          "promptPrediction": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PromptPrediction"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "queue": {
             "$ref": "#/$defs/Queue"
@@ -124052,6 +125617,83 @@
           "outcome"
         ],
         "type": "object"
+      },
+      "PromptPrediction": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "configurationRevision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "sourceTurnId": {
+                "type": "string"
+              },
+              "status": {
+                "const": "pending",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "sourceTurnId",
+              "configurationRevision"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "configurationRevision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "sourceTurnId": {
+                "type": "string"
+              },
+              "status": {
+                "const": "ready",
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "sourceTurnId",
+              "configurationRevision",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "configurationRevision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "sourceTurnId": {
+                "type": "string"
+              },
+              "status": {
+                "const": "unavailable",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "sourceTurnId",
+              "configurationRevision"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "Provider": {
         "additionalProperties": false,

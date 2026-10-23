@@ -23,6 +23,7 @@ const diagnostics = require('./diagnostics.cjs');
 const { configureUserData, serviceOptions, serviceHome } = require('./service-config.cjs');
 const { SharedCoreBackend } = require('./service-client.cjs');
 const { recoverConnectedService } = require('./startup-recovery.cjs');
+const { setNativeLocale, nativeText } = require('./native-i18n.cjs');
 const { loadThemes, engineCss, panelCss } = require('../themes');
 
 startupTraceMain.advance('app_ready');
@@ -108,36 +109,43 @@ function requestQuit(intent = 'application') {
   const attempt = { id: ++quitRequestSequence, intent, owner: null, frame: null, decide: null, approved: false,
     phase: null, startedAt: performance.now(), promise: null };
   quitAttempt = attempt;
-  attempt.promise = (async () => {
-    if (!backend) throw new Error('界面仍在准备，请稍后退出');
-    if (!await confirmRendererQuit(attempt)) { recordQuitStage(attempt, 'canceled'); return { canceled: true }; }
-    if (quitting) { recordQuitStage(attempt, 'canceled'); return { canceled: true }; }
+  const beginQuit = phase => {
     attempt.approved = true;
     quitting = true;
     if (intent !== 'install') preview?.setPresentationSuppressed(true);
-    setQuitProgress(attempt, 'checking');
-    recordQuitStage(attempt, 'checking');
+    setQuitProgress(attempt, phase);
+  };
+  const notify = async options => {
+    recordQuitStage(attempt, 'native-confirmation');
+    const answer = await (process.platform === 'darwin' && intent !== 'install' ? dialog.showMessageBox(options) : dialog.showMessageBox(window, options));
+    if (answer.response === 1) { beginQuit('stopping'); recordQuitStage(attempt, 'stop'); }
+    return answer;
+  };
+  attempt.promise = (async () => {
+    if (!backend) throw new Error(nativeText('lifecycle.preparing'));
+    if (!await confirmRendererQuit(attempt)) { recordQuitStage(attempt, 'canceled'); return { canceled: true }; }
+    if (quitting) { recordQuitStage(attempt, 'canceled'); return { canceled: true }; }
+    if (intent === 'install') { beginQuit('checking'); recordQuitStage(attempt, 'checking'); }
     recordQuitStage(attempt, 'readiness');
     await backend.waitForApplicationReady();
     recordQuitStage(attempt, 'reconcile');
     await backend.checkLifecycle();
     if (backend.foreignOwner && (intent === 'install' || backend.desktopLifetimes.size))
-      throw Object.assign(new Error('原后台属于其他应用会话，请先从其原入口安全退出，再重试安装'), { code: 'APPLICATION_OWNER_MISMATCH' });
+      throw Object.assign(new Error(nativeText('lifecycle.foreignOwner')), { code: 'APPLICATION_OWNER_MISMATCH' });
     if (!backend.foreignOwner && !backend.serviceExited && (backend.status.connected || backend.metadata || backend.desktopLifetimes.size)) {
-      setQuitProgress(attempt, 'stopping');
       recordQuitStage(attempt, 'stop');
-      const result = await recoverConnectedService({ backend,
-        notify: async options => {
-          recordQuitStage(attempt, 'native-confirmation');
-          const answer = await (process.platform === 'darwin' && intent !== 'install' ? dialog.showMessageBox(options) : dialog.showMessageBox(window, options));
-          if (answer.response === 1) recordQuitStage(attempt, 'stop');
-          return answer;
-        }, purpose: intent === 'install' ? 'update' : 'quit', forUpdate: intent === 'install' });
+      const result = await recoverConnectedService({ backend, notify,
+        purpose: intent === 'install' ? 'update' : 'quit', forUpdate: intent === 'install' });
       if (result.stopped !== true) {
         recordQuitStage(attempt, result.canceled ? 'canceled' : 'incomplete');
-        if (!result.canceled) backend.reportLifecycleError(new Error('应用后台停止尚未完成，请检查原请求与阻塞事项。'));
+        if (!result.canceled) backend.reportLifecycleError(new Error(nativeText('lifecycle.stopIncomplete')));
         return result;
       }
+    } else if (intent !== 'install') {
+      const answer = await notify({ type: 'question', message: nativeText('quit.question'),
+        detail: nativeText('quit.interfaceDetail'),
+        buttons: [nativeText('common.cancel'), nativeText('common.quit')], defaultId: 1, cancelId: 0, noLink: true });
+      if (answer.response !== 1) { recordQuitStage(attempt, 'canceled'); return { canceled: true }; }
     }
     setQuitProgress(attempt, 'finishing');
     recordQuitStage(attempt, 'terminal');
@@ -164,12 +172,12 @@ function requestQuit(intent = 'application') {
 }
 async function exportDiagnostics() {
   try {
-    const options = { title: '导出诊断包', defaultPath: `areal-diagnostics-${new Date().toISOString().replace(/[:.]/g, '-')}.json`, filters: [{ name: 'JSON', extensions: ['json'] }] };
+    const options = { title: nativeText('diagnostics.exportTitle'), defaultPath: `areal-diagnostics-${new Date().toISOString().replace(/[:.]/g, '-')}.json`, filters: [{ name: 'JSON', extensions: ['json'] }] };
     const result = await (window && !window.isDestroyed() ? dialog.showSaveDialog(window, options) : dialog.showSaveDialog(options));
     if (result.canceled || !result.filePath) return { canceled: true };
     await diagnostics.exportTo(result.filePath, diagnosticsRoots);
     return { path: result.filePath };
-  } catch { throw Object.assign(new Error('诊断包保存失败，请选择其他位置后重试。'), { code: 'DIAGNOSTICS_EXPORT_FAILED' }); }
+  } catch { throw Object.assign(new Error(nativeText('diagnostics.saveFailed')), { code: 'DIAGNOSTICS_EXPORT_FAILED' }); }
 }
 const requestStopAndQuit = () => requestQuit('stop');
 const stopAndQuitFromMenu = () => { void requestStopAndQuit().catch(error => { backend?.reportLifecycleError(error); revealWindow(); }); };
@@ -222,12 +230,16 @@ function desktopSnapshot() {
 }
 function trustedSender(event) {
   if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame
-    || !event.senderFrame.url.startsWith('areal-ui://app/')) throw new Error('拒绝非主视图请求');
+    || !event.senderFrame.url.startsWith('areal-ui://app/')) throw new Error(nativeText('boundary.untrustedSender'));
 }
 function trusted(event) {
-  if (quitting) throw new Error('应用正在退出或安装更新');
+  if (quitting) throw new Error(nativeText('boundary.quitting'));
   trustedSender(event);
 }
+ipcMain.on('areal-core:interface-locale', (event, locale) => {
+  try { trustedSender(event); } catch { return; }
+  setNativeLocale(locale);
+});
 ipcMain.on('areal-core:quit-decision', (event, decision) => {
   const attempt = quitAttempt;
   if (!attempt?.decide || !decision || decision.id !== attempt.id || typeof decision.allowed !== 'boolean'
@@ -268,12 +280,12 @@ async function createWindow() {
           && window.isFocused() && preview?.currentDevelopmentPrompt(page, fence);
         if (!current()) return false;
         const { response } = await dialog.showMessageBox(window, {
-          type: 'question', title: kind === 'frame' ? '授权当前页面的嵌入站点' : '允许本地开发站点',
-          message: kind === 'frame' ? `允许当前页面嵌入 ${origin} 并在人工标注时检查其隐私？` : `允许此浏览工作区访问 ${origin}？`,
+          type: 'question', title: kind === 'frame' ? nativeText('browser.frameTitle') : nativeText('browser.developmentTitle'),
+          message: kind === 'frame' ? nativeText('browser.frameQuestion', { origin }) : nativeText('browser.developmentQuestion', { origin }),
           detail: kind === 'frame'
-            ? '仅当前 Human 页面有效，不授权 Agent。确认后需明确重载，未保存的页面状态可能丢失。截图检查失败不生成图片；撤销、文档变化、关闭预览或切换页面将关闭此页面；标注时临时隐藏除外。'
-            : '仅允许此精确地址的临时站点状态；关闭工作区或重启后需要重新授权。',
-          buttons: ['取消', kind === 'frame' ? '仅当前页面允许' : '仅此工作区允许'], defaultId: 0, cancelId: 0, noLink: true,
+            ? nativeText('browser.frameDetail')
+            : nativeText('browser.developmentDetail'),
+          buttons: [nativeText('common.cancel'), kind === 'frame' ? nativeText('browser.allowFrame') : nativeText('browser.allowWorkspace')], defaultId: 0, cancelId: 0, noLink: true,
         });
         return response === 1 && current();
       });
@@ -321,13 +333,13 @@ app.whenReady().then(async () => {
     const path = resolve(guiRoot, '.' + decodeURIComponent(url.pathname === '/' ? '/index.html' : url.pathname));
     if (!path.startsWith(guiRoot + sep)) return new Response('Not found', { status: 404 });
     try { return new Response(await readFile(path), { headers: { 'Content-Type': mime[extname(path)] ?? 'application/octet-stream', 'Content-Security-Policy': "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; frame-src areal-mcp:" } }); }
-    catch { return new Response('GUI 未构建，请先执行 make gui-build', { status: 404 }); }
+    catch { return new Response(nativeText('gui.notBuilt'), { status: 404 }); }
   });
   backend = new SharedCoreBackend({ app, ...serviceOptions(app), applicationOwner, onChange: publish,
     onNotification: notice => showCoreNotification(Notification, window, notice, openNotificationTarget),
     onNotificationOpen: openNotificationTarget,
-    onRecoveryAttention: attention => dialog.showMessageBox(window, { type: 'warning', message: '定时安排需要核对',
-      detail: attention.join('\n\n') + '\n\n可打开原任务核对安排。应用不会恢复已暂停的 Run 或自动重发未知操作。', buttons: ['打开应用后核对'], defaultId: 0, cancelId: 0 }) });
+    onRecoveryAttention: attention => dialog.showMessageBox(window, { type: 'warning', message: nativeText('recovery.attention'),
+      detail: attention.join('\n\n') + nativeText('recovery.attentionDetail'), buttons: [nativeText('recovery.review')], defaultId: 0, cancelId: 0 }) });
   backend.onBrowserDisconnected = () => preview?.revokeAll();
   backend.onBrowserCancel = request => preview?.cancelRead(request);
   backend.onBrowserRequest = async request => {
@@ -421,11 +433,11 @@ app.whenReady().then(async () => {
     validatePreview(request);
     if (quitting) {
       if (preview?.suppressedPresentation && request.operation === 'show') return null;
-      throw new Error('应用正在退出或安装更新');
+      throw new Error(nativeText('boundary.quitting'));
     }
-    if (!preview) throw new Error('预览不可用');
+    if (!preview) throw new Error(nativeText('browser.previewUnavailable'));
     if (request?.operation === 'subscribe') {
-      if (!backend.ownsThread(request.projectId, request.threadId)) throw new Error('请选择有效任务');
+      if (!backend.ownsThread(request.projectId, request.threadId)) throw new Error(nativeText('browser.selectTask'));
       const key = JSON.stringify([request.projectId, request.threadId]);
       previewSubscriptions.get(key)?.();
       const subscription = preview.subscribe(request.projectId, request.threadId, update => {
@@ -440,7 +452,7 @@ app.whenReady().then(async () => {
       return null;
     }
     if (browserWindowClosed && ['show', 'newPage', 'navigate', 'reload'].includes(request?.operation))
-      throw new Error('窗口已关闭，无法打开浏览页面');
+      throw new Error(nativeText('browser.windowClosed'));
     if (request?.operation === 'claim') {
       const identity = await preview.claim(request.projectId, request.threadId, request.pageId);
       const currentClaimPage = () => {
@@ -453,7 +465,7 @@ app.whenReady().then(async () => {
       try {
         await backend.browserClaim(identity);
         trusted(event);
-        if (!currentClaimPage()) throw new Error('浏览页面已换代，请重新认领');
+        if (!currentClaimPage()) throw new Error(nativeText('browser.claimExpired'));
       }
       catch (error) { if (currentClaimPage()) preview.takeover(request.projectId, request.threadId, request.pageId); throw error; }
       return preview.state(preview.page(request.projectId, request.threadId, request.pageId));
@@ -487,7 +499,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('areal-core:theme', (event, id) => {
     trusted(event);
     if (id !== undefined) {
-      if (id !== 'system' && !themes.some(item => item.id === id)) throw new Error('未知主题');
+      if (id !== 'system' && !themes.some(item => item.id === id)) throw new Error(nativeText('gui.unknownTheme'));
       themeId = id;
     }
     return theme();
@@ -495,7 +507,7 @@ app.whenReady().then(async () => {
   nativeTheme.on('updated', () => window?.webContents.send('areal-core:theme-changed', theme()));
   ipcMain.handle('areal-core:choose-project', async event => {
     trusted(event);
-    const result = await dialog.showOpenDialog(window, { title: '打开项目', properties: ['openDirectory'] });
+    const result = await dialog.showOpenDialog(window, { title: nativeText('picker.project'), properties: ['openDirectory'] });
     if (result.canceled) return null;
     const path = await realpath(result.filePaths[0]);
     trusted(event);
@@ -503,16 +515,16 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle('areal-core:choose-task-directory', async event => {
     trusted(event);
-    const result = await dialog.showOpenDialog(window, { title: '选择工作目录', properties: ['openDirectory'] });
+    const result = await dialog.showOpenDialog(window, { title: nativeText('picker.taskDirectory'), properties: ['openDirectory'] });
     if (result.canceled) return null;
     const cwd = await realpath(result.filePaths[0]);
-    if (!(await stat(cwd)).isDirectory()) throw new Error('请选择现有文件夹');
+    if (!(await stat(cwd)).isDirectory()) throw new Error(nativeText('picker.existingDirectory'));
     trusted(event);
     return { cwd };
   });
   ipcMain.handle('areal-core:choose-projectless-directory', async event => {
     trusted(event);
-    const result = await dialog.showOpenDialog(window, { title: '选择无项目任务文件夹', properties: ['openDirectory', 'createDirectory'] });
+    const result = await dialog.showOpenDialog(window, { title: nativeText('picker.projectlessDirectory'), properties: ['openDirectory', 'createDirectory'] });
     if (result.canceled) return null;
     trusted(event);
     return backend.command('projectless', { operation: 'directory', path: result.filePaths[0] });
@@ -543,15 +555,15 @@ app.whenReady().then(async () => {
       if (name === 'recoverResources') return { ok: true, value: await backend.recoverBackend({ notify: options => dialog.showMessageBox(window, options) }) };
       if (name === 'connectService') { await backend.init(); return { ok: true, value: null }; }
       if (name === 'manage' && params.operation === 'archive') {
-        const answer = await dialog.showMessageBox(window, { type: 'question', message: '归档此会话？', detail: '历史仍可查看。当前 Core 不支持取消归档，归档后无法继续发送消息；该会话的临时浏览页面和登录状态也会关闭。', buttons: ['取消', '归档会话'], defaultId: 0, cancelId: 0 });
+        const answer = await dialog.showMessageBox(window, { type: 'question', message: nativeText('archive.question'), detail: nativeText('archive.detail'), buttons: [nativeText('common.cancel'), nativeText('archive.confirm')], defaultId: 0, cancelId: 0 });
         if (answer.response !== 1) return { ok: true, value: { canceled: true } };
       }
       if (name === 'export') {
         await backend.command('open', params);
         const project = backend.snapshot().projects.find(item => item.id === params.projectId);
         const thread = project?.state?.threads[params.threadId];
-        if (!thread) throw new Error('请选择需要导出的会话');
-        const result = await dialog.showSaveDialog(window, { title: '导出会话记录与执行轨迹', defaultPath: `areal-${thread.id}.json`, filters: [{ name: 'JSON', extensions: ['json'] }] });
+        if (!thread) throw new Error(nativeText('export.selectConversation'));
+        const result = await dialog.showSaveDialog(window, { title: nativeText('export.title'), defaultPath: `areal-${thread.id}.json`, filters: [{ name: 'JSON', extensions: ['json'] }] });
         if (result.canceled || !result.filePath) return { ok: true, value: { canceled: true } };
         await writeFile(result.filePath, JSON.stringify({ format: 'areal-harness-thread-v1', exportedAt: new Date().toISOString(), project: { id: project.id, root: project.root }, thread, queue: project.state.queues[thread.id] }, null, 2), { mode: 0o600 });
         return { ok: true, value: { path: result.filePath } };
@@ -566,13 +578,13 @@ app.whenReady().then(async () => {
       if (name === 'manage') mcpMetadataImages.remember(params, value);
       if (name === 'manage' && params.operation === 'pluginAuth' && params.authOperation === 'start' && value?.status === 'pending') {
         const authUrl=new URL(value.authorizationUrl);
-        if (authUrl.protocol !== 'https:' && !(authUrl.protocol === 'http:' && ['localhost','127.0.0.1','[::1]'].includes(authUrl.hostname))) throw new Error('不支持的认证 URL');
+        if (authUrl.protocol !== 'https:' && !(authUrl.protocol === 'http:' && ['localhost','127.0.0.1','[::1]'].includes(authUrl.hostname))) throw new Error(nativeText('auth.unsupportedUrl'));
         try { await shell.openExternal(authUrl.href); }
-        catch { throw new Error('无法打开认证页面，请核对认证状态后重试'); }
+        catch { throw new Error(nativeText('auth.openFailed')); }
       }
       if (name === 'chatgpt' && params.operation === 'login') {
         try { await shell.openExternal(value.authUrl); }
-        catch { await backend.command('chatgpt', { operation: 'cancel', provider: params.provider }); throw new Error('无法打开浏览器，请重试 ChatGPT 登录'); }
+        catch { await backend.command('chatgpt', { operation: 'cancel', provider: params.provider }); throw new Error(nativeText('auth.chatgptOpenFailed')); }
       }
       return { ok: true, value };
     }
@@ -596,9 +608,9 @@ app.whenReady().then(async () => {
   updates = setupUpdater({ recoverInstall, hasWork: hasUpdateWork,
     onState: state => { if (window && !window.isDestroyed()) window.webContents.send('areal-core:update-changed', state); },
     prepareInstall: async () => {
-    if (quitting || await hasUpdateWork()) throw Object.assign(new Error('仍有活动任务或操作，请检查后台状态'), { code: 'LIFECYCLE_BLOCKED' });
+    if (quitting || await hasUpdateWork()) throw Object.assign(new Error(nativeText('lifecycle.activeWork')), { code: 'LIFECYCLE_BLOCKED' });
     const result = await requestQuit('install');
-    if (result.stopped !== true) throw Object.assign(new Error('应用退出已取消，更新尚未安装'), { code: 'LIFECYCLE_BLOCKED' });
+    if (result.stopped !== true) throw Object.assign(new Error(nativeText('lifecycle.installCanceled')), { code: 'LIFECYCLE_BLOCKED' });
   } });
   ipcMain.handle('areal-core:update-state', event => { trusted(event); return updates.state(); });
   ipcMain.handle('areal-core:update-download', event => { trusted(event); void updates.download(); return updates.state(); });
@@ -607,7 +619,7 @@ app.whenReady().then(async () => {
     notify: options => dialog.showMessageBox(window, options), purpose: 'stop' });
 
   Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { label: 'AReaL Harness', submenu: [{ role: 'about' }, { label: '检查更新…', click: () => { void updates.check(true); } }, { label: '导出诊断包…', click: async () => { try { await exportDiagnostics(); } catch { dialog.showErrorBox('诊断包保存失败', '请选择其他位置后重试。'); } } }, { label: '检查后台资源…', click: () => { void backend.checkLifecycle().catch(error => backend.reportLifecycleError(error)); } }, { label: '停止后台 Core 服务…', click: async () => {
+    { label: 'AReaL Harness', submenu: [{ role: 'about' }, { label: '检查更新…', click: () => { void updates.check(true); } }, { label: '导出诊断包…', click: async () => { try { await exportDiagnostics(); } catch { dialog.showErrorBox(nativeText('diagnostics.saveFailedTitle'), nativeText('diagnostics.retryLocation')); } } }, { label: '检查后台资源…', click: () => { void backend.checkLifecycle().catch(error => backend.reportLifecycleError(error)); } }, { label: '停止后台 Core 服务…', click: async () => {
       try { await requestStopService(); } catch (error) { backend.reportLifecycleError(error); }
     } }, { type: 'separator' },
     { label: '退出 AReaL Harness', accelerator: 'CmdOrCtrl+Q', click: () => app.quit() }] },
@@ -639,7 +651,7 @@ app.whenReady().then(async () => {
   sampleActivity();
   await serviceStarted;
   sampleActivity();
-}).catch(error => { startupTraceMain.finish('error', error); if (error.code !== 'STARTUP_CANCELLED') { console.error(error); dialog.showErrorBox('AReaL 启动失败', error.message); } diagnostics.record({ type: 'exit-requested', exitCode: error.code === 'STARTUP_CANCELLED' ? 0 : 1 }); app.exit(error.code === 'STARTUP_CANCELLED' ? 0 : 1); });
+}).catch(error => { startupTraceMain.finish('error', error); if (error.code !== 'STARTUP_CANCELLED') { console.error(error); dialog.showErrorBox(nativeText('gui.startupFailed'), error.message); } diagnostics.record({ type: 'exit-requested', exitCode: error.code === 'STARTUP_CANCELLED' ? 0 : 1 }); app.exit(error.code === 'STARTUP_CANCELLED' ? 0 : 1); });
 
 app.on('activate', revealWindow);
 app.on('window-all-closed', () => {});

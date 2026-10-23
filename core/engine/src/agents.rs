@@ -1724,6 +1724,7 @@ mod tests {
         assert!(done.turns[0].configuration.as_ref().unwrap().read_only);
         assert!(done.turns[0].items.iter().any(|item| matches!(item, Item::DynamicToolCall { tool, success: Some(true), .. } if tool == "agent_report")));
         let mut state = State {
+            prediction_source: None,
             thread: done,
             active: None,
             poisoned: false,

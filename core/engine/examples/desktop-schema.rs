@@ -29,6 +29,7 @@ fn desktop_schema() -> Value {
         };
     }
     add!("areal/capabilities", CapabilitiesRequest);
+    add!("areal/thread/prediction", PromptPredictionRequest);
     add!(
         "areal/mcp/app/tools/register",
         areal_protocol::plugin_runtime::PageRegister

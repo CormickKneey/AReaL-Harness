@@ -225,6 +225,7 @@ pub fn projections() -> (Value, Value) {
     observation["properties"]["history"] = history_window.clone();
     insert(&["thread/observe"], observation);
     insert(&["thread/configure"], config.clone());
+    insert(&["thread/prediction"], schema::<Option<PromptPrediction>>());
     insert(
         &["thread/inspect"],
         object(
@@ -544,6 +545,10 @@ pub fn projections() -> (Value, Value) {
     notifications.insert(
         "areal/thread/edited".into(),
         object(json!({"threadId":string,"thread":thread})),
+    );
+    notifications.insert(
+        "areal/thread/predictionChanged".into(),
+        object(json!({"threadId":string,"promptPrediction":schema::<PromptPrediction>()})),
     );
     for name in ["turn/started", "turn/completed"] {
         notifications.insert(name.into(), object(json!({"threadId":string,"turn":turn})));

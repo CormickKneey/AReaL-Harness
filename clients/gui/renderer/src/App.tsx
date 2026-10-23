@@ -231,7 +231,7 @@ function AppContent({ services }: { services: PlatformServices }) {
   };
   const requestNavigation = useGuardedNavigation();
   useEffect(() => services.onQuitRequested?.(() => requestNavigation(() => {})), [services, requestNavigation]);
-  const { terminalLocation } = useApplicationPreferences();
+  const { terminalLocation, nextPromptSuggestions } = useApplicationPreferences();
   const [snapshot, updateSnapshot] = useState<Snapshot>({ projects: [], connection: { state: "connecting" } });
   const backendActionInFlight = React.useRef(false);
   const [backendActionPending, setBackendActionPending] = useState(false);
@@ -623,7 +623,7 @@ function AppContent({ services }: { services: PlatformServices }) {
         // Composer owns confirmed send refusals and clears them on acceptance.
         // Unconfirmed/admitted sends still keep their global recovery notice.
         const composerRefusal = name === "send" && failure.outcome?.kind === "rejected";
-        if (!composerRefusal && !["providers", "chatgpt"].includes(name) && !(name === "respond" && params.answers)
+        if (!composerRefusal && !["providers", "chatgpt", "prediction"].includes(name) && !(name === "respond" && params.answers)
           && name !== "media" && name !== "feedback" && !(name === "manage" && params.operation === "goalCreate")) {
           const operation = failure.outcome && "operation" in failure.outcome ? failure.outcome.operation : undefined;
           const requestId = operation?.requestId ?? failure.requestId ?? request.requestId;
@@ -642,6 +642,24 @@ function AppContent({ services }: { services: PlatformServices }) {
     },
     [services],
   );
+  const cancelledPredictions = React.useRef(new Set<string>());
+  useEffect(() => {
+    if (nextPromptSuggestions) { cancelledPredictions.current.clear(); return; }
+    const pending = new Set<string>();
+    for (const project of snapshot.projects) {
+      if (!project.state?.connected || !project.core?.features?.promptPrediction) continue;
+      for (const thread of Object.values(project.state.threads ?? {}) as Data[]) {
+        const slot = thread.desktop?.promptPrediction;
+        if (slot?.status !== "pending") continue;
+        const key = `${project.core?.instanceId}:${project.id}:${thread.id}:${slot.sourceTurnId}`;
+        pending.add(key);
+        if (cancelledPredictions.current.has(key)) continue;
+        cancelledPredictions.current.add(key);
+        void action("prediction", { projectId: project.id, threadId: thread.id, sourceTurnId: slot.sourceTurnId, operation: "cancel" }).catch(() => {});
+      }
+    }
+    for (const key of cancelledPredictions.current) if (!pending.has(key)) cancelledPredictions.current.delete(key);
+  }, [nextPromptSuggestions, snapshot.projects, action]);
   // Resource pages own their loading, validation and recovery feedback.
   const resourceAction: Action = useCallback(
     (name: import("./services.js").CommandName, params: Data = {}) => call(services, name, params),
@@ -774,7 +792,7 @@ function AppContent({ services }: { services: PlatformServices }) {
     [initialReleased, snapshot.projects, restoreConversation, recordWorkspaceLocation],
   );
   const [mcpMentionsOpen, setMcpMentionsOpen] = useState(false);
-  const mcpWorkspace = useMcpAppsWorkspace({ project, deepLinksEnabled: initialReleased, projects: snapshot.projects, activeTab: !annotationVisible && !pluginsOpen && !settingsOpen && !taskCenterOpen && workspaceView !== "conversation" ? panel : "", threadId, action: resourceAction,
+  const mcpWorkspace = useMcpAppsWorkspace({ services, project, deepLinksEnabled: initialReleased, projects: snapshot.projects, activeTab: !annotationVisible && !pluginsOpen && !settingsOpen && !taskCenterOpen && workspaceView !== "conversation" ? panel : "", threadId, action: resourceAction,
     onOpenThread: async (pid, tid) => { updateSettingsOpen(false); await open(pid, tid); },
     onReveal: (tab, owner) => { if(activePanelOwner.current!==`${owner.projectId}:${owner.threadId}`){mcpPendingReveal.current={tab,owner:`${owner.projectId}:${owner.threadId}`};return;} updateSettingsOpen(false); setWorkspaceView("split"); setPanelTabs(tabs => tabs.includes(tab) ? tabs : [...tabs, tab]); setPanel(tab); },
     onRemoveTab: tab => {
@@ -788,7 +806,7 @@ function AppContent({ services }: { services: PlatformServices }) {
     description: t("chat.composer.openApp"),
     source: server.title ?? server.pluginId,
     keywords: ["app", "应用", "plugin", "插件"],
-    icon: <McpAppIcon icon={tool.icons?.[0] ?? server.icons?.[0]} size={16} />,
+    icon: <McpAppIcon icon={tool.icons?.[0] ?? server.icons?.[0]} size={16} loadMetadataImage={mcpWorkspace.loadMetadataImage} />,
     group: "应用",
     disabled: !project?.state?.connected || project.desktopCapabilities?.currentCommands === false || !!thread?.desktop?.archived,
     run: () => { void mcpWorkspace.openApp(server, tool, { kind: "thread" }).catch(cause => setError(cause.message)); },
@@ -1330,7 +1348,7 @@ function AppContent({ services }: { services: PlatformServices }) {
     if (panel.startsWith("file:"))
       return (
         <div className="flex h-full min-h-0 flex-col">
-        {threadId && <McpAppEntrypoints servers={mcpWorkspace.servers} kind="file" fileName={panel.slice(5)} onOpen={(server, tool) => { if (dirtyFiles[`${project.id}:${panel.slice(5)}`]) { setError("请先保存当前文件，再用应用打开。"); return; } void mcpWorkspace.openApp(server, tool, {kind:"file",filePath:panel.slice(5)}).catch(cause=>setError(cause.message)); }}/>}<WorkspaceFilePane
+        {threadId && <McpAppEntrypoints servers={mcpWorkspace.servers} loadMetadataImage={mcpWorkspace.loadMetadataImage} kind="file" fileName={panel.slice(5)} onOpen={(server, tool) => { if (dirtyFiles[`${project.id}:${panel.slice(5)}`]) { setError("请先保存当前文件，再用应用打开。"); return; } void mcpWorkspace.openApp(server, tool, {kind:"file",filePath:panel.slice(5)}).catch(cause=>setError(cause.message)); }}/>}<WorkspaceFilePane
           key={`${project.id}:${panel}`}
           projectId={project.id}
           root={project.root}
@@ -1462,16 +1480,41 @@ function AppContent({ services }: { services: PlatformServices }) {
     return new Promise(resolve => setForkIntent({ projectId: owner, sourceThreadId, turnId,
       route, anchor: anchor ?? document.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(turnId)}"] .turn-fork-trigger`) ?? undefined, resolve }));
   };
+  const canStageSelection = !!project && !!thread && !thread.desktop?.archived && !thread.parentThreadId
+    && thread.conversation?.kind !== "side" && !!project.state?.connected && !project.observationErrors?.[thread.id]
+    && snapshot.connection?.state === "ready" && !viewRefreshing && !projectExecutionBlocked(snapshot.lifecycle, project.id);
+  const addSelectionToChat = (text: string) => {
+    if (!canStageSelection || !project || !thread) return;
+    const key = `areal-gui:draft:${project.id}:${thread.id}`;
+    if (sending.has(key) || localStorage.getItem(`${key}:pending`) || localStorage.getItem(`${key}:queue-edit`)
+      || project.pending?.some((request: Data) => request.params?.threadId === thread.id)) return;
+    attachmentDrafts.set(key, [...(attachmentDrafts.get(key) ?? []), { kind: "pasted-text", text }]);
+    window.dispatchEvent(new CustomEvent("areal-draft-change", { detail: key }));
+  };
   const openSideSelection = (selection: Data, excerpt: string, anchor?: Data) => {
-    if (!project || !thread) return;
+    if (!canStageSelection || !project || !thread || project.core?.features?.sidePreview !== true) return;
     rememberSideTrigger();
     const workspace = new SideDraftWorkspace(localStorage, { instanceId: project.core?.instanceId ?? "unknown",
       projectId: project.id, sourceThreadId: thread.id, randomId: () => crypto.randomUUID() });
-    const draft = workspace.newDraft();
+    const draft = workspace.current();
     const owner = workspace.owner(draft);
-    localStorage.setItem(`${owner}:selection`, JSON.stringify(selection));
-    localStorage.setItem(`${owner}:selection-preview`, excerpt);
-    if (anchor) localStorage.setItem(`${owner}:anchor`, JSON.stringify(anchor));
+    if (localStorage.getItem(workspace.pendingKey(draft))) return;
+    const side = draft.kind === "side" ? project.state?.threads?.[draft.id] : undefined;
+    if (draft.kind === "side" && (!side || side.desktop?.archived || side.conversation?.kind !== "side"
+      || side.conversation.origin?.sourceThreadId !== thread.id
+      || project.pending?.some((request: Data) => request.params?.threadId === draft.id))) return;
+    if (draft.kind === "side" || localStorage.getItem(`${owner}:selection`)) {
+      // 首个冻结来源不被后来选区覆盖；后续引文作为可编辑问题追加。
+      const key = workspace.draftKey(draft);
+      const text = [localStorage.getItem(key) ?? "", excerpt].filter(Boolean).join("\n\n");
+      localStorage.setItem(key, text);
+      window.dispatchEvent(new CustomEvent("areal-side-draft", { detail: { owner, text } }));
+    } else {
+      localStorage.setItem(`${owner}:selection`, JSON.stringify(selection));
+      localStorage.setItem(`${owner}:selection-preview`, excerpt);
+      if (anchor) localStorage.setItem(`${owner}:anchor`, JSON.stringify(anchor));
+      else localStorage.removeItem(`${owner}:anchor`);
+    }
     setWorkspaceView(mode => matchMedia("(max-width: 1200px)").matches ? "panel" : mode === "split" ? mode : "panel");
     setPanel("旁路讨论");
     setPanelTabs(tabs => tabs.includes("旁路讨论") ? tabs : [...tabs, "旁路讨论"]);
@@ -1845,7 +1888,8 @@ function AppContent({ services }: { services: PlatformServices }) {
                           onOpenResult={mcpWorkspace.openResult}
                           resultStates={mcpWorkspace.resultStates}
                           onFork={forkFromTurn}
-                          onSideSelection={project.core?.features?.sidePreview === true && !thread.desktop?.archived ? openSideSelection : undefined}
+                          onAddSelection={canStageSelection ? addSelectionToChat : undefined}
+                          onSideSelection={canStageSelection && project.core?.features?.sidePreview === true ? openSideSelection : undefined}
                           dark={dark}
                           onLink={onLink}
                           onFile={openFile}

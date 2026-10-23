@@ -28,6 +28,8 @@
   overflow-y: visible;
   padding-bottom: 8px;
   caret-color: var(--color-foreground);
+}
+.composer-editor :is([contenteditable], textarea, .composer-prediction) {
   font-size: var(--text-ui-lg);
   line-height: max(22px, calc(var(--ui-font-size) + 8px));
 }
@@ -43,7 +45,8 @@
 /* 决策面只改变布局，保留已挂载编辑器与草稿。 */
 .interaction-composer-compact .composer-surface { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 6px 8px 6px 12px; }
 .interaction-composer-compact .composer-editor { flex: 1 1 120px; padding: 0; max-height: 80px; }
-.interaction-composer-compact .composer-editor :is([contenteditable], textarea) { min-height: 20px; padding-bottom: 0; font-size: var(--text-ui-base); line-height: var(--line-height-ui); }
+.interaction-composer-compact .composer-editor :is([contenteditable], textarea) { min-height: 20px; padding-bottom: 0; }
+.interaction-composer-compact .composer-editor :is([contenteditable], textarea, .composer-prediction) { font-size: var(--text-ui-base); line-height: var(--line-height-ui); }
 .interaction-composer-compact .composer-toolbar { flex: 1 0 auto; }
 .interaction-composer-compact .composer-toolbar [data-composer-leading-actions] { flex: 0 0 auto; }
 

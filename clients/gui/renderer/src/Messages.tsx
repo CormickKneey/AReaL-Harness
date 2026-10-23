@@ -1,6 +1,6 @@
 import { useI18n } from "./i18n/IntlProvider.js";
 import { TurnUsage } from "./TurnUsage.js";
-import { mcpResultKey, type McpResultSource, type McpResultState } from "./McpAppHost.js";
+import { mcpResultKey, type McpResultSource, type McpResultState } from "./mcp-app-services.js";
 import { McpContentLabel } from "./McpComposerAttachments.js";
 import { useForkHistory } from "./ForkHistory.js";
 import { DeferredHistoryItem, useConversationHistory } from "./ConversationHistory.js";
@@ -19,9 +19,10 @@ import { UserFeedback } from "./UserFeedback.js";
 import { TurnHookStats } from "./TurnHookStats.js";
 import { ToolEvent } from "./ToolEvent.js";
 import { TurnActivity, TurnExecution } from "./TurnExecution.js";
-import { Fragment, useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { TimelineBottomButton } from "./TimelineBottomButton.js";
 import { Button } from "./components/ui/button.js";
+import { Popover, PopoverContent } from "./components/ui/popover.js";
 import { MessageResponse } from "./components/ai-elements/message.js";
 import { SentAttachment } from "./MessageAttachment.js";
 import { sentReviewFeedback } from "./reviewComments.js";
@@ -34,6 +35,10 @@ import { TurnFileSummary } from "./TurnFileSummary.js";
 import type { Data, Action } from "./services.js";
 // Like the existing file/Diff view caches, this is process-local GUI state.
 // It owns no history or execution and intentionally disappears on restart.
+type TranscriptSelectionSnapshot = {
+  owner: string; text: string; turnId: string; itemId: string; range: Range; rect: DOMRect;
+  provenance: { kind: "userQuote" } | { kind: "itemRange"; startUtf8: number; endUtf8: number };
+};
 type ResponseSpace = { turnId: string; height: number; contentHeight: number };
 const readingViews = new Map<string, { top: number; following: boolean; atTail: boolean; responseSpace?: ResponseSpace }>();
 // Queue pauseReason "stopped" is Core's stop receipt. It stays separate from the turn status.
@@ -59,6 +64,7 @@ export function Messages({
   onAgent,
   onFork,
   onSideSelection,
+  onAddSelection,
   responseActions,
   embedded = false,
   readOnly = false,
@@ -78,6 +84,7 @@ export function Messages({
   onFork?: (turnId: string, anchor?: HTMLElement) => Promise<void>;
   responseActions?: (message: Data) => ReactNode;
   onSideSelection?: (selection: Data, text: string, anchor?: Data) => void;
+  onAddSelection?: (text: string) => void;
   project: Data;
   thread: Data;
   action: Action;
@@ -102,19 +109,50 @@ export function Messages({
   const latestTurnId = thread.turns?.at(-1)?.id;
   const [forking, setForking] = useState(false);
   const [forkError, setForkError] = useState<{ turnId: string; message: string } | null>(null);
-  const selectionOwner = JSON.stringify([project.core?.instanceId, project.id, thread.id]);
+  const selectionOwner = JSON.stringify([project.core?.instanceId, project.core?.connectionGeneration, project.id, thread.id]);
   const currentSelectionOwner = useRef(selectionOwner);
   currentSelectionOwner.current = selectionOwner;
-  const [selectedSideText, setSelectedSideText] = useState<{ owner: string; text: string; turnId: string; itemId: string; startUtf8?: number; endUtf8?: number } | null>(null);
-  useLayoutEffect(() => { setSelectedSideText(null); }, [selectionOwner]);
+  const [selectedSideText, updateSelection] = useState<TranscriptSelectionSnapshot | null>(null);
+  const selectionSnapshot = useRef<TranscriptSelectionSnapshot | null>(null);
+  const setSelectedSideText = (next: TranscriptSelectionSnapshot | null) => { selectionSnapshot.current = next; updateSelection(next); };
+  useLayoutEffect(() => { setSelectedSideText(null); }, [selectionOwner, !!onAddSelection, !!onSideSelection, readOnly]);
+  const selectionIsCurrent = (chosen: TranscriptSelectionSnapshot) => {
+    const selected = window.getSelection();
+    return currentSelectionOwner.current === chosen.owner && selectionSnapshot.current === chosen
+      && chosen.range.startContainer.isConnected && chosen.range.endContainer.isConnected
+      && !!container.current?.contains(chosen.range.commonAncestorContainer)
+      && selected?.rangeCount === 1 && !selected.isCollapsed && selected.toString() === chosen.text
+      && selected.getRangeAt(0).compareBoundaryPoints(Range.START_TO_START, chosen.range) === 0
+      && selected.getRangeAt(0).compareBoundaryPoints(Range.END_TO_END, chosen.range) === 0
+      && chosen.range.toString() === chosen.text;
+  };
+  useEffect(() => {
+    const invalidate = () => { const chosen = selectionSnapshot.current; if (chosen && !selectionIsCurrent(chosen)) setSelectedSideText(null); };
+    const dismiss = () => setSelectedSideText(null);
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") dismiss(); };
+    document.addEventListener("selectionchange", invalidate);
+    document.addEventListener("keydown", escape);
+    window.addEventListener("scroll", dismiss, true);
+    window.addEventListener("resize", dismiss);
+    return () => {
+      document.removeEventListener("selectionchange", invalidate);
+      document.removeEventListener("keydown", escape);
+      window.removeEventListener("scroll", dismiss, true);
+      window.removeEventListener("resize", dismiss);
+    };
+  });
   const captureSideSelection = () => {
-    if (!onSideSelection) return;
+    setSelectedSideText(null);
+    if ((!onSideSelection && !onAddSelection) || readOnly) return;
     const selected = window.getSelection();
     if (!selected || selected.isCollapsed || selected.rangeCount !== 1) return;
     const range = selected.getRangeAt(0);
     const start = (range.startContainer.nodeType === Node.ELEMENT_NODE ? range.startContainer as Element : range.startContainer.parentElement)?.closest<HTMLElement>("[data-side-item-id]");
     const end = (range.endContainer.nodeType === Node.ELEMENT_NODE ? range.endContainer as Element : range.endContainer.parentElement)?.closest<HTMLElement>("[data-side-item-id]");
-    if (!start || start !== end) return;
+    if (!start || start !== end || !container.current?.contains(start)
+      || !container.current.contains(range.commonAncestorContainer)) return;
+    const selectedElement = range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement;
+    if (selectedElement?.closest("button, input, textarea, [contenteditable='true']")) return;
     const text = selected.toString();
     if (!text.trim()) return;
     const turnId = start.closest<HTMLElement>("[data-turn-id]")?.dataset.turnId;
@@ -122,6 +160,8 @@ export function Messages({
     if (!turnId || !itemId) return;
     const sourceTurn = (thread.turns ?? []).find((turn: Data) => turn.id === turnId);
     const canonical = sourceTurn?.items?.find((item: Data) => item.id === itemId);
+    if (!canonical) return;
+    const snapshot = { owner: selectionOwner, text, turnId, itemId, range: range.cloneRange(), rect: range.getBoundingClientRect() };
     // 流式回复的增量尚未确认持久化；DOM 相等不能证明选区属于冻结证据。
     const streamingReply = sourceTurn?.status === "inProgress" && canonical?.type === "agentMessage";
     const canonicalText = canonical?.type === "agentMessage" ? canonical.text : canonical?.type === "userMessage" && canonical.content?.length === 1 && canonical.content[0].type === "text" ? canonical.content[0].text :
@@ -131,21 +171,21 @@ export function Messages({
       const prefix = range.cloneRange(); prefix.selectNodeContents(body); prefix.setEnd(range.startContainer, range.startOffset);
       const startUtf8 = new TextEncoder().encode(prefix.toString()).length;
       const endUtf8 = startUtf8 + new TextEncoder().encode(text).length;
-      setSelectedSideText({ owner: selectionOwner, text, turnId, itemId, startUtf8, endUtf8 });
-    } else setSelectedSideText({ owner: selectionOwner, text, turnId, itemId });
+      setSelectedSideText({ ...snapshot, provenance: { kind: "itemRange", startUtf8, endUtf8 } });
+    } else setSelectedSideText({ ...snapshot, provenance: { kind: "userQuote" } });
   };
   const askAboutSelection = async () => {
     const chosen = selectedSideText;
-    if (!chosen || chosen.owner !== selectionOwner || !onSideSelection) return;
+    if (!chosen || !selectionIsCurrent(chosen) || !onSideSelection) return;
     let selection: Data = { kind: "userQuote", text: chosen.text, claimedTurnId: chosen.turnId, claimedItemId: chosen.itemId };
-    if (chosen.startUtf8 !== undefined && chosen.endUtf8 !== undefined) {
+    if (chosen.provenance.kind === "itemRange") {
       const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(chosen.text));
       selection = { kind: "itemRange", turnId: chosen.turnId, itemId: chosen.itemId,
-        startUtf8: chosen.startUtf8, endUtf8: chosen.endUtf8,
+        startUtf8: chosen.provenance.startUtf8, endUtf8: chosen.provenance.endUtf8,
         textSha256: Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("") };
     }
     // 计算摘要期间也可能切换来源；旧回调不能把选区交给新会话。
-    if (currentSelectionOwner.current !== chosen.owner) return;
+    if (!selectionIsCurrent(chosen)) return;
     const turn = (thread.turns ?? []).find((item: Data) => item.id === chosen.turnId);
     onSideSelection(selection, chosen.text, turn?.status === "completed" ? { kind: "turn", turnId: chosen.turnId, boundary: "after" } : undefined);
     setSelectedSideText(null);
@@ -318,6 +358,7 @@ export function Messages({
       ref={container}
       onScroll={embedded ? undefined : updateReading}
       onMouseUp={captureSideSelection}
+      onKeyUp={event => { if (event.key !== "Escape" && event.key !== "Tab" && event.key !== "Enter") captureSideSelection(); }}
       onClickCapture={event => {
         const control = event.target instanceof Element ? event.target.closest("button[aria-expanded], summary") : null;
         if (control && event.currentTarget.contains(control) && control.closest(".turn-progress, .turn-execution")) readHere();
@@ -327,11 +368,16 @@ export function Messages({
         {beforeTurns}
         {inherited.loading && <p role="status">正在加载继承历史…</p>}
         {inherited.error && <p role="alert">继承历史读取失败：{inherited.error}</p>}
-        {localThread.displayHistory?.supported && !localThread.displayHistory.complete && <Button type="button" variant="ghost" size="sm"
+        {localThread.displayHistory?.loadingLatest && <p role="status">{t("chat.history.loadingLatest")}</p>}
+        {localThread.displayHistory?.supported && localThread.displayHistory.latestTurnComplete !== false && !localThread.displayHistory.complete && <Button type="button" variant="ghost" size="sm"
           disabled={localThread.displayHistory.loadingOlder} onClick={() => { readHere(); void history.load(); }}>
           {localThread.displayHistory.loadingOlder ? t("chat.history.loadingOlder") : t("chat.history.loadOlder")}
         </Button>}
-        {history.failure && !history.failure.itemId && <p role="alert">{history.failure.message}</p>}
+        {history.failure && !history.failure.itemId && <div>
+          <p role="alert">{history.failure.message}</p>
+          {localThread.displayHistory?.latestTurnComplete === false && <Button type="button" variant="ghost" size="sm"
+            disabled={localThread.displayHistory.loadingLatest} onClick={() => void history.load()}>{t("recovery.retryView")}</Button>}
+        </div>}
         {thread.desktop?.archived && (
           <p role="status" className="notice">
             此任务已归档，历史只读。
@@ -353,14 +399,11 @@ export function Messages({
               setForkError({ turnId: turn.id, message });
             }).finally(() => setForking(false));
           };
-          const canAskSelection = !!onSideSelection && selectedSideText?.owner === selectionOwner && selectedSideText.turnId === turn.id;
           const forkControls = <>
             {canFork && turn.status !== "inProgress" && <button type="button" className="turn-fork-trigger"
               disabled={forking || !!forkReason} title={forkReason || undefined}
               aria-label="从此轮创建聊天分支" aria-describedby={forkReason ? `fork-reason-${turn.id}` : undefined}
               onClick={event => forkAt(event.currentTarget)}><ForkIcon /><span>分支</span></button>}
-            {canAskSelection && <button type="button" className="side-bring-action" aria-label={t("chat.selection.askInSideChat")}
-              onClick={() => void askAboutSelection()}>{t("chat.selection.ask")}</button>}
             {canFork && inspectTurn && turn.status !== "inProgress" && <Button type="button" variant="ghost" size="xs" className="side-bring-action"
               aria-label={t("chat.selection.inspectSourceTurn")}
               onClick={() => document.querySelector<HTMLElement>(`[data-turn-id="${CSS.escape(inspectTurn)}"]`)?.scrollIntoView({ block: "center" })}>{t("chat.selection.inspectSource")}</Button>}
@@ -519,6 +562,19 @@ export function Messages({
       </div>
       {!embedded && <div ref={responseSpace} className="message-response-space" aria-hidden="true" />}
     </div>
+    {selectedSideText?.owner === selectionOwner && (onAddSelection || onSideSelection) && <Popover open onOpenChange={open => { if (!open) setSelectedSideText(null); }}>
+      <PopoverContent anchor={{ getBoundingClientRect: () => selectedSideText.rect }} side="top" initialFocus={false} finalFocus={false}
+        data-testid="transcript-selection-actions" aria-label={t("chat.selection.actions")}
+        className="w-auto flex-row gap-inline p-1" onMouseDown={event => event.preventDefault()}>
+        {onAddSelection && <Button type="button" variant="ghost" size="sm" onClick={() => {
+          const chosen = selectionSnapshot.current;
+          if (!chosen || !selectionIsCurrent(chosen)) return;
+          onAddSelection(chosen.text); setSelectedSideText(null);
+        }}>{t("chat.selection.addToChat")}</Button>}
+        {onSideSelection && <Button type="button" variant="ghost" size="sm" aria-label={t("chat.selection.askInSideChat")}
+          onClick={() => void askAboutSelection()}>{t("chat.selection.ask")}</Button>}
+      </PopoverContent>
+    </Popover>}
     {!embedded && readingHistory && <TimelineBottomButton onClick={returnToBottom} />}
     </div>
   );

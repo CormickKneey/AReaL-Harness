@@ -1,4 +1,5 @@
 export const generalMessages = {
+  "composer.prediction.tab": { "zh-CN": "Tab", en: "Tab" },
   "chat.permissions.ask": {
     "zh-CN": "请求审批",
     "en": "Ask for approval"
@@ -254,6 +255,14 @@ export const generalMessages = {
   "settings.displaySettings.editor": {
     "zh-CN": "编辑器",
     "en": "Editor"
+  },
+  "settings.displaySettings.predictNextPrompt": {
+    "zh-CN": "预测下一条提示词",
+    "en": "Predict next prompt"
+  },
+  "settings.displaySettings.predictNextPromptDescription": {
+    "zh-CN": "回复完成后，使用当前对话模型预测下一条提示词。会额外请求模型并产生用量费用；按 Tab 接受后可编辑。",
+    "en": "After a reply, use the conversation model to suggest your next prompt. This makes an extra model request and may incur usage costs. Press Tab to accept and edit."
   },
   "settings.displaySettings.sendShortcut": {
     "zh-CN": "发送快捷键",

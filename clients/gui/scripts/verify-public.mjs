@@ -14,6 +14,7 @@ for (const entry of creatorManifest.files) {
   assert.equal(createHash("sha256").update(bytes).digest("hex"), entry.sha256, `Bundled Skill changed: ${entry.path}`);
 }
 let files = 0;
+const rendererBridgeBypasses = [];
 async function scan(dir) {
   for (const item of await readdir(dir, { withFileTypes: true })) {
     if (skip.has(item.name)) continue;
@@ -37,6 +38,8 @@ async function scan(dir) {
       !rel.startsWith("scripts/verify-public")
     ) {
       const text = await readFile(path, "utf8");
+      if (rel.startsWith("renderer/src/") && rel !== "renderer/src/main.tsx" && /\barealDesktop\b/.test(text))
+        rendererBridgeBypasses.push(rel);
       assert.ok(
         !/\/Users\/|registry\.npmmirror|registry\.npm\.alibaba|BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY/.test(
           text,
@@ -52,6 +55,7 @@ async function scan(dir) {
 }
 await scan(root);
 await scan(join(root, "../../design/tokens"));
+assert.deepEqual(rendererBridgeBypasses, [], `Renderer preload access belongs to main.tsx: ${rendererBridgeBypasses.join(", ")}`);
 for (const path of [
   "app/LICENSE",
   "renderer/ZCODE-LICENSE",

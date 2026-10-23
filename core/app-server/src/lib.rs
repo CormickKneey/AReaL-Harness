@@ -808,6 +808,7 @@ async fn check_side_policy(engine: &Engine, method: &str, params: &Value) -> Res
             | "areal/tool/acknowledge"
             | "areal/context/read"
             | "areal/thread/configure"
+            | "areal/thread/prediction"
             | "areal/thread/archive"
             | "areal/conversation/unarchive"
             | "areal/request/read"

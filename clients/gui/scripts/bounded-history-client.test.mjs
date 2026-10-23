@@ -14,13 +14,13 @@ const turn = (id, items, status = 'completed') => ({ id, items, status });
 const entry = (turnId, value) => ({ sourceThreadId: 'thread', sourceTurnId: turnId,
   sourceItemId: value.id, sourceTurnStatus: 'completed', turn: { id: turnId, status: 'completed' }, item: value });
 const baseline = (archived = false) => ({ thread: { id: 'thread', status: { type: 'idle' },
-  turns: [turn('t2', [item('i2')])], desktop: { archived, configuration: { revision: 1 }, queue: { revision: 1, items: [] }, interactions: [], interactionRevision: 1 } },
+  turns: [turn('t1', []), turn('t2', [item('i2')])], desktop: { archived, configuration: { revision: 1 }, queue: { revision: 1, items: [] }, interactions: [], interactionRevision: 1 } },
   history: { snapshotId: 'snapshot', nextCursor: 'older', complete: false } });
 function fixture(read, { archived = false, bounded = true, afterResult = () => {} } = {}) {
   const calls = [];
   const project = { id: 'project', model: new CoreTaskModel(), configurations: {}, summaries: [{ id: 'thread', desktop: { archived } }], connectionGeneration: 1 };
   const backend = Object.assign(Object.create(CoreBackend.prototype), { projects: new Map([['project', project]]), starting: new Map(),
-    onChange() {}, providers: { redact: value => value }, lifecycleOperations: { activeTargets: new Set(), blocking: () => false },
+    onChange() {}, library: { recordThreadActivity: async () => {} }, providers: { redact: value => value }, lifecycleOperations: { activeTargets: new Set(), blocking: () => false },
     start: async () => project });
   project.client = { ready: true, closed: false,
     capabilities: { methods: ['areal/thread/observe', 'areal/conversation/history', 'areal/subscription/remove'], features: { boundedObservation: bounded, boundedHistory: bounded } },
@@ -116,7 +116,7 @@ test('explicit item loading validates UTF8 fragments and release does not discar
   let offset = 0, reads = 0;
   const f = fixture(async (method, params) => {
     if (method === 'areal/thread/observe') {
-      const result = baseline(); result.thread.turns[0].items = [{ type: 'historyDeferred', id: 'i2', originalType: 'agentMessage', version: 'v1', cursor: 'item:0', totalBytes: bytes.length }]; return result;
+      const result = baseline(); result.thread.turns.at(-1).items = [{ type: 'historyDeferred', id: 'i2', originalType: 'agentMessage', version: 'v1', cursor: 'item:0', totalBytes: bytes.length }]; return result;
     }
     assert.equal(method, 'areal/conversation/history'); assert.equal(params.maxBytes, 1048576, 'explicit content uses the negotiated maximum fragment budget'); reads++;
     let end = Math.min(offset + 20000, bytes.length);
@@ -130,12 +130,12 @@ test('explicit item loading validates UTF8 fragments and release does not discar
   await f.history('acquire', { viewId: 'view-b' });
   assert.equal(reads, 0, 'opening a view must not eagerly materialize huge content');
   await f.history('loadItem', { itemId: 'i2' });
-  assert.deepEqual(f.project.model.state.threads.thread.turns[0].items[0], value.item);
+  assert.deepEqual(f.project.model.state.threads.thread.turns.at(-1).items[0], value.item);
   await f.history('release');
   assert.equal(f.calls.some(call => call.method === 'areal/subscription/remove'), false);
-  assert.deepEqual(f.project.model.state.threads.thread.turns[0].items[0], value.item);
+  assert.deepEqual(f.project.model.state.threads.thread.turns.at(-1).items[0], value.item);
   await f.history('release', { viewId: 'view-b' });
-  assert.equal(f.project.model.state.threads.thread.turns[0].items[0].type, 'historyDeferred');
+  assert.equal(f.project.model.state.threads.thread.turns.at(-1).items[0].type, 'historyDeferred');
 });
 
 test('metadata budget retries exactly once at the supported maximum', async () => {
@@ -152,7 +152,7 @@ test('metadata budget retries exactly once at the supported maximum', async () =
 test('stale old page resets its display window without retrying a mutation', async () => {
   let observations = 0;
   const f = fixture(async method => {
-    if (method === 'areal/thread/observe') { observations++; const value = baseline(); if (observations > 1) value.thread.turns = [turn('edited', [item('edited')])]; return value; }
+    if (method === 'areal/thread/observe') { observations++; const value = baseline(); if (observations > 1) { value.thread.turns = [turn('edited', [item('edited')])]; value.history = { snapshotId: 'edited', nextCursor: null, complete: true }; } return value; }
     assert.equal(method, 'areal/conversation/history');
     throw Object.assign(new Error('history edited'), { code: -32012, reason: 'HISTORY_CURSOR_STALE', data: { reset: true, reason: 'HISTORY_CURSOR_STALE' } });
   });
@@ -168,7 +168,7 @@ test('changed item restarts once and never mixes two serialized versions', async
   let reads = 0;
   const f = fixture(async (method, params) => {
     if (method === 'areal/thread/observe') {
-      const result = baseline(); result.thread.turns[0].items = [{ type: 'historyDeferred', id: 'i2', originalType: 'agentMessage', version: 'old', cursor: 'old:0', totalBytes: 1000 }]; return result;
+      const result = baseline(); result.thread.turns.at(-1).items = [{ type: 'historyDeferred', id: 'i2', originalType: 'agentMessage', version: 'old', cursor: 'old:0', totalBytes: 1000 }]; return result;
     }
     reads++;
     if (reads === 1) throw Object.assign(new Error('changed'), { code: -32012, reason: 'HISTORY_ITEM_CHANGED', data: { restartCursor: 'new:0', reason: 'HISTORY_ITEM_CHANGED' } });
@@ -177,7 +177,7 @@ test('changed item restarts once and never mixes two serialized versions', async
   });
   await f.backend.openThread(f.project, 'thread'); await f.history('acquire'); await f.history('loadItem', { itemId: 'i2' });
   assert.equal(reads, 2);
-  assert.deepEqual(f.project.model.state.threads.thread.turns[0].items[0], value.item);
+  assert.deepEqual(f.project.model.state.threads.thread.turns.at(-1).items[0], value.item);
 });
 
 test('retained old-page window stays finite and reports its omitted interval', async () => {
@@ -195,4 +195,180 @@ test('retained old-page window stays finite and reports its omitted interval', a
   assert.equal(thread.turns.at(-1).items[0].id, 'i2', 'latest live window remains visible');
   await f.history('release');
   assert.deepEqual(f.project.model.state.threads.thread.turns.flatMap(t => t.items.map(i => i.id)), ['i2']);
+});
+
+const partialBaseline = () => ({ ...baseline(), thread: { ...baseline().thread, turns: [turn('t2', [item('i2')], 'inProgress')] } });
+const page = (data, nextCursor, complete = !nextCursor) => ({ snapshotId: 'snapshot', data, nextCursor, complete });
+const ids = f => f.project.model.state.threads.thread.turns.flatMap(value => value.items.map(value => value.id));
+
+test('acquire restores the entire latest turn beyond four pages and pins it through eviction and release', async () => {
+  let reads = 0;
+  const f = fixture(async method => {
+    if (method === 'areal/thread/observe') return partialBaseline();
+    assert.equal(method, 'areal/conversation/history');
+    reads++;
+    if (reads <= 6) return page([entry('t2', reads === 5
+      ? { id: 'steer', type: 'userMessage', content: [{ type: 'inputText', text: 'continue' }] }
+      : item(`latest-${7 - reads}`))], `latest:${reads}`);
+    if (reads === 7) return page([entry('t1', item('spill')), entry('t2', { id: 'prompt', type: 'userMessage', content: [{ type: 'inputText', text: 'work' }] })], 'old:0');
+    return page([entry(`old-${reads}`, item(`old-${reads}`))], `old:${reads}`);
+  });
+  await f.backend.openThread(f.project, 'thread');
+  assert.equal(f.calls.filter(call => call.method === 'areal/conversation/history').length, 0, 'baseline installation stays synchronous and bounded');
+  await f.history('acquire');
+  assert.equal(reads, 7, 'steering messages do not truncate the same turn');
+  const latest = ['prompt', 'latest-1', 'steer', 'latest-3', 'latest-4', 'latest-5', 'latest-6', 'i2'];
+  assert.deepEqual(f.project.model.state.threads.thread.turns.at(-1).items.map(value => value.id), latest);
+  assert.equal(f.project.model.state.threads.thread.displayHistory.latestTurnComplete, true);
+  for (let n = 0; n < 6; n++) await f.history('loadOlder');
+  assert.deepEqual(f.project.model.state.threads.thread.turns.at(-1).items.map(value => value.id), latest);
+  await f.history('release');
+  assert.deepEqual(ids(f), ['spill', ...latest]);
+  assert.ok(f.calls.filter(call => call.method === 'areal/conversation/history').every(call => call.params.maxBytes === 262144 && call.maxResponseBytes === 262144));
+  assert.equal(f.calls.some(call => /submit|resume|start|steer/.test(call.method)), false);
+});
+
+test('concurrent owners share latest hydration and retain live deltas when the first owner closes', async () => {
+  let resolvePage, started;
+  const reading = new Promise(resolve => { started = resolve; });
+  const f = fixture(async method => {
+    if (method === 'areal/thread/observe') return partialBaseline();
+    started();
+    return new Promise(resolve => { resolvePage = resolve; });
+  });
+  await f.backend.openThread(f.project, 'thread');
+  const first = f.history('acquire');
+  await reading;
+  const second = f.history('acquire', { viewId: 'view-b' });
+  const older = f.history('loadOlder', { viewId: 'view-b' });
+  await f.history('release');
+  f.project.model.event('item/agentMessage/delta', { threadId: 'thread', turnId: 't2', itemId: 'i2', delta: ':live' });
+  resolvePage(page([entry('t2', item('i1'))], null));
+  await Promise.all([first, second, older]);
+  assert.deepEqual(ids(f), ['i1', 'i2']);
+  assert.equal(f.project.model.state.threads.thread.turns.at(-1).items.at(-1).text, 'i2:live');
+  assert.equal(f.calls.filter(call => call.method === 'areal/conversation/history').length, 1);
+});
+
+test('closing the last owner cancels pending hydration and reacquiring starts a fresh owned read', async () => {
+  const pending = [];
+  const f = fixture(async method => method === 'areal/thread/observe' ? partialBaseline()
+    : new Promise(resolve => pending.push(resolve)));
+  await f.backend.openThread(f.project, 'thread');
+  const first = f.history('acquire');
+  await new Promise(resolve => setImmediate(resolve));
+  await f.history('release');
+  const next = f.history('acquire');
+  await new Promise(resolve => setImmediate(resolve));
+  pending[0](page([entry('t2', item('discarded'))], null));
+  await assert.rejects(first, error => error.code === 'HISTORY_VIEW_UNAVAILABLE');
+  assert.equal(ids(f).includes('discarded'), false);
+  assert.equal(f.project.model.state.threads.thread.displayHistory.loadingLatest, true);
+  pending[1](page([entry('t2', item('kept'))], null));
+  await next;
+  assert.deepEqual(ids(f), ['kept', 'i2']);
+});
+
+test('refresh preserves the shown latest prefix until authoritative hydration replaces it', async () => {
+  let refresh = false, resolvePage;
+  const f = fixture(async method => {
+    if (method === 'areal/thread/observe') return partialBaseline();
+    if (!refresh) return page([entry('t1', item('spill')), entry('t2', { id: 'prompt', type: 'userMessage', content: [{ type: 'inputText', text: 'keep me visible' }] })], 'old');
+    return new Promise(resolve => { resolvePage = resolve; });
+  });
+  await f.backend.openThread(f.project, 'thread'); await f.history('acquire');
+  const huge = item('huge', 'x'.repeat(2000000));
+  f.project.model.replace({ ...f.project.model.state.threads.thread, turns: [turn('t2', [huge, ...f.project.model.state.threads.thread.turns.at(-1).items])] });
+  refresh = true;
+  await f.backend.openThread(f.project, 'thread');
+  assert.equal(ids(f).includes('prompt'), true, 'context refresh does not hide the known prompt');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.project.model.state.threads.thread.displayHistory.loadingLatest, true);
+  resolvePage(page([entry('t1', item('spill')), entry('t2', { id: 'huge', type: 'historyDeferred', originalType: 'agentMessage' }), entry('t2', { id: 'prompt', type: 'historyDeferred', originalType: 'userMessage' })], 'old'));
+  await f.history('acquire');
+  const restored = f.project.model.state.threads.thread.turns.at(-1).items;
+  assert.equal(restored.find(item => item.id === 'prompt').type, 'userMessage', 'known user content survives a deferred projection');
+  assert.equal(restored.find(item => item.id === 'huge').type, 'historyDeferred', 'unchanged retained oversized content respects the authoritative deferred entry');
+  f.project.connectionGeneration++;
+  f.backend.installObservation(f.project, partialBaseline());
+  assert.equal(ids(f).includes('prompt'), false, 'a new connection cannot revive the old prefix');
+  await f.history('release');
+  resolvePage?.(page([], null));
+});
+
+test('a stale latest cursor stops until explicit retry and cannot resurrect the old prefix', async () => {
+  let stale = false, observations = 0;
+  const f = fixture(async method => {
+    if (method === 'areal/thread/observe') {
+      observations++;
+      const value = partialBaseline();
+      if (stale && observations > 2) { value.thread.turns = [turn('t2', [item('edited')])]; value.history = { snapshotId: 'edited', complete: true, nextCursor: null }; }
+      return value;
+    }
+    if (!stale) return page([entry('t2', item('old-prefix'))], null);
+    throw Object.assign(new Error('edited'), { reason: 'HISTORY_CURSOR_STALE' });
+  });
+  await f.backend.openThread(f.project, 'thread'); await f.history('acquire');
+  stale = true;
+  await f.backend.openThread(f.project, 'thread');
+  await f.history('acquire').catch(() => {});
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(observations, 2, 'a stale latest read does not start background refresh loops');
+  await f.history('loadOlder');
+  assert.deepEqual(ids(f), ['edited']);
+  assert.equal(f.calls.some(call => /submit|resume|start|steer/.test(call.method)), false);
+});
+
+test('release midway resumes hydration at the last pinned page rather than losing its prefix', async () => {
+  let pending, reads = 0;
+  const cursors = [];
+  const f = fixture(async (method, params) => {
+    if (method === 'areal/thread/observe') return partialBaseline();
+    cursors.push(params.cursor); reads++;
+    if (reads === 1) return page([entry('t2', item('prefix'))], 'continue');
+    if (reads === 2) return new Promise(resolve => { pending = resolve; });
+    return page([entry('t2', item('prompt'))], null);
+  });
+  await f.backend.openThread(f.project, 'thread');
+  const first = f.history('acquire');
+  await new Promise(resolve => setImmediate(resolve));
+  await f.history('release');
+  assert.deepEqual(ids(f), ['prefix', 'i2']);
+  await f.history('acquire');
+  pending(page([entry('t2', item('discard'))], null));
+  await assert.rejects(first, error => error.code === 'HISTORY_VIEW_UNAVAILABLE');
+  assert.deepEqual(cursors, ['older', 'continue', 'continue']);
+  assert.deepEqual(ids(f), ['prompt', 'prefix', 'i2']);
+});
+
+test('stale automatic hydration leaves an in-flight observation alone until explicit retry', async () => {
+  let stale = false, observations = 0, finishObservation;
+  const held = new Promise(resolve => { finishObservation = resolve; });
+  const f = fixture(async method => {
+    if (method === 'areal/thread/observe') {
+      observations++;
+      const value = partialBaseline();
+      if (observations >= 3) { value.thread.turns = [turn('t2', [item('fresh')])]; value.history = { snapshotId: 'fresh', complete: true, nextCursor: null }; }
+      return value;
+    }
+    if (!stale) return page([entry('t2', item('prefix'))], null);
+    throw Object.assign(new Error('edited'), { reason: 'HISTORY_CURSOR_STALE' });
+  });
+  await f.backend.openThread(f.project, 'thread'); await f.history('acquire');
+  stale = true;
+  const request = f.project.client.request;
+  f.project.client.request = async (...args) => {
+    const result = await request(...args);
+    if (args[0] === 'areal/thread/observe' && observations === 2) await held;
+    return result;
+  };
+  const refresh = f.backend.openThread(f.project, 'thread');
+  await new Promise(resolve => setImmediate(resolve));
+  finishObservation();
+  await refresh;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(observations, 2);
+  await f.history('loadOlder');
+  assert.equal(observations, 3);
+  assert.deepEqual(ids(f), ['fresh']);
 });

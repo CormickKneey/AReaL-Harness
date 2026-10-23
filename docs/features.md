@@ -19,7 +19,7 @@
 | 权限模式 | 本地默认 YOLO，可配置 ASK_PERMISSIONS；TUI/Web 审批、会话/项目精确授权与自动 Thread scratch。[配置](guides/configuration.md#permissions) |
 | 桌面接口 | 认证、Profile/Skill/Plan、`--agent id@revision` 选择、Profile 绑定 Workflow 自动启动、审批/追问、提交去重与队列、共享终端、配置 CAS、模型切换、媒体 Blob、归档与 GC。[桌面 API](api/desktop.md) |
 | 桌面 GUI | `clients/gui` 提供 React/Electron、原生文件/差异/终端/浏览器面板、模型与资源设置、手机配对和定时任务界面；普通会话支持暂停后在原会话手动继续，最后一条用户消息可编辑后作为新消息发送并保留原记录。启用 Browser 的聊天可在用户授权后让 Core 读取该聊天当前原生网页的可访问性文本。人工批注支持冻结原生截图、元素/区域选择、多条 Composer 附件与含裁图和说明的消息，不要求启用模型 Browser 工具包。公共服务连接使 GUI 退出不终止 Core 任务；启动恢复支持二次确认后取消活动轮次并重启后台。支持独立公开依赖构建与 macOS arm64 本地包。[GUI](../clients/gui/README.md) |
-| 会话轮次导航 | 启用旁路预览时，选中文本后通过该轮“…”菜单询问所选内容，不自动展示浮动提示。主会话和 Side chat 共用左侧波纹轨道。悬停预览问题与回复，点击定位对应轮次，各面板独立滚动。支持方向键、Home/End、Enter/Space、Esc 和减少动态效果。[GUI](../clients/gui/README.md) |
+| 会话选区与轮次导航 | 在主会话的一条消息内选中文本后，浮动操作可将原文作为可移除的文本附件添加到 Chat 的 Compose；启用旁路预览时，也可加入当前 Side Chat 的 Compose。保留已有草稿与附件，用户可继续补充后手动发送，不自动提交。Side 首问引用在输入框上方显示并可移除；后续选区追加到问题正文，不替换已有冻结来源。主会话和 Side chat 共用左侧波纹轨道。悬停预览问题与回复，点击定位对应轮次，各面板独立滚动。支持方向键、Home/End、Enter/Space、Esc 和减少动态效果。[GUI](../clients/gui/README.md) |
 | 客户端 | 统一 `areal` 命令（默认 TUI、exec、version、upgrade、app-server、config、workgroup、service、web）与本地 Web；TUI 支持 Unicode 光标编辑与常用输入快捷键、持久错误提示、默认分组折叠、鼠标/键盘展开及过程/最终正文分级；CLI 实现选定 Claude Code 非交互参数与消息。[CLI 契约](api/claude-cli.md) |
 | Skills | 自动发现与显式 Profile 共用元信息登记、正文/附件按需读取；单个无效全局 Skill 告警隔离，不创建内容快照。[Skill 指南](guides/skills.md) |
 | Task Mode 与独立频道 | foreground/scheduled/background、持久 TaskRun、独立 Inbox 回复、headless 无人工等待；统一委派的 TaskRun worker 跨协调 Turn 存活并共享预算。Web 提供任务控制、定时创建和独立收件箱。[接口](api/tasks.md) 计划支持显式“立即运行”，创建独立 manual Run，保留暂停和下次计划时间，使用原总预算；响应丢失时只读核对原收据。 |

@@ -32,6 +32,7 @@ pub(super) fn request(
         match purpose {
             RequestPurpose::Solve => "solve",
             RequestPurpose::Summary => "summary",
+            RequestPurpose::PromptPrediction => "promptPrediction",
             RequestPurpose::PermissionReview => "permissionReview",
         },
     );

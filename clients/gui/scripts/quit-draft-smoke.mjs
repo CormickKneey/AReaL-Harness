@@ -76,10 +76,16 @@ const launch = async () => {
   await page.getByTestId('areal-workbench').waitFor({ timeout: 60000 });
   await until(async () => (await page.evaluate(() => window.arealDesktop.snapshot())).connection?.state === 'ready', 'GUI ready');
   metadata = JSON.parse(await readFile(join(scratch, 'core/service.json'), 'utf8'));
+  await app.evaluate(({ dialog }) => {
+    dialog.showMessageBox = async (...args) => {
+      const options = args.at(-1);
+      return { response: options.message === '退出 AReaL Harness？' ? 1 : options.cancelId ?? 0 };
+    };
+  });
   await button('设置').click();
   await page.getByRole('heading', { name: '模型设置', exact: true }).waitFor();
   await page.locator('.provider-catalog-row').filter({ hasText: 'Fixture' }).click();
-  await page.getByRole('tab', { name: '连接配置', exact: true }).click();
+  await page.getByRole('textbox', { name: '供应商名称', exact: true }).waitFor();
   await idle();
 };
 const exited = async () => {

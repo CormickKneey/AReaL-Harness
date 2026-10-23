@@ -67,7 +67,7 @@ function connectionError(error) {
 
 /** Core-owned metadata, with desktop-only encrypted credentials and OAuth. */
 class AppProviders {
-  constructor(backend, encryption) { this.backend = backend; this.encryption = encryption; this.config = new ModelConfiguration(backend, encryption); this.openaiToken = null; this.pendingApplications = new Map(); this.projectApplications = new Map(); }
+  constructor(backend, encryption) { this.backend = backend; this.encryption = encryption; this.config = new ModelConfiguration(backend, encryption); this.openaiToken = null; this.pendingApplications = new Map(); this.projectApplications = new Map(); this.subscriptionApplications = new WeakMap(); }
   async init() {
     await this.config.init();
     try { this.lastAcceptedModel = JSON.parse(await readFile(join(this.backend.home, 'model-selection.json'), 'utf8')); }
@@ -108,6 +108,7 @@ class AppProviders {
           return true;
         } finally { this.backend.providerUpdating = false; }
       };
+      this.openaiService = service;
       return service;
     }).catch(error => { this.openaiPromise = null; throw error; });
     return this.openaiPromise;
@@ -215,25 +216,60 @@ class AppProviders {
     // OAuth completion does not restart Core or alter existing task selections.
     for (const project of this.backend.projects.values()) {
       if (!project.client?.ready) continue;
-      await this.syncSubscription(project, service);
-      project.models = (await project.client.request('areal/model/list')).data ?? [];
+      const scope = this.subscriptionScope(project, service);
+      const provider = await this.syncSubscription(project, service, undefined, scope);
+      await this.publishSubscription(scope, provider);
     }
-    this.backend.onChange();
     return { ...status, billing: 'subscription', catalog: service.catalog?.metadata() ?? null };
   }
-  syncSubscription(project, service, correlation = { projectId: project.id, connectionGeneration: project.connectionGeneration, coreGeneration: project.service?.generation }) {
+  subscriptionScope(project, service) {
+    return { target: this.target(project), connectionGeneration: project.connectionGeneration, service,
+      accountRevision: service?.account.revision, accountLifetime: service?.account.lifetime };
+  }
+  currentSubscription(scope) {
+    const { target, connectionGeneration, service, accountRevision, accountLifetime } = scope;
+    return !this.closed && !this.backend.closing && this.currentTarget(target)
+      && (!this.backend.projects || this.backend.projects.get(target.project.id) === target.project)
+      && target.project.connectionGeneration === connectionGeneration
+      && (!service || service.account.revision === accountRevision && service.account.lifetime === accountLifetime && !accountLifetime.signal.aborted);
+  }
+  refreshSubscription(project, correlation, { observeOnly = false } = {}) {
+    const target = this.target(project), connectionGeneration = project.connectionGeneration;
+    return Promise.resolve(this.openaiPromise ?? null).then(service => {
+      const scope = { ...this.subscriptionScope(project, service), target, connectionGeneration, observeOnly };
+      if (!this.currentSubscription(scope)) return;
+      const work = (async () => {
+        const provider = await this.syncSubscription(project, service, correlation, scope);
+        await this.publishSubscription(scope, provider);
+      })();
+      return service ? service.account.track(work) : work;
+    }).catch(error => {
+      if (!this.closed && !this.backend.closing) console.warn(this.redact(`ChatGPT 模型同步失败：${error.message}`));
+    });
+  }
+  async publishSubscription(scope, provider) {
+    if (!this.currentSubscription(scope)) return;
+    const { target } = scope;
+    const models = (await target.client.request('areal/model/list')).data ?? [];
+    if (!this.currentSubscription(scope)) return;
+    if (provider) this.subscriptionApplications.set(target.project, { scope, providerRevision: provider.revision });
+    else if (provider === null) this.subscriptionApplications.delete(target.project);
+    target.project.models = models;
+    this.backend.onChange();
+  }
+  syncSubscription(project, service, correlation = { projectId: project.id, connectionGeneration: project.connectionGeneration, coreGeneration: project.service?.generation }, scope = this.subscriptionScope(project, service)) {
     const queueTrace = startupTrace('providers.subscription_queue', correlation);
     queueTrace.advance('queue_wait');
     const task = (this.subscriptionSync ?? Promise.resolve()).catch(() => {}).then(() => {
       queueTrace.finish('ok');
-      return this.applySubscription(project, service, correlation);
+      return this.applySubscription(scope, correlation);
     });
     this.subscriptionSync = task; return task;
   }
-  async applySubscription(project, service, correlation) {
+  async applySubscription(scope, correlation) {
     const trace = startupTrace('providers.subscription', correlation);
-    const account = service?.account, revision = account?.revision, lifetime = account?.lifetime;
-    const current = () => !account || account.revision === revision && account.lifetime === lifetime && !lifetime?.signal.aborted;
+    const { target: { project, client }, service } = scope;
+    const current = () => this.currentSubscription(scope);
     const prepared = this.preparedSubscriptionStatus;
     trace.advance(prepared?.service === service ? 'consume_wait' : 'account_status');
     try {
@@ -241,14 +277,16 @@ class AppProviders {
       const status = service ? await this.subscriptionStatus(service, trace) : { authenticated: false };
       if (!current()) { trace.finish('degraded'); return; }
       trace.advance('provider_read', status.modelError ? 'degraded' : service ? 'ok' : 'skipped');
-      const existing = (await project.client.request('areal/provider/list')).data.find(p => p.id === (service?.id ?? 'areal_openai'));
+      const existing = (await client.request('areal/provider/list')).data.find(p => p.id === (service?.id ?? 'areal_openai'));
       if (!current()) { trace.finish('degraded'); return; }
       if (status.modelError || status.state && !['ready', 'signed_out'].includes(status.state)) { trace.finish('degraded'); return; }
       if (!status.authenticated || status.models?.length === 0) {
+        if (scope.observeOnly) { trace.finish('skipped'); return null; }
         trace.advance('provider_remove');
-        if (existing) await this.backend.submit(project, 'areal/provider/remove', { id: existing.id, expectedRevision: existing.revision });
+        if (existing) await this.backend.submit(project, 'areal/provider/remove', { id: existing.id, expectedRevision: existing.revision }, { preDispatch: current });
+        if (!current()) { trace.finish('degraded'); return; }
         trace.finish(existing ? 'ok' : 'skipped');
-        return;
+        return null;
       }
       trace.advance('local_ready');
       await service.ready();
@@ -257,10 +295,15 @@ class AppProviders {
       const contexts = Object.fromEntries(models.filter(m => validContextWindow(m.parameters?.contextWindowTokens)).map(m => [m.id, { contextWindowTokens: m.parameters.contextWindowTokens }]));
       const desired = { id: service.id ?? 'areal_openai', contextSource: 'account', protocol: 'responses', endpoint: service.endpoint, credentialRef: service.id ?? 'areal_openai', models: models.map(m => m.id),
         ...(Object.keys(contexts).length ? { modelParameters: contexts } : {}), parameters: {} };
-      trace.advance('provider_upsert');
-      if (!existing || !isDeepStrictEqual(existing.modelParameters ?? {}, contexts) || Object.entries(desired).some(([k,v]) => k !== 'modelParameters' && JSON.stringify(existing[k]) !== JSON.stringify(v)))
-        await this.backend.submit(project, 'areal/provider/upsert', { provider: { ...desired, revision: existing?.revision ?? 0 }, expectedRevision: existing?.revision ?? 0 });
+      trace.advance(scope.observeOnly ? 'provider_confirm' : 'provider_upsert');
+      let provider = existing;
+      if (!existing || !isDeepStrictEqual(existing.modelParameters ?? {}, contexts) || Object.entries(desired).some(([k,v]) => k !== 'modelParameters' && JSON.stringify(existing[k]) !== JSON.stringify(v))) {
+        if (scope.observeOnly) { trace.finish('degraded'); return null; }
+        provider = await this.backend.submit(project, 'areal/provider/upsert', { provider: { ...desired, revision: existing?.revision ?? 0 }, expectedRevision: existing?.revision ?? 0 }, { preDispatch: current });
+      }
+      if (!current()) { trace.finish('degraded'); return; }
       trace.finish('ok');
+      return provider;
     } catch (error) { trace.finish('error', error); throw error; }
   }
   async refreshGoalTransport(project, threadId) {
@@ -282,10 +325,13 @@ class AppProviders {
   async close() {
     this.closed = true;
     clearTimeout(this.reconciliationTimer);
-    await this.reconciliation;
     this.preparedSubscriptionStatus = null;
     try { if (this.openaiPromise) await (await this.openaiPromise).close(); }
-    finally { if (this.networkPromise) (await this.networkPromise).close(); }
+    finally {
+      await this.subscriptionSync?.catch(() => {});
+      await this.reconciliation;
+      if (this.networkPromise) (await this.networkPromise).close();
+    }
   }
   public() {
     const value = this.config.public();
@@ -348,7 +394,17 @@ class AppProviders {
     this.modelSelectionUpdate = update;
     return update;
   }
-  catalog(models, project) { return models.map(m => ({ ...m, displayName: this.model(m, project)?.displayName || m.displayName || m.modelId })); }
+  subscriptionAvailable(model, project) {
+    if (model.providerId !== 'areal_openai') return true;
+    const application = this.subscriptionApplications.get(project), service = this.openaiService;
+    const scope = application?.scope;
+    return !!scope && !this.closed && !this.backend.closing && scope.service === service && !!service?.endpoint
+      && (!this.backend.projects || this.backend.projects.get(project.id) === project)
+      && scope.target.serviceId === project.service?.serviceId && scope.target.generation === project.service?.generation
+      && scope.accountRevision === service.account.revision && scope.accountLifetime === service.account.lifetime && !scope.accountLifetime.signal.aborted
+      && model.providerRevision === application.providerRevision && service.models.some(item => item.id === model.modelId);
+  }
+  catalog(models, project) { return models.map(m => ({ ...m, ...(m.providerId === 'areal_openai' ? { available: m.available !== false && this.subscriptionAvailable(m, project) } : {}), displayName: this.model(m, project)?.displayName || m.displayName || m.modelId })); }
   key(item) { return this.config.key(item); }
   environment() { return { ...this.config.environment(), AREAL_CREDENTIAL_areal_openai: this.openaiToken }; }
   redact(message) {
@@ -357,11 +413,10 @@ class AppProviders {
     for (const item of this.value.data) { const key = this.key(item); if (key) value = value.split(key).join('[redacted]'); }
     return value;
   }
-  async sync(project, correlation = { projectId: project.id, connectionGeneration: project.connectionGeneration, coreGeneration: project.service?.generation }) {
+  async syncLocal(project) {
     // Retire the previous desktop catalog without importing its OAuth grant or changing task history.
     const retired = (await project.client.request('areal/provider/list')).data.find(p => p.id === 'areal_chatgpt');
     if (retired) await this.backend.submit(project, 'areal/provider/remove', { id: retired.id, expectedRevision: retired.revision });
-    await this.syncSubscription(project, this.openaiPromise ? await this.openaiPromise : null, correlation);
     for (const id of this.config.legacy?.retired ?? []) {
       if (this.value.data.some(item => item.id === id)) continue;
       const existing = (await project.client.request('areal/provider/list')).data.find(item => item.id === id);

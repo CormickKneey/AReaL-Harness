@@ -19,7 +19,8 @@ type Execution = {
     threadId?: string;
     turnId?: string;
     timedOut?: boolean;
-    artifact?: { head: string; workgroupId: string };
+    capabilities?: { readArtifact?: boolean };
+    artifact?: { head?: string; workgroupId: string; available?: boolean };
 };
 type ArtifactPreview = {
     path: string;
@@ -32,6 +33,26 @@ type ArtifactPreview = {
     data: number[];
     text: string | null;
 };
+type ArtifactList = {
+    ready?: true;
+    path?: never;
+    head: string;
+    paths: string[];
+    nextOffset: number;
+    complete: boolean;
+};
+type ArtifactFile = Omit<ArtifactPreview, "data" | "text"> & {
+    ready?: true;
+    offset: number;
+    dataBase64: string;
+};
+type ArtifactRead =
+    | {
+          ready: false;
+          execution: Omit<Execution, "parentThreadId"> & { parentThreadId?: string };
+      }
+    | ArtifactList
+    | ArtifactFile;
 const statusLabels: Record<string, string> = {
     inProgress: "执行中",
     running: "执行中",
@@ -68,6 +89,9 @@ const deliveryLabels: Record<string, string> = {
     unknown: "交付结果待确认",
 };
 
+const canReadArtifact = (execution: Execution) =>
+    execution.artifact?.available !== false && execution.capabilities?.readArtifact !== false;
+
 // 状态仅来自 Core；客户端不根据 Worker 返回或测试输出推断交付成功。
 export function ExecutionsPane({
     project,
@@ -87,9 +111,7 @@ export function ExecutionsPane({
     const [busy, setBusy] = useState<string | null>(null),
         [more, setMore] = useState(false);
     const [advanced, setAdvanced] = useState(false);
-    const [artifacts, setArtifacts] = useState<
-        Record<string, { head: string; paths: string[]; nextOffset: number; complete: boolean }>
-    >({});
+    const [artifacts, setArtifacts] = useState<Record<string, ArtifactList>>({});
     const [previews, setPreviews] = useState<Record<string, ArtifactPreview>>({});
     const pages = useRef(1),
         generation = useRef(0),
@@ -215,14 +237,51 @@ export function ExecutionsPane({
         const offset = more
             ? ((path ? previousFile?.nextOffset : artifacts[executionId]?.nextOffset) ?? 0)
             : 0;
+        const retainHead = (head?: string) => {
+            setArtifacts((previous) => {
+                if (head && previous[executionId]?.head === head) return previous;
+                const { [executionId]: removed, ...rest } = previous;
+                return rest;
+            });
+            setPreviews((previous) => {
+                if (head && previous[executionId]?.head === head) return previous;
+                const { [executionId]: removed, ...rest } = previous;
+                return rest;
+            });
+        };
         try {
-            const value = await request("executionArtifact", {
+            const value: ArtifactRead = await request("executionArtifact", {
                 executionId,
                 ...(path ? { path } : {}),
                 offset,
             });
             if (!mounted.current) return;
-            if (path) {
+            if (value.ready === false) {
+                const receipt = value.execution;
+                if (
+                    receipt.executionId !== executionId ||
+                    (receipt.parentThreadId !== undefined && receipt.parentThreadId !== thread.id)
+                )
+                    throw new Error("子任务回执不匹配，请刷新状态。");
+                generation.current++;
+                setExecutions((previous) =>
+                    previous.map((item) =>
+                        item.executionId === executionId
+                            ? {
+                                  ...item,
+                                  ...receipt,
+                                  artifact: receipt.artifact,
+                                  parentThreadId: item.parentThreadId,
+                              }
+                            : item,
+                    ),
+                );
+                retainHead(receipt.artifact?.head);
+                setNotice("交付文件尚未就绪，请等待子任务结算后刷新状态。");
+                return;
+            }
+            retainHead(value.head);
+            if (typeof value.path === "string") {
                 if (
                     value.path !== path ||
                     (more &&
@@ -259,6 +318,7 @@ export function ExecutionsPane({
                     [executionId]: { ...value, data, text },
                 }));
             } else {
+                if (path) throw new Error("文件回执不匹配，请重新读取文件。");
                 if (more && artifacts[executionId]?.head !== value.head)
                     throw new Error("交付版本已变化，请重新读取文件列表。");
                 setArtifacts((previous) => ({
@@ -275,7 +335,10 @@ export function ExecutionsPane({
             if (mounted.current) setNotice(`交付文件读取失败。${(cause as Error).message}`);
         } finally {
             control.current = false;
-            if (mounted.current) setBusy(null);
+            if (mounted.current) {
+                setBusy(null);
+                setReading(false);
+            }
         }
     };
     return (
@@ -351,20 +414,24 @@ export function ExecutionsPane({
                             <p className="whitespace-pre-wrap break-words">{execution.text}</p>
                         )}
                         {execution.artifact &&
-                            [
-                                "candidate",
-                                "requiresActiveTurn",
-                                "applied",
-                                "conflict",
-                                "partial",
-                                "unknown",
-                                "failed",
-                            ].includes(execution.delivery.status) && (
+                            (execution.artifact.available !== undefined ||
+                                execution.capabilities?.readArtifact !== undefined ||
+                                [
+                                    "candidate",
+                                    "requiresActiveTurn",
+                                    "applied",
+                                    "conflict",
+                                    "partial",
+                                    "unknown",
+                                    "failed",
+                                ].includes(execution.delivery.status)) && (
                                 <div className="flex flex-col gap-2">
                                     <Button
                                         size="sm"
                                         variant="outline"
-                                        disabled={!connected || !!busy}
+                                        disabled={
+                                            !connected || !!busy || !canReadArtifact(execution)
+                                        }
                                         onClick={() => void readArtifact(execution.executionId)}
                                     >
                                         查看交付文件
@@ -374,7 +441,9 @@ export function ExecutionsPane({
                                             key={path}
                                             size="sm"
                                             variant="ghost"
-                                            disabled={!connected || !!busy}
+                                            disabled={
+                                                !connected || !!busy || !canReadArtifact(execution)
+                                            }
                                             onClick={() =>
                                                 void readArtifact(execution.executionId, path)
                                             }
@@ -387,7 +456,11 @@ export function ExecutionsPane({
                                             <Button
                                                 size="sm"
                                                 variant="ghost"
-                                                disabled={!connected || !!busy}
+                                                disabled={
+                                                    !connected ||
+                                                    !!busy ||
+                                                    !canReadArtifact(execution)
+                                                }
                                                 onClick={() =>
                                                     void readArtifact(
                                                         execution.executionId,
@@ -420,7 +493,11 @@ export function ExecutionsPane({
                                                 <Button
                                                     size="sm"
                                                     variant="ghost"
-                                                    disabled={!connected || !!busy}
+                                                    disabled={
+                                                        !connected ||
+                                                        !!busy ||
+                                                        !canReadArtifact(execution)
+                                                    }
                                                     onClick={() =>
                                                         void readArtifact(
                                                             execution.executionId,

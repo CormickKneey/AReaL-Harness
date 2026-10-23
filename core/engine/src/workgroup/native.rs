@@ -1012,7 +1012,7 @@ impl Executor for NativeExecutor {
             serde_json::to_vec_pretty(&*worker_model.context_audit.lock().unwrap())?,
         )?;
         result?;
-        let artifact = tree::snapshot_artifact(&workspace, &base)?;
+        let artifact = tree::snapshot_artifact(&workspace, &base, &task.writes)?;
         compose(&base, &base, &artifact, &task.writes)?;
         let failure = *worker_model.failure.lock().unwrap();
         if let Some(failure) = failure {
@@ -1075,7 +1075,7 @@ impl Executor for NativeExecutor {
         // Recheck after the Runtime cleanup barrier, not just after the foreground
         // command exited. Scratch/cache files are excluded from source artifacts.
         check.passed &=
-            digest(&tree::snapshot_artifact(&workspace, &candidate)?) == check.tree_hash;
+            digest(&tree::snapshot_artifact(&workspace, &candidate, &[])?) == check.tree_hash;
         std::fs::write(
             root.join("receipt.json"),
             serde_json::to_vec_pretty(&check)?,

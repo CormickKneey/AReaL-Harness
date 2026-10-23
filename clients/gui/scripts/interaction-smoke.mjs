@@ -341,6 +341,14 @@ try {
   const done=()=>until(s=>current(s)?.turns.at(-1)?.status==="completed","same turn completed");
   const approval=()=>page.getByRole("region",{name:"工具审批",exact:true});
   const question=()=>page.getByRole("region",{name:"需要你的回答",exact:true});
+  if (!focusOnly) {
+    // 本专项覆盖 ASK_PERMISSIONS 的单次/任务/项目授权；新草稿的 autoReview 预设不会要求普通工作区写入审批。
+    await send("initialize approval fixture");
+    await done();
+    const configuration = project(await state()).configurations[tid];
+    await call("configure", { projectId: pid, threadId: tid, options: { ...configuration.options, permissionPreset: null } });
+    assert.equal(project(await state()).configurations[tid].options.permissionPreset, undefined);
+  }
   await send("write:denied.txt");
   if (focusOnly) assert.deepEqual(project(await state()).configurations[tid].profile.approvalTools, ["fs_create"], "real Core requires fixture tool approval");
   await until(s=>interaction(s,"approval"),"approval request");

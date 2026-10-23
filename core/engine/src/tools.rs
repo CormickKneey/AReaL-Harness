@@ -14,6 +14,32 @@ pub(super) const HANDOFF_OUTPUT_RESERVE: usize = 8 * 1024;
 // escaped. Control-heavy output can expand several times in the model payload.
 const MODEL_OUTPUT_HEADROOM: usize = 4096;
 
+fn unexecuted_workspace_conflict(item: &Item) -> bool {
+    let Item::DynamicToolCall {
+        status: ToolStatus::Failed,
+        success: Some(false),
+        execution,
+        content_items: Some(content),
+        ..
+    } = item
+    else {
+        return false;
+    };
+    execution.outcome == ToolOutcome::Failed
+        && execution.backend.as_deref() == Some("core")
+        && content.iter().any(|part| {
+            part["text"]
+                .as_str()
+                .and_then(|text| serde_json::from_str::<Value>(text).ok())
+                .is_some_and(|result| {
+                    result["error"]["code"] == "CONFLICT"
+                        && result["error"]["message"].as_str().is_some_and(|message| {
+                            message.starts_with("WORKSPACE_CHANGED_BEFORE_EXECUTION:")
+                        })
+                })
+        })
+}
+
 fn previous_matching_failures(items: &[Item], call: &ToolCall, current_id: &str) -> usize {
     let arguments = serde_json::from_str(&call.arguments)
         .unwrap_or_else(|_| Value::String(call.arguments.clone()));
@@ -22,6 +48,7 @@ fn previous_matching_failures(items: &[Item], call: &ToolCall, current_id: &str)
     items
         .iter()
         .rev()
+        .filter(|item| !unexecuted_workspace_conflict(item))
         .filter_map(|item| match item {
             Item::DynamicToolCall {
                 id,
@@ -47,6 +74,9 @@ fn consecutive_matching_failures(items: &[Item], call: &ToolCall) -> usize {
         .unwrap_or_else(|_| Value::String(call.arguments.clone()));
     let mut count = 0;
     for item in items.iter().rev() {
+        if unexecuted_workspace_conflict(item) {
+            continue;
+        }
         let Item::DynamicToolCall {
             tool,
             arguments: previous,
@@ -873,20 +903,35 @@ impl Engine {
         call: ToolCall,
         ready: Option<tokio::sync::oneshot::Sender<()>>,
     ) -> anyhow::Result<usize> {
-        let mut rejection = self.goal_tool_guard(cell, &call.name).await?;
+        let blocked_by_workspace_conflict = cell
+            .state
+            .lock()
+            .await
+            .active
+            .as_ref()
+            .is_some_and(|active| active.workspace_conflict_call.is_some());
+        let mut rejection = if blocked_by_workspace_conflict {
+            Some(rt::Error::new(
+                rt::ErrorCode::Conflict,
+                "WORKSPACE_CHANGED_BEFORE_EXECUTION: this call was NOT executed. A previous call from this response observed a shared workspace conflict. Inspect that receipt and current inputs before a new decision; no mutation was replayed.",
+            ))
+        } else {
+            self.goal_tool_guard(cell, &call.name).await?
+        };
         let bindings = cell.bindings.read().await.clone();
         let entry = bindings.registry.get(&call.name);
         let native_metadata = entry
             .as_ref()
             .is_ok_and(|tool| matches!(tool.backend, Backend::Builtin));
         let repeat_limit = self.limits.max_repeated_tool_failures;
-        let repeats = if repeat_limit > 0 {
+        let repeats = if repeat_limit > 0 && !blocked_by_workspace_conflict {
             let state = cell.state.lock().await;
             consecutive_matching_failures(&state.thread.turns.last().unwrap().items, &call)
         } else {
             0
         };
-        let repeat_blocked = repeat_limit > 0 && repeats >= repeat_limit;
+        let repeat_blocked =
+            !blocked_by_workspace_conflict && repeat_limit > 0 && repeats >= repeat_limit;
         if rejection.is_none() && repeat_blocked {
             rejection = Some(rt::Error::new(
                 rt::ErrorCode::InvalidArgument,
@@ -894,19 +939,21 @@ impl Engine {
             ));
         }
         let side_read = cell.state.lock().await.thread.side_workspace_read();
-        if cell.state.lock().await.thread.is_side()
+        if !blocked_by_workspace_conflict
+            && cell.state.lock().await.thread.is_side()
             && !(call.name == "side_context_read"
                 && entry
                     .as_ref()
-                    .is_ok_and(|e| matches!(e.backend, Backend::Core)))
-            && !(side_read
-                && entry
-                    .as_ref()
-                    .is_ok_and(|e| side_file_tool(&call.name, &e.backend)))
+                    .is_ok_and(|e| matches!(e.backend, Backend::Core))
+                || side_read
+                    && entry
+                        .as_ref()
+                        .is_ok_and(|e| side_file_tool(&call.name, &e.backend)))
         {
             anyhow::bail!("SIDE_POLICY_VIOLATION");
         }
-        if side_read
+        if !blocked_by_workspace_conflict
+            && side_read
             && entry
                 .as_ref()
                 .is_ok_and(|e| side_file_tool(&call.name, &e.backend))
@@ -938,10 +985,11 @@ impl Engine {
             .desktop
             .as_ref()
             .is_some_and(|d| d.execution_policy.exclusive_write);
-        if (assigned_writer
-            || exclusive
-            || cell.exclusive_writer
-            || self.limits.max_children_per_turn == 0)
+        if !blocked_by_workspace_conflict
+            && (assigned_writer
+                || exclusive
+                || cell.exclusive_writer
+                || self.limits.max_children_per_turn == 0)
             && entry
                 .as_ref()
                 .is_ok_and(|tool| creates_child_execution(&call.name, &tool.backend))
@@ -961,7 +1009,8 @@ impl Engine {
             .is_some_and(|d| {
                 d.execution_policy.deferred_write || d.execution_policy.exclusive_write
             });
-        if deferred
+        if !blocked_by_workspace_conflict
+            && deferred
             && call.name == "development_service_start"
             && entry
                 .as_ref()

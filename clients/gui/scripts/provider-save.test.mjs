@@ -452,6 +452,10 @@ async function connectFixture(t, { catalogFailure = false, replaceOwner = false 
   const native = f.project.client.request;
   const originalConnect = CoreClient.prototype.connect, originalRequest = CoreClient.prototype.request;
   const connected = [];
+  let releaseSubscription, subscriptionRefresh;
+  const subscriptionReady = new Promise(resolve => { releaseSubscription = resolve; });
+  const refreshSubscription = f.service.refreshSubscription.bind(f.service);
+  f.service.refreshSubscription = (...args) => subscriptionRefresh = refreshSubscription(...args);
   let providers = [{ id: "demo", models: [{ id: "old-model" }] }, { id: "areal_chatgpt", revision: "retired", models: [{ id: "retired-model" }] }];
   const catalog = () => providers.flatMap(provider => provider.models);
   Object.setPrototypeOf(f.backend, CoreBackend.prototype);
@@ -469,7 +473,7 @@ async function connectFixture(t, { catalogFailure = false, replaceOwner = false 
   });
   f.project.client.close = () => {};
   f.project.model = { state: { threads: {} }, connection: value => connected.push(value) };
-  f.service.syncSubscription = async project => f.backend.submit(project, "areal/provider/upsert", { id: "subscription", models: [{ id: "subscription-model" }] });
+  f.service.syncSubscription = async project => { await subscriptionReady; return f.backend.submit(project, "areal/provider/upsert", { id: "subscription", models: [{ id: "subscription-model" }] }); };
   CoreClient.prototype.connect = async function() {
     this.ready = true;
     this.capabilities = { methods: [readMethod, applyMethod] };
@@ -488,22 +492,28 @@ async function connectFixture(t, { catalogFailure = false, replaceOwner = false 
     assert.fail(method);
   };
   t.after(async () => {
+    releaseSubscription();
+    await subscriptionRefresh;
     f.project.taskNotificationMonitor?.stop();
     CoreClient.prototype.connect = originalConnect;
     CoreClient.prototype.request = originalRequest;
     await f.service.close();
   });
-  return { ...f, connected };
+  return { ...f, connected, releaseSubscription, subscriptionRefresh: () => subscriptionRefresh };
 }
 
-test("connect installs one authoritative catalog after provider retirement, subscription and MCP synchronization", async t => {
+test("connect publishes local models after retirement and MCP before background subscription models", async t => {
   const f = await connectFixture(t);
   await f.backend.connect(f.project);
-  assert.deepEqual(f.project.models, [{ id: "old-model" }, { id: "subscription-model" }]);
+  assert.deepEqual(f.project.models, [{ id: "old-model" }]);
   assert.deepEqual(f.connected, [true]);
   const methods = f.calls.map(([method]) => method);
   assert.equal(methods.filter(method => method === "areal/model/list").length, 1);
   assert.ok(methods.indexOf("areal/model/list") > methods.indexOf("mcp-sync"));
+  f.releaseSubscription();
+  await f.subscriptionRefresh();
+  assert.deepEqual(f.project.models, [{ id: "old-model" }, { id: "subscription-model" }]);
+  assert.equal(f.calls.filter(([method]) => method === "areal/model/list").length, 2);
   assert.equal(f.project.providerRevision, "old");
   assert.equal(f.service.applicationState(f.project).kind, "applied");
 });

@@ -41,6 +41,7 @@ function projectCoreCapabilities(binary, capabilities) {
     runtimeAvailable: capabilities ? capabilities.runtime != null : null,
     features: capabilities ? {
       conversation: supports('thread/start', 'turn/start'),
+      promptPrediction: supports('areal/thread/prediction'),
       ordinaryTurnSubmit: supports('areal/turn/submit') && capabilities?.features?.ordinaryTurnSubmit === true,
       editLastMessage: supports('areal/turn/submit') && capabilities?.features?.editLastMessage === true,
       permissionPresets: capabilities?.features?.permissionPresets === true,

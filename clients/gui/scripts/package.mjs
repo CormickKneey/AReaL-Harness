@@ -1,30 +1,64 @@
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { join, resolve } from "node:path";
-import { cp, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { stageCoreApp } from "./stage-app.mjs";
 import { stageMacOSService } from "./stage-macos-service.mjs";
 import { buildMacOSDmg } from "./macos-dmg.mjs";
+import { parseArgs } from "node:util";
 import { signLocalMacOSApp } from "./macos-signing-paths.mjs";
 const gui = fileURLToPath(new URL("..", import.meta.url));
 const root = resolve(gui, "../..");
 const require = createRequire(join(gui, "app/package.json"));
+const { values: options } = parseArgs({ options: {
+  help: { type: "boolean" }, build: { type: "boolean" },
+  platform: { type: "string", default: "mac" }, arch: { type: "string", default: "arm64" },
+  formats: { type: "string" }, signing: { type: "string" }, output: { type: "string" },
+  identity: { type: "string" }, "keychain-profile": { type: "string" },
+  "dmg-only": { type: "boolean" },
+} });
+if (options.help) {
+  console.log("Usage: pnpm --dir clients/gui run dist --platform mac --arch arm64 --formats dmg,zip --signing none|adhoc|developer-id [--output NEW_DIRECTORY] [--identity ID --keychain-profile PROFILE]\n" +
+    "dist builds release Core and GUI. Only native macOS arm64 is supported. none preserves input signatures; no launch trust is implied. developer-id requires both formats and performs notarization/acceptance. Never publishes. Resume pending Apple work with sign:mac --resume --output OUTPUT/signed.");
+  process.exit(0);
+}
+assert.ok(options.platform === "mac" && options.arch === "arm64", "Supported GUI target: mac/arm64 only; Linux/Windows and cross-compilation are not implemented");
+const signing = options.signing || (process.env.AREAL_GUI_UNSIGNED_LOCAL === "1" ? "none" : "adhoc");
+assert.ok(["none", "adhoc", "developer-id"].includes(signing), "Invalid --signing mode");
+assert.ok(!options.formats || !options["dmg-only"], "Choose --formats or --dmg-only");
+const formats = (options.formats || (options["dmg-only"] ? "dmg" : "dmg,zip")).split(",");
+assert.ok(formats.length > 0 && new Set(formats).size === formats.length && formats.every(f => ["dmg", "zip"].includes(f)), "--formats must contain dmg, zip or dmg,zip");
+const developerId = signing === "developer-id";
+const identity = options.identity || process.env.CSC_NAME;
+const profile = options["keychain-profile"] || process.env.APPLE_KEYCHAIN_PROFILE;
+assert.ok(developerId || (!options.identity && !options["keychain-profile"]), "Signing credentials require --signing developer-id");
+if (developerId) {
+  assert.ok(formats.length === 2, "Developer ID acceptance requires --formats dmg,zip");
+  assert.ok(identity && profile, "Developer ID requires --identity and --keychain-profile (or CSC_NAME/APPLE_KEYCHAIN_PROFILE)");
+}
 if (process.platform !== "darwin" || process.arch !== "arm64")
   throw new Error("Local package acceptance currently targets macOS arm64");
-const release = process.env.AREAL_GUI_RELEASE === "1";
-const unsignedLocal = process.env.AREAL_GUI_UNSIGNED_LOCAL === "1";
-const dmgOnly = process.argv.includes("--dmg-only");
-assert.ok(
-  !dmgOnly || (!release && !unsignedLocal),
-  "DMG-only packaging requires local ad-hoc mode",
-);
+const release = developerId || process.env.AREAL_GUI_RELEASE === "1";
+const unsignedLocal = signing === "none";
+if (release) assert.equal(execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" }).trim(), "", "GUI release requires a clean source checkout");
 assert.ok(!(release && unsignedLocal), "Unsigned local packaging cannot enable release mode");
-const output = resolve(
-  process.env.AREAL_GUI_PACKAGE_DIR || join(gui, "dist", `local-${Date.now()}`),
-);
+const output = resolve(options.output || process.env.AREAL_GUI_PACKAGE_DIR || join(gui, "dist", `local-${Date.now()}`));
+try {
+  await lstat(output);
+  throw new Error("Package output already exists; choose a new --output directory");
+} catch (error) {
+  if (error.code !== "ENOENT") throw error;
+}
+// Explicit command options own child process behavior, rather than inherited mode flags.
+process.env.AREAL_GUI_UNSIGNED_LOCAL = unsignedLocal ? "1" : "0";
+if (options.build) {
+  process.env.AREAL_CORE_PROFILE = "release";
+  for (const target of ["release", "gui-install", "gui-build"])
+    execFileSync("make", [target], { cwd: root, stdio: "inherit" });
+}
 await mkdir(output, { recursive: true });
 const staged = await mkdtemp("/private/tmp/areal-stage-");
 // stageCoreApp 要求新目录；使用临时目录的子目录隔离包管理器发现。
@@ -162,21 +196,25 @@ if (!unsignedLocal) {
   }
 }
 verifyCoreBundle(join(app, "Contents/Resources"), { hashes: true });
-const archive = dmgOnly ? undefined : join(output, "AReaL-Harness-GUI-mac-arm64.zip");
+const archive = formats.includes("zip") && !developerId ? join(output, "AReaL-Harness-GUI-mac-arm64.zip") : undefined;
 if (archive)
   execFileSync("/usr/bin/ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", app, archive]);
 const dmg =
-  !unsignedLocal && !release
+  formats.includes("dmg") && !developerId
     ? await buildMacOSDmg({
         app,
         destination: join(output, "AReaL-Harness-GUI-mac-arm64.dmg"),
         volumeName: "AReaL Harness Preview",
+        verifySignatures: !unsignedLocal,
       })
     : undefined;
 await writeFile(
   join(output, "package-evidence.json"),
   JSON.stringify(
     {
+      target: { platform: options.platform, arch: options.arch },
+      formats,
+      signingMode: signing,
       app,
       archive,
       dmg,
@@ -200,3 +238,10 @@ await writeFile(
   ),
 );
 console.log(JSON.stringify({ app, archive, dmg, evidence: join(output, "package-evidence.json") }));
+
+if (developerId) {
+  try { execFileSync(process.execPath, [join(gui, "scripts/notarize-macos.mjs"),
+    "--app", app, "--output", join(output, "signed"), "--identity", identity,
+    "--keychain-profile", profile], { cwd: root, stdio: "inherit" });
+  } catch (error) { process.exit(error.status || 1); }
+}

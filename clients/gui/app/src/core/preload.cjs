@@ -27,6 +27,7 @@ ipcRenderer.on('areal-core:quit-request', (_event, id) => {
     .then(allowed => answerQuitRequest(subscription, allowed === true), () => answerQuitRequest(subscription, false));
 });
 contextBridge.exposeInMainWorld('arealDesktop', {
+  setInterfaceLocale: locale => ipcRenderer.send('areal-core:interface-locale', locale),
   presentReady: () => ipcRenderer.invoke('areal-core:present-ready'),
   onQuitProgress: listener => {
     quitProgressListeners.add(listener);

@@ -1,7 +1,5 @@
 name: Sync public Homebrew tap
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       tag:

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-/** HTTPS metadata is fetched only by the Main process after checking its server grant. */
-export function McpAppIcon({ icon, size = 24 }: { icon?: { src: string }; size?: number }) {
+import type { McpMetadataImageLoader } from "./mcp-app-services.js";
+export function McpAppIcon({ icon, size = 24, loadMetadataImage }: { icon?: { src: string }; size?: number; loadMetadataImage?: McpMetadataImageLoader }) {
     const [failed, setFailed] = useState(false);
     const [source, setSource] = useState<string>();
     useEffect(() => {
@@ -12,14 +12,8 @@ export function McpAppIcon({ icon, size = 24 }: { icon?: { src: string }; size?:
             setSource(icon.src);
             return;
         }
-        const desktop = (
-            window as unknown as {
-                arealDesktop?: { mcpApp: (request: Record<string, unknown>) => Promise<unknown> };
-            }
-        ).arealDesktop;
-        if (icon.src.startsWith("https://") && desktop)
-            void desktop
-                .mcpApp({ operation: "metadataImage", source: icon.src })
+        if (icon.src.startsWith("https://") && loadMetadataImage)
+            void loadMetadataImage(icon.src)
                 .then((value) => {
                     if (active && typeof value === "string") setSource(value);
                 })
@@ -29,7 +23,7 @@ export function McpAppIcon({ icon, size = 24 }: { icon?: { src: string }; size?:
         return () => {
             active = false;
         };
-    }, [icon?.src]);
+    }, [icon?.src, loadMetadataImage]);
     return !failed &&
         source &&
         /^data:image\/(?:png|jpeg|gif|webp|svg\+xml);base64,/i.test(source) ? (

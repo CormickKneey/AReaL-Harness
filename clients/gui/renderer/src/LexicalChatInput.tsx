@@ -21,7 +21,7 @@ import {
   shouldBareEnterFallThroughToNewline,
 } from "@/shortcuts/composerShortcuts.js";
 import { useEffectiveShortcutBindings } from "@/shortcuts/useShortcutBindings.js";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
 import { PlainTextPlugin } from "@lexical/react/LexicalPlainTextPlugin";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
@@ -43,6 +43,7 @@ import {
   KEY_BACKSPACE_COMMAND,
   COMMAND_PRIORITY_HIGH,
   KEY_ENTER_COMMAND,
+  KEY_TAB_COMMAND,
   type EditorState,
   type LexicalEditor,
   type ParagraphNode,
@@ -58,6 +59,7 @@ import {
   PromptMentionNode,
 } from "./mentions/nodes/PromptMentionNode.js";
 import { logger } from "./logger.js";
+import { useI18n } from "./i18n/IntlProvider.js";
 
 import { navigatePromptHistory } from "./lib/promptHistory.js";
 import type { MentionItemData } from "@/mentions/mentionTypes.js";
@@ -1291,7 +1293,52 @@ function EditorApiPlugin({
   return null;
 }
 
+function PromptPredictionPlugin({ text, disabled }: { text?: string; disabled: boolean }) {
+  const { t } = useI18n();
+  const [editor] = useLexicalComposerContext();
+  const [empty, setEmpty] = useState(false);
+  const [composing, setComposing] = useState(false);
+  const composition = useRef(false);
+  useEffect(() => {
+    const readEmpty = () => editor.getEditorState().read(() => setEmpty($getRoot().getTextContent() === ""));
+    readEmpty();
+    return editor.registerUpdateListener(({ editorState }) => editorState.read(() => setEmpty($getRoot().getTextContent() === "")));
+  }, [editor]);
+  useEffect(() => {
+    const start = () => { composition.current = true; setComposing(true); };
+    const end = () => { composition.current = false; setComposing(false); };
+    const cleanup = editor.registerRootListener((root, previous) => {
+      previous?.removeEventListener("compositionstart", start, true);
+      previous?.removeEventListener("compositionend", end);
+      root?.addEventListener("compositionstart", start, true);
+      root?.addEventListener("compositionend", end);
+    });
+    return () => {
+      cleanup();
+      editor.getRootElement()?.removeEventListener("compositionstart", start, true);
+      editor.getRootElement()?.removeEventListener("compositionend", end);
+    };
+  }, [editor]);
+  useEffect(() => editor.registerCommand(KEY_TAB_COMMAND, event => {
+    if (!text || disabled || event.repeat || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey
+      || event.isComposing || composition.current || editor.isComposing()
+      || editor.getRootElement() !== document.activeElement || $getRoot().getTextContent() !== "") return false;
+    event.preventDefault();
+    event.stopPropagation();
+    const paragraph = $createParagraphNode().append($createTextNode(text));
+    $getRoot().clear().append(paragraph);
+    paragraph.selectEnd();
+    return true;
+  }, COMMAND_PRIORITY_HIGH), [editor, text, disabled]);
+  if (!text || disabled || !empty || composing) return null;
+  return <div data-testid="composer-prediction" aria-hidden="true"
+    className="composer-prediction pointer-events-none col-start-1 row-start-1 min-w-0 self-start whitespace-pre-wrap break-words text-foreground-subtle">
+    {text}<span className="ml-2 inline-block rounded border border-current px-1 text-ui-xs leading-4">{t("composer.prediction.tab")}</span>
+  </div>;
+}
+
 interface LexicalChatInputProps {
+  nextPrompt?: string;
   placeholder?: string;
   disabled?: boolean;
   submitDisabled?: boolean;
@@ -1327,6 +1374,7 @@ const EDITOR_THEME = {
 
 export function LexicalChatInput({
   placeholder,
+  nextPrompt,
   disabled = false,
   submitDisabled = false,
   allowSubmitWhenEmpty = false,
@@ -1368,7 +1416,7 @@ export function LexicalChatInput({
   const contentEditableProps: React.ComponentProps<typeof ContentEditable> = placeholder
     ? {
         "aria-placeholder": placeholder,
-        placeholder: (
+        placeholder: () => nextPrompt ? null : (
           <div
             className={`pointer-events-none absolute left-0 top-0 ${compactPlaceholder ? "line-clamp-2" : ""} text-ui-base leading-5 text-foreground-subtle`}
           >
@@ -1384,7 +1432,7 @@ export function LexicalChatInput({
     <ContentEditable
       // mention node 使用固定行高的 inline-flex chip，普通正文如果继承浏览器 normal line-height，
       // 在 token 后继续输入文字时会按不同 line box 计算基线；这里显式收口正文行高。
-      className="lexical-chat-input min-h-10 max-h-40 overflow-y-auto text-ui-base leading-5 text-foreground outline-none"
+      className="lexical-chat-input col-start-1 row-start-1 min-w-0 min-h-10 max-h-40 overflow-y-auto text-ui-base leading-5 text-foreground outline-none"
       tabIndex={0}
       data-testid={inputTestId}
       aria-label={placeholder || "消息输入"}
@@ -1410,8 +1458,9 @@ export function LexicalChatInput({
   return (
     <div className="relative flex-1">
       <LexicalComposer initialConfig={initialConfig}>
-        <div className="relative">
+        <div className="relative grid">
           <PlainTextPlugin contentEditable={contentEditable} ErrorBoundary={LexicalErrorBoundary} />
+          <PromptPredictionPlugin text={nextPrompt} disabled={disabled} />
           <HistoryPlugin />
           <PromptClipboardPlugin />
           <TextContentPlugin onChange={onChange} />

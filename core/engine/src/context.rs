@@ -120,6 +120,7 @@ impl ContextPlan<'_> {
             .last()
             .filter(|input| Some(&input.item_id) == latest.as_ref());
         let mut checkpoint = areal_protocol::ContextCheckpoint {
+            app_reference_seen: Some(crate::history::has_app_reference(thread, count)),
             through_item_id: items[count - 1].id().to_owned(),
             summary: summary.to_owned(),
             retained_inputs: Some(mandatory.cloned().into_iter().collect()),
@@ -1364,6 +1365,7 @@ mod budget_tests {
                 {"type":"agentMessage","id":"second","text":""}, call("settled", "failed")
             ]})).unwrap());
             state.thread.context_checkpoint = Some(areal_protocol::ContextCheckpoint {
+                app_reference_seen: None,
                 through_item_id: "unknown".into(),
                 summary: "Legacy checkpoint".into(),
                 compactions: 1,

@@ -2,7 +2,7 @@
 
 # Installation and upgrades
 
-Use these commands after the packages are published to GitHub Releases. Before publication, use candidate artifacts from the `Release bundles` workflow for verification; unreleased versions and taps are not available installation sources.
+Use these commands after the packages are published to GitHub Releases. Before publication, build and validate candidate artifacts locally; unreleased versions and taps are not available installation sources.
 
 ## Platforms and contents
 
