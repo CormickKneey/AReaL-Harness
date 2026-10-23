@@ -93,9 +93,7 @@ runtime: ## 启动私有 stdio Runtime；ARGS 指定 --workspace
 	cargo build --locked -p areal-runtime-exec-native --bin areal-runtime-reaper
 	cargo run --locked -p areal-runtime -- $(ARGS)
 
-runtime-smoke: cordis-pin ## 构建 Runtime 并验证原生执行后端
-	python3 scripts/prepare-runtime-shell.py --profile debug
-	cargo build --locked -p areal-runtime -p areal-runtime-fs -p areal-runtime-exec-native
+runtime-smoke: cordis-pin build ## 构建 Runtime 并验证原生执行后端
 	python3 scripts/runtime-smoke.py $(ARGS)
 	python3 scripts/runtime-fs-smoke.py $(ARGS)
 
@@ -191,7 +189,7 @@ verify-harness: ## 全部常规与原生集成验收（容量测试单独运行�
 verify-native: build ## macOS 原生后端与 Harness 集成验收（通用回归由 Linux CI 执行）
 	cargo test --locked -p areal-runtime-exec-native
 	cargo test --locked -p areal-runtime --features native-tests --test native_transport
-	$(MAKE) launcher-test runtime-smoke harness-smoke examples-desktop-api workgroup-smoke
+	$(MAKE) -j4 launcher-test runtime-smoke harness-smoke examples-desktop-api workgroup-smoke
 
 smoke: build ## 构建后验证 TUI、HTTP/SSE、持久化、强杀恢复和异步轨迹补传
 	node scripts/smoke.mjs
@@ -235,7 +233,7 @@ perf: ## 交互式运行 Docker E2E/perf 工作流
 	./scripts/perf interactive
 
 .PHONY: examples-desktop-api desktop-schemas desktop-schema-check package
-examples-desktop-api: build ## 真实 Core/Runtime 的桌面 API 与 CLI 确定性验收
+examples-desktop-api: build sdk-build ## 真实 Core/Runtime 的桌面 API 与 CLI 确定性验收
 	node examples/desktop-api/run.mjs --all
 	node examples/desktop-api/task-controls.mjs
 	node examples/desktop-api/cli.mjs

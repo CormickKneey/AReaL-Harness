@@ -1,8 +1,10 @@
 import { ProjectionReader } from '@areal/workbench/state-projection';
 import type { PlatformServices, Snapshot } from './services.js';
+import type { AppLocale } from './i18n/messages.js';
 
 type ProjectionMessage = { requestId?: number; frame: unknown };
 export type DesktopBridge = Omit<PlatformServices, 'onState'> & {
+  setInterfaceLocale(locale: AppLocale): void;
   onProjection(listener: (message: ProjectionMessage) => void): () => void;
   requestProjection(requestId: number): void;
 };

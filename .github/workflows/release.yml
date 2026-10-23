@@ -3,8 +3,6 @@ name: Release bundles
 on:
   workflow_dispatch:
   pull_request:
-  push:
-    tags: ['v*']
 
 permissions:
   contents: read
@@ -35,7 +33,7 @@ jobs:
 
   bundle:
     needs: scope
-    if: needs.scope.outputs.release == 'true'
+    if: github.event_name == 'workflow_dispatch' && needs.scope.outputs.release == 'true'
     name: Bundle and install (${{ matrix.target }})
     strategy:
       fail-fast: false
@@ -150,7 +148,7 @@ jobs:
   linux_homebrew:
     name: Native Linuxbrew install and upgrade
     needs: [scope, bundle]
-    if: needs.scope.outputs.release == 'true'
+    if: github.event_name == 'workflow_dispatch' && needs.scope.outputs.release == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -232,10 +230,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+      - name: Verify local release contracts
+        if: github.event_name == 'pull_request'
+        run: python3 -m unittest discover -s scripts/tests -p test_release.py
       - name: Require applicable work
         env:
           SCOPE_RESULT: ${{ needs.scope.result }}
           WORK_RESULT: ${{ needs.bundle.result }}
-          HOMEBREW_RESULT: ${{ needs.scope.outputs.release == 'true' && needs.linux_homebrew.result || 'success' }}
-          NEEDED: ${{ needs.scope.outputs.release }}
+          HOMEBREW_RESULT: ${{ github.event_name == 'workflow_dispatch' && needs.scope.outputs.release == 'true' && needs.linux_homebrew.result || 'success' }}
+          NEEDED: ${{ github.event_name == 'workflow_dispatch' && needs.scope.outputs.release || 'false' }}
         run: python3 scripts/ci-gate.py

@@ -1,5 +1,6 @@
 import { useI18n } from "./i18n/IntlProvider.js";
 import { SettingsDisclosure } from "./settings/SettingsDisclosure.js";
+import { useComposerPrediction } from "./useComposerPrediction.js";
 import { ContextMeter } from "./ContextMeter.js";
 import { isOrdinaryConversation, interruptedConversationTurn } from "./ordinaryConversation.js";
 import { useEffect, useId, useRef, useState, useSyncExternalStore } from "react";
@@ -154,6 +155,8 @@ export function Composer({
     await queueEditor.save();
   };
   const config = project.configurations?.[thread.id];
+  const configuredModel = config?.model && project.models.find((item: Data) => item.providerId === config.model.providerId && item.modelId === config.model.modelId);
+  const modelUnavailable = configuredModel?.available === false || config?.model?.providerId === "areal_openai" && !configuredModel;
   const [mcpOpen, setMcpOpen] = useState(false);
 
   const skills = useComposerSkills({ project, threadId: thread.id, draftKey: key, action: readAction, disabled: editorDisabled });
@@ -161,6 +164,10 @@ export function Composer({
   const ordinary = isOrdinaryConversation(thread, config);
   const interrupted = ordinary && project.core?.features?.ordinaryTurnSubmit === true ? interruptedConversationTurn(thread) : undefined;
   const emptyDraft = !input.text.trim() && !input.files.length && !comments.length && !skills.selected.length && !mcpDraft.length;
+  const nextPrompt = useComposerPrediction({ project, thread, action, enabled: prefs.nextPromptSuggestions,
+    eligible: ordinary && !disabled && !running && !questions.length && !approvals.length && !creatingGoal && !queueEditor.edit,
+  });
+  const predictionVisible = !input.files.length && !comments.length && !skills.selected.length && !mcpDraft.length && !annotationEditing && !mcpOpen;
   const canContinue = !!interrupted && emptyDraft && !creatingGoal && !queueEditor.edit;
   const planActive = permissionMode(config ?? {}) === "plan";
   const executionPermission = planActive ? permissionMode({ ...config, readOnly: false, options: planModeOptions(false, config?.options) }) : permissionMode(config ?? {});
@@ -249,6 +256,7 @@ export function Composer({
     }
     if (disabled || annotationEditing || invalidAnnotation || sending.has(key)) return;
     if (queueEditor.edit) { await saveQueueEdit(); return; }
+    if (modelUnavailable && !creatingGoal) return;
     if (!submittedInput.text.trim() && !submittedInput.files.length && !comments.length && !skills.selected.length && !mcpDraft.length) return;
     if (approvePlan && (!planReady || input.text.trim() || input.files.length || comments.length)) return;
     if (creatingGoal && (running || thread.parentThreadId || !submittedInput.text.trim())) return;
@@ -302,7 +310,7 @@ export function Composer({
     }
   };
   const continueExecution = async () => {
-    if (desktopUnsupported || !canContinue || disabled || sending.has(key)) return;
+    if (desktopUnsupported || !canContinue || disabled || modelUnavailable || sending.has(key)) return;
     markSending(key, true); setDeliveryError("");
     try {
       await action("continue", { projectId: project.id, threadId: thread.id, expectedTurnId: interrupted.id, expectedConfigRevision: config?.revision });
@@ -391,7 +399,7 @@ export function Composer({
       )}
       {planReady && !queueEditor.edit && <section className="flex items-center justify-between gap-3 px-3 py-2 text-ui-sm" aria-label="计划确认">
         <span className="text-foreground-subtle">计划已完成。批准后将以自动编辑模式执行。</span>
-        <Button size="sm" disabled={disabled || desktopUnsupported || !!input.text.trim() || !!input.files.length || !!comments.length} aria-describedby={desktopUnsupported ? compatibilityDescription : undefined} title={desktopUnsupported ? t("backend.updateRequired") : undefined} onClick={() => void submit("按上方已确认的计划执行。", false, true)}>批准并执行</Button>
+        <Button size="sm" disabled={disabled || modelUnavailable || desktopUnsupported || !!input.text.trim() || !!input.files.length || !!comments.length} aria-describedby={desktopUnsupported ? compatibilityDescription : undefined} title={desktopUnsupported ? t("backend.updateRequired") : undefined} onClick={() => void submit("按上方已确认的计划执行。", false, true)}>批准并执行</Button>
       </section>}
       <div className="composer-input-stack">
       <div ref={setMenuAnchor} className="composer-menu-anchor" />
@@ -419,6 +427,7 @@ export function Composer({
         }}>查看关联工作流结果</Button>
       </div>}
       <ConversationComposer
+        nextPrompt={predictionVisible ? nextPrompt : undefined}
         surfaceLayout={surfaceLayout}
         project={project}
         contextControl={<ContextMeter key={`${project.id}:${thread.id}`} project={project} thread={thread} action={readAction} anchor={menuAnchor} />}
@@ -436,8 +445,8 @@ export function Composer({
         submitTestId="chat-send-button"
         placeholder={archived ? "已归档任务只读" : creatingGoal ? "描述目标，明确可衡量的结果" : planActive ? "描述任务，生成计划…" : "随心输入"}
         disabled={editorDisabled}
-        submitDisabled={disabled || (desktopUnsupported && !queueEditor.edit && !creatingGoal) || (taskManagement && !!running) || annotationEditing || invalidAnnotation || (queueEditor.edit ? queueEditor.saveDisabled || (!input.text.trim() && !input.files.length && !queueEditor.edit.attachments.length) : creatingGoal ? !input.text.trim() || !!running : !canContinue && emptyDraft)}
-        submitDisabledReason={desktopUnsupported && !queueEditor.edit && !creatingGoal ? t("backend.updateRequired") : undefined}
+        submitDisabled={disabled || (modelUnavailable && !queueEditor.edit && !creatingGoal) || (desktopUnsupported && !queueEditor.edit && !creatingGoal) || (taskManagement && !!running) || annotationEditing || invalidAnnotation || (queueEditor.edit ? queueEditor.saveDisabled || (!input.text.trim() && !input.files.length && !queueEditor.edit.attachments.length) : creatingGoal ? !input.text.trim() || !!running : !canContinue && emptyDraft)}
+        submitDisabledReason={desktopUnsupported && !queueEditor.edit && !creatingGoal ? t("backend.updateRequired") : modelUnavailable && !queueEditor.edit && !creatingGoal ? t("chat.composer.previousModelUnavailable") : undefined}
         submitting={busy}
         submitLabel={queueEditor.edit ? "保存排队消息" : creatingGoal ? "开始目标" : canContinue ? "继续执行" : "发送"}
         enterSubmits={prefs.sendShortcut === "enter"}
@@ -531,7 +540,7 @@ export function Composer({
           <ControlHintTooltip title={desktopUnsupported ? t("backend.updateRequired") : "发送"} shortcut={prefs.sendShortcut === "enter" ? "Enter" : "⌘/Ctrl+Enter"}>
             <Button type="button" variant="composer" size="icon-md" aria-label="发送" data-testid="chat-send-button"
               aria-describedby={desktopUnsupported ? compatibilityDescription : undefined} title={desktopUnsupported ? t("backend.updateRequired") : undefined}
-              disabled={disabled || desktopUnsupported || taskManagement || (!input.text.trim() && !input.files.length && !comments.length && !skills.selected.length && !mcpDraft.length)}
+              disabled={disabled || modelUnavailable || desktopUnsupported || taskManagement || (!input.text.trim() && !input.files.length && !comments.length && !skills.selected.length && !mcpDraft.length)}
               onClick={event => void submit(api.current?.getMarkdown() ?? text, event.metaKey || event.ctrlKey)}>
               <SendMessageIcon className="size-5" />
             </Button>
@@ -540,7 +549,7 @@ export function Composer({
           <ControlHintTooltip title={desktopUnsupported ? t("backend.updateRequired") : "继续执行"}>
             <Button type="button" variant="composer" size="icon-md" aria-label="继续执行" data-testid="chat-continue-button"
               aria-describedby={desktopUnsupported ? compatibilityDescription : undefined} title={desktopUnsupported ? t("backend.updateRequired") : undefined}
-              disabled={disabled || desktopUnsupported} className="composer-primary-action" onClick={() => void continueExecution()}>
+              disabled={disabled || modelUnavailable || desktopUnsupported} className="composer-primary-action" onClick={() => void continueExecution()}>
               <ContinueExecutionIcon className="size-5" />
             </Button>
           </ControlHintTooltip>

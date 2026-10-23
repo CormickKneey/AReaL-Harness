@@ -112,6 +112,17 @@ impl Engine {
                 {
                     return Err(Error::Conflict);
                 }
+                let mut candidate = state.thread.clone();
+                if let Some(data) = &mut candidate.desktop {
+                    data.prompt_prediction = None;
+                }
+                engine.persist(&candidate).await?;
+                state.thread = candidate;
+                crate::prompt_prediction::invalidate(&mut state);
+                cell.emit(
+                    "areal/thread/edited",
+                    json!({"threadId":cell.id,"thread":state.thread}),
+                );
                 state.compacting = true;
                 let activation = id();
                 state.compaction_owner = Some(crate::desktop::mcp_apps::CallOwner {

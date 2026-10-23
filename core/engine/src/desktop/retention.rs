@@ -40,7 +40,9 @@ impl Engine {
             validate_archive(&state)?;
             let mut candidate = state.thread.clone();
             candidate.desktop.get_or_insert_with(Default::default).archived = true;
+            candidate.desktop.as_mut().unwrap().prompt_prediction = None;
             engine.persist(&candidate).await?;
+            crate::prompt_prediction::invalidate(&mut state);
             candidate.turns.clear();
             candidate.context_checkpoint = None;
             state.thread = candidate;

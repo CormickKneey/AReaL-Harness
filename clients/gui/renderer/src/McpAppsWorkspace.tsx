@@ -1,23 +1,17 @@
-import { useI18n, formatUiMessage, UiMessageError, type UiMessage, type Translate } from "./i18n/IntlProvider.js";
+import { useI18n, formatUiMessage, UiMessageError, type UiMessage } from "./i18n/IntlProvider.js";
 import { Button } from "./components/ui/button.js";
 import { SettingsSelect } from "./settings/SettingsPageParts.js";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ProtocolError, type ContentBlock } from "@modelcontextprotocol/client";
 import type { McpUiHostContext } from "@modelcontextprotocol/ext-apps/app-bridge";
 import {
     McpAppHost,
-    mcpAppDesktop,
-    openMcpApp,
-    mcpResultKey,
-    type McpResultSource,
-    type McpResultState,
-    type McpResultReply,
-    type McpAppDescriptor,
     type McpAppMessage,
     type McpAppModelContext,
     type McpAppPlacement,
 } from "./McpAppHost.js";
-import { McpAppForm, type McpFormResponse, type McpFormResource } from "./McpAppForm.js";
+import { McpAppForm, type McpFormResponse } from "./McpAppForm.js";
+import { mcpResultKey, type McpResultSource, type McpResultState, type McpAppDescriptor, type McpMetadataImageLoader } from "./mcp-app-services.js";
 import { McpContentLabel } from "./McpComposerAttachments.js";
 import { appendMcpDraft } from "./mcp-app-draft.js";
 import { sending, markSending, submitMessage } from "./Composer.js";
@@ -29,7 +23,7 @@ import {
     type McpAppServer,
     type McpAppTool,
 } from "./settings/McpAppsSettings.js";
-import type { Action, Data } from "./services.js";
+import type { Action, Data, PlatformServices } from "./services.js";
 export type McpWorkspaceServer = McpAppServer & { pluginId?: string; marketplace?: string; installedDigest?: string };
 type FormRequest = {
     requestId: string;
@@ -40,14 +34,6 @@ type FormRequest = {
     message: string;
     requestedSchema: unknown;
 };
-type FormResourceRequest = { projectId: string; threadId: string; requestId: string; fieldName: string; uri?: string };
-function formResource(operation: "pick" | "release", request: FormResourceRequest, t: Translate): Promise<{ resources?: McpFormResource[] }> {
-    const desktop = (window as unknown as { arealDesktop?: {
-        mcpFormResource?: (operation: string, request: FormResourceRequest) => Promise<{ resources?: McpFormResource[] }>;
-    } }).arealDesktop;
-    if (!desktop?.mcpFormResource) return Promise.reject(new Error(t("settings.apps.localResourceUnavailable")));
-    return desktop.mcpFormResource(operation, request);
-}
 const appTab = (app: McpAppDescriptor) => `mcp-app:${app.instanceId}`;
 const compatibilityHint: UiMessage = { id: "settings.apps.upgradeBackend" };
 const visible = (block: ContentBlock) =>
@@ -57,6 +43,7 @@ function entrypoint(tool: McpAppTool, kind: string) {
     return value?.entrypoints?.some((entry) => entry.type === kind) === true;
 }
 export function useMcpAppsWorkspace({
+    services,
     project,
     deepLinksEnabled,
     projects,
@@ -68,6 +55,7 @@ export function useMcpAppsWorkspace({
     onRemoveTab,
     onError,
 }: {
+    services: Pick<PlatformServices, "mcpApp" | "onMcpAppEvent" | "onMcpAppDeepLink" | "mcpFormResource">;
     project?: Data;
     deepLinksEnabled: boolean;
     projects: Data[];
@@ -80,7 +68,12 @@ export function useMcpAppsWorkspace({
     onError: (message: string) => void;
 }) {
   const { t } = useI18n();
-    const desktopSupported = project?.desktopCapabilities?.currentCommands !== false;
+    const { mcpApp, onMcpAppEvent, onMcpAppDeepLink, mcpFormResource } = services;
+    const hostSupported = !!mcpApp && !!onMcpAppEvent;
+    const desktopSupported = hostSupported && project?.desktopCapabilities?.currentCommands !== false;
+    const loadMetadataImage = useMemo<McpMetadataImageLoader | undefined>(() => mcpApp
+        ? (source) => mcpApp({ operation: "metadataImage", source })
+        : undefined, [mcpApp]);
     const [servers, setServers] = useState<McpWorkspaceServer[]>([]),
         [loading, setLoading] = useState(false),
         [error, setError] = useState<string | UiMessage>("");
@@ -114,7 +107,7 @@ export function useMcpAppsWorkspace({
     const refresh = useCallback(async () => {
         const { project, threadId, action } = current.current;
         const epoch = ++readEpoch.current;
-        if (!project?.state?.connected || project.desktopCapabilities?.currentCommands === false) {
+        if (!hostSupported || !project?.state?.connected || project.desktopCapabilities?.currentCommands === false) {
             setServers([]);
             setLoading(false);
             setError(project?.desktopCapabilities?.currentCommands === false ? compatibilityHint : "");
@@ -139,7 +132,7 @@ export function useMcpAppsWorkspace({
         } finally {
             if (epoch === readEpoch.current) setLoading(false);
         }
-    }, []);
+    }, [hostSupported]);
     useEffect(() => {
         void refresh();
         return () => {
@@ -160,14 +153,15 @@ export function useMcpAppsWorkspace({
         const intent = key ? resultIntents.current.get(key) : undefined;
         if (intent) intent.phase = "closing";
         try {
-            await mcpAppDesktop().mcpApp({ operation: "close", token: app.token });
+            if (!mcpApp) throw Error(t(compatibilityHint.id));
+            await mcpApp({ operation: "close", token: app.token });
             if (intent) intent.phase = "closed";
             removeApps(new Set([app.token]));
         } catch (cause) {
             if (key) resultState(key, { message: "关闭结果待确认，请再次点击核对。原始记录仍可查看。" });
             throw cause;
         }
-    }, [removeApps]);
+    }, [removeApps, mcpApp, t]);
     const validationEpoch = useRef(0);
     const revalidate = useCallback(async () => {
         const epoch = ++validationEpoch.current;
@@ -214,8 +208,9 @@ export function useMcpAppsWorkspace({
         return () => window.removeEventListener("areal-plugins-changed", listener);
     }, [refresh, revalidate]);
     useEffect(
-        () =>
-            mcpAppDesktop().onMcpAppEvent((event) => {
+        () => {
+            if (!hostSupported || !onMcpAppEvent) return;
+            return onMcpAppEvent((event) => {
                 if ("method" in event.notification && event.notification.method === "ui/notifications/closed") {
                     removeApps(new Set([event.token]));
                     return;
@@ -234,22 +229,22 @@ export function useMcpAppsWorkspace({
                                 : app,
                         ),
                     );
-            }),
-        [],
+            });
+        },
+        [hostSupported, onMcpAppEvent, removeApps],
     );
     useEffect(
         () => () => {
+            if (!mcpApp) return;
             for (const app of appsRef.current)
-                void mcpAppDesktop()
-                    .mcpApp({ operation: "close", token: app.token })
-                    .catch(() => {});
+                void mcpApp({ operation: "close", token: app.token }).catch(() => {});
         },
-        [],
+        [mcpApp],
     );
     async function ensureThread(forceNew = false) {
         const { project, threadId, action, onOpenThread } = current.current;
         if (!project?.state?.connected) throw Error(t("settings.mcpAppsWorkspace.connectTheProjectFirst"));
-        if (project.desktopCapabilities?.currentCommands === false) throw Error(t(compatibilityHint.id));
+        if (!hostSupported || project.desktopCapabilities?.currentCommands === false) throw Error(t(compatibilityHint.id));
         if (
             !forceNew &&
             threadId &&
@@ -275,7 +270,7 @@ export function useMcpAppsWorkspace({
     ) {
         const { project } = current.current;
         if (!project) throw Error(t("settings.mcpAppsWorkspace.chooseAProjectFirst"));
-        if (project.desktopCapabilities?.currentCommands === false) throw Error(t(compatibilityHint.id));
+        if (!mcpApp || !onMcpAppEvent || project.desktopCapabilities?.currentCommands === false) throw Error(t(compatibilityHint.id));
         const global = options.kind === "global";
         const existing = appsRef.current.find(
             (app) =>
@@ -326,7 +321,8 @@ export function useMcpAppsWorkspace({
             const connectedTool = connectedServer?.tools.find((candidate) => candidate.name === tool.name);
             if (!connectedServer || !connectedTool)
                 throw Error(t("settings.mcpAppsWorkspace.theAppConnectionOrPluginVersionHas"));
-            const app = await openMcpApp({
+            const app = await mcpApp({
+                operation: "open",
                 ...owner,
                 serverId: connectedServer.serverId,
                 expectedGeneration: connectedServer.generation,
@@ -346,7 +342,7 @@ export function useMcpAppsWorkspace({
         if (pending) return pending;
         const task = (async () => {
             const owner = current.current.projects.find(project => project.id === source.projectId);
-            if (!owner?.state?.connected || owner.desktopCapabilities?.currentCommands === false) {
+            if (!mcpApp || !onMcpAppEvent || !owner?.state?.connected || owner.desktopCapabilities?.currentCommands === false) {
                 resultState(key, { message: "交互结果暂不可用，原始记录仍可查看。" });
                 return;
             }
@@ -354,7 +350,7 @@ export function useMcpAppsWorkspace({
             resultState(key, { opening: true });
             try {
                 if (intent?.phase === "closing") {
-                    await mcpAppDesktop().mcpApp({ operation: "close", token: intent.token });
+                    await mcpApp({ operation: "close", token: intent.token });
                     intent.phase = "closed";
                 }
                 const existing = appsRef.current.find(app => app.resultSource && mcpResultKey(app.resultSource) === key);
@@ -381,7 +377,7 @@ export function useMcpAppsWorkspace({
                     intent = { requestId: `result-v1.${directory.requestEpoch}.${crypto.randomUUID()}`, phase: "opening" };
                     resultIntents.current.set(key, intent);
                 }
-                const reply = await mcpAppDesktop().mcpApp({ operation: "openFromResult", ...source, requestId: intent.requestId }) as McpResultReply;
+                const reply = await mcpApp({ operation: "openFromResult", ...source, requestId: intent.requestId });
                 if (reply.status === "open") {
                     const app = { ...reply.app, resultSource: source };
                     intent.phase = "open";
@@ -405,7 +401,7 @@ export function useMcpAppsWorkspace({
         resultPending.current.set(key, task);
         void task.finally(() => resultPending.current.delete(key));
         return task;
-    }, [close, removeApps]);
+    }, [close, removeApps, mcpApp, onMcpAppEvent]);
     const resultPageFailed = (app: McpAppDescriptor) => {
         if (!app.resultSource) return;
         const key = mcpResultKey(app.resultSource);
@@ -487,8 +483,8 @@ export function useMcpAppsWorkspace({
         );
     }
     async function clearContext(app: McpAppDescriptor) {
-        if (current.current.project?.desktopCapabilities?.currentCommands === false) throw Error(t(compatibilityHint.id));
-        const reply = (await mcpAppDesktop().mcpApp({
+        if (!mcpApp || !onMcpAppEvent || current.current.project?.desktopCapabilities?.currentCommands === false) throw Error(t(compatibilityHint.id));
+        const reply = await mcpApp({
             operation: "request",
             token: app.token,
             request: {
@@ -497,7 +493,7 @@ export function useMcpAppsWorkspace({
                 method: "ui/update-model-context",
                 params: { content: [] },
             },
-        })) as { error?: unknown };
+        });
         if (reply.error) throw Error(t("settings.mcpAppsWorkspace.couldNotRemoveAppContext"));
         setApps((items) =>
             items.map((item) =>
@@ -508,9 +504,8 @@ export function useMcpAppsWorkspace({
         );
     }
     useEffect(() => {
-        const desktop = mcpAppDesktop();
-        if (!deepLinksEnabled || !desktop?.onMcpAppDeepLink) return;
-        return desktop.onMcpAppDeepLink(async (link) => {
+        if (!desktopSupported || !deepLinksEnabled || !onMcpAppDeepLink) return;
+        return onMcpAppDeepLink(async (link) => {
             const candidates = servers.filter(
                 (server) =>
                     server.pluginId === link.pluginId &&
@@ -527,7 +522,7 @@ export function useMcpAppsWorkspace({
                 deepLink: link.path,
             });
         });
-    }, [servers, project?.id, deepLinksEnabled]);
+    }, [servers, project?.id, deepLinksEnabled, desktopSupported, onMcpAppDeepLink]);
     useEffect(() => {
         let active = true,
             timer: ReturnType<typeof setTimeout> | undefined;
@@ -654,6 +649,7 @@ export function useMcpAppsWorkspace({
     };
     return {
         supported: desktopSupported,
+        loadMetadataImage,
         servers: desktopSupported ? servers : [],
         loading,
         error: formatUiMessage(t, error),
@@ -676,6 +672,7 @@ export function useMcpAppsWorkspace({
         },
         pages: apps.map(app => <McpAppHost
             key={app.token} app={app} context={app.hostContext}
+            services={services} loadMetadataImage={loadMetadataImage}
             placement={activeTab === appTab(app) && project?.id === app.projectId && threadId === app.threadId ? placement : null}
             closeOnUnmount={false} onMessage={message} onModelContext={modelContext}
             onClose={() => { void close(appTab(app)).catch(cause => current.current.onError(cause.message)); }}
@@ -721,26 +718,27 @@ export function useMcpAppsWorkspace({
                         requestId={form.requestId}
                         message={form.message}
                         requestedSchema={form.requestedSchema}
+                        loadMetadataImage={loadMetadataImage}
                         onRespond={(_id, response) => respond(form, response)}
                         onUnsupported={() => respond(form, { unsupported: true })}
                         onPreview={(target) => previewForm(form, target)}
-                        onPickResources={async (fieldName) => {
+                        onPickResources={mcpFormResource ? async (fieldName) => {
                             if (current.current.project?.desktopCapabilities?.currentCommands === false)
                                 throw Error(t(compatibilityHint.id));
                             if (!project?.id || current.current.project?.id !== project.id || current.current.threadId !== form.threadId)
                                 throw new Error("Form owner expired");
                             const owner = { projectId: project.id, threadId: form.threadId, requestId: form.requestId, fieldName };
-                            const result = await formResource("pick", owner, t);
+                            const result = await mcpFormResource("pick", owner);
                             if (current.current.project?.id !== owner.projectId || current.current.threadId !== owner.threadId) {
-                                await Promise.all((result.resources ?? []).map(item => formResource("release", { ...owner, uri: item.uri }, t)));
+                                await Promise.all((result.resources ?? []).map(item => mcpFormResource("release", { ...owner, uri: item.uri })));
                                 throw new Error("Form owner expired");
                             }
                             return result.resources ?? [];
-                        }}
-                        onReleaseResource={async (fieldName, uri) => {
+                        } : undefined}
+                        onReleaseResource={mcpFormResource ? async (fieldName, uri) => {
                             if (!project?.id) throw new Error("Form owner expired");
-                            await formResource("release", { projectId: project.id, threadId: form.threadId, requestId: form.requestId, fieldName, uri }, t);
-                        }}
+                            await mcpFormResource("release", { projectId: project.id, threadId: form.threadId, requestId: form.requestId, fieldName, uri });
+                        } : undefined}
                     />
                 ))}
                 {formPreview && forms.some((form) => form.requestId === formPreview.requestId) && (
@@ -833,6 +831,7 @@ export function McpAppsHub({
             <McpAppEntrypoints
                 servers={servers}
                 kind="global"
+                loadMetadataImage={workspace.loadMetadataImage}
                 onOpen={(server, tool) =>
                     void workspace
                         .openApp(server, tool, { kind: "global" })

@@ -13,7 +13,10 @@ const root = await mkdtemp(join(tmpdir(), "areal-shared-writer-"));
 const workspace = join(root, "workspace");
 const data = join(root, "data");
 await mkdir(workspace);
-await writeFile(join(root, "config.toml"), 'schema_version=1\n[network]\nretry_mode="bounded"\n');
+await writeFile(
+  join(root, "config.toml"),
+  'schema_version=1\n[network]\nretry_mode="bounded"\n[limits]\nmax_repeated_tool_failures=2\n',
+);
 const delay = (ms) => new Promise((done) => setTimeout(done, ms));
 let failure,
   rpc,
@@ -23,19 +26,23 @@ let serial = 0;
 const waiting = new Map();
 const arrivals = [];
 const calls = [];
-function reply(response, name, args, text = "final verified handoff") {
+let staleCallIds = [];
+let staleBatchObserved = false;
+const reconsideredCommand = {
+  argv: ["/bin/sh", "-c", "echo accepted-after-observation > redecided.txt"],
+  timeoutMs: 5000,
+};
+function reply(response, name, args, text = "final verified handoff", additional = []) {
   if (response.destroyed) return;
   response.writeHead(200, { "content-type": "text/event-stream" });
   const delta = name
     ? {
-        tool_calls: [
-          {
-            index: 0,
-            id: `lease-${++serial}`,
-            type: "function",
-            function: { name, arguments: JSON.stringify(args) },
-          },
-        ],
+        tool_calls: [{ name, args }, ...additional].map((call, index) => ({
+          index,
+          id: `lease-${++serial}`,
+          type: "function",
+          function: { name: call.name, arguments: JSON.stringify(call.args) },
+        })),
       }
     : { content: text };
   response.write(
@@ -45,6 +52,7 @@ function reply(response, name, args, text = "final verified handoff") {
     `data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: name ? "tool_calls" : "stop" }] })}\n\n`,
   );
   response.end("data: [DONE]\n\n");
+  return delta.tool_calls?.map((call) => call.id) ?? [];
 }
 const model = createServer(async (request, response) => {
   try {
@@ -58,10 +66,8 @@ const model = createServer(async (request, response) => {
         m.role === "user" && !body(m).startsWith("AReaL runtime context (not a user request):"),
     );
     const text = body(input.messages[taskIndex]);
-    const results = input.messages
-      .slice(taskIndex + 1)
-      .filter((m) => m.role === "tool")
-      .map((m) => JSON.parse(m.content));
+    const toolMessages = input.messages.slice(taskIndex + 1).filter((m) => m.role === "tool");
+    const results = toolMessages.map((m) => JSON.parse(m.content));
     const worker = text.match(/LEASE_WORKER:([abx])/);
     calls.push({ worker: worker?.[1] ?? "parent", results: results.length, at: Date.now() });
     if (worker) {
@@ -76,8 +82,34 @@ const model = createServer(async (request, response) => {
         return reply(response, "fs_create", { path: `${key}.txt`, text: `${key} committed\n` });
       }
       const last = results.at(-1);
-      if (last.error?.code === "CONFLICT") {
-        assert.match(last.error.message, /NOT executed/);
+      const conflict = results.find((result) => result.error?.code === "CONFLICT");
+      if (conflict) {
+        assert.match(conflict.error.message, /NOT executed/);
+        if (key === "a" && !staleBatchObserved) {
+          assert.equal(staleCallIds.length, 5);
+          for (const id of staleCallIds) {
+            const paired = toolMessages.filter((message) => message.tool_call_id === id);
+            assert.equal(
+              paired.length,
+              1,
+              `missing or duplicate receipt for advertised call ${id}`,
+            );
+            const result = JSON.parse(paired[0].content);
+            assert.equal(result.error?.code, "CONFLICT", JSON.stringify(result));
+            assert.match(result.error.message, /WORKSPACE_CHANGED_BEFORE_EXECUTION.*NOT executed/);
+          }
+          for (const path of ["stale-command.txt", "stale-followup.txt", "redecided.txt"])
+            await assert.rejects(
+              access(join(workspace, path)),
+              `stale response executed ${path} before the model observed the conflict`,
+            );
+          staleBatchObserved = true;
+          return reply(response, "run_command", reconsideredCommand);
+        }
+        if (key === "a") {
+          assert.equal(last.error, undefined, JSON.stringify(last));
+          assert.equal(last.exitCode, 0, JSON.stringify(last));
+        }
         if (results.some((result) => result.sha256))
           return reply(
             response,
@@ -124,10 +156,28 @@ const model = createServer(async (request, response) => {
           }
           for (const key of ["a", "b"]) {
             if (key === "a")
-              reply(waiting.get(key), "run_command", {
-                argv: ["/bin/sh", "-c", "echo must-not-run > stale-command.txt"],
-                timeoutMs: 5000,
-              });
+              staleCallIds = reply(
+                waiting.get(key),
+                "run_command",
+                {
+                  argv: ["/bin/sh", "-c", "echo must-not-run > stale-command.txt"],
+                  timeoutMs: 5000,
+                },
+                "",
+                [
+                  {
+                    name: "run_command",
+                    args: {
+                      argv: ["/bin/sh", "-c", "echo must-not-run > stale-followup.txt"],
+                      timeoutMs: 5000,
+                    },
+                  },
+                  ...Array.from({ length: 3 }, () => ({
+                    name: "run_command",
+                    args: reconsideredCommand,
+                  })),
+                ],
+              );
             else reply(waiting.get(key), null);
             waiting.delete(key);
           }
@@ -242,6 +292,15 @@ try {
     access(join(workspace, "stale-command.txt")),
     "stale source command executed before rebase",
   );
+  await assert.rejects(
+    access(join(workspace, "stale-followup.txt")),
+    "a later write from the same stale response executed after the first conflict",
+  );
+  assert(staleBatchObserved, "the model never observed all stale call receipts");
+  assert.equal(
+    await readFile(join(workspace, "redecided.txt"), "utf8"),
+    "accepted-after-observation\n",
+  );
   const pinned = await start("LEASE_PIN_PARENT");
   const until = Date.now() + 10000;
   while (!waiting.has("x")) {
@@ -275,11 +334,15 @@ try {
     root,
     authorsReachedModelWait: arrivals,
     calls,
+    staleCallIds,
     checks: [
       "independent shared authors reach model wait concurrently",
       "parent source write progresses while authors wait",
       "running managed process pins writer lease",
       "stale source command rejected before dispatch",
+      "all writes from the stale response stay unexecuted until the model observes the conflict",
+      "a fresh model decision can write after observing the conflict",
+      "three identical suppressed calls do not exhaust the finite repeated-failure limit",
       "cancellation settles resources before parent source write",
     ],
   };

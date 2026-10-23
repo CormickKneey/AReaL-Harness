@@ -1,16 +1,17 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { chmod, copyFile, lstat, mkdtemp, mkdir, readFile, readdir, realpath, rename, rm, utimes, writeFile } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 import { applicationFixture } from './application-fixture.mjs';
+import { respondToSessionName } from './model-fixture.mjs';
 
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), '..'), root = resolve(gui, '../..');
 const require = createRequire(join(gui, 'app/package.json'));
-const { _electron: electron } = require('playwright-core');
+const { _electron: electron, chromium } = require('playwright-core');
 const binary = process.env.AREAL_CORE_BIN;
 assert.ok(binary?.startsWith(join(root, '.local/dev-bin/')), 'Use a private fixed Core slot');
 assert.ok(!process.env.AREAL_REOPEN_LEGACY, 'Detached legacy migration requires the explicit legacy recovery runner');
@@ -26,11 +27,15 @@ const force = process.env.AREAL_REOPEN_FORCE_GUI === '1';
 const scratch = await mkdtemp('/private/tmp/ar-'), workspace = join(scratch, 'workspace'), config = join(scratch, 'config.toml');
 await mkdir(workspace); await mkdir(join(scratch, 'user/.areal'), { recursive: true });
 execFileSync('git', ['init', '-b', 'main'], { cwd: workspace, stdio: 'ignore' });
-const requests = [], held = new Set(), checks = [], errors = [], generations = [];
+const requests = [], modelRequests = [], held = new Set(), checks = [], errors = [], generations = [], attachments = [];
 checks.push = (...items) => { console.log('CHECK', ...items); return Array.prototype.push.apply(checks, items); };
 const model = createServer(async (request, response) => {
   try {
-    let raw = ''; for await (const chunk of request) raw += chunk; requests.push(JSON.parse(raw));
+    let raw = ''; for await (const chunk of request) raw += chunk;
+    const body = JSON.parse(raw), naming = respondToSessionName(body, response);
+    modelRequests.push({ kind: naming ? 'naming' : 'work', body });
+    if (naming) return;
+    requests.push(body);
     response.writeHead(200, { 'Content-Type': 'text/event-stream' });
     const text = requests.length === 1 ? 'COMPLETED_HISTORY' : 'REOPEN_HELD';
     response.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: text }, finish_reason: null }] })}\n\n`);
@@ -62,8 +67,33 @@ const records = async () => {
   let names; try { names = await readdir(join(scratch, 'registry/services')); } catch (error) { if (error.code === 'ENOENT') return []; throw error; }
   return (await Promise.all(names.map(name => readFile(join(scratch, 'registry/services', name, 'service.json'), 'utf8').then(JSON.parse).catch(error => { if (error.code === 'ENOENT') return null; throw error; })))).filter(Boolean);
 };
-const metadata = () => readFile(join(scratch, 'core/service.json'), 'utf8').then(JSON.parse);
-let app, page, processHandle, originalMetadata, projectId, threadId, passed = false;
+const desktopPids = new Set();
+const metadata = async () => {
+  const value = JSON.parse(await readFile(join(scratch, 'core/service.json'), 'utf8'));
+  assert.ok(Number.isSafeInteger(value.pid), 'Desktop metadata identifies its process');
+  desktopPids.add(value.pid);
+  return value;
+};
+const identity = async () => {
+  const desktop = await metadata(), services = await records();
+  const processes = execFileSync('ps', ['-axo', 'pid=,ppid=,comm='], { encoding: 'utf8' }).trim().split('\n').map(line => {
+    const match = line.match(/^\s*(\d+)\s+(\d+)\s+(.+)$/);
+    return match ? { pid: Number(match[1]), parent: Number(match[2]), executable: basename(match[3]) } : null;
+  }).filter(Boolean);
+  const descendants = new Set(services.map(service => service.hostPid));
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const row of processes) if (descendants.has(row.parent) && !descendants.has(row.pid)) {
+      descendants.add(row.pid); changed = true;
+    }
+  }
+  const runtimePids = processes.filter(row => descendants.has(row.pid) && row.executable === 'areal-runtime').map(row => row.pid).sort((a, b) => a - b);
+  for (const pid of [processHandle.pid, desktop.pid, ...services.flatMap(service => [service.hostPid, service.corePid]), ...runtimePids]) assert.ok(alive(pid), `owned process ${pid} is alive`);
+  return { mainPid: processHandle.pid, desktopPid: desktop.pid, desktopGeneration: desktop.desktopGeneration,
+    applicationOwner: desktop.applicationOwner, services, runtimePids };
+};
+let app, page, rendererConnection, processHandle, originalMetadata, projectId, threadId, passed = false;
 const state = () => page.evaluate(() => window.arealDesktop.snapshot());
 const thread = snapshot => snapshot.projects.find(project => project.id === projectId)?.state?.threads[threadId];
 const launch = async () => {
@@ -79,9 +109,9 @@ const stop = async () => {
 };
 const quiescent = async () => {
   await until(async () => (await records()).every(service => !alive(service.hostPid) && !alive(service.corePid)), 'old engine processes exit');
-  if (originalMetadata) await until(() => !alive(originalMetadata.pid), 'old Desktop exits');
+  await until(() => [...desktopPids].every(pid => !alive(pid)), 'all observed Desktop generations exit');
 };
-const sourcePaths = ['app/src/core/main.cjs', 'app/src/core/service-main.cjs', 'app/src/core/service-client.cjs', 'app/src/core/backend.cjs', 'scripts/service-reopen-smoke.mjs', 'renderer/dist/index.html'];
+const sourcePaths = ['app/src/core/main.cjs', 'app/src/core/service-main.cjs', 'app/src/core/service-client.cjs', 'app/src/core/backend.cjs', 'scripts/service-reopen-smoke.mjs', 'scripts/model-fixture.mjs', 'renderer/dist/index.html'];
 const sourceHashes = Object.fromEntries(await Promise.all(sourcePaths.map(async path => [path, createHash('sha256').update(await readFile(join(gui, path))).digest('hex')])));
 const sourceHash = createHash('sha256').update(execFileSync('git', ['diff', 'HEAD'], { cwd: root, maxBuffer: 16 * 1024 * 1024 })).digest('hex');
 console.log('Service reopen evidence:', scratch);
@@ -96,9 +126,83 @@ try {
   await until(async () => thread(await state())?.turns.at(-1)?.status === 'completed', 'first turn completes');
   await page.getByTestId('chat-input').fill('hold reopen'); await page.getByRole('button', { name: '发送', exact: true }).click();
   await until(() => held.size === 1, 'held second turn');
-  const originalThread = structuredClone(thread(await state())); originalMetadata = await metadata();
-  const original = await records(); generations.push(original);
+  await until(async () => thread(await state())?.turns.at(-1)?.status === 'inProgress', 'second turn running');
+  originalMetadata = await metadata();
+  const attachedThread = structuredClone(thread(await state())), attachedTurnId = attachedThread.turns.at(-1).id;
+  const heldResponse = [...held][0], connection = { workRequest: 2, localPort: heldResponse.socket.localPort, remotePort: heldResponse.socket.remotePort };
+  const originalIdentity = await identity();
   const draft = 'PRESERVED_REOPEN_DRAFT'; await page.getByTestId('chat-input').fill(draft); await sleep(300);
+  const streamedParts = ['REOPEN_HELD'];
+  const observeAttachment = async label => {
+    await page.getByTestId('areal-workbench').waitFor();
+    await until(async () => (await page.getByTestId('areal-workbench').getAttribute('data-thread-id')) === threadId, `${label} restores selected thread`);
+    assert.equal(await page.getByTestId('areal-workbench').getAttribute('data-project-id'), projectId);
+    const history = page.locator(`[data-turn-id="${attachedThread.turns[0].id}"] .assistant-message .conversation-markdown`);
+    await until(async () => (await history.innerText()).includes('COMPLETED_HISTORY'), `${label} renders completed history`);
+    const active = page.locator(`[data-turn-id="${attachedTurnId}"]`), answer = active.locator('.assistant-message .conversation-markdown');
+    await until(async () => { const text = await answer.innerText(); return streamedParts.every(part => text.includes(part)); }, `${label} renders original held text`);
+    await active.getByTestId('turn-activity').waitFor();
+    assert.equal(await active.getAttribute('data-turn-status'), 'inProgress');
+    assert.equal(await page.getByTestId('chat-input').innerText(), draft);
+    assert.equal(await page.locator('.message-column [data-turn-id]').count(), 2);
+    assert.equal(await page.locator('.message-column .user-message').count(), 2);
+    const snapshotThread = thread(await state());
+    assert.deepEqual(snapshotThread.turns.map(turn => turn.id), attachedThread.turns.map(turn => turn.id));
+    assert.equal(snapshotThread.turns.at(-1).status, 'inProgress');
+    assert.equal(requests.length, 2); assert.equal(held.size, 1); assert.ok(held.has(heldResponse));
+    assert.equal(heldResponse.destroyed, false); assert.equal(heldResponse.writableEnded, false);
+    assert.deepEqual({ workRequest: 2, localPort: heldResponse.socket.localPort, remotePort: heldResponse.socket.remotePort }, connection);
+    const currentIdentity = await identity(); assert.deepEqual(currentIdentity, originalIdentity, `${label} retains owned processes and generations`);
+    const rendererPid = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.getOSProcessId());
+    const screenshot = `${label}.png`; await page.screenshot({ path: join(scratch, screenshot) });
+    attachments.push({ label, projectId, threadId, turnId: attachedTurnId, identity: currentIdentity, rendererPid, connection, text: await answer.innerText(), status: snapshotThread.turns.at(-1).status, draft: await page.getByTestId('chat-input').innerText(), screenshot });
+  };
+  await observeAttachment('before-reload');
+  for (const label of ['renderer-reload', 'renderer-crash-reload']) {
+    if (label === 'renderer-crash-reload') {
+      await Promise.all([page.waitForEvent('crash'), app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.forcefullyCrashRenderer())]);
+      assert.deepEqual(await identity(), originalIdentity, 'renderer crash retains the running application and engines');
+      assert.ok(held.has(heldResponse)); assert.equal(requests.length, 2);
+    }
+    if (label === 'renderer-crash-reload') {
+      const documentUrl = await app.evaluate(async ({ BrowserWindow }) => {
+        const contents = BrowserWindow.getAllWindows()[0].webContents;
+        await new Promise(resolve => { contents.once('did-finish-load', resolve); contents.reload(); });
+        return contents.getURL();
+      });
+      const [port] = (await readFile(join(scratch, 'electron/DevToolsActivePort'), 'utf8')).split('\n');
+      rendererConnection = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+      page = rendererConnection.contexts()[0].pages().find(candidate => candidate.url() === documentUrl);
+      assert.ok(page, 'fresh automation connection observes the recovered product document');
+      page.setDefaultTimeout(20000); page.on('pageerror', error => errors.push(error.stack));
+    } else await page.reload({ waitUntil: 'domcontentloaded' });
+    await observeAttachment(`${label}-reattached`);
+    const continuation = `LIVE_AFTER_${label.replaceAll('-', '_').toUpperCase()}`;
+    heldResponse.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: `\n${continuation}` }, finish_reason: null }] })}\n\n`);
+    streamedParts.push(continuation);
+    await observeAttachment(`${label}-continued`);
+    checks.push(`${label} reattaches the production App to the original live turn and model connection, retains history and draft, and renders a new continuation without replay`);
+  }
+  heldResponse.end(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] })}\n\ndata: [DONE]\n\n`);
+  await until(async () => thread(await state())?.turns.find(turn => turn.id === attachedTurnId)?.status === 'completed', 'original attached turn completes');
+  await until(() => held.size === 0, 'completed original model connection closes');
+  const completed = page.locator(`[data-turn-id="${attachedTurnId}"]`);
+  await until(async () => { const text = await completed.locator('.assistant-message-final .conversation-markdown').innerText(); return streamedParts.every(part => text.includes(part)); }, 'App renders completed original response');
+  assert.equal(await completed.getAttribute('data-turn-status'), 'completed');
+  assert.equal(await completed.locator('.assistant-message-final').count(), 1); assert.equal(await completed.getByTestId('turn-activity').count(), 0);
+  assert.deepEqual(thread(await state()).turns.map(turn => turn.id), attachedThread.turns.map(turn => turn.id));
+  assert.equal(thread(await state()).turns.filter(turn => turn.id === attachedTurnId && turn.status === 'completed').length, 1);
+  assert.equal(await page.locator('.message-column .user-message').count(), 2); assert.equal(requests.length, 2);
+  assert.deepEqual(await identity(), originalIdentity);
+  await page.screenshot({ path: join(scratch, 'attached-turn-completed.png') });
+  attachments.push({ label: 'attached-turn-completed', projectId, threadId, turnId: attachedTurnId, status: 'completed', requests: requests.length, screenshot: 'attached-turn-completed.png' });
+  checks.push('the original attached turn completes once with one final response and no duplicate input or model work');
+  await page.getByTestId('chat-input').fill('hold application restart'); await page.getByRole('button', { name: '发送', exact: true }).click();
+  await until(async () => held.size === 1 && thread(await state())?.turns.length === 3 && thread(await state()).turns.at(-1).status === 'inProgress', 'independent third turn held for application restart');
+  assert.equal(requests.length, 3); assert.equal(held.size, 1);
+  const originalThread = structuredClone(thread(await state()));
+  const original = await records(); generations.push(original);
+  await page.getByTestId('chat-input').fill(draft); await sleep(300);
   if (replacement) { await copyFile(replacement, staged); await chmod(staged, originalStat.mode & 0o777); await rename(staged, binary); }
   else await utimes(binary, originalStat.atime, new Date(originalStat.mtimeMs + 10000));
   for (let index = 0; index < 2; index++) {
@@ -108,7 +212,7 @@ try {
     await until(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible()), 'window shown');
     assert.equal((await metadata()).applicationOwner.appRunId, originalMetadata.applicationOwner.appRunId);
     assert.deepEqual((await records()).map(service => service.generation), original.map(service => service.generation));
-    assert.equal(await page.getByTestId('chat-input').innerText(), draft); assert.equal(requests.length, 2); assert.equal(held.size, 1);
+    assert.equal(await page.getByTestId('chat-input').innerText(), draft); assert.equal(requests.length, 3); assert.equal(held.size, 1);
     assert.equal(thread(await state()).turns.at(-1).id, originalThread.turns.at(-1).id);
   }
   await restoreBinary();
@@ -132,12 +236,14 @@ try {
   assert.ok(current.filter(service => service.state === 'stopped').every(service => !alive(service.hostPid) && !alive(service.corePid)));
   assert.deepEqual(thread(await state()).turns.map(turn => turn.id), originalThread.turns.map(turn => turn.id));
   assert.equal(thread(await state()).turns[0].status, 'completed');
+  assert.equal(thread(await state()).turns.find(turn => turn.id === attachedTurnId).status, 'completed');
   assert.notEqual(thread(await state()).turns.at(-1).status, 'inProgress');
-  assert.equal(await page.getByTestId('chat-input').innerText(), draft); assert.equal(requests.length, 2);
+  assert.equal(await page.getByTestId('chat-input').innerText(), draft); assert.equal(requests.length, 3);
   checks.push('application restart creates a new owner and engine generation, retains history and unsent draft, and never replays interrupted input');
   await stop(); await quiescent(); passed = true;
 } catch (error) { errors.push(error.stack); if (page && app) await page.screenshot({ path: join(scratch, 'failure.png') }).catch(() => {}); }
 finally {
+  await rendererConnection?.close().catch(() => {});
   if (app && alive(processHandle.pid)) await app.evaluate(({ app }) => app.exit(1)).catch(() => processHandle.kill('SIGKILL'));
   await application.close();
   await restoreBinary().catch(error => errors.push(`binary restore: ${error.stack}`));
@@ -147,6 +253,7 @@ finally {
   for (const response of held) response.destroy(); model.closeAllConnections(); await new Promise(resolve => model.close(resolve));
   for (const [path, hash] of Object.entries(sourceHashes)) if (createHash('sha256').update(await readFile(join(gui, path))).digest('hex') !== hash) errors.push(`source changed during test: ${path}`);
   passed = passed && errors.length === 0;
-  await writeFile(join(scratch, 'manifest.json'), JSON.stringify({ passed, checks, errors, force, generations, sourceHash, sourceHashes, binary, replacement, originalHash, requests: requests.length, scope: 'isolated source Electron/Main/Desktop/Core/Runtime; local model; native dialog/picker responses injected; no installed package' }, null, 2));
+  const desktopCleanup = [...desktopPids].map(pid => ({ pid, exited: !alive(pid) }));
+  await writeFile(join(scratch, 'manifest.json'), JSON.stringify({ passed, checks, errors, force, generations, attachments, desktopCleanup, sourceHash, sourceHashes, binary, replacement, originalHash, requests: requests.length, namingRequests: modelRequests.filter(request => request.kind === 'naming').length, modelRequests, scope: 'isolated source Electron/Main/Desktop/Core; Runtime PID presence recorded without requiring tool execution; local model; native dialog/picker responses injected; no installed package' }, null, 2));
 }
 assert.ok(passed, errors.join('\n')); console.log('PASS', checks);

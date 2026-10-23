@@ -8,14 +8,20 @@ type ConversationComposerProps = Omit<ComponentProps<typeof ChatPromptEditor>, "
   project: Data;
   contextControl?: ReactNode;
   modelConfig?: Data;
+  fallbackModelConfig?: Data;
   modelDisabled?: boolean;
-  allowModelInheritance?: boolean;
   onConfigureModel: (values: Data) => void;
 };
 
 /** Main and Side share the editor, toolbar and Core model catalog; callers own submission and drafts. */
-export function ConversationComposer({ project, modelConfig: config, modelDisabled, onConfigureModel, allowModelInheritance, contextControl, ...editor }: ConversationComposerProps) {
-  const value = allowModelInheritance && config?.model === undefined ? "__inherit" : config?.model ? `${config.model.providerId}/${config.model.modelId}` : "";
+export function ConversationComposer({ project, modelConfig, fallbackModelConfig, modelDisabled, onConfigureModel, contextControl, ...editor }: ConversationComposerProps) {
+  // 展示回退不改变草稿意图；显式点选当前展示模型仍可覆盖历史锚点模型。
+  const config = modelConfig?.model === undefined && fallbackModelConfig ? {
+    ...fallbackModelConfig,
+    parameters: { ...fallbackModelConfig.parameters, ...modelConfig?.parameters },
+    resolvedParameters: { ...fallbackModelConfig.resolvedParameters, ...modelConfig?.parameters },
+  } : modelConfig;
+  const value = config?.model ? `${config.model.providerId}/${config.model.modelId}` : "";
   const options = project.models.filter((item: Data) => item.providerId || !project.models.some((candidate: Data) => candidate.providerId && candidate.isDefault)).map(composerModelOption);
   if (config?.model && !options.some((option: { value: string }) => option.value === value)) {
     options.push({ value, label: config.model.modelId, unavailableReason: "模型不可用" });
@@ -34,11 +40,10 @@ export function ConversationComposer({ project, modelConfig: config, modelDisabl
     disabled={modelDisabled}
     effort={config?.resolvedParameters?.reasoningEffort ?? config?.parameters?.reasoningEffort}
     value={value}
-    options={[...(allowModelInheritance ? [{ value: "__inherit", label: "继承锚点模型" }] : []), ...options]}
-    onEffortChange={value => onConfigureModel({ parameters: { ...config?.parameters, reasoningEffort: value } })}
+    options={options}
+    onEffortChange={value => onConfigureModel({ parameters: { ...modelConfig?.parameters, reasoningEffort: value } })}
     onChange={nextValue => {
-      if (nextValue === value) return;
-      if (nextValue === "__inherit") { onConfigureModel({ model: undefined }); return; }
+      if (nextValue === value && (!fallbackModelConfig || modelConfig?.model !== undefined)) return;
       const model = project.models.find((item: Data) => nextValue ? `${item.providerId}/${item.modelId}` === nextValue : !item.providerId);
       if (model) onConfigureModel({
         model: model.providerId ? { providerId: model.providerId, modelId: model.modelId } : null,

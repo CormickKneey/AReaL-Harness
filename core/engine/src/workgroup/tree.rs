@@ -57,7 +57,7 @@ pub fn snapshot(root: &Path) -> Result<Tree> {
 /// 忽略的构建产物不成为源码，依赖必须由执行环境单独提供。
 pub fn snapshot_source(root: &Path, baseline: &Tree) -> Result<Tree> {
     #[cfg(unix)]
-    return snapshot::read_source(root, baseline, true);
+    return snapshot::read_source(root, baseline.keys().cloned().collect(), true);
     #[cfg(not(unix))]
     anyhow::bail!(
         "descriptor-relative source projection is unsupported: {}",
@@ -65,10 +65,14 @@ pub fn snapshot_source(root: &Path, baseline: &Tree) -> Result<Tree> {
     )
 }
 
-/// 私有工作区不能继承存储目录祖先仓库的 index 或 ignore；冻结输入显式保留。
-pub fn snapshot_artifact(root: &Path, baseline: &Tree) -> Result<Tree> {
+/// 私有工作区不能继承存储目录祖先仓库的 index 或 ignore；冻结输入与声明写路径显式保留。
+pub fn snapshot_artifact(root: &Path, baseline: &Tree, declared_writes: &[String]) -> Result<Tree> {
     #[cfg(unix)]
-    return snapshot::read_source(root, baseline, false);
+    return snapshot::read_source(
+        root,
+        baseline.keys().chain(declared_writes).cloned().collect(),
+        false,
+    );
     #[cfg(not(unix))]
     anyhow::bail!(
         "descriptor-relative artifact projection is unsupported: {}",

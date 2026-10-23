@@ -49,6 +49,7 @@ areal_protocol::method_catalog! {
     "areal/plugin/resolve" => Mutation, Management;
     "areal/thread/start" => Mutation, Thread;
     "areal/thread/configure" => Mutation, Thread;
+    "areal/thread/prediction" => Mutation;
     "areal/thread/inspect" => Read;
     "areal/profile/list" => Read;
     "areal/profile/read" => Read;
@@ -813,6 +814,10 @@ async fn dispatch_inner(
             engine.plan(&p.thread_id).await.map(|p| json!(p))
         }
         "areal/plan/update" => engine.update_plan(parse(params)?).await.map(|p| json!(p)),
+        "areal/thread/prediction" => engine
+            .prompt_prediction(parse(params)?)
+            .await
+            .map(|value| json!(value)),
         "areal/thread/configure" => engine
             .configure_thread_as(identity.into(), parse(params)?)
             .await

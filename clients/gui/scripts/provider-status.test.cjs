@@ -61,7 +61,7 @@ function fixture() {
     return { authenticated: true, state: account.refreshing ? 'refreshing' : account.failure?.state ?? 'ready',
       models: service.models, diagnostic: account.failure?.diagnostic() ?? null };
   };
-  const project = (id, existing = []) => ({ id, client: { request: async method => {
+  const project = (id, existing = []) => ({ id, connectionGeneration: 1, service: { serviceId: `service-${id}`, generation: 'generation-1' }, client: { ready: true, request: async method => {
     assert.equal(method, 'areal/provider/list');
     reads.push(id);
     return { data: existing };

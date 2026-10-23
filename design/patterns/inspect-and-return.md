@@ -14,9 +14,8 @@
 
 | 平台 | 实现所有者 | 应核对的结果 |
 | --- | --- | --- |
-| GUI 与 Remote | [长文本组件指南](../../clients/gui/DESIGN_SYSTEM.md#长文本统一采用渐进展示)、原资源宿主 | 全文可达、展开与收起、身份、返回、焦点及原生视图 |
-| TUI | [展开与阅读](../../docs/design/tui.md#展开与阅读) | 稳定内容锚点、键盘切换、终端宽度变化和输入焦点 |
+| 桌面 GUI | [长文本组件指南](../../clients/gui/DESIGN_SYSTEM.md#长文本统一采用渐进展示)、原资源宿主 | 全文可达、展开与收起、身份、返回、焦点及原生视图 |
+| Remote Web 复用 | [RemoteWorkbench](../../clients/gui/renderer/src/remote/RemoteWorkbench.tsx) | 按实际接入的组件核对浏览器内的全文、返回与焦点，不推导桌面原生能力 |
 | 本地 Web | [界面所有者](../../clients/web/app.js) | 浏览器内的展开、导航和草稿，不据此推导原生窗口能力 |
-| 非交互 CLI | [输出契约](../../docs/api/claude-cli.md) | 所选输出模式中的完整内容和身份，不要求面板或折叠 |
 
 返回是否成功需要实际操作验证。宿主截图不替代独立原生视图的可见性和交互证据。

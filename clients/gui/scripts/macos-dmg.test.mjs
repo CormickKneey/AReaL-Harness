@@ -243,3 +243,25 @@ test(
     }
   },
 );
+
+test("unsigned DMG compacts identical frameworks without sealing the source and rejects differing bytes", {
+  skip: process.platform !== "darwin", timeout: 120_000,
+}, async (t) => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "areal-dmg-unsigned-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const app = await fixture(root);
+  // Raw Electron inputs can have no framework signature envelope.
+  for (const framework of [join(app, frameworkRelative), join(app, serviceRelative, frameworkRelative)])
+    await rm(join(framework, "Versions/A/_CodeSignature"), { recursive: true, force: true });
+  // An unsealed outer app must still export in the explicit no-new-signatures mode.
+  await writeFile(join(app, "Contents/Resources/unsealed"), "local unsigned package");
+  const before = await fingerprint(app);
+  const result = await buildMacOSDmg({ app, destination: join(root, "unsigned.dmg"),
+    volumeName: "Unsigned fixture", verifySignatures: false });
+  assert.ok(result.linkedBytes > 0);
+  assert.deepEqual(await fingerprint(app), before);
+  await writeFile(join(app, serviceRelative, frameworkRelative, "Versions/A/Resources/payload"), "different bytes");
+  await assert.rejects(buildMacOSDmg({ app, destination: join(root, "rejected.dmg"),
+    volumeName: "Rejected", verifySignatures: false }), /bytes differ/);
+  await assert.rejects(lstat(join(root, "rejected.dmg")), { code: "ENOENT" });
+});

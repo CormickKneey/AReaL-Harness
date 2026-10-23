@@ -7,7 +7,7 @@ English: [shared workspace](shared-workspace.en.md)。[页面合同](../surfaces
 - ComposerSurface 拥有编辑区、工具栏、default/compact 布局和模型入口的基础呈现。ChatPromptEditor 透传 surfaceLayout；App 只为满屏资源下的主 Composer / DraftComposer 显式选择 compact。Side 保持 default，切换工作区不会因祖先选择器改变另一个编辑器的布局。
 - 紧凑输入在其实际 composer-dock 容器宽度下重排；长输入由原编辑区滚动。布局切换保留编辑器实例，不重建草稿。
 - 窄容器的紧凑布局将编辑区与工具栏上下排列，并约束模型入口宽度，避免长草稿挤出发送按钮。
-- ConversationComposer 仍是理解模型目录、继承与思考强度的业务组合。主/Side 共用展示和编辑骨架，草稿键、来源、服务身份、配置与提交分别归原调用方和 Core。
+- ConversationComposer 仍是理解模型目录与思考强度的业务组合。主/Side 共用模型名称、思考强度和选择菜单，不单列“继承”文案或选项；未选模型的 Side 草稿按来源主会话配置展示，显式选择后及已创建的 Side 按自己的配置展示。展示回退不写入草稿提交，首问未指定模型时仍由 Core 按锚点继承。主/Side 共用展示和编辑骨架，草稿键、来源、服务身份、配置与提交分别归原调用方和 Core。
 - SidePane 拥有窗口局部的标签和视图选择。App 继续拥有任务面板返回与焦点；原生网页、终端和 MCP App 的资源归属不转移到共享控件。
 - Side 的已带回提示和错误复用 Feedback 的文字角色。原 requestId、未知受理、恢复与重试入口保留；已保存与后续同步失败不合并成一个成功状态。
 - 设置继续复用 SettingsPageParts.css、真实 SettingsPage 与 portal SettingsDialog。普通设置 Switch 沿 default；SettingsSelect 的有限变体由共享组件决定，调用方不复制控件样式。

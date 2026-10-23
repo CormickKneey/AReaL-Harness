@@ -170,6 +170,12 @@ export function GeneralSettings({ settings = {}, power, menuBar, projectlessDire
       <SettingsSection title={t("settings.displaySettings.editor")}>
         <SettingsGroupCard>
           <SettingsRow
+            label={t("settings.displaySettings.predictNextPrompt")}
+            description={t("settings.displaySettings.predictNextPromptDescription")}
+            control={<SettingsSwitch aria-label={t("settings.displaySettings.predictNextPrompt")} checked={prefs.nextPromptSuggestions}
+              onCheckedChange={nextPromptSuggestions => setApplicationPreferences({ nextPromptSuggestions })} />}
+          />
+          <SettingsRow
             label={t("settings.displaySettings.sendShortcut")}
             description={t("settings.displaySettings.shiftEnterAlwaysInsertsANewLine")}
             control={

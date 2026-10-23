@@ -1,6 +1,5 @@
 "use strict";
-const MAX_CACHED_PAGES = 8;
-const MAX_WORKSPACE_PAGES = 4;
+const { isPinned, reserveDecision } = require('./preview-residency.cjs');
 const workspaceKey = (coreInstanceId, projectId, threadId) => JSON.stringify([coreInstanceId, projectId, threadId]);
 const pageKey = (coreInstanceId, projectId, threadId, pageId) => JSON.stringify([coreInstanceId, projectId, threadId, pageId]);
 const { randomUUID, randomBytes, createHash } = require('node:crypto');
@@ -635,15 +634,8 @@ class CorePreview {
     page.downloads?.clear();
     page.downloadRecords?.clear();
   }
-  pinned(page) {
-    return !page.view || page.crashed || page.control !== 'human' || page.requestedVisible || !!page.annotationCaptureId
-      || !!page.styleTrial
-      || page.activeAction || page.activeRead || page.activeSelection || page.activePrepare || page.claiming || page.plans.size > 0
-      || page.inputPending.size > 0 || page.heldButtons.size > 0 || page.heldKeys.size > 0
-      || page.dialogPending || page.fileHandoff || (page.downloads?.size ?? 0) > 0;
-  }
   suspend(page) {
-    if (this.pinned(page)) throw new Error('页面正在使用，不能驱逐');
+    if (isPinned(page)) throw new Error('页面正在使用，不能驱逐');
     const c = page.view.webContents;
     page.url = c.isDestroyed() ? page.url : c.getURL() || page.url;
     page.title = c.isDestroyed() ? page.title : c.getTitle() || page.title;
@@ -654,13 +646,13 @@ class CorePreview {
   }
   reservePageSlot(projectId, threadId, replacing = false, excluded = null) {
     this.releaseInvalidOwners();
-    if (!replacing && this.workspacePages(projectId, threadId).length >= MAX_WORKSPACE_PAGES)
+    const decision = reserveDecision(this.pages.values(), {
+      workspacePageCount: this.workspacePages(projectId, threadId).length, replacing, excluded,
+    });
+    if (decision.kind === 'workspaceFull')
       throw new Error('当前浏览工作区已达4页，请先关闭页面');
-    const native = [...this.pages.values()].filter(page => page.view && page !== excluded);
-    if (native.length < MAX_CACHED_PAGES) return;
-    const idle = native.find(page => !this.pinned(page));
-    if (!idle) throw new Error('浏览页面已达8页且都在使用，请先关闭页面');
-    this.suspend(idle);
+    if (decision.kind === 'allPinned') throw new Error('浏览页面已达8页且都在使用，请先关闭页面');
+    if (decision.kind === 'evict') this.suspend(decision.page);
   }
   workspaceOutstanding(projectId, threadId) {
     return this.workspacePages(projectId, threadId).reduce((count, page) => count + page.plans.size

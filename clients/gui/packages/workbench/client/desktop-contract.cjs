@@ -31,6 +31,7 @@ const commandDefinitions = Object.freeze({
   history: ['service', 'thread', operations(read, 'acquire loadOlder loadItem release')],
   create: ['service', 'project', recoverable], prepareCreator: ['service', 'project', mutation], fork: ['service', 'project', recoverable],
   side: ['service', 'project', { ...operations(read, 'recover context list'), ...operations(recoverable, 'start send') }],
+  prediction: ['service', 'thread', mutation],
   send: ['service', 'thread', recoverable], editMessage: ['service', 'thread', recoverable], continue: ['service', 'thread', recoverable], stop: ['service', 'thread', recoverable],
   attachBrowser: ['service', 'thread', recoverable], respond: ['service', 'thread', mutation], reconcile: ['service', 'project', read], configure: ['service', 'thread', recoverable],
   queue: ['service', 'thread', read], queueEdit: ['service', 'thread', recoverable],
@@ -85,6 +86,8 @@ function validateCommand(name, params, { serviceOnly = false } = {}) {
   if (serviceOnly && layer !== 'service') invalid();
   if (scope !== 'app' && !identifier(params.projectId)) invalid();
   if (scope === 'thread' && !identifier(params.threadId)) invalid();
+  if (name === 'prediction' && (!identifier(params.sourceTurnId) || !['request', 'cancel'].includes(String(params.operation))
+    || Object.keys(params).some(key => !['projectId', 'threadId', 'sourceTurnId', 'operation'].includes(key)))) invalid();
   if (name === 'history' && (!identifier(params.viewId) || !['acquire', 'loadOlder', 'loadItem', 'release'].includes(String(params.operation))
     || params.operation === 'loadItem' && !identifier(params.itemId)
     || Object.keys(params).some(key => !['projectId', 'threadId', 'viewId', 'operation', ...(params.operation === 'loadItem' ? ['itemId'] : [])].includes(key)))) invalid();

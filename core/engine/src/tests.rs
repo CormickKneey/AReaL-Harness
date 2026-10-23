@@ -954,6 +954,7 @@ async fn compacted_history_preserves_steer_inside_an_automatic_goal_turn() {
         ],
     });
     thread.context_checkpoint = Some(areal_protocol::ContextCheckpoint {
+        app_reference_seen: None,
         retained_inputs: None,
         evidence: Vec::new(),
         through_item_id: "boundary".into(),

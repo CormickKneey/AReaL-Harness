@@ -14,7 +14,7 @@ import { verifiedFileReceipts } from "./TurnFileSummary.js";
 import { DiffViewer } from "./components/ui/diff-viewer.js";
 import { MessageActions } from "./MessageActions.js";
 import { SentAttachment } from "./MessageAttachment.js";
-import type { McpResultSource, McpResultState } from "./McpAppHost.js";
+import type { McpResultSource, McpResultState } from "./mcp-app-services.js";
 import type { Action, Data } from "./services.js";
 export function ToolEvent({ item, onFile, onAgent, agents, turnId, readTurnReview, action, projectId, threadId, animate = false, onDisclosureChange, onOpenResult, resultState }: {
   onOpenResult?: (source: McpResultSource) => Promise<void>; resultState?: McpResultState;

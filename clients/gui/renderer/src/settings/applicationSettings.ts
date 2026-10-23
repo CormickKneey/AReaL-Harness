@@ -52,6 +52,7 @@ export type ApplicationSettings = {
   fontSmoothing: boolean;
   reducedMotion: "system" | "on" | "off";
   diffMarkers: "color" | "signs";
+  nextPromptSuggestions: boolean;
   sendShortcut: "enter" | "modifier";
   followUp: "queue" | "steer";
   defaultPermissionPreset: PermissionPreset;
@@ -67,6 +68,7 @@ export const DEFAULT_APPLICATION_SETTINGS: ApplicationSettings = {
   fontSmoothing: true,
   reducedMotion: "system",
   diffMarkers: "color",
+  nextPromptSuggestions: true,
   sendShortcut: "enter",
   followUp: "queue",
   defaultPermissionPreset: "autoReview",
@@ -86,6 +88,7 @@ export function normalizeApplicationSettings(raw: any): ApplicationSettings {
     saved.contentSize <= 24
       ? saved.contentSize
       : 14;
+  result.nextPromptSuggestions = saved.nextPromptSuggestions !== false;
   result.sendShortcut =
     saved.sendShortcut === "modifier" ? "modifier" : "enter";
   result.pointerCursor = saved.pointerCursor === true;

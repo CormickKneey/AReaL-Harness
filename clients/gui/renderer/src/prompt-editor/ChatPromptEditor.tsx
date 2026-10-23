@@ -49,6 +49,7 @@ export function ChatPromptEditor({
   taskId,
   skillCatalogSessionId,
   initialValue,
+  nextPrompt,
   syncInitialValueOnMount = true,
   placeholder,
   disabled = false,
@@ -140,6 +141,7 @@ export function ChatPromptEditor({
   inputApiRef?: MutableRefObject<LexicalChatInputHandle | null>;
   onModeSwitchContainerChange?: (container: HTMLSpanElement | null) => void;
   triggerPanelContainer?: HTMLElement | null;
+  nextPrompt?: string;
   promptHistory?: readonly string[];
   className?: string;
   shellClassName?: string;
@@ -388,6 +390,7 @@ export function ChatPromptEditor({
         context={topContent}
         editor={<LexicalChatInput
           placeholder={placeholder}
+          nextPrompt={nextPrompt}
           disabled={disabled}
           submitDisabled={submitDisabled}
           allowSubmitWhenEmpty={allowSubmitWhenEmpty}

@@ -148,6 +148,9 @@ impl Engine {
         self.validate_fork_model_compatibility(thread, model.as_ref())?;
         validate_input(&input, &model.capabilities())?;
         let mut candidate = thread.clone();
+        if let Some(data) = &mut candidate.desktop {
+            data.prompt_prediction = None;
+        }
         let text = input
             .iter()
             .map(Input::as_text)
@@ -244,6 +247,7 @@ impl Engine {
         ),
     ) {
         let (direct_tool, tool_meta) = direct_tool;
+        prompt_prediction::invalidate(state);
         self.spawn_goal_scheduler();
         self.start_task_scheduler();
         let (tx, rx) = mpsc::channel(self.limits.mailbox_capacity);
@@ -1044,6 +1048,11 @@ impl Engine {
         }
         let active = state.active.take().unwrap();
         let name_model = active.model.clone();
+        prompt_prediction::capture(
+            &mut state,
+            active.model.clone(),
+            self.shutdown.child_token(),
+        );
         let name_turn = state
             .thread
             .turns

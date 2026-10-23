@@ -230,6 +230,18 @@ async function launch() {
   page = await app.firstWindow(); page.setDefaultTimeout(15000);
   page.on("pageerror", error => errors.push(error.message));
   await page.getByTestId("areal-workbench").waitFor({ timeout: 120000 });
+  // 本专项统计执行请求；提示预测由独立专项验收，避免辅助请求混入不重放断言。
+  const preferencesChanged = await page.evaluate(() => {
+    const key = "areal-gui:application-preferences";
+    const preferences = JSON.parse(localStorage.getItem(key) ?? "{}");
+    if (preferences.nextPromptSuggestions === false) return false;
+    localStorage.setItem(key, JSON.stringify({ ...preferences, nextPromptSuggestions: false }));
+    return true;
+  });
+  if (preferencesChanged) {
+    await page.reload();
+    await page.getByTestId("areal-workbench").waitFor({ timeout: 120000 });
+  }
   await until(s => s.connection?.state === "ready", "desktop ready");
   await app.evaluate(({ dialog, BrowserWindow }, path) => {
     dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] });

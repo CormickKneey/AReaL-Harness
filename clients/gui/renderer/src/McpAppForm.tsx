@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { z } from "zod";
 import { McpAppIcon } from "./McpAppIcon.js";
+import type { McpFormResource, McpMetadataImageLoader } from "./mcp-app-services.js";
 const icon = z
     .object({
         src: z
@@ -33,7 +34,6 @@ const resource = z
         _meta: z.record(z.string(), z.unknown()).optional(),
     })
     .passthrough();
-export type McpFormResource = z.infer<typeof resource>;
 const resourceInput = z
     .object({
         type: z.enum(["resource", "file"]),
@@ -202,6 +202,7 @@ export function McpAppForm({
     requestId,
     message,
     requestedSchema,
+    loadMetadataImage,
     onRespond,
     onUnsupported,
     onPickResources,
@@ -211,6 +212,7 @@ export function McpAppForm({
     requestId: string;
     message: string;
     requestedSchema: unknown;
+    loadMetadataImage?: McpMetadataImageLoader;
     onRespond: (requestId: string, response: McpFormResponse) => Promise<void>;
     onUnsupported: (requestId: string) => Promise<void>;
     onPickResources?: (fieldName: string) => Promise<McpFormResource[]>;
@@ -465,6 +467,7 @@ export function McpAppForm({
                                             }}
                                         >
                                             <McpAppIcon
+                                                loadMetadataImage={loadMetadataImage}
                                                 size={48}
                                                 icon={
                                                     "x-openai-thumbnail" in item

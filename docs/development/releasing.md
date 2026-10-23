@@ -12,9 +12,9 @@ CLI 正式与预览均交付完整 bundle；macOS 保留并严格验证输入 ad
 
 ## 候选构建
 
-`Release bundles` workflow 可通过相关 PR 或 workflow_dispatch 构建候选；这两种触发只上传 CI artifacts，不创建 Git tag 或 Release。固定 Rust 工具链与 Cargo.lock；macOS 15 arm64、Ubuntu 22.04 x86_64 分别原生构建。
+CLI/GUI 安装包在干净的选定提交上本地构建、验收和发布。PR 通过稳定的 `Release gate` 运行发行契约测试，不构建完整包、不执行安装升级包验收、不上传候选或发布；推送 tag 也不启动打包。既有 `Release bundles` 手动 workflow 仅保留显式 `workflow_dispatch` 入口，常规发行使用下方本地命令。固定 Rust 工具链与 Cargo.lock；macOS 15 arm64、Ubuntu 22.04 x86_64 分别原生构建。
 
-流水线执行 `make release`、生成完整 bundle 与逐文件 manifest、生成 tar.gz 和 SHA256，然后解压到含空格的新路径，以本地 HTTP 模型 fixture 验证真实命令写入与文件读取。Linux 执行安装器再验证安装入口，并验证原生工具；两平台在隔离 Homebrew prefix 验证稳定与 beta 安装升级，执行 `brew test` 和真实读写；macOS 另外运行 release-profile 的 bundle 生命周期 soak。
+本地发行验收执行 `make release`、生成完整 bundle 与逐文件 manifest、生成 tar.gz 和 SHA256，然后解压到含空格的新路径，以本地 HTTP 模型 fixture 验证真实命令写入与文件读取。Linux 执行安装器再验证安装入口，并验证原生工具；两平台在隔离 Homebrew prefix 验证稳定与 beta 安装升级，执行 `brew test` 和真实读写；macOS 另外运行 release-profile 的 bundle 生命周期 soak。
 
 macOS 打包保留构建产物的签名与原始字节，并执行 `codesign --verify --strict`；签名缺失或无效时停止打包，需修复构建产物。打包不强制重签二进制，manifest 校验和对应实际复制的文件。
 
@@ -26,10 +26,10 @@ macOS 完整包还包含独立执行的 Bash（版本与全部源文件校验和
 
 ## 发布步骤
 
-1. 合并发布准备变更；确认选定提交的 Verify 与 Release bundles 验收通过，并检查当前版本、许可证和迁移说明。
+1. 合并发布准备变更；确认选定提交的 PR 检查与本地发行验收通过，并检查当前版本、许可证和迁移说明。
 2. 审阅两平台候选、Homebrew 测试和 Linux 安装日志，确认版本及支持范围。
-3. 在固定提交创建尚未使用的 `v<版本>` tag（预览为 `vX.Y.Z-beta.N`）；tag 必须与 `areal --version` 一致，不覆盖已有 tag。tag workflow 重建并验收两平台产物，全部通过后才创建 **draft** Release，不自动公开。
-4. 下载 draft assets，核对 SHA256SUMS、manifest 中的 sourceRevision、profile 和平台；补齐简短中英文 release notes，仅写本次用户可见变化、重要修复与必要升级注意。macOS 尚无 Developer ID/公证，不应标为已公证。
+3. 在固定提交创建尚未使用的 `v<版本>` tag（预览为 `vX.Y.Z-beta.N`）；tag 必须与 `areal --version` 一致，不覆盖已有 tag。在本机完成两平台构建和验收后，创建 **draft** Release 并上传已验证附件；创建 tag 不触发打包或发布。
+4. 对照本地产物和已上传 draft 附件，核对 SHA256SUMS、manifest 中的 sourceRevision、profile 和平台；补齐简短中英文 release notes，仅写本次用户可见变化、重要修复与必要升级注意。macOS 尚无 Developer ID/公证，不应标为已公证。
 5. 按已有授权公开 draft，再按下方公共 tap 流程同步对应渠道：正式版只更新 `Formula/areal.rb`，beta 只更新 `Formula/areal-beta.rb`。先确认公共仓库、对应 formula 和归档可下载，再提供相应安装命令；同步失败不能声称 Homebrew 可用。
 6. 在 macOS arm64 与 Linux x86_64 的隔离环境，从公共地址验证 Homebrew 首装、旧版升级、实际来源路由、渠道隔离和完整 Runtime，并保留独立安装器回归；记录发行 digest 与最终结果。后续版本重复本流程，不替换已公开版本的归档。
 
@@ -47,7 +47,7 @@ python3 scripts/release-smoke.py --bundle target/release-bundle/areal
 python3 -m unittest discover -s scripts/tests -p test_release.py
 ```
 
-Homebrew formula 安装 `bin`、`libexec`、LICENSE 和 manifest，避免改变 Core 查找 helper 的相对路径。安装器将不同版本放在不同目录，只原子替换入口符号链接；用户配置与历史不由安装器维护。校验、版本探测或入口提交失败均不得切换旧入口。`install-smoke.py` 在隔离目录用真实完整包/共享服务验证入口更新时保留真实运行中服务的 PID、generation 和完整旧包；该脚本随 Release bundles 运行。普通脚本测试使用合成包覆盖异常，不启动用户服务。
+Homebrew formula 安装 `bin`、`libexec`、LICENSE 和 manifest，避免改变 Core 查找 helper 的相对路径。安装器将不同版本放在不同目录，只原子替换入口符号链接；用户配置与历史不由安装器维护。校验、版本探测或入口提交失败均不得切换旧入口。`install-smoke.py` 在隔离目录用真实完整包/共享服务验证入口更新时保留真实运行中服务的 PID、generation 和完整旧包；本地发行验收必须运行该脚本。普通脚本测试使用合成包覆盖异常，不启动用户服务。
 
 ## 可选平台适配包
 
@@ -109,7 +109,7 @@ GUI 只支持 macOS arm64 更新，检查和下载由 Electron 持有，后台�
 
 `release-artifacts.py formula` 接受同版本两个 `--archive`，生成 macOS arm64/Linux x86_64 条件 formula，使用各自真实 SHA256。正式版输出 `areal.rb`；beta 输出 `areal-beta.rb`，keg-only，不覆盖稳定入口。Linux 需要宿主 glibc ≥ 2.35 与系统 `/usr/bin/bwrap`；不要把 macOS 限制放到 Linux 分支。
 
-`Sync public Homebrew tap` 在 CLI Release 公开后同步对应渠道，也可 workflow_dispatch 指定已公开 tag 重试。它保持 `contents: read`，只使用预先批准的 `HOMEBREW_TAP_TOKEN` 跨仓库授权；缺失时明确失败，不创建凭据或把发行成功当作 tap 同步成功。组织仓库不存在、写权限不足或 checksum 失败均阻断同步，但不覆盖/撤销已公开附件。由维护者按授权补齐仓库/权限后重试同一 tag；不能为了恢复扩大 token 或 workflow 权限。
+CLI Release 公开后不自动同步 tap；按下方命令在本机同步对应渠道，既有 `Sync public Homebrew tap` 手动 workflow 仅保留显式 workflow_dispatch 入口。它保持 `contents: read`，只使用预先批准的 `HOMEBREW_TAP_TOKEN` 跨仓库授权；缺失时明确失败，不创建凭据或把发行成功当作 tap 同步成功。组织仓库不存在、写权限不足或 checksum 失败均阻断同步，但不覆盖/撤销已公开附件。由维护者按授权补齐仓库/权限后重试同一 tag；不能为了恢复扩大 token 或 workflow 权限。
 
 具有既有 tap 写权限的维护者也可手动同步，脚本只接受已公开且渠道正确的 Release，重新下载双平台归档并校验，拒绝 formula 降级：
 
@@ -121,4 +121,4 @@ python3 scripts/sync-homebrew.py --tag vX.Y.Z --tap-checkout /absolute/new-tap -
 
 脚本不会创建仓库或凭据。公共渠道验收必须在未认证的公开地址核查 tap、formula、双平台归档和 SHA256，并在两平台的隔离 Homebrew prefix 实测首次安装、旧版升级、实际来源路由和稳定/beta 隔离。`homebrew-smoke.py` 在 macOS/Linux runner 执行原生候选验收；其中 `areal-validation/channel` 是隔离测试 tap，不等于公共 tap 验收。安装器完整性、Linux 原生工具、真实运行任务及旧包保留检查继续执行。Homebrew 可能清理旧 keg，升级要求先让任务完成并安全停服；不隐式停止后台。
 
-Linux 完整包仍在 Ubuntu 22.04 / glibc 2.35 原生构建并执行安装器、工具回归；Linuxbrew 在 Ubuntu 24.04 上下载并验证同一归档。Homebrew 自身当前需要较新的 glibc，旧宿主与长自定义 prefix 会触发其额外工具链引导，不能把该行为当作产品 glibc 基线变化，也不能跳过依赖检查冒充验收通过。两项均纳入 Release gate 和草稿发布门槛。
+Linux 完整包仍在 Ubuntu 22.04 / glibc 2.35 原生构建并执行安装器、工具回归；Linuxbrew 在 Ubuntu 24.04 上下载并验证同一归档。Homebrew 自身当前需要较新的 glibc，旧宿主与长自定义 prefix 会触发其额外工具链引导，不能把该行为当作产品 glibc 基线变化，也不能跳过依赖检查冒充验收通过。两项均保留为本地发行验收与草稿发布前的必需证据。

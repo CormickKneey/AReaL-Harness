@@ -2,6 +2,7 @@ use super::{File, MAX_FILE_BYTES, MAX_TREE_BYTES, Tree, excluded, valid_path};
 use anyhow::{Context, Result, ensure};
 use rustix::fs::{self, Dir, Mode, OFlags};
 use std::{
+    collections::BTreeSet,
     fs::File as Handle,
     io::Read,
     os::unix::fs::MetadataExt,
@@ -46,11 +47,8 @@ impl Drop for Reap {
     }
 }
 
-pub(super) fn read_source(root: &Path, baseline: &Tree, use_git: bool) -> Result<Tree> {
-    use std::{
-        collections::BTreeSet,
-        process::{Command, Stdio},
-    };
+pub(super) fn read_source(root: &Path, required: BTreeSet<String>, use_git: bool) -> Result<Tree> {
+    use std::process::{Command, Stdio};
     let root: PathBuf = root.components().collect();
     let directory: Handle = fs::open(&root, READ_FLAGS | OFlags::DIRECTORY, Mode::empty())?.into();
     let mut selected = BTreeSet::new();
@@ -128,7 +126,7 @@ pub(super) fn read_source(root: &Path, baseline: &Tree, use_git: bool) -> Result
             ensure!(valid_path(name), "unsupported tracked source path: {name}");
             selected.insert(name.to_owned());
         }
-        selected.extend(baseline.keys().cloned());
+        selected.extend(required);
         ensure!(
             selected.len() <= MAX_ENTRIES,
             "source selection capacity exceeded"
@@ -148,7 +146,7 @@ pub(super) fn read_source(root: &Path, baseline: &Tree, use_git: bool) -> Result
             !use_git || !root.join(".git").exists(),
             "Git source selection failed; no shared fallback was performed here"
         );
-        snapshot.required = baseline.keys().cloned().collect();
+        snapshot.required = required;
     }
     snapshot.visit(&directory, "", 0)?;
     Ok(snapshot.tree)
@@ -305,7 +303,7 @@ mod tests {
             .set_len(MAX_TREE_BYTES as u64 + 1)
             .unwrap();
         symlink("/outside/private", root.join("deps")).unwrap();
-        let source = read_source(root, &Tree::new(), true).unwrap();
+        let source = read_source(root, BTreeSet::new(), true).unwrap();
         assert_eq!(source["tracked.bin"].bytes.len(), 3 * 1024 * 1024);
         assert_eq!(source["tracked.txt"].bytes, b"dirty source");
         assert_eq!(source["untracked.py"].bytes, b"source");
@@ -317,7 +315,10 @@ mod tests {
         let materialized = root.join("build/private-worker");
         super::super::materialize(&source, &materialized).unwrap();
         // 没有 .git 的 worker 仍保留原先已跟踪、后来被忽略的输入。
-        assert_eq!(read_source(&materialized, &source, false).unwrap(), source);
+        assert_eq!(
+            read_source(&materialized, source.keys().cloned().collect(), false).unwrap(),
+            source
+        );
         let mut changed = source.clone();
         changed.get_mut("tracked.txt").unwrap().bytes = b"candidate".to_vec();
         let store = root.join("build/store");
@@ -337,26 +338,20 @@ mod tests {
         std::fs::write(root.join("src/.gitignore"), "*.tmp\n!kept.tmp\n").unwrap();
         std::fs::write(root.join("src/hidden.tmp"), "ignored").unwrap();
         std::fs::write(root.join("src/kept.tmp"), "source").unwrap();
-        let source = read_source(root, &Tree::new(), true).unwrap();
+        let source = read_source(root, BTreeSet::new(), true).unwrap();
         assert!(source.contains_key("src/kept.tmp"));
         assert!(!source.contains_key("src/hidden.tmp"));
-        let required = Tree::from([(
-            "src/hidden.tmp".into(),
-            File {
-                bytes: Vec::new(),
-                executable: false,
-            },
-        )]);
+        let required = BTreeSet::from(["src/hidden.tmp".into()]);
         assert_eq!(
-            read_source(root, &required, true).unwrap()["src/hidden.tmp"].bytes,
+            read_source(root, required, true).unwrap()["src/hidden.tmp"].bytes,
             b"ignored"
         );
         symlink("/outside/source", root.join("required.py")).unwrap();
-        assert!(read_source(root, &Tree::new(), true).is_err());
+        assert!(read_source(root, BTreeSet::new(), true).is_err());
         std::fs::remove_file(root.join("required.py")).unwrap();
         std::fs::remove_file(root.join(".gitignore")).unwrap();
         symlink("/outside/ignore", root.join(".gitignore")).unwrap();
-        assert!(read_source(root, &Tree::new(), true).is_err());
+        assert!(read_source(root, BTreeSet::new(), true).is_err());
     }
 
     #[test]

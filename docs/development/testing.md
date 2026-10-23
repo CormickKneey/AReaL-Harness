@@ -212,7 +212,7 @@ GUI CI 只构建一次 Core 和 Renderer，再将历史兼容、迁移、Compose
 
 `make script-test` 不要求产品二进制；`make launcher-test` 先构建整个 workspace，再执行真实 Rust launcher 回归。直接运行 launcher suite 时缺二进制是失败，不是 skip。`make verify` 包含两个入口。GUI 低成本隐私和 trajectory polling 回归通过 `pnpm --dir clients/gui test:regressions` 执行；`make gui-install` 同时准备 Electron 和 FFmpeg。
 
-Verify 汇总要求 host、container 和独立依赖审计全部成功。GUI gate / Release gate 对每个 PR 运行：路径判定明确不适用时才允许昂贵任务 skipped；失败、取消、意外 skip 均失败。建议将这三个汇总检查设为 required，取消把条件矩阵名称设为 required；需维护者另行确认并配置，本仓库不修改分支保护。
+Verify 汇总要求 host、container 和独立依赖审计全部成功。GUI gate / Release gate 对每个 PR 运行：Release gate 检查本地打包契约，完整打包及发布由本地发行流程执行；GUI 路径判定明确不适用时才允许对应任务 skipped；失败、取消、意外 skip 均失败。建议将这三个汇总检查设为 required，取消把条件矩阵名称设为 required；需维护者另行确认并配置，本仓库不修改分支保护。
 
 依赖审计独立扫描 Cargo、三个 npm 和 GUI pnpm 锁文件，区分漏洞命中与扫描错误，两者均失败。RustSec revision 与扫描报告保存 7 天；npm 实时数据库无不可变 revision。每周轻量独立审计从冷 cargo-audit 工具缓存安装；不运行每日完整 macOS/GUI。工具版本和锁文件指纹不包含凭据或环境变量。
 
@@ -223,6 +223,6 @@ Verify 汇总要求 host、container 和独立依赖审计全部成功。GUI gat
 
 包与 Engine 集成：`cargo test --locked -p areal-plugins --test store -p areal-engine --test codex_plugins --test skills --test agents --test queue_transfer`。它们分别检查文件系统/安装事务与会话/Turn 权限和生命周期。上述检查不替代真实供应商、签名安装包、物理输入或跨平台验收，后续范围见[实施计划](codex-plugins-plan.md)。
 
-安装与更新改动：`make script-test` 包含合成完整包的安装事务回归、独立 Git 仓库的来源门禁和无 Electron 依赖的 GUI 更新控制器回归。覆盖下载中断、摘要/版本错误、运行服务保持、入口提交失败、安装互斥、数据不变、原生准备超时与受理未知不重发；模拟传输错误不代表真实签名替换。Release bundles 另运行 `scripts/install-smoke.py` 的真实共享服务保持。正式相邻版本的签名替换、重开及数据保持仍使用隔离包副本的 `test:update` 与合成 `test:history-compat`，按发行影响执行；Gatekeeper、Finder 启动和真人权限不由单元测试代替。
+安装与更新改动：`make script-test` 包含合成完整包的安装事务回归、独立 Git 仓库的来源门禁和无 Electron 依赖的 GUI 更新控制器回归。覆盖下载中断、摘要/版本错误、运行服务保持、入口提交失败、安装互斥、数据不变、原生准备超时与受理未知不重发；模拟传输错误不代表真实签名替换。本地发行验收另运行 `scripts/install-smoke.py` 的真实共享服务保持。正式相邻版本的签名替换、重开及数据保持仍使用隔离包副本的 `test:update` 与合成 `test:history-compat`，按发行影响执行；Gatekeeper、Finder 启动和真人权限不由单元测试代替。
 
 网络回归同时覆盖 persistent 与 bounded 的摘要恢复、短暂断流后保留同一输入、五次上限不被通用响应恢复额度绕过、确认过的写操作只执行一次，以及显式关闭开关的独立配置和环境优先级。有限模式失败后保留全部已观测用量，不把达到重试上限视为成功。

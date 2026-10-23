@@ -52,6 +52,35 @@ for (const entry of (await readdir(join(gui, "renderer/src/i18n/messages"))).sor
   visit(source);
 }
 
+const { nativeMessages } = require(join(gui, "app/src/core/native-i18n.cjs"));
+const nativeExamples = {
+  "browser.frameQuestion": { origin: "https://example.test:4317" },
+  "browser.developmentQuestion": { origin: "http://localhost:4317" },
+  "lifecycle.mobileConnections": { count: 7 },
+  "lifecycle.activeThread": { value: "thread-原文" },
+  "lifecycle.goal": { value: "Keep 原始 objective" },
+  "lifecycle.task": { value: "task-原文" },
+  "lifecycle.resource": { value: "/原始/path/tool" },
+};
+for (const [id, pair] of Object.entries(nativeMessages)) {
+  const issue = message => issues.push(`app/src/core/native-i18n.cjs: ${id}: ${message}`);
+  if (Object.keys(pair).sort().join(",") !== "en,zh-CN") issue("must contain exactly en and zh-CN");
+  if (typeof pair.en !== typeof pair["zh-CN"]) issue("translation kinds differ");
+  for (const locale of ["zh-CN", "en"]) {
+    const message = pair[locale];
+    if (!["string", "function"].includes(typeof message)) { issue(`invalid ${locale} message kind`); continue; }
+    if (typeof message === "function" && !nativeExamples[id]) { issue("dynamic message needs a representative example"); continue; }
+    const values = nativeExamples[id];
+    let output;
+    try { output = typeof message === "function" ? message(values) : message; }
+    catch (error) { issue(`invalid ${locale} message: ${error.message}`); continue; }
+    if (typeof output !== "string" || !output.trim()) { issue(`empty ${locale} message`); continue; }
+    if (typeof message === "function") for (const value of Object.values(values)) {
+      if (!output.includes(String(value))) issue(`${locale} must preserve dynamic value ${JSON.stringify(value)}`);
+    }
+  }
+}
+
 const visibleProps = new Set(["label", "title", "description", "placeholder", "aria-label", "ariaLabel", "alt", "clearLabel", "actionLabel", "emptyLabel", "addLabel"]);
 const technicalText = new Set(["-y\n@modelcontextprotocol/server-memory", "/path/to/marketplace", "npx", "MY_SERVICE_TOKEN", "AReaL Harness", "Aa", "px", "API", "API Key", "API key", "Base URL", "MCP", "Skills", "OAuth", "JSON", "URL", "Token", "Tokens", "English", "简体中文", "ChatGPT", "OpenAI", "GitHub", "Chat Completions", "Responses", "CLI", "Core", "Runtime", "SHA-256", "UTC", "HTTPS", "HTTP", "GB", "MB", "KB", "B", "ms", "s", "min", "h", "m", "d", "×", "+/-"]);
 const human = text => /[\p{Script=Han}A-Za-z]/u.test(text) && !technicalText.has(text.trim()) && !/^(?:https?:\/\/|\$?\{|settings\.|common\.|chat\.|terminal\.|markdownTable\.|taskList\.)/.test(text.trim());
@@ -180,4 +209,4 @@ for (const file of [...settingsFiles, ...shared, "renderer/src/App.tsx"]) {
 if (issues.length) {
   console.error(issues.join("\n"));
   process.exitCode = 1;
-} else console.log(JSON.stringify({ passed: true, messages: catalogs.size, fullCoverageFiles: settingsFiles.length + shared.length, incrementalFiles, base: revision, scope: "bundled catalogs, ICU arguments, raw settings copy and new visible renderer copy; external content and arbitrary dynamic data flow require UI review" }));
+} else console.log(JSON.stringify({ passed: true, messages: catalogs.size, nativeMessages: Object.keys(nativeMessages).length, fullCoverageFiles: settingsFiles.length + shared.length, incrementalFiles, base: revision, scope: "bundled renderer catalogs and ICU arguments, paired native catalog and representative dynamic outputs, raw settings copy and new visible renderer copy; external content and arbitrary dynamic data flow require UI review" }));

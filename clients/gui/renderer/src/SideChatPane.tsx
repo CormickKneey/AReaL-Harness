@@ -1,4 +1,6 @@
+import { useComposerPrediction } from "./useComposerPrediction.js";
 import { ContextMeter } from "./ContextMeter.js";
+import { useI18n } from "./i18n/IntlProvider.js";
 import "./SideChat.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Messages } from "./Messages.js";
@@ -64,6 +66,7 @@ function SideChatEditor({ project, source, executionBlocked, action, dark, works
   selected: { kind: string; id: string }; onSelected: (next: { kind: string; id: string }) => void; onPanel: (name: string) => void; contextOpen: boolean;
 }) {
   const prefs = useApplicationPreferences();
+  const { t } = useI18n();
   const api = useRef<LexicalChatInputHandle | null>(null);
   const [menuAnchor, setMenuAnchor] = useState<HTMLDivElement | null>(null);
   const owner = workspace.owner(selected);
@@ -113,6 +116,8 @@ function SideChatEditor({ project, source, executionBlocked, action, dark, works
   const active = validSide && side.turns?.some((turn: Data) => turn.status === "inProgress");
   const unsettled = !!sideId && project.pending?.some((request: Data) => request.params?.threadId === sideId);
   const config = validSide ? project.configurations?.[sideId] : draftConfig ?? {};
+  const configuredModel = config?.model && project.models.find((item: Data) => item.providerId === config.model.providerId && item.modelId === config.model.modelId);
+  const modelUnavailable = configuredModel?.available === false || config?.model?.providerId === "areal_openai" && !configuredModel;
   const sourceStatus = !project.state?.connected || !validSide ? "来源当前状态未知" :
     sideSourceAdvanced(source, side) ? "来源已推进；此讨论仍依据创建时快照" :
     !Number.isFinite(source.updatedAt) || !Number.isFinite(side.createdAt) ? "来源当前状态未知" : "依据创建时快照";
@@ -159,11 +164,13 @@ function SideChatEditor({ project, source, executionBlocked, action, dark, works
       try { setSelection(JSON.parse(localStorage.getItem(selectionKey) ?? "null")); } catch { setSelection(null); }
       try { setAnchor(JSON.parse(localStorage.getItem(anchorKey) ?? "null")); } catch { setAnchor(null); }
       setSelectionPreview(localStorage.getItem(previewKey) ?? "");
+      const next = localStorage.getItem(draftKey) ?? "";
+      setText(next); api.current?.setText(next); api.current?.focus();
       setEvidence([]); setEvidenceCursor(null); setEvidenceOpen(false);
     };
     window.addEventListener("areal-side-selection", receive);
     return () => window.removeEventListener("areal-side-selection", receive);
-  }, [owner, selectionKey, anchorKey, previewKey]);
+  }, [owner, selectionKey, anchorKey, previewKey, draftKey]);
   const loadEvidence = async (cursor?: string) => {
     if (!validSide || evidenceBusy) return;
     setEvidenceBusy(true); setError("");
@@ -200,8 +207,8 @@ function SideChatEditor({ project, source, executionBlocked, action, dark, works
   }, [pendingId, busy, action, project.id, pendingKey, draftKey, selectionKey, anchorKey, previewKey, workspaceAccessKey, workspace, generation, onSelected]);
   useEffect(() => { if (pendingId && project.state?.connected) void recover(); }, [project.state?.connected]);
   const submit = async (value = api.current?.getMarkdown() ?? text) => {
-    const question = value.trim();
-    if (executionBlocked || !question || busy || pendingId || unsettled || active || !project.state?.connected || sideId && (!validSide || side.desktop?.archived)) return;
+    const question = value.trim() || (!sideId && selection ? (selectionPreview || selection.text || "") : "");
+    if (executionBlocked || modelUnavailable || !question || busy || pendingId || unsettled || active || !project.state?.connected || sideId && (!validSide || side.desktop?.archived)) return;
     const token = workspace.capture(generation);
     setBusy(true); setError("");
     try {
@@ -247,6 +254,9 @@ function SideChatEditor({ project, source, executionBlocked, action, dark, works
   };
   const editorDisabled = !project.state?.connected || busy || !!pendingId || unsettled || !!sideId && (!validSide || side.desktop?.archived);
   const disabled = editorDisabled || executionBlocked;
+  const nextPrompt = useComposerPrediction({ project, thread: validSide ? side : undefined, action, enabled: prefs.nextPromptSuggestions,
+    eligible: !!validSide && !disabled && !active && !selection && !bringPreview && !loading,
+  });
   return <>
     <div className="side-chat-information" hidden={!contextOpen}>
       {validSide && <p role="status">{sourceStatus}{active && <> · {side.desktop?.sideCapacityStatus === "waiting" ? "等待模型容量" : "正在生成"}</>}</p>}
@@ -260,7 +270,6 @@ function SideChatEditor({ project, source, executionBlocked, action, dark, works
         <option value="none">仅会话证据</option>
       </select></label>}
       {!sideId && !workspaceReadAvailable && <p className="text-foreground-subtle">当前 Core 未提供经过验证的工作区只读能力；可使用仅会话证据。</p>}
-      {selection && !sideId && <blockquote className="notice">{selection.kind === "itemRange" ? "已持久化选区；发送时验证原文位置。" : "用户引文，来源未确认。"}<br />{selectionPreview || selection.text}</blockquote>}
       {validSide && <p className="text-foreground-subtle">冻结锚点：{side.conversation.origin?.boundary} · {side.conversation.origin?.sourceTurnId || "空历史"}</p>}
       {validSide && side.conversation.selection && <blockquote className="notice">{side.conversation.selection.verified ? "已验证来源片段" : "用户引文，来源未确认"}：{side.conversation.selection.text}</blockquote>}
       {validSide && <div className="utility-actions"><button type="button" onClick={() => void loadEvidence()} disabled={evidenceBusy}>查看冻结证据</button></div>}
@@ -307,12 +316,25 @@ function SideChatEditor({ project, source, executionBlocked, action, dark, works
     </div>
     <div className="composer-dock side-chat-composer" data-side-owner={owner}>
       <div ref={setMenuAnchor} className="composer-menu-anchor" />
-      <ConversationComposer project={project} contextControl={<ContextMeter key={`${project.id}:${sideId ?? "draft"}`} project={project} thread={validSide ? side : undefined} action={action} />} modelConfig={config} allowModelInheritance={!sideId} modelDisabled={editorDisabled || !!active || !!sideId && (executionBlocked || !config)}
+      <ConversationComposer nextPrompt={nextPrompt} project={project} contextControl={<ContextMeter key={`${project.id}:${sideId ?? "draft"}`} project={project} thread={validSide ? side : undefined} action={action} />} modelConfig={config} fallbackModelConfig={!sideId ? project.configurations?.[source.id] : undefined} modelDisabled={editorDisabled || !!active || !!sideId && (executionBlocked || !config)}
         onConfigureModel={values => { void configure(values); }}
         workspacePath={project.root} taskId={sideId || null} triggerPanelContainer={menuAnchor}
         inputApiRef={api} inputTestId="side-chat-input" submitTestId="side-chat-send" initialValue={text}
+        topContent={selection && !sideId ? <section data-testid="side-selection-quote" aria-label={t("chat.selection.quote")}
+          className="flex items-start gap-inline rounded-inset border border-border bg-background p-2 text-ui-sm">
+          <div className="min-w-0 flex-1">
+            <p className="text-foreground-subtle">{t(selection.kind === "itemRange" ? "chat.selection.persisted" : "chat.selection.unverified")}</p>
+            <blockquote className="max-h-32 overflow-auto whitespace-pre-wrap break-words">{selectionPreview || selection.text}</blockquote>
+          </div>
+          <Button type="button" variant="ghost" size="icon-sm" aria-label={t("chat.selection.remove")} disabled={editorDisabled} onClick={() => {
+            localStorage.removeItem(selectionKey); localStorage.removeItem(previewKey); localStorage.removeItem(anchorKey);
+            setSelection(null); setSelectionPreview(""); setAnchor(null); api.current?.focus();
+          }}><CloseIcon /></Button>
+        </section> : undefined}
         composerCatalog={{ entries: [], refresh: () => {} }}
-        placeholder="随心输入" disabled={editorDisabled} submitDisabled={disabled || !!active || !text.trim()}
+        placeholder="随心输入" disabled={editorDisabled} submitDisabled={disabled || modelUnavailable || !!active || (!text.trim() && !selection)}
+        submitDisabledReason={modelUnavailable ? t("chat.composer.previousModelUnavailable") : undefined}
+        allowSubmitWhenEmpty={!!selection && !sideId}
         submitting={busy} submitLabel="发送" enterSubmits={prefs.sendShortcut === "enter"} enableMentionPanel={false}
         onChange={value => { setText(value); localStorage.setItem(draftKey, value); }}
         onSubmit={value => { void submit(value); return false; }} onCancel={active ? stop : undefined}

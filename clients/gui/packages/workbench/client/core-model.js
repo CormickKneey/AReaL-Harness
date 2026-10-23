@@ -68,6 +68,10 @@ export class CoreTaskModel {
     }
     const thread = this.state.threads[params?.threadId];
     if (!thread) return;
+    if (method === 'areal/thread/predictionChanged') {
+      this.replace({ ...thread, desktop: { ...thread.desktop, promptPrediction: params.promptPrediction } });
+      return;
+    }
     if (method === 'areal/side/capacity' && thread.conversation?.kind === 'side'
       && ['waiting', 'available'].includes(params.status)) {
       this.replace({ ...thread, desktop: { ...thread.desktop, sideCapacityStatus: params.status } });

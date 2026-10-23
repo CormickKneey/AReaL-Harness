@@ -62,6 +62,15 @@ assert.equal(storage.getItem(workspace.draftKey({ kind: 'side', id: 'side-two' }
 const oldConnection = workspace.capture(7);
 assert.equal(workspace.clearAfterSend(oldConnection, 8), false, 'old connection completion cannot clear the selected Side draft');
 assert.equal(storage.getItem(workspace.draftKey(workspace.current())), 'side-two follow-up');
+const quoteOnly = workspace.newDraft();
+const quoteKey = `${workspace.owner(quoteOnly)}:selection`;
+storage.setItem(quoteKey, JSON.stringify({ kind: 'userQuote', text: '仅选中的文字' }));
+assert.ok(workspace.availableDrafts().some(draft => draft.id === quoteOnly.id), 'selection-only drafts remain reachable without typed questions');
+workspace.newDraft();
+workspace.selectDraft(quoteOnly.id);
+assert.equal(JSON.parse(storage.getItem(quoteKey)).text, '仅选中的文字', 'switching drafts preserves the staged quote');
+storage.removeItem(quoteKey);
+assert.ok(!workspace.availableDrafts().some(draft => draft.id === quoteOnly.id), 'removing the only quote leaves an empty draft');
 const replacementService = make('instance-b');
 assert.notEqual(replacementService.owner(replacementService.current()), workspace.owner(workspace.current()));
 assert.deepEqual(replacementService.pendingDrafts(), [], 'another Core instance cannot inherit unknown keys');

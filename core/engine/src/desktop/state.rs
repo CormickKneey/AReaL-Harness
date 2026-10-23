@@ -793,6 +793,7 @@ impl Engine {
                     .desktop
                     .get_or_insert_with(Default::default)
                     .configuration = configuration.clone();
+                candidate.desktop.as_mut().unwrap().prompt_prediction = None;
                 if let Some(request_id) = &request_id {
                     remember(
                         candidate.desktop.as_mut().unwrap(),
@@ -805,6 +806,7 @@ impl Engine {
                 }
                 engine.persist(&candidate).await?;
                 state.thread = candidate;
+                crate::prompt_prediction::invalidate(&mut state);
                 cell.emit(
                     "areal/thread/configured",
                     json!({"threadId":request.thread_id,"configuration":configuration}),
@@ -962,6 +964,7 @@ impl Engine {
                 .desktop
                 .get_or_insert_with(Default::default)
                 .configuration = configuration.clone();
+            candidate.desktop.as_mut().unwrap().prompt_prediction = None;
             let registry = engine
                 .managed_registry(&candidate, cell.research)
                 .map_err(invalid)?;
@@ -977,6 +980,7 @@ impl Engine {
             }
             engine.persist(&candidate).await?;
             state.thread = candidate;
+            crate::prompt_prediction::invalidate(&mut state);
             cell.bindings.write().await.registry = registry;
             cell.emit(
                 "areal/thread/configured",

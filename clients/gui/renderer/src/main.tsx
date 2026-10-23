@@ -1,3 +1,4 @@
+import { getApplicationPreferences, subscribeApplicationPreferences } from "./settings/applicationPreferences.js";
 import { ApplicationIntlProvider } from "./i18n/IntlProvider.js";
 import { createRoot } from 'react-dom/client';
 // Stylesheets load before the app module so SettingsWorkspace.css (imported through App)
@@ -13,5 +14,10 @@ const bridge = (window as unknown as {
 }).arealDesktop;
 if (!bridge)
     document.getElementById('root')!.textContent = '请通过 AReaL Harness 桌面入口打开此界面。';
-else
+else {
+    const syncNativeLocale = () => bridge.setInterfaceLocale(getApplicationPreferences().locale);
+    const unsubscribeLocale = subscribeApplicationPreferences(syncNativeLocale);
+    syncNativeLocale();
+    window.addEventListener('pagehide', unsubscribeLocale, { once: true });
     createRoot(document.getElementById('root')!).render(<ApplicationIntlProvider><TooltipProvider><App services={createDesktopServices(bridge)}/></TooltipProvider></ApplicationIntlProvider>);
+}

@@ -495,6 +495,9 @@ pub struct ContextCheckpoint {
     /// 保留的真实用户输入；缺省表示旧 checkpoint 的全量重放契约。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retained_inputs: Option<Vec<ContextInput>>,
+    /// 压缩前缀是否包含 App 引用；缺省时从原始历史恢复并保存。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_reference_seen: Option<bool>,
     /// 有界的原始工具回执提示，不授予权限或恢复过期句柄。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub evidence: Vec<String>,

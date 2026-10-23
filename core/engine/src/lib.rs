@@ -14,6 +14,7 @@ mod observations;
 mod outcome;
 mod permissions;
 mod plugin_hooks;
+mod prompt_prediction;
 mod request_meter;
 mod session_name;
 mod sessions;
@@ -229,6 +230,7 @@ struct Active {
     handles: tools::Handles,
 }
 struct State {
+    prediction_source: Option<prompt_prediction::PredictionSource>,
     thread: Thread,
     active: Option<Active>,
     poisoned: bool,
@@ -265,11 +267,22 @@ struct Cell {
 }
 impl Cell {
     fn new(
-        thread: Thread,
+        mut thread: Thread,
         depth: usize,
         bindings: tools::Bindings,
         parent_scratch: Option<&Path>,
     ) -> Arc<Self> {
+        if let Some(data) = &mut thread.desktop
+            && let Some(areal_protocol::desktop::PromptPrediction::Pending {
+                source_turn_id,
+                configuration_revision,
+            }) = data.prompt_prediction.clone()
+        {
+            data.prompt_prediction = Some(areal_protocol::desktop::PromptPrediction::Unavailable {
+                source_turn_id,
+                configuration_revision,
+            });
+        }
         Arc::new(Self {
             scratch_path: parent_scratch
                 .unwrap_or_else(|| Path::new(""))
@@ -293,6 +306,7 @@ impl Cell {
             cancel_grace_ms: AtomicUsize::new(1000),
             bindings: RwLock::new(bindings),
             state: Mutex::new(State {
+                prediction_source: None,
                 thread,
                 active: None,
                 poisoned: false,
@@ -327,6 +341,7 @@ pub struct Engine {
     store: store::Store,
     model: Arc<dyn Model>,
     limits: Limits,
+    prediction_preemption: watch::Sender<()>,
     permits: Arc<Semaphore>,
     active_turns: Arc<Semaphore>,
     shutdown: CancellationToken,
@@ -639,6 +654,7 @@ impl Engine {
             fork_commit_barrier: Default::default(),
             store,
             model,
+            prediction_preemption: watch::channel(()).0,
             permits: Arc::new(Semaphore::new(limits.model_concurrency)),
             active_turns: Arc::new(Semaphore::new(limits.max_active_turns)),
             limits,

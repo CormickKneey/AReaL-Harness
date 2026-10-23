@@ -1,6 +1,8 @@
 # AReaL 设计文档
 
-这里是 AReaL Harness 的共享设计地图，供设计师、客户端工程师和 Agent 使用。从用户任务进入，找到负责该判断的唯一文档，再前往各端实现与验证位置。
+这里是 AReaL Harness 的设计地图，供设计师、客户端工程师和 Agent 使用。从用户任务进入，找到负责该判断的唯一文档，再前往实现与验证位置。
+
+设计系统以桌面 GUI 为准，先完成 GUI 的视觉、交互与生产迁移。后续 Web 复用适用的设计原则、Token、组件和模式，并按浏览器能力适配。TUI、CLI 不在本设计系统的建设与验收范围内。设计知识仍集中在根目录 `design/`，范围取舍见[D-001](decisions/001-shared-design-knowledge.md)。
 
 本目录只维护中文。外部使用与 API 文档由 `docs/` 维护。文档归档不改变产品行为、GUI Base 准入或视觉基线。
 
@@ -8,12 +10,12 @@
 
 | 目录 | 回答的问题 | 维护边界 |
 | --- | --- | --- |
-| [设计原则](principles/README.md) | 为什么这样设计，怎样取舍 | 跨端设计理由，具体规则指向所属主题 |
+| [设计原则](principles/README.md) | 为什么这样设计，怎样取舍 | GUI 的设计理由，具体规则指向所属主题 |
 | [设计基础](foundations/README.md) | 颜色、文字、空间、图标和动效怎样表达 | [表达角色](foundations/roles.md)说明用途，[Token 地图](foundations/tokens.md)指向真实数值源 |
 | [内容与文案](content/README.md) | 对象怎样命名，动作与状态怎样表达 | 界面用词建议，引用人机关系与执行事实 |
 | [人与 Agent](people-and-agents/README.md) | 谁负责工作，人控制什么，结果依据什么 | 身份、控制、审批、委派、交接、上下文与证据的产品含义 |
 | [交互模式](patterns/README.md) | 用户怎样完成一个完整任务 | [意图地图](patterns/intents.md)、过程阅读、深入查看、设置、反馈与恢复 |
-| [组件与组合](components/README.md) | 该选什么组件，谁维护接口与行为 | 控件选择与职责，链接各端真实合同和生产示例 |
+| [组件与组合](components/README.md) | 该选什么组件，谁维护接口与行为 | 控件选择与职责，链接真实合同和 GUI 生产示例 |
 | [产品与工作台](products/README.md) | 完整路径的信息放在哪里，怎样进入与返回 | 当前桌面工作台与预览、真实控制器的边界 |
 | [设计决策](decisions/README.md) | 已经选择什么，何时重新评估 | 一项重要取舍一篇记录，状态在该记录中维护 |
 
@@ -32,11 +34,11 @@
 | 桌面 GUI | [GUI 设计入口](../clients/gui/design-system/README.md)、[组件指南](../clients/gui/DESIGN_SYSTEM.md)、[生产目录](../clients/gui/design-system/inventory.md) | React 控件、布局、窗口与原生视图的适配和准入 |
 | Remote Web | [RemoteWorkbench](../clients/gui/renderer/src/remote/RemoteWorkbench.tsx) | 复用的 GUI 组件，以及浏览器权限和偏好边界 |
 | 本地 Web | [界面](../clients/web/app.js)、[样式](../clients/web/style.css) | 独立 Web 实现及主题偏好，不等同于 Remote Web |
-| TUI | [主题](../clients/tui/src/theme.rs)、[UI](../clients/tui/src/ui.rs)、[设计说明](../docs/design/tui.md) | 终端颜色、字符布局、键盘与阅读连续性 |
-| 非交互 CLI | [输出所有者](../clients/cli/src/run.rs)、[CLI 契约](../docs/api/claude-cli.md) | 文字、机器输出及退出语义 |
+
+Web 两行记录现有接线，供后续复用时核对，不表示完整设计系统已经接入 Web，也不构成当前 GUI 交付的前置条件。
 
 ## 唯一维护位置
 
-共同设计含义在本目录维护。平台规则引用这些含义，并拥有组件、数值、规则 ID、布局和准入。Core、Runtime 及已有服务契约仍拥有执行、权限、恢复与历史事实。
+GUI 的设计含义在本目录维护。GUI 实现规则引用这些含义，并拥有组件、数值、规则 ID、布局和准入。Web 复用时只补浏览器适配与验证。Core、Runtime 及已有服务契约仍拥有执行、权限、恢复与历史事实。
 
-新增要求先判断归属。修改共同含义时更新对应主题，平台只补本端映射；移动正文时同步迁移引用并删除旧定义。原始取证与平台运行报告留在原位置，目录存在不证明各端已经实现或验收。
+新增要求先判断归属。修改设计含义时更新对应主题；移动正文时同步迁移引用并删除旧定义。原始取证与平台运行报告留在原位置，目录存在不证明 GUI 或 Web 已经实现或验收。

@@ -12,6 +12,6 @@
 
 ## 平台接线
 
-GUI 的分组、行、尺寸和窄窗重排由[设置组合布局](../../clients/gui/design-system/patterns.md#设置组合布局)及[组件指南](../../clients/gui/DESIGN_SYSTEM.md#设置与管理界面的交互规范)维护。TUI 与 Web 的外观和持久化见[客户端指南](../../docs/guides/clients.md)。参数和配置校验仍归原配置契约。
+GUI 的分组、行、尺寸和窄窗重排由[设置组合布局](../../clients/gui/design-system/patterns.md#设置组合布局)及[组件指南](../../clients/gui/DESIGN_SYSTEM.md#设置与管理界面的交互规范)维护。后续 Web 复用时核对实际支持的偏好、持久化与生效范围。参数和配置校验仍归原配置契约。
 
 代表验证包括当前值、可修正错误、保存或即时生效、恢复默认、长内容与空间不足，以及主题或字号变化。未支持的反向操作不能用虚假开关补齐。
