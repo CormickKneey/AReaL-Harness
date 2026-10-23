@@ -25,7 +25,7 @@ class RpcError(Exception):
 
 
 class Runtime:
-    def __init__(self, binary, workspace, extra=()):
+    def __init__(self, binary, workspace, extra=(), env=None):
         self.process = subprocess.Popen(
             [str(binary), "--workspace", str(workspace), "--allow-write", *extra],
             stdin=subprocess.PIPE,
@@ -34,6 +34,7 @@ class Runtime:
             text=True,
             encoding="utf-8",
             bufsize=1,
+            env=env,
         )
         self.messages = queue.Queue()
         self.errors = []

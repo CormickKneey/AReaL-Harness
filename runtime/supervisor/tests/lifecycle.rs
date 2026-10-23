@@ -143,6 +143,125 @@ fn op(runtime: &Supervisor) -> String {
     )
 }
 
+#[tokio::test]
+async fn restricted_home_uses_authorized_scratch_without_importing_or_widening_permissions() {
+    let repo = tempfile::tempdir().unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let repo_path = repo.path().canonicalize().unwrap();
+    let scratch_path = scratch.path().canonicalize().unwrap();
+    let thread_scratch = scratch_path.join("thread");
+    std::fs::create_dir(&thread_scratch).unwrap();
+    let escape = repo_path.join("escape");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(outside.path(), &escape).unwrap();
+    for requested in [
+        None,
+        Some(thread_scratch.clone()),
+        Some(outside.path().to_path_buf()),
+        Some(escape),
+        Some("relative".into()),
+    ] {
+        let executor = Executor::new(false);
+        let mut config = Config::read_only(repo_path.clone());
+        config.scratch = Some(scratch_path.clone());
+        let runtime = Supervisor::new(config, executor.clone()).unwrap();
+        let root = runtime.connection_info().root_scope_id;
+        let mut request = child(&runtime, &root);
+        request.permissions.read_roots = Some(vec![
+            "workspace://repo".into(),
+            "workspace://scratch/thread".into(),
+        ]);
+        request.permissions.write_roots = Some(vec!["workspace://scratch/thread".into()]);
+        request.permissions.network = NetworkRequest::Deny;
+        let scope = runtime.create_scope(request).unwrap();
+        let mut request = process(&runtime, &scope.scope_id);
+        if let Some(path) = &requested {
+            request
+                .env
+                .insert("TMPDIR".into(), path.to_string_lossy().into_owned());
+        }
+        let started = bounded(runtime.start(request)).await.unwrap();
+        let execution = executor.executions.lock().unwrap()[0].clone();
+        let expected = if requested.is_none() || requested.as_ref() == Some(&thread_scratch) {
+            &thread_scratch
+        } else {
+            &repo_path
+        };
+        assert_eq!(execution.env["HOME"], expected.to_string_lossy());
+        assert_eq!(execution.write_roots, vec![thread_scratch.clone()]);
+        assert_eq!(execution.network, NetworkRequest::Deny);
+        if requested.is_none() {
+            assert_eq!(execution.env["TMPDIR"], thread_scratch.to_string_lossy());
+        }
+        let mut expected_reads = vec![repo_path.clone(), thread_scratch.clone()];
+        expected_reads.sort();
+        assert_eq!(execution.read_roots, expected_reads);
+        executor.finish(&started.process_id, b"").await;
+        bounded(runtime.shutdown()).await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn full_access_preserves_the_deployment_path_and_explicit_command_overrides() {
+    let repo = tempfile::tempdir().unwrap();
+    let executor = Executor::new(false);
+    let mut config = Config::read_only(repo.path().into());
+    config.full_access = true;
+    config.writable = true;
+    config.allow_network = true;
+    config.command_search_path = Some("/deployment/bin:/usr/bin:/bin".into());
+    config.unrestricted_command_search_path =
+        Some("/host/shims:/deployment/bin:/usr/bin:/bin".into());
+    let runtime = Supervisor::new(config, executor.clone()).unwrap();
+    let root = runtime.connection_info().root_scope_id;
+    for override_path in [None, Some("/explicit/bin:/usr/bin")] {
+        let mut request = process(&runtime, &root);
+        if let Some(path) = override_path {
+            request.env.insert("PATH".into(), path.into());
+        }
+        let started = bounded(runtime.start(request)).await.unwrap();
+        let execution = executor.executions.lock().unwrap().last().unwrap().clone();
+        assert_eq!(
+            execution.env["PATH"],
+            override_path.unwrap_or("/host/shims:/deployment/bin:/usr/bin:/bin")
+        );
+        if let Ok(home) = std::env::var("HOME") {
+            assert_eq!(execution.env["HOME"], home);
+        }
+        executor.finish(&started.process_id, b"").await;
+    }
+    let child = runtime
+        .create_scope(CreateScope {
+            operation_id: op(&runtime),
+            parent_scope_id: root,
+            owner: Owner {
+                task_id: "restricted".into(),
+                plugin_instance_id: None,
+            },
+            permissions: PermissionRequest {
+                read_roots: Some(vec!["workspace://repo".into()]),
+                write_roots: Some(vec![]),
+                network: NetworkRequest::Deny,
+            },
+            limits: LimitRequest::default(),
+        })
+        .unwrap();
+    let started = runtime
+        .start(process(&runtime, &child.scope_id))
+        .await
+        .unwrap();
+    let execution = executor.executions.lock().unwrap().last().unwrap().clone();
+    assert_eq!(execution.env["PATH"], "/deployment/bin:/usr/bin:/bin");
+    assert_eq!(
+        execution.env["HOME"],
+        repo.path().canonicalize().unwrap().to_string_lossy()
+    );
+    assert!(!execution.env.contains_key("RUSTUP_HOME"));
+    executor.finish(&started.process_id, b"").await;
+    bounded(runtime.shutdown()).await.unwrap();
+}
+
 struct InputExecutor {
     process: Arc<Executor>,
     expected: Vec<u8>,

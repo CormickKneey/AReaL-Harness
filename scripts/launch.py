@@ -33,6 +33,29 @@ CORE_OPTIONS = (
 
 TUI_OPTIONS = ("theme", "color", "tui_config", "no_logo", "ascii", "mouse")
 
+# 与 runtime/host-tools 的部署发现白名单同步；不向任务自动导入这些宿主目录。
+TOOLCHAIN_ENVIRONMENT = (
+    "XDG_DATA_HOME",
+    "XDG_CONFIG_HOME",
+    "NVM_DIR",
+    "FNM_DIR",
+    "VOLTA_HOME",
+    "MISE_DATA_DIR",
+    "MISE_CONFIG_DIR",
+    "MISE_INSTALLS_DIR",
+    "ASDF_DATA_DIR",
+    "PYENV_ROOT",
+    "RBENV_ROOT",
+    "RUSTUP_HOME",
+    "CARGO_HOME",
+    "PNPM_HOME",
+    "BUN_INSTALL",
+    "DENO_INSTALL",
+    "RUSTUP_TOOLCHAIN",
+    "PYENV_VERSION",
+    "RBENV_VERSION",
+)
+
 
 def tui_arguments(args):
     """仅透传客户端选项，保持显式 false 和含空格路径。"""
@@ -373,7 +396,15 @@ def main():
                 env={
                     **{
                         name: os.environ[name]
-                        for name in ("PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TERM")
+                        for name in (
+                            "PATH",
+                            "HOME",
+                            "TMPDIR",
+                            "LANG",
+                            "LC_ALL",
+                            "TERM",
+                            *TOOLCHAIN_ENVIRONMENT,
+                        )
                         if name in os.environ
                     },
                     **{

@@ -70,7 +70,7 @@ impl Client {
             workspace,
             writable,
             limits,
-            &environment.path,
+            &environment.unrestricted_path,
         )
         .await
     }
@@ -147,6 +147,7 @@ impl Client {
             .arg(limits.max_processes.to_string())
             .current_dir(workspace)
             .env_clear()
+            .envs(areal_runtime_host_tools::deployment_environment())
             .env("PATH", command_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

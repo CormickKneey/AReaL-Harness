@@ -28,7 +28,7 @@ impl Engine {
             .store
             .history_item(&thread, item_id)
             .await?
-            .context("history item is not in this thread")?;
+            .context("history item is not in this thread; use agent_read(executionId, offset) for a child handoff, or list this thread's history without itemId")?;
         let text = serde_json::to_string(&item)?;
         let offset = match args["after"].as_str() {
             Some(cursor) => cursor

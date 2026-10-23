@@ -348,3 +348,16 @@ fn public_toolchain_config_file_does_not_expose_adjacent_private_files() {
     }
     assert_eq!(fs::read_to_string(&config).unwrap(), "public-config");
 }
+
+#[test]
+fn replaced_toolchain_root_is_rejected_before_sandbox_launch() {
+    use std::os::unix::fs::symlink;
+    let fixture = Fixture::new();
+    let root = fixture.root.join("toolchain");
+    fs::create_dir(&root).unwrap();
+    let mut invocation = fixture.shell("true", &[]);
+    invocation.toolchain_roots = vec![root.clone()];
+    fs::remove_dir(&root).unwrap();
+    symlink(&fixture.outside, &root).unwrap();
+    assert!(command(&invocation, Profile::Native).is_err());
+}

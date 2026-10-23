@@ -12,6 +12,7 @@ clap.workspace = true
 fs2.workspace = true
 libc.workspace = true
 areal-local-service.workspace = true
+areal-runtime-host-tools.workspace = true
 areal-protocol.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true

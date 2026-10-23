@@ -282,6 +282,7 @@ fn push_option(
 
 fn runtime_env(command: &mut tokio::process::Command, credentials: bool) {
     command.env_clear();
+    command.envs(areal_runtime_host_tools::deployment_environment());
     for name in ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TERM"] {
         if let Some(value) = std::env::var_os(name) {
             command.env(name, value);
