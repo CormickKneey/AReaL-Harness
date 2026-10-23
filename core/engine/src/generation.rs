@@ -1087,16 +1087,27 @@ impl Engine {
                                 }
                             }
                             if batch.len() > 1 {
-                                text_output_bytes += self
+                                let result = self
                                     .parallel_read_tools(
                                         cell,
                                         cancel,
                                         batch,
                                         &mut tool_count,
-                                        tool_limit,
                                         steer,
+                                        (
+                                            tool_limit,
+                                            self.limits.remaining_output_bytes(text_output_bytes),
+                                        ),
                                     )
                                     .await?;
+                                text_output_bytes += result.bytes;
+                                if let Some(name) = result.unexecuted {
+                                    output_handoff = true;
+                                    recovery_hint = Some(format!(
+                                        "Output budget reached before executing {name}. This call and any later calls in the response were NOT executed. Give an explicit incomplete handoff based only on confirmed results; do not retry tools."
+                                    ));
+                                    break;
+                                }
                                 continue;
                             }
                             let call = batch.pop().unwrap();

@@ -53,3 +53,27 @@ test("Relay enrollment requires explicit local confirmation and exact HTTPS orig
   }
   assert.equal(remote.state().enabled, false);
 });
+
+test("fresh desktop does not access secure storage until remote is requested", async (t) => {
+  const remote = await host(t);
+  let accesses = 0;
+  remote.encryption = {
+    isEncryptionAvailable() { accesses += 1; return false; },
+    decryptString() { throw new Error("unexpected decryption"); },
+    encryptString() { throw new Error("unexpected encryption"); },
+  };
+  await remote.init();
+  assert.equal(accesses, 0);
+  assert.equal(remote.state().enabled, false);
+  assert.equal(remote.state().directEnabled, false);
+  await assert.rejects(remote.control({ operation: "enableDirect" }), /系统安全存储不可用/);
+  assert.equal(accesses, 1);
+});
+
+test("existing encrypted remote state still requires successful secure storage", async (t) => {
+  const remote = await host(t);
+  await writeFile(join(remote.backend.home, "remote.json"), JSON.stringify({ encrypted: "eA==" }));
+  remote.encryption.decryptString = () => { throw new Error("fixture access denied"); };
+  await assert.rejects(remote.init(), /无法读取手机配对/);
+  assert.equal(remote.state().enabled, false);
+});
