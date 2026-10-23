@@ -1,7 +1,139 @@
 use super::*;
 use areal_runtime_protocol as rt;
+#[cfg(test)]
+mod tests;
+
+fn validate_process_admission(
+    state: &State,
+    identity: &str,
+    request: &ProcessStart,
+    hash: &str,
+    concurrent_writes: bool,
+) -> Result<Option<Value>> {
+    let empty = DesktopState::default();
+    let data = state.thread.desktop.as_ref().unwrap_or(&empty);
+    if let Some(result) = receipt(
+        data,
+        identity,
+        &request.request_id,
+        "areal/process/start",
+        hash,
+    )? {
+        return Ok(Some(result));
+    }
+    if data.processes.len() >= 128 {
+        return Err(Error::Exhausted("process history capacity reached".into()));
+    }
+    let config = state
+        .active
+        .as_ref()
+        .and_then(|_| state.thread.turns.last())
+        .and_then(|turn| turn.configuration.as_ref())
+        .unwrap_or(&data.configuration);
+    if !matches!(request.lifetime.as_str(), "thread" | "turn") {
+        return Err(invalid("lifetime must be thread or turn"));
+    }
+    if request.lifetime == "thread"
+        && !config
+            .profile
+            .as_ref()
+            .is_some_and(|p| p.allow_thread_processes)
+    {
+        return Err(invalid("profile does not authorize thread resources"));
+    }
+    if request.lifetime == "thread" && !config.read_only && !concurrent_writes {
+        return Err(invalid(
+            "thread services require trusted --allow-concurrent-writes to avoid holding the workspace write lock",
+        ));
+    }
+    if request.lifetime == "turn"
+        && state
+            .active
+            .as_ref()
+            .is_none_or(|active| active.cancel.is_cancelled())
+    {
+        return Err(Error::Conflict);
+    }
+    if request.argv.is_empty()
+        || request.argv.len() > 256
+        || request.argv.iter().any(|arg| arg.contains('\0'))
+        || (request.cols.is_some() != request.rows.is_some())
+        || ((request.cols.is_some() || request.rows.is_some()) && !request.tty)
+        || request.cols == Some(0)
+        || request.rows == Some(0)
+    {
+        return Err(invalid("invalid process argv or terminal size"));
+    }
+    Ok(None)
+}
+
+fn process_admission_version(state: &State) -> (Option<String>, u64) {
+    let turn = state.active.as_ref().map(|active| active.id.clone());
+    let revision = state
+        .active
+        .as_ref()
+        .and_then(|_| state.thread.turns.last())
+        .and_then(|turn| turn.configuration.as_ref())
+        .map(|config| config.revision)
+        .or_else(|| {
+            state
+                .thread
+                .desktop
+                .as_ref()
+                .map(|data| data.configuration.revision)
+        })
+        .unwrap_or(1);
+    (turn, revision)
+}
+
+// 仅从可信装配的普通命令预算 Scope 分离 Thread 资源预算；权限或其他资源限制不同则保留原祖先。
+fn command_budget_only(command: &rt::ScopeInfo, root: &rt::ScopeInfo) -> bool {
+    command.parent_scope_id.as_ref() == Some(&root.scope_id)
+        && command.read_roots == root.read_roots
+        && command.write_roots == root.write_roots
+        && command.network == root.network
+        && command.limits.output_bytes == root.limits.output_bytes
+        && command.limits.max_processes == root.limits.max_processes
+        && command.limits.wall_time_ms <= root.limits.wall_time_ms
+}
 
 impl Engine {
+    async fn runtime_process_parent(
+        &self,
+        cell: &Cell,
+        thread_lifetime: bool,
+    ) -> rt::Result<rt::ScopeInfo> {
+        let parent = self.runtime_task_parent(cell).await?;
+        let runtime = self
+            .runtime
+            .as_ref()
+            .ok_or_else(|| rt::Error::new(rt::ErrorCode::Unavailable, "Runtime unavailable"))?;
+        let client = &runtime.client;
+        let mut scope: rt::ScopeInfo = client.call("scope.get", json!({"scopeId":parent})).await?;
+        // 子任务及 hooks 的任务 Scope 是权限/生命周期边界，不能因服务需要更长时限而跳过。
+        if thread_lifetime
+            && cell.state.lock().await.thread.parent_thread_id.is_none()
+            && runtime
+                .command_scope
+                .as_ref()
+                .is_some_and(|command| command.scope_id == scope.scope_id)
+        {
+            let root: rt::ScopeInfo = client
+                .call("scope.get", json!({"scopeId":client.info().root_scope_id}))
+                .await?;
+            if command_budget_only(&scope, &root) {
+                scope = root;
+            }
+        }
+        if scope.state != rt::ScopeState::Active {
+            return Err(rt::Error::new(
+                rt::ErrorCode::ScopeClosed,
+                "process parent scope is not active",
+            ));
+        }
+        Ok(scope)
+    }
+
     pub async fn process_start(
         self: &Arc<Self>,
         identity: String,
@@ -22,29 +154,34 @@ impl Engine {
             let hash=digest(&request)?;
             let cwd=crate::tools::workspace_uri(&request.cwd,&runtime.workspace).map_err(invalid)?;
             if request.timeout_ms.is_some_and(|v|v==0||v>86400000)||request.argv.iter().map(|s|s.len()).sum::<usize>()>64*1024{return Err(invalid("invalid process budget"));}
+            let concurrent_writes=runtime.client.info().capabilities["filesystem"]["writeSerialization"]=="filePaths";
+            let version={
+                let state=cell.state.lock().await;
+                if let Some(result)=validate_process_admission(&state,&identity,&request,&hash,concurrent_writes)?{return Ok(result);}
+                process_admission_version(&state)
+            };
+            let permissions=engine.active_permissions(&cell).await.map_err(invalid)?;
+            let parent=engine.runtime_process_parent(&cell,request.lifetime=="thread").await.map_err(invalid)?;
+            // 已知超额在持久受理前拒绝；受理后的不确定结果仍由原记录查询，不能自动重放。
+            if request.timeout_ms.is_some_and(|timeout|timeout>parent.limits.wall_time_ms){
+                return Err(invalid(format!("timeoutMs exceeds {} process parent wallTimeMs ({})",request.lifetime,parent.limits.wall_time_ms)));
+            }
             let record={
                 let mut state=cell.state.lock().await;
+                // Scope 查询期间 Turn 可以取消或更换；以当前状态重新检查准入，不回写旧快照。
+                if let Some(result)=validate_process_admission(&state,&identity,&request,&hash,concurrent_writes)?{return Ok(result);}
+                if process_admission_version(&state)!=version{return Err(Error::Conflict);}
+                let turn=state.active.as_ref().map(|a|a.id.clone());
                 let mut candidate=state.thread.clone();let data=candidate.desktop.get_or_insert_with(Default::default);
-                if let Some(result)=receipt(data,&identity,&request.request_id,"areal/process/start",&hash)?{return Ok(result);}
-                if data.processes.len()>=128{return Err(Error::Exhausted("process history capacity reached".into()));}
-                let config=state.active.as_ref().and_then(|_|state.thread.turns.last()).and_then(|t|t.configuration.clone()).unwrap_or_else(||data.configuration.clone());
-                if !matches!(request.lifetime.as_str(),"thread"|"turn"){return Err(invalid("lifetime must be thread or turn"));}
-                if request.lifetime=="thread" && !config.profile.as_ref().is_some_and(|p|p.allow_thread_processes){return Err(invalid("profile does not authorize thread resources"));}
-                if request.lifetime=="thread" && !config.read_only && runtime.client.info().capabilities["filesystem"]["writeSerialization"]!="filePaths"{return Err(invalid("thread services require trusted --allow-concurrent-writes to avoid holding the workspace write lock"));}
-                let turn=state.active.as_ref().filter(|a|!a.cancel.is_cancelled()).map(|a|a.id.clone());
-                if request.lifetime=="turn" && turn.is_none(){return Err(Error::Conflict);}
-                if request.argv.is_empty() || request.argv.len()>256 || request.argv.iter().any(|a|a.contains('\0')) || (request.cols.is_some()!=request.rows.is_some()) || ((request.cols.is_some() || request.rows.is_some())&&!request.tty) || request.cols==Some(0) || request.rows==Some(0){return Err(invalid("invalid process argv or terminal size"));}
                 let record=ManagedProcess{cleanup_attestation:None,id:id(),runtime_epoch:runtime.client.info().runtime_epoch.clone(),scope_operation_id:runtime.client.operation_id(),scope_id:None,operation_id:runtime.client.operation_id(),process_id:None,lifetime:request.lifetime.clone(),turn_id:if request.lifetime=="turn"{turn}else{None},owner:identity.clone(),argv:request.argv.clone(),state:"accepted".into(),cleanup_confirmed:false,error:None,inputs:Vec::new()};
                 data.processes.push(record.clone());
                 remember(data,&identity,&request.request_id,"areal/process/start",hash,json!({"id":record.id,"runtimeEpoch":record.runtime_epoch}));
                 engine.persist(&candidate).await?;state.thread=candidate;
                 record
             };
-            let permissions=engine.active_permissions(&cell).await.map_err(invalid)?;
-            let parent=engine.runtime_task_parent(&cell).await.map_err(invalid)?;
             drop(admission);
             let result=async{
-                let scope=runtime.client.create_scope(rt::CreateScope{operation_id:record.scope_operation_id.clone(),parent_scope_id:parent,owner:rt::Owner{task_id:request.thread_id.clone(),plugin_instance_id:None},permissions,limits:rt::LimitRequest::default()}).await;
+                let scope=runtime.client.create_scope(rt::CreateScope{operation_id:record.scope_operation_id.clone(),parent_scope_id:parent.scope_id,owner:rt::Owner{task_id:request.thread_id.clone(),plugin_instance_id:None},permissions,limits:rt::LimitRequest::default()}).await;
                 let scope=match scope {Ok(scope)=>scope,Err(error)=>{
                     if !matches!(error.code,rt::ErrorCode::Unavailable|rt::ErrorCode::CleanupFailed) {engine.edit_process(&cell,&record.id,|p|{p.cleanup_confirmed=true;p.state="failed".into();}).await?;}
                     return Err(invalid(error));
