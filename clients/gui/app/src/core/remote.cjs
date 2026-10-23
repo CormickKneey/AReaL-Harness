@@ -38,6 +38,10 @@ class RemoteControl {
             );
         } catch (error) {
             if (error.code !== "ENOENT") throw new Error("无法读取手机配对；请检查系统钥匙串");
+            // 新配置尚未申请远程入口，不让安全存储的系统交互阻塞桌面与 Core 启动。
+            // 已有加密配对仍按原路径读取；首次启用时再检查并使用系统安全存储。
+            this.config = { enabled: false, devices: [] };
+            return;
         }
         this.config ??= { enabled: false, devices: [] };
         if (this.config.schemaVersion !== 2 && this.config.devices?.length) {

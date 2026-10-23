@@ -3,9 +3,14 @@
 use super::*;
 use futures_util::{StreamExt, stream::FuturesUnordered};
 
+pub(crate) struct ParallelReadResult {
+    pub(crate) bytes: usize,
+    pub(crate) unexecuted: Option<String>,
+}
+
 impl Engine {
     pub(crate) async fn parallel_read_width(&self, cell: &Cell) -> usize {
-        // 插件 hooks 仍保守串行；有限输出与重复失败门禁依赖逐调用结算。
+        // 插件 hooks 与重复失败门禁仍依赖逐调用结算；有限输出使用逐调用预留。
         if cell
             .state
             .lock()
@@ -13,7 +18,6 @@ impl Engine {
             .active
             .as_ref()
             .is_some_and(|active| !active.hooks.is_empty())
-            || self.limits.max_output_bytes != 0
             || self.limits.max_repeated_tool_failures != 0
         {
             1
@@ -37,15 +41,19 @@ impl Engine {
         cancel: &CancellationToken,
         calls: Vec<ToolCall>,
         tool_count: &mut usize,
-        tool_limit: usize,
         steer: &mpsc::Receiver<bool>,
-    ) -> anyhow::Result<usize> {
+        budgets: (usize, usize),
+    ) -> anyhow::Result<ParallelReadResult> {
+        let (tool_limit, remaining_output) = budgets;
         let width = self.parallel_read_width(cell).await;
+        let finite = self.limits.max_output_bytes != 0;
+        let mut available = remaining_output.saturating_sub(HANDOFF_OUTPUT_RESERVE);
         let mut pending = FuturesUnordered::new();
-        let mut calls = calls.into_iter();
+        let mut calls = calls.into_iter().peekable();
         let mut admission_error = None;
         let mut stopped = false;
         let mut bytes = 0;
+        let mut unexecuted = None;
         loop {
             while !stopped && pending.len() < width {
                 if cancel.is_cancelled() {
@@ -57,7 +65,29 @@ impl Engine {
                     stopped = true;
                     break;
                 }
-                let Some(call) = calls.next() else { break };
+                let Some(call) = calls.peek() else { break };
+                let reservation = if finite {
+                    let minimum = self.tool_output_budget(cell, call).await;
+                    if available < minimum {
+                        if pending.is_empty() {
+                            unexecuted = Some(call.name.clone());
+                            stopped = true;
+                        }
+                        break;
+                    }
+                    // 仅用于已声明可信、固定内置读取。结果有界；额外预留覆盖 JSON 转义及
+                    // 原始/有效参数在审计元数据中的副本。预算不足时退回单个调用，不能抢占在途预留。
+                    let bound = minimum
+                        .saturating_mul(24)
+                        .saturating_add(call.id.len().saturating_mul(24));
+                    if available < bound && !pending.is_empty() {
+                        break;
+                    }
+                    bound.min(available)
+                } else {
+                    usize::MAX
+                };
+                let call = calls.next().unwrap();
                 let admission = async {
                     self.reserve_agent_tool_call(cell)?;
                     *tool_count += 1;
@@ -68,7 +98,7 @@ impl Engine {
                     );
                     let (started, ready) = tokio::sync::oneshot::channel();
                     let result = self
-                        .start_tool(cell, cancel, call, usize::MAX, Some(started))
+                        .start_tool(cell, cancel, call, reservation, Some(started))
                         .await?;
                     Ok::<_, anyhow::Error>((result, ready))
                 }
@@ -81,20 +111,34 @@ impl Engine {
                         break;
                     }
                 };
-                pending.push(result);
+                if finite {
+                    available -= reservation;
+                }
+                pending.push(async move { (reservation, result.await) });
                 // 历史意图按模型声明顺序落盘；只等意图，不等执行完成。
                 if ready.await.is_err() {
                     stopped = true;
                 }
             }
-            let Some(result) = pending.next().await else {
+            let Some((reservation, result)) = pending.next().await else {
                 break;
             };
             match result
                 .map_err(anyhow::Error::from)
                 .and_then(|result| result)
             {
-                Ok(size) => bytes += size,
+                Ok(size) => {
+                    bytes += size;
+                    if finite {
+                        available = available.saturating_add(reservation).saturating_sub(size);
+                        if size > reservation {
+                            admission_error.get_or_insert_with(|| anyhow::anyhow!(
+                                "trusted read receipt exceeded its output reservation; results retained, no further calls admitted"
+                            ));
+                            stopped = true;
+                        }
+                    }
+                }
                 Err(error) => {
                     admission_error.get_or_insert(error);
                     stopped = true;
@@ -105,6 +149,6 @@ impl Engine {
         if let Some(error) = admission_error {
             return Err(error);
         }
-        Ok(bytes)
+        Ok(ParallelReadResult { bytes, unexecuted })
     }
 }

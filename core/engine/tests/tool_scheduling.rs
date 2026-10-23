@@ -25,6 +25,7 @@ use tokio_util::sync::CancellationToken;
 struct BatchModel {
     calls: Vec<ToolCall>,
     requests: AtomicUsize,
+    expected_results: AtomicUsize,
 }
 
 #[async_trait]
@@ -47,10 +48,11 @@ impl Model for BatchModel {
                     .map(Ok),
             )));
         }
+        let expected = self.expected_results.load(Ordering::SeqCst);
         let results: Vec<_> = messages.iter().filter(|m| m.role == "tool").collect();
-        assert_eq!(results.len(), self.calls.len());
+        assert_eq!(results.len(), expected);
         let advertised: Vec<_> = messages.iter().flat_map(|m| &m.tool_calls).collect();
-        assert_eq!(advertised.len(), self.calls.len());
+        assert_eq!(advertised.len(), expected);
         for ((call, advertised), result) in self.calls.iter().zip(advertised).zip(results) {
             assert_eq!(advertised["id"], call.id);
             assert_eq!(result.tool_call_id.as_deref(), Some(call.id.as_str()));
@@ -274,6 +276,7 @@ async fn open(
     std::fs::create_dir(&workspace).unwrap();
     let runtime = runtime(&data).await;
     let model = Arc::new(BatchModel {
+        expected_results: AtomicUsize::new(calls.len()),
         calls,
         requests: AtomicUsize::new(0),
     });
@@ -443,6 +446,85 @@ async fn defaults_finite_output_repeated_failure_limits_and_hooks_keep_serial_ex
 }
 
 #[tokio::test]
+async fn finite_output_reserves_receipts_and_reuses_settled_capacity_for_parallel_reads() {
+    let dir = tempfile::tempdir().unwrap();
+    let limits = Limits {
+        max_output_bytes: 16 * 1024 * 1024,
+        ..Limits::default()
+    };
+    let (engine, _, mut runtime, thread, _) = open(
+        dir.path(),
+        vec![
+            call("fs_stat", "a"),
+            call("fs_stat", "b"),
+            call("fs_stat", "c"),
+        ],
+        limits,
+        parallel(),
+    )
+    .await;
+    let first = runtime.next().await;
+    let second = runtime.next().await;
+    runtime.assert_no_dispatch().await;
+    second.succeed();
+    let replacement = runtime.next().await;
+    assert!(replacement.path().ends_with("/c"));
+    first.succeed();
+    replacement.succeed();
+    let done = bounded(engine.wait(&thread)).await.unwrap();
+    assert_eq!(done.turns[0].status, TurnStatus::Completed);
+    let bytes = done.turns[0]
+        .items
+        .iter()
+        .filter(|item| matches!(item, Item::DynamicToolCall { .. }))
+        .map(|item| serde_json::to_vec(item).unwrap().len())
+        .sum::<usize>();
+    assert!(bytes < 16 * 1024 * 1024);
+    close(engine, runtime).await;
+}
+
+#[tokio::test]
+async fn finite_parallel_budget_keeps_settled_results_and_does_not_admit_unaffordable_reads() {
+    let dir = tempfile::tempdir().unwrap();
+    let limits = Limits {
+        max_output_bytes: 60 * 1024,
+        ..Limits::default()
+    };
+    let mut unaffordable = call("fs_stat", &"unexecuted".repeat(2 * 1024));
+    unaffordable.id = "unexecuted".into();
+    let (engine, model, mut runtime, thread, _) = open(
+        dir.path(),
+        vec![call("fs_stat", "a"), call("fs_stat", "b"), unaffordable],
+        limits,
+        parallel(),
+    )
+    .await;
+    model.expected_results.store(2, Ordering::SeqCst);
+    let first = runtime.next().await;
+    runtime.assert_no_dispatch().await;
+    first.succeed();
+    runtime.next().await.succeed();
+    let done = bounded(engine.wait(&thread)).await.unwrap();
+    assert_eq!(done.turns[0].status, TurnStatus::Completed);
+    let calls = done.turns[0]
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::DynamicToolCall {
+                call_id, execution, ..
+            } => {
+                assert_eq!(execution.outcome, ToolOutcome::Succeeded);
+                Some(call_id.as_str())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(calls, ["a", "b"]);
+    assert_eq!(model.requests.load(Ordering::SeqCst), 2);
+    close(engine, runtime).await;
+}
+
+#[tokio::test]
 async fn an_unmatched_write_hook_does_not_serialize_trusted_reads() {
     let dir = tempfile::tempdir().unwrap();
     let mut extensions = parallel();
@@ -472,69 +554,79 @@ async fn an_unmatched_write_hook_does_not_serialize_trusted_reads() {
 
 #[tokio::test]
 async fn unknown_waits_for_other_inflight_reads_and_never_dispatches_the_following_write() {
-    let dir = tempfile::tempdir().unwrap();
-    let (engine, model, mut runtime, thread, _) = open(
-        dir.path(),
-        vec![
-            call("fs_stat", "a"),
-            call("fs_stat", "b"),
-            call("fs_stat", "c"),
-            call("fs_create", "d"),
-        ],
-        Limits::default(),
-        parallel(),
-    )
-    .await;
-    let (first, second) = runtime.pair("/a", "/b").await;
-    second.unknown();
-    runtime.assert_no_dispatch().await;
-    first.succeed();
-    let done = bounded(engine.wait(&thread)).await.unwrap();
-    assert_eq!(done.turns[0].status, TurnStatus::Failed);
-    let outcomes: Vec<_> = done.turns[0]
-        .items
-        .iter()
-        .filter_map(|item| match item {
-            Item::DynamicToolCall { execution, .. } => Some(execution.outcome.clone()),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(outcomes, [ToolOutcome::Succeeded, ToolOutcome::Unknown]);
-    assert_eq!(model.requests.load(Ordering::SeqCst), 1);
-    assert!(runtime.seen.try_recv().is_err());
-    close(engine, runtime).await;
+    for max_output_bytes in [0, 16 * 1024 * 1024] {
+        let dir = tempfile::tempdir().unwrap();
+        let (engine, model, mut runtime, thread, _) = open(
+            dir.path(),
+            vec![
+                call("fs_stat", "a"),
+                call("fs_stat", "b"),
+                call("fs_stat", "c"),
+                call("fs_create", "d"),
+            ],
+            Limits {
+                max_output_bytes,
+                ..Limits::default()
+            },
+            parallel(),
+        )
+        .await;
+        let (first, second) = runtime.pair("/a", "/b").await;
+        second.unknown();
+        runtime.assert_no_dispatch().await;
+        first.succeed();
+        let done = bounded(engine.wait(&thread)).await.unwrap();
+        assert_eq!(done.turns[0].status, TurnStatus::Failed);
+        let outcomes: Vec<_> = done.turns[0]
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::DynamicToolCall { execution, .. } => Some(execution.outcome.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(outcomes, [ToolOutcome::Succeeded, ToolOutcome::Unknown]);
+        assert_eq!(model.requests.load(Ordering::SeqCst), 1);
+        assert!(runtime.seen.try_recv().is_err());
+        close(engine, runtime).await;
+    }
 }
 
 #[tokio::test]
 async fn cancellation_settles_all_parallel_reads_before_scope_cleanup_without_replay() {
-    let dir = tempfile::tempdir().unwrap();
-    let (engine, model, mut runtime, thread, turn) = open(
-        dir.path(),
-        vec![
-            call("fs_stat", "a"),
-            call("fs_stat", "b"),
-            call("fs_stat", "c"),
-        ],
-        Limits::default(),
-        parallel(),
-    )
-    .await;
-    let _first = runtime.next().await;
-    let _second = runtime.next().await;
-    engine.interrupt(&thread, &turn).await.unwrap();
-    let done = bounded(engine.wait(&thread)).await.unwrap();
-    assert_eq!(done.turns[0].status, TurnStatus::Failed);
-    let outcomes: Vec<_> = done.turns[0]
-        .items
-        .iter()
-        .filter_map(|item| match item {
-            Item::DynamicToolCall { execution, .. } => Some(execution.outcome.clone()),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(outcomes, [ToolOutcome::Unknown, ToolOutcome::Unknown]);
-    assert_eq!(runtime.closed.load(Ordering::SeqCst), 1);
-    assert_eq!(model.requests.load(Ordering::SeqCst), 1);
-    assert!(runtime.seen.try_recv().is_err());
-    close(engine, runtime).await;
+    for max_output_bytes in [0, 16 * 1024 * 1024] {
+        let dir = tempfile::tempdir().unwrap();
+        let (engine, model, mut runtime, thread, turn) = open(
+            dir.path(),
+            vec![
+                call("fs_stat", "a"),
+                call("fs_stat", "b"),
+                call("fs_stat", "c"),
+            ],
+            Limits {
+                max_output_bytes,
+                ..Limits::default()
+            },
+            parallel(),
+        )
+        .await;
+        let _first = runtime.next().await;
+        let _second = runtime.next().await;
+        engine.interrupt(&thread, &turn).await.unwrap();
+        let done = bounded(engine.wait(&thread)).await.unwrap();
+        assert_eq!(done.turns[0].status, TurnStatus::Failed);
+        let outcomes: Vec<_> = done.turns[0]
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::DynamicToolCall { execution, .. } => Some(execution.outcome.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(outcomes, [ToolOutcome::Unknown, ToolOutcome::Unknown]);
+        assert_eq!(runtime.closed.load(Ordering::SeqCst), 1);
+        assert_eq!(model.requests.load(Ordering::SeqCst), 1);
+        assert!(runtime.seen.try_recv().is_err());
+        close(engine, runtime).await;
+    }
 }
