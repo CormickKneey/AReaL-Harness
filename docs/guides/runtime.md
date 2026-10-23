@@ -16,7 +16,7 @@
 | `--output-window-bytes` | 64 KiB/进程，最大 8 MiB；另有 1024 片段限制 |
 | `--sandbox-profile` | 独立 daemon 默认 native；产品 launcher 默认 full-access；Linux 受控容器显式 outer-container-perf |
 
-launcher 的 `--command-timeout-ms` 默认 300000，与独立 daemon 默认不同。桌面模式可设置 `--desktop-process-timeout-ms`（1–86400000）；受管桌面进程使用该额度，普通命令工具仍受 `--command-timeout-ms` 限制。本地 TUI/Web/CLI 和 launcher 默认 full-access：YOLO 直接开放宿主文件与网络，ASK_PERMISSIONS 在 Core 增加审批。全开放命令以当前用户身份执行，不经过 OS 沙箱；显式只读、研究 Agent 和插件收窄的 Scope 仍使用 native 隔离。模型和审批不能扩大显式受限 Runtime 的授权，见[权限模式](configuration.md#permissions)。
+launcher 的 `--command-timeout-ms` 默认 300000，与独立 daemon 默认不同。桌面模式可设置 `--desktop-process-timeout-ms`（1–86400000）；根 Thread 的受管服务可使用 Runtime 桌面额度，普通命令工具和 Turn 进程仍受 `--command-timeout-ms` 限制。子任务、hooks 及额外收窄的 Scope 始终受相应祖先约束；桌面额度不扩大其权限与预算。显式进程时长超过父限额时在受理前拒绝。本地 TUI/Web/CLI 和 launcher 默认 full-access：YOLO 直接开放宿主文件与网络，ASK_PERMISSIONS 在 Core 增加审批。全开放命令以当前用户身份执行，不经过 OS 沙箱；显式只读、研究 Agent 和插件收窄的 Scope 仍使用 native 隔离。模型和审批不能扩大显式受限 Runtime 的授权，见[权限模式](configuration.md#permissions)。
 
 命令不继承模型凭据。full-access 继承宿主 PATH/HOME/TMPDIR/LANG/LC_ALL/TERM，其中 Core 将 TMPDIR 改为 Thread scratch；显式任务凭据仍只传给指定 executable。收窄命令保留受限环境。process.start.env 接受 PATH/LANG/LC_ALL/TERM/CI/RUST_BACKTRACE/TMPDIR/PYTHONDONTWRITEBYTECODE；TMPDIR 只改变临时文件位置，不扩大路径授权。
 

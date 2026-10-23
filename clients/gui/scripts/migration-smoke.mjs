@@ -293,7 +293,11 @@ async function launch() {
   app = await electron.launch({
     ...(journey && !motionMode ? { recordVideo: { dir: join(scratch, "video"), size: { width: 1509, height: 949 } } } : {}),
     executablePath: process.env.AREAL_GUI_EXECUTABLE || require("electron"),
-    args: process.env.AREAL_GUI_EXECUTABLE ? [] : [desktop, ...(hostMode && process.env.AREAL_E3_CDP_PORT ? ["--remote-debugging-port=" + process.env.AREAL_E3_CDP_PORT] : [])],
+    // 原生恢复弹窗使用 bundle 级状态，独立 userData 仍会受之前崩溃影响；只在夹具忽略旧窗口。
+    args: [
+      ...(process.env.AREAL_GUI_EXECUTABLE ? [] : [desktop, ...(hostMode && process.env.AREAL_E3_CDP_PORT ? ["--remote-debugging-port=" + process.env.AREAL_E3_CDP_PORT] : [])]),
+      ...(process.platform === "darwin" ? ["-ApplePersistenceIgnoreState", "YES"] : []),
+    ],
     env,
     timeout: 120000,
   });
@@ -709,6 +713,8 @@ try {
   await button("返回应用").click();
   checks.push("settings navigation and appearance");
   await input().fill("保留未发送草稿");
+  // Turn 可先进入 inProgress；必须等本次请求抵达，不能复用之前 Goal 的完成回调。
+  finishBackground = undefined;
   await call("send", { projectId: pid, threadId: tid, text: "后台持续执行" });
   await waitForSnapshot(
     (s) => current(s).turns.at(-1)?.status === "inProgress" && finishBackground,

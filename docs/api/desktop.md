@@ -188,11 +188,11 @@ contentItems 按顺序保存 inputText 或 arealMedia，实际字节进入模型
 
 ## 进程与保留
 
-process/start 默认 lifetime=turn；thread 生命周期需 Profile allowThreadProcesses，写服务还需部署 allow-concurrent-writes。GUI 终端与手动启动的 GUI 进程继承父 Runtime 限额，不再申请固定 24 小时时长；显式 `timeoutMs` 只能收窄父限额。输入归因到认证身份，输出游标与清理沿用 Runtime。PTY resize 为实际 ioctl；pipe EOF 关闭 FD，canonical PTY 使用 VEOF，raw mode 不支持。
+process/start 默认 lifetime=turn；thread 生命周期需 Profile allowThreadProcesses，写服务还需部署 allow-concurrent-writes。根 Thread 的受管服务使用 Runtime 已授予的桌面进程时长，普通 Turn 进程保留命令时长限制；只有可信命令 Scope 与 Runtime 根权限及其他预算一致时才分离两种时长。子任务、hooks 的任务 Scope 及额外收窄的 Scope 保留原祖先，不通过服务接口扩大授权。GUI 终端与手动启动的 GUI 进程默认继承父 Runtime 限额；显式 `timeoutMs` 只能收窄相应父限额，已知超额在持久受理前拒绝，不生成未知启动回执。受理后的 UNKNOWN 仍查询原记录，不自动重放。输入归因到认证身份，输出游标与清理沿用 Runtime。PTY resize 为实际 ioctl；pipe EOF 关闭 FD，canonical PTY 使用 VEOF，raw mode 不支持。
 
 GUI 终端选择账户中可执行的登录 shell，缺失时依次尝试 `SHELL` 和 `/bin/sh`。桌面适配器提交交互登录会话的具体 argv，并通过字面 `/usr/bin/env` 参数设置 `SHELL`、`USER`、`LOGNAME` 和 `TERM=xterm-256color`。登录和交互初始化文件负责建立用户工具链环境。Runtime 保留现有环境过滤与权限。恢复读取原托管进程 argv。运行中的终端隐藏常规清理诊断，已退出或状态不确定的进程继续显示退出与清理事实。
 
-面向模型的 `development_service_inspect` 只列出当前 Thread 的受管记录，或返回单条记录的 Runtime 当前状态与最多 16 KiB 输出。`development_service_start` 通过同一持久 process/start 所有者提交 thread 生命周期进程，请求身份由可信的 Core Thread、Turn 和工具调用 ID 生成。Core 审批、Profile 权限和 Runtime 写入序列化检查仍然生效。启动结果未知时检查原记录，不自动重发。这两个工具不另建进程执行器，也不推断监听端口。
+面向模型的 `development_service_inspect` 只列出当前 Thread 的受管记录，或返回单条记录的 Runtime 当前状态与最多 16 KiB 输出。`development_service_start` 通过同一持久 process/start 所有者提交 thread 生命周期进程，请求身份由可信的 Core Thread、Turn 和工具调用 ID 生成。省略 `timeoutMs` 时继承已授权的服务父限额，不另申请固定 24 小时。Core 审批、Profile 权限和 Runtime 写入序列化检查仍然生效。启动结果未知时检查原记录，不自动重发。这两个工具不另建进程执行器，也不推断监听端口。
 
 旧 epoch 句柄为 STALE_HANDLE，不恢复活进程。Thread 进程清理未确认、活动组或压缩阻止 restartSafe。纯历史工具或 Hook UNKNOWN 不阻止停止服务，但原 Thread 继续前仍需检查。归档需空闲且队列/资源结算，释放热历史并保留磁盘和去重键；GC 在 drain 完成后扫描冷热引用，不能删除历史仍引用的 Blob。
 
