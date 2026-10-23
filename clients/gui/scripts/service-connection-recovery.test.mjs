@@ -14,6 +14,45 @@ const { serviceIdentity } = require('../app/src/core/service-config.cjs');
 const { WebSocketServer } = require('../app/node_modules/ws');
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+for (const fails of [false, true]) {
+  test(`concurrent initialization shares control read and ${fails ? 'failure' : 'connection'}`, async t => {
+    const f = await fixture(t);
+    let release, reads = 0, starts = 0;
+    const gate = new Promise(resolve => { release = resolve; });
+    f.backend.readControl = async () => { reads++; await gate; return null; };
+    const failure = new Error('fixture initialization failure');
+    f.backend.initialize = async () => {
+      starts++; await sleep(10);
+      if (fails) throw failure;
+    };
+    const pending = Promise.allSettled(Array.from({ length: 8 }, () => f.backend.init()));
+    await sleep(0); release();
+    const results = await pending;
+    assert.equal(reads, 1, 'the shared attempt must cover asynchronous control-file reads');
+    assert.equal(starts, 1, 'concurrent callers must not replace each other\'s connection');
+    assert.equal(f.backend.connecting, null);
+    assert.equal(f.backend.initializing, false);
+    assert.ok(results.every(result => fails ? result.status === 'rejected' && result.reason === failure : result.status === 'fulfilled'));
+    if (fails) {
+      f.backend.initialize = async () => { starts++; };
+      await f.backend.init();
+      assert.equal(starts, 2, 'a later explicit retry is allowed after shared failure');
+    }
+  });
+}
+
+test('disposal during control read prevents initialization', async t => {
+  const f = await fixture(t);
+  let release, starts = 0;
+  f.backend.readControl = () => new Promise(resolve => { release = resolve; });
+  f.backend.initialize = async () => { starts++; };
+  const pending = assert.rejects(f.backend.init(), /GUI 连接已关闭/);
+  f.backend.disposed = true; release(null);
+  await pending;
+  assert.equal(starts, 0);
+  assert.equal(f.backend.connecting, null);
+});
+
 test('application shutdown preserves registered historical project identity and rejects crossed bindings', async () => {
   const local = require('../app/src/core/local-service.cjs');
   const original = local.serviceRequest;
