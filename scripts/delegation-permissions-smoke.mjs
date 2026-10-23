@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { createServer } from "node:http";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { connect } from "../examples/desktop-api/client.mjs";
@@ -18,6 +19,26 @@ await writeFile(outside, "outside-private-sentinel\n");
 function commandProbes() {
   const denied = current.mode === "read-only";
   return [
+    { name: "custom-managed-tool", argv: ["managed-probe"] },
+    ...["node", "npm", "pnpm", "rg"]
+      .filter(
+        (tool) =>
+          process.platform === "darwin" &&
+          ["/opt/homebrew/bin", "/usr/local/bin"].some((bin) => existsSync(join(bin, tool))),
+      )
+      .map((tool) => ({ name: `${tool}-version`, argv: [tool, "--version"] })),
+    ...(process.platform === "darwin" && existsSync("/opt/homebrew/bin/node")
+      ? [
+          {
+            name: "node-home-and-scratch",
+            argv: [
+              "node",
+              "-e",
+              'const fs=require("node:fs"),os=require("node:os");if(!os.homedir()||!os.tmpdir())process.exit(31);fs.writeFileSync(os.tmpdir()+"/node-probe","ok");console.log("node-scratch-ok")',
+            ],
+          },
+        ]
+      : []),
     { name: "git-version", argv: ["/usr/bin/git", "--version"] },
     {
       name: "git-read",
@@ -135,11 +156,21 @@ http = createServer(async (request, output) => {
       // 先证明可信读取不占写租约，再执行需要申请租约的命令，避免测试自身造成互等。
       if (current.mode === "inherit") await current.parentRead;
       const probes = commandProbes();
-      if (tools.length <= probes.length) {
+      const last = tools.at(-1);
+      if (tools.length > 1) {
+        assert(last.processId, JSON.stringify(last));
+        if (!last.outputClosed) {
+          current.processReads++;
+          assert(current.processReads <= probes.length * 5, "process observation did not settle");
+          return response(output, "read_process", { processId: last.processId, waitMs: 1000 });
+        }
+      }
+      const completed = new Set(tools.slice(1).map((tool) => tool.processId)).size;
+      if (completed < probes.length) {
         return response(output, "run_command", {
-          argv: probes[tools.length - 1].argv,
+          argv: probes[completed].argv,
           timeoutMs: 3000,
-          yieldMs: 1000,
+          yieldMs: probes[completed].name === "custom-managed-tool" ? 10 : 1000,
         });
       }
       return response(output, null, null, "verified public source evidence; inspection report");
@@ -237,12 +268,25 @@ async function run(mode) {
   }
   const originalIndex = await readFile(join(workspace, ".git/index"));
   const originalConfig = await readFile(join(workspace, ".git/config"));
+  const manager = join(dir, "custom-node-manager");
+  const installed = join(manager, "versions/node/v22.1.0");
+  await mkdir(join(installed, "bin"), { recursive: true });
+  await mkdir(join(installed, "lib"), { recursive: true });
+  await mkdir(join(manager, "alias"), { recursive: true });
+  await mkdir(join(dir, "user"), { recursive: true });
+  await writeFile(join(manager, "alias/default"), "22\n");
+  await writeFile(join(installed, "lib/resource"), "managed-tool-ok\n");
+  await writeFile(
+    join(installed, "bin/managed-probe"),
+    `#!/bin/sh\nsleep 0.05\ncat '${installed}/lib/resource'\n`,
+  );
+  await chmod(join(installed, "bin/managed-probe"), 0o755);
   const config = join(dir, "config.toml");
   await writeFile(
     config,
     `schema_version=2\n[delegation]\ninspection_permissions="${mode}"\n[model]\nmax_retries=0\n[network]\nretry_mode="bounded"\n`,
   );
-  current = { mode, requests: 0, childRequests: 0 };
+  current = { mode, requests: 0, childRequests: 0, processReads: 0 };
   current.parentRead = new Promise((done) => (current.releaseParentRead = done));
   const child = spawn(
     "python3",
@@ -276,8 +320,9 @@ async function run(mode) {
     {
       stdio: ["ignore", "pipe", "pipe"],
       env: {
-        PATH: process.env.PATH,
+        PATH: process.platform === "darwin" ? "/usr/bin:/bin:/usr/sbin:/sbin" : process.env.PATH,
         HOME: join(dir, "user"),
+        NVM_DIR: manager,
         AREAL_HARNESS_HOME: join(dir, "home"),
         NO_PROXY: "127.0.0.1,localhost",
         no_proxy: "127.0.0.1,localhost",
@@ -325,21 +370,43 @@ async function run(mode) {
   const rejected = mode === "read-only" && !restrictedAvailable;
   assert.equal(executions[0].status, rejected ? "failed" : "completed");
   const probes = commandProbes();
-  assert.equal(current.childRequests, rejected ? 0 : probes.length + 2);
+  assert.equal(current.childRequests, rejected ? 0 : probes.length + 2 + current.processReads);
+  if (!rejected)
+    assert(current.processReads > 0, "fixture must exercise asynchronous process reads");
   const observations = [];
   if (!rejected) {
     const { thread: childHistory } = await service.rpc.call("thread/read", {
       threadId: executions[0].threadId,
       includeTurns: true,
     });
+    await writeFile(
+      join(evidence, `${mode}.child-history.json`),
+      JSON.stringify(childHistory, null, 2),
+    );
     const calls = childHistory.turns[0].items.filter((item) => item.type === "dynamicToolCall");
     assert.equal(calls[0].tool, "read_file");
     assert.equal(calls[0].success, true);
-    for (const [index, probe] of probes.entries()) {
-      const call = calls[index + 1];
+    let cursor = 1;
+    for (const probe of probes) {
+      let call = calls[cursor++];
       assert.equal(call.tool, "run_command");
       assert.equal(call.execution.backend, "runtime");
-      const result = JSON.parse(call.contentItems.find((item) => item.type === "inputText").text);
+      const decode = (item) =>
+        JSON.parse(item.contentItems.find((c) => c.type === "inputText").text);
+      let result = decode(call);
+      const processId = result.processId;
+      let stdout = result.stdout ?? "",
+        stderr = result.stderr ?? "";
+      // yield 只结束等待；继续回取同一进程，不重跑命令或放宽超时。
+      while (!result.outputClosed) {
+        call = calls[cursor++];
+        assert.equal(call.tool, "read_process");
+        result = decode(call);
+        assert.equal(result.processId, processId);
+        stdout += result.stdout ?? "";
+        stderr += result.stderr ?? "";
+      }
+      result = { ...result, stdout, stderr };
       assert.equal(
         result.exitCode === 0,
         !probe.denied,
@@ -359,10 +426,7 @@ async function run(mode) {
       assert.deepEqual(await readFile(join(workspace, ".git/index")), originalIndex);
       assert.deepEqual(await readFile(join(workspace, ".git/config")), originalConfig);
     }
-    await writeFile(
-      join(evidence, `${mode}.child-history.json`),
-      JSON.stringify(childHistory, null, 2),
-    );
+    assert.equal(cursor, calls.length, "probe command was repeated or left unsettled");
   }
   // 父任务 ToolOutcome 必须如实区分创建拒绝与读取失败子任务的成功操作。
   const { thread: history } = await service.rpc.call("thread/read", {

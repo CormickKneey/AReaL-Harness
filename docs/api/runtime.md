@@ -32,9 +32,29 @@ macOS 的内置搜索助手与 fs.execute 复用系统 Python 启动桥接，再
 
 Runtime 在可信宿主解析 Apple Git shim，受限任务只读取/执行选定系统 Git 及其固定资源。它不为此开放开发工具链选择状态、宿主配置或整个工具链目录；默认不导入宿主 Git system/global 配置和系统 attributes，仓库配置仍按原路径权限读取。任务显式覆盖 Git 环境后仍受相同 OS 沙箱约束。Git 的索引、配置和源码写入在只读 Scope 中继续被拒绝。
 
-可信启动 PATH 可接入系统目录，以及 `/opt/homebrew`、`/usr/local` 下已有的软件目录。Runtime 仅为这些部署工具链增加只读执行与动态库读取，其 etc 下仅接入 OpenSSL 公共启动配置和 CA 资源（openssl.cnf、cert.pem、certs），不开放 private 私钥目录、其他服务配置、var 或任意用户 home。模型进程自行设置 PATH 不增加授权根；读写、网络、只读输入和资源清理仍受原 Scope 约束。握手的 `commandEnvironment` 给出路径和只读工具链范围。非标准用户环境不自动导入，需要当前环境时委派应声明 requiresCurrentEnvironment。
+可信启动 PATH 保留绝对目录的显式顺序，但 PATH 本身不授予文件权限。macOS 桌面启动缺少标准路径时，补齐 `/opt/homebrew`、`/usr/local` 中实际存在的 bin/sbin；这些前缀不得重定向到用户目录。仅增加程序和动态库的只读资源，etc 下仅接入 OpenSSL 公共配置和 CA（openssl.cnf、cert.pem、certs），不开放 private、其他服务配置或 var。macOS 系统 LibreSSL 使用同样的规则逐项接入 `/private/etc/ssl` 的公共配置和证书，供 Cargo 等程序启动；不开放整个 `/etc`。
 
-Rust Client 的 `launch_with_limits` 只投影可信 PATH，不继承其他环境；`launch_with_command_path` 供可信部署显式接入已物化工具链，要求有界的绝对目录列表。NativeExecutor 为显式工具链把私有 .toolchain/bin 加在系统路径前。它不扩大源文件写集合。`launch_with_environment` 另接受可信调用方已授权的网络上限；已有 launch 入口仍默认禁网，子 Scope 可继续收窄为 deny。
+用户级工具发现与系统工具使用同一个 Runtime 启动边界：
+
+| 安装方式 | 受限命令使用的资源与版本选择 |
+|---|---|
+| nvm | `NVM_DIR` 或默认安装树；解析 default/用户别名/LTS 别名，选择已安装的匹配版本 |
+| fnm | `FNM_DIR`、标准数据目录；解析 default 或已激活的 multishell 链接 |
+| mise、asdf | 数据/安装目录中的具体工具版本；读取全局配置的字面量版本，不求值模板、env、hooks 或插件 |
+| pyenv、rbenv | 已安装版本与全局 version 文件，保留显式部署版本提示 |
+| rustup / Cargo | 已选 toolchain 的真实 bin、lib 等安装资源；Cargo 自装命令只接入 bin，不读取 credentials.toml |
+| Volta | 已安装的默认 Node/npm/pnpm/Yarn 镜像；保留默认包管理器在 Node 附带 npm 之前的顺序 |
+| uv、pipx、Bun、Deno、独立 pnpm 等 CLI | 已存在的用户 bin；uv/pipx 链接只接入对应 venv 与已识别的解释器，不开放整个用户数据目录 |
+
+显式激活的具体安装路径优先于全局默认。没有默认时，仅在安装集合唯一时补齐；有多个版本、配置无效或版本缺失时不随意切换到最新版。发现只读取有界文件和固定层级目录，不执行 shell 配置、manager hooks，不安装或下载工具。受限路径将已识别 shim 替换为具体安装目录，避免独立 HOME 破坏工具启动；完整授权且继承网络时保留原始 shim 顺序与宿主项目选择语义。受限执行使用启动时的版本快照，不自动解释工作区版本文件、复杂 manager 配置或安装未存在的项目版本；需要其他版本时使用已获授权的显式工具路径，或在可信启动环境激活后重启 Runtime。
+
+桌面服务、Rust Client、独立 worker 和开发 launcher 透传同一组发现提示：HOME、XDG_DATA_HOME/XDG_CONFIG_HOME、NVM_DIR、FNM_DIR、VOLTA_HOME、MISE_DATA_DIR/MISE_CONFIG_DIR/MISE_INSTALLS_DIR、ASDF_DATA_DIR、PYENV_ROOT、RBENV_ROOT、RUSTUP_HOME、CARGO_HOME、PNPM_HOME、BUN_INSTALL、DENO_INSTALL，以及 RUSTUP_TOOLCHAIN/PYENV_VERSION/RBENV_VERSION。这些值用于可信启动发现，不直接注入受限任务。配置内容、宿主 home、凭据和 manager 状态目录不因此获得读取权限。具体安装根须解析到已识别安装树内，执行前再次拒绝被重定向或移除的根。模型进程自行设置 PATH 或 manager 变量不能增加授权根；源码写入、网络、只读输入和清理仍受原 Scope 约束。
+
+握手的 `commandEnvironment` 给出受限 `path`、完整授权 `unrestrictedPath`、`readOnlyToolchains` 和未能确定默认版本等 `notices`。发现按 Runtime 生命周期执行，不在每次工具调用时启动 shell 或重新扫描用户目录；更换工具安装或默认版本后重启服务。
+
+受限命令不会继承宿主 HOME。Runtime 在既有读取权限内选择 HOME：优先采用有效的 TMPDIR（Core 的每线程 scratch），未提供时尝试 Scope 可读的部署 scratch 或其已授权子目录，均不可用时退回当前工作目录；缺失的 TMPDIR 同步使用该目录。目录必须是已存在的绝对目录，解析符号链接后仍在 Scope 读取范围内；不增加读写根或网络权限。没有可写 scratch 的只读调用仍不能写缓存，应由可信调用方提供 scratch。完整授权且继承网络的宿主模式保留原有 HOME/TMPDIR 继承规则。
+
+Rust Client 的 `launch_with_limits` 投影可信 PATH 并向 Runtime 传递上述发现提示，不继承其他环境；`launch_with_command_path` 供可信部署显式接入已物化工具链，要求有界的绝对目录列表。NativeExecutor 为显式工具链把私有 .toolchain/bin 加在系统路径前。它不扩大源文件写集合。`launch_with_environment` 另接受可信调用方已授权的网络上限；已有 launch 入口仍默认禁网，子 Scope 可继续收窄为 deny。
 
 私有 Bash 是单独执行的 GPL-3.0-or-later 组件，完整包同时携带许可证、锁定对应源码和构建信息；不静态链接进 Rust。构建和升级须使用完整 bundle，见[开发指南](../development/README.md)和[发行流程](../development/releasing.md)。
 

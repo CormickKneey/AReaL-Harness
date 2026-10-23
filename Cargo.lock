@@ -382,7 +382,10 @@ dependencies = [
 name = "areal-runtime-host-tools"
 version = "0.1.7-beta.3"
 dependencies = [
+ "libc",
+ "serde_json",
  "tempfile",
+ "toml_edit",
 ]
 
 [[package]]
@@ -399,6 +402,7 @@ dependencies = [
 name = "areal-runtime-supervisor"
 version = "0.1.7-beta.3"
 dependencies = [
+ "areal-runtime-host-tools",
  "areal-runtime-protocol",
  "async-trait",
  "base64 0.22.1",
@@ -455,6 +459,7 @@ dependencies = [
  "anyhow",
  "areal-local-service",
  "areal-protocol",
+ "areal-runtime-host-tools",
  "clap",
  "fs2",
  "libc",

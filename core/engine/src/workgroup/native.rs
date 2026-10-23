@@ -818,7 +818,7 @@ impl NativeExecutor {
             areal_runtime_host_tools::command_environment(
                 &std::env::var_os("PATH").unwrap_or_default(),
             )
-            .path
+            .unrestricted_path
         };
         Ok(Client::launch_with_environment(
             &self.runtime,

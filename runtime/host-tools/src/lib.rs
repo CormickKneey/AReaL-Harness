@@ -1,6 +1,8 @@
 //! 可信宿主的工具发现；不执行任务脚本，不读取模型或工作区配置。
 mod environment;
+mod managed;
 pub use environment::{CommandEnvironment, command_environment};
+pub use managed::deployment_environment;
 use std::{
     io,
     path::{Path, PathBuf},

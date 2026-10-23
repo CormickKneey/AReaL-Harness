@@ -71,7 +71,7 @@ class CoreArgumentsTest(unittest.TestCase):
 
 
 class LauncherProcessTest(unittest.TestCase):
-    def fixture(self, directory, invalid=False, linked=False, extra=()):
+    def fixture(self, directory, invalid=False, linked=False, extra=(), tool_environment=None):
         root = Path(directory)
         (root / "workspace").mkdir()
         prefix = f"#!{sys.executable}\nimport json, os, sys\nfrom pathlib import Path\nroot=Path({str(root)!r})\n"
@@ -95,7 +95,7 @@ else:
         runtime = (
             prefix
             + """
-(root/'runtime.json').write_text(json.dumps({'has_key': 'MODEL_KEY' in os.environ, 'args': sys.argv[1:]}))
+(root/'runtime.json').write_text(json.dumps({'has_key': 'MODEL_KEY' in os.environ, 'nvm': os.environ.get('NVM_DIR'), 'mise': os.environ.get('MISE_DATA_DIR'), 'args': sys.argv[1:]}))
 sys.stdin.buffer.read()
 """
         )
@@ -134,6 +134,7 @@ sys.stdin.buffer.read()
                 "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
                 "MODEL_KEY": "fixture-key",
                 "AREAL_HARNESS_MODEL": "env-model",
+                **(tool_environment or {}),
                 **({"INVALID_CONFIG": "1"} if invalid else {}),
             },
             text=True,
@@ -156,6 +157,16 @@ sys.stdin.buffer.read()
             self.assertNotIn("--listen", core["args"])
             self.assertEqual(core["key"], "fixture-key")
             self.assertFalse(json.loads((root / "runtime.json").read_text())["has_key"])
+
+    def test_custom_manager_locations_reach_runtime_without_provider_credentials(self):
+        with tempfile.TemporaryDirectory() as directory:
+            locations = {"NVM_DIR": "/custom node manager", "MISE_DATA_DIR": "/custom mise"}
+            result = self.fixture(directory, tool_environment=locations)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            runtime = json.loads((Path(directory) / "runtime.json").read_text())
+            self.assertEqual(runtime["nvm"], locations["NVM_DIR"])
+            self.assertEqual(runtime["mise"], locations["MISE_DATA_DIR"])
+            self.assertFalse(runtime["has_key"])
 
     def test_process_capacity_default_and_override_reach_runtime_only(self):
         for extra, expected in [((), "4"), (("--runtime-max-processes", "32"), "32")]:

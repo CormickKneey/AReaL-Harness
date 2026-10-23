@@ -47,6 +47,8 @@ pub struct Config {
     pub task_credential_commands: Vec<PathBuf>,
     pub task_environment: BTreeMap<String, String>,
     pub command_search_path: Option<String>,
+    pub unrestricted_command_search_path: Option<String>,
+    pub command_environment_notices: Vec<String>,
     pub toolchain_roots: Vec<PathBuf>,
 }
 impl Config {
@@ -69,6 +71,8 @@ impl Config {
             task_credential_commands: Vec::new(),
             task_environment: BTreeMap::new(),
             command_search_path: None,
+            unrestricted_command_search_path: None,
+            command_environment_notices: Vec::new(),
             toolchain_roots: Vec::new(),
         }
     }
@@ -248,6 +252,8 @@ impl Supervisor {
             Err(error) => json!({"available":false,"error":error}),
         };
         info.capabilities["commandEnvironment"] = json!({"path":self.config.command_search_path,
+            "unrestrictedPath":self.config.unrestricted_command_search_path,
+            "notices":self.config.command_environment_notices,
             "readOnlyToolchains":self.config.toolchain_roots,"inheritsCredentials":false});
         if self.config.file_helper.is_some() {
             info.capabilities["methods"]
@@ -666,26 +672,74 @@ impl Supervisor {
                 if helper.as_ref().is_some_and(|helper| !helper.writes) {
                     execution.write_roots.clear();
                 }
-                if self.config.full_access
+                let unrestricted_environment = self.config.full_access
                     && execution
                         .write_roots
                         .iter()
                         .any(|p| p == std::path::Path::new("/"))
-                    && execution.network == NetworkRequest::Inherit
-                {
+                    && execution.network == NetworkRequest::Inherit;
+                if unrestricted_environment {
                     // 只继承工具链所需的宿主环境，模型凭据仍不自动传入。
                     for name in ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TERM"] {
+                        if name == "PATH" && self.config.command_search_path.is_some() {
+                            continue;
+                        }
                         if let Ok(value) = std::env::var(name) {
                             execution.env.entry(name.into()).or_insert(value);
                         }
                     }
+                    for (name, value) in areal_runtime_host_tools::deployment_environment() {
+                        if let Some(value) = value.to_str() {
+                            execution
+                                .env
+                                .entry(name)
+                                .or_insert_with(|| value.to_owned());
+                        }
+                    }
                 }
                 execution.env.entry("PATH".into()).or_insert_with(|| {
-                    self.config
-                        .command_search_path
-                        .clone()
-                        .unwrap_or_else(|| "/usr/local/bin:/usr/bin:/bin".into())
+                    (if unrestricted_environment {
+                        self.config
+                            .unrestricted_command_search_path
+                            .as_ref()
+                            .or(self.config.command_search_path.as_ref())
+                    } else {
+                        self.config.command_search_path.as_ref()
+                    })
+                    .cloned()
+                    .unwrap_or_else(|| "/usr/local/bin:/usr/bin:/bin".into())
                 });
+                if !execution.env.contains_key("HOME") {
+                    // 受限进程不能依赖系统账户查询；HOME 只指向已获授权的目录。
+                    // 优先使用 Core 的每线程 scratch，不导入宿主 home、配置或凭据。
+                    let home = execution
+                        .env
+                        .get("TMPDIR")
+                        .map(PathBuf::from)
+                        .or_else(|| {
+                            let scratch = self.workspace.scratch_root()?;
+                            if within(scratch, &scope.reads) {
+                                Some(scratch.clone())
+                            } else {
+                                scope
+                                    .writes
+                                    .iter()
+                                    .chain(&scope.reads)
+                                    .find(|path| path.starts_with(scratch))
+                                    .cloned()
+                            }
+                        })
+                        .filter(|path| path.is_absolute())
+                        .and_then(|path| path.canonicalize().ok())
+                        .filter(|path| path.is_dir() && within(path, &scope.reads))
+                        .unwrap_or_else(|| execution.cwd.clone());
+                    let home = home.to_string_lossy().into_owned();
+                    execution
+                        .env
+                        .entry("TMPDIR".into())
+                        .or_insert_with(|| home.clone());
+                    execution.env.insert("HOME".into(), home);
+                }
                 let write_paths = if execution.write_roots.is_empty()
                     || (self.config.concurrent_writes
                         && helper.is_none()

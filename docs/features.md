@@ -35,7 +35,7 @@ Remote 的 Direct 与 Relay 已接入共同 Host 授权和 PWA 协议，Direct �
 
 ## 支持边界
 
-- macOS 受限命令支持系统 Git 的工具链解析、私有 Bash here-document，以及可信启动 PATH 接入的软件只读工具链，保留源码只读、独立 scratch 和禁网边界。完整发行包附带独立 Bash 的许可证和对应源码；嵌套硬编码系统 Bash 不被替换。见 [Runtime 工具边界](api/runtime.md#macos-受限命令的系统工具)。
+- macOS 受限命令支持系统 Git 的工具链解析、私有 Bash here-document，以及可信启动 PATH 和 nvm/mise/fnm/Volta、Python/Rust 版本管理器接入的已安装只读工具链；用户 CLI 与必要公共 TLS 资源也在启动时发现，保留源码只读、独立 scratch 和禁网边界。完整发行包附带独立 Bash 的许可证和对应源码；嵌套硬编码系统 Bash 不被替换。见 [Runtime 工具边界](api/runtime.md#macos-受限命令的系统工具)。
 - macOS 的收窄工具执行使用 Seatbelt，并跟踪清退已观察到的后代；快速孤儿化仍可能漏检。Linux native 使用 Bubblewrap namespace 与 Runtime seccomp，要求部署提供 `/usr/bin/bwrap` 和 user namespace；Linux launcher 的 full-access 支持宿主执行。产品 Rust launcher 与 Linux Runtime 的单次执行回收不依赖 Python；后者使用随包发布的 Rust 二进制 `areal-runtime-reaper` 和可读的 `/proc`。详见 [Runtime 清理边界](api/runtime.md#输出与清理)。受控 Docker `outer-container-perf` 仍用于固定评测流程。Windows native Runtime 未提供。
 - Core、stdio MCP 和插件 Host 是可信宿主，未受 Runtime OS 沙箱隔离；远程工具权限由服务负责。审批不能扩大部署授权。
 - `UNKNOWN` 需要人工检查，不自动重放。没有跨 Runtime epoch 恢复、外部写入者 CAS、跨文件事务或完整逃逸后代树清理保证。

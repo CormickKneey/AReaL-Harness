@@ -81,13 +81,10 @@ async fn main() -> Result<()> {
     // 只有私有启动环境能接入软件工具链；process.start 的 PATH 不能增加只读根。
     let startup_path = std::env::var_os("PATH").unwrap_or_default();
     let environment = areal_runtime_host_tools::command_environment(&startup_path);
-    config.command_search_path = Some(
-        startup_path
-            .to_str()
-            .filter(|path| !path.is_empty())
-            .unwrap_or(&environment.path)
-            .to_owned(),
-    );
+    // 模型的 env.PATH 不参与发现；完整授权模式继续使用宿主 shim 语义。
+    config.command_search_path = Some(environment.path);
+    config.unrestricted_command_search_path = Some(environment.unrestricted_path);
+    config.command_environment_notices = environment.notices;
     config.toolchain_roots = environment.read_only_toolchains;
     config.scratch = args.scratch;
     config.read_only_paths = args.read_only_path;

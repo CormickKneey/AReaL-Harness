@@ -757,6 +757,7 @@ impl Engine {
                 }
                 let raw =
                     crate::agents::snapshot_turn(&state, turn_id, offset, 8192).map_err(invalid)?;
+                value["capabilities"]["sendInput"] = raw["capabilities"]["sendInput"].clone();
                 value["threadId"] = json!(thread_id);
                 value["turnId"] = json!(turn_id);
                 value["status"] = json!(match turn.status {
@@ -1071,7 +1072,7 @@ impl Engine {
         prompt: String,
     ) -> Result<Value> {
         let record = self.execution_record(parent, execution_id).await?;
-        match record.execution {
+        let accepted = match record.execution {
             Some(ExecutionRef::Thread { thread_id, turn_id }) => {
                 self.steer_child_input(&thread_id, &turn_id, vec![Input::text(prompt)])
                     .await?
@@ -1081,8 +1082,10 @@ impl Engine {
                     "an isolated attempt has a frozen contract; cancel and delegate revised work after settlement",
                 ));
             }
-        }
-        self.execution_read(parent, execution_id).await
+        };
+        let mut receipt = self.execution_read(parent, execution_id).await?;
+        crate::agents::input_receipt(&mut receipt, accepted);
+        Ok(receipt)
     }
     pub async fn execution_artifact(
         &self,

@@ -431,6 +431,61 @@ impl Fixture {
 }
 
 #[tokio::test]
+async fn late_input_returns_explicit_non_delivery_without_resuming_the_child() {
+    let fixture = Fixture::open(None).await;
+    let started = fixture
+        .engine
+        .delegate(fixture.request("late-input", "inspect", "report"))
+        .await
+        .unwrap();
+    let done = fixture.wait(&started).await;
+    let thread = done["threadId"].as_str().unwrap();
+    let before = fixture.engine.read(thread, true).await.unwrap();
+    let result = fixture
+        .engine
+        .execution_send_input(
+            &fixture.parent,
+            done["executionId"].as_str().unwrap(),
+            "Finish using the existing evidence".into(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result["inputAccepted"], false);
+    assert_eq!(result["status"], "completed");
+    assert_eq!(result["capabilities"]["sendInput"], false);
+    assert_eq!(result["receiptVersion"], done["receiptVersion"]);
+    assert_eq!(
+        serde_json::to_value(fixture.engine.read(thread, true).await.unwrap()).unwrap(),
+        serde_json::to_value(before).unwrap(),
+        "迟到输入不得重启子任务、污染历史或增加模型预算"
+    );
+    let foreign = fixture
+        .engine
+        .create(
+            fixture
+                .root
+                .path()
+                .join("repo")
+                .to_string_lossy()
+                .into_owned(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        fixture
+            .engine
+            .execution_send_input(
+                &foreign.id,
+                done["executionId"].as_str().unwrap(),
+                "foreign".into()
+            )
+            .await
+            .is_err()
+    );
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn artifact_readiness_matches_the_guard_without_reading_unsettled_bytes() {
     let fixture = Fixture::open(Some(false)).await;
     fixture.worker.block_attempt.store(true, Ordering::SeqCst);

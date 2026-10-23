@@ -2,6 +2,135 @@ use areal_runtime_protocol::*;
 use std::{process::Stdio, time::Duration};
 use tokio::process::Command;
 
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn desktop_path_runs_installed_tools_in_parent_and_read_only_child() {
+    use futures_util::{StreamExt, stream};
+    let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
+    let tools: Vec<_> = ["node", "npm", "pnpm", "rg", "rustc", "cargo", "uv"]
+        .into_iter()
+        .filter(|tool| {
+            ["/opt/homebrew/bin", "/usr/local/bin"]
+                .iter()
+                .any(|bin| std::path::Path::new(bin).join(tool).is_file())
+                || home.as_ref().is_some_and(|home| {
+                    [".cargo/bin", ".local/bin"]
+                        .iter()
+                        .any(|bin| home.join(bin).join(tool).is_file())
+                })
+        })
+        .collect();
+    assert!(
+        !tools.is_empty(),
+        "原生工具链验证需要至少一个已安装的标准工具"
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("source"), "keep").unwrap();
+    std::fs::write(outside.path().join("private"), "private").unwrap();
+    let binary = std::path::Path::new(env!("CARGO_BIN_EXE_areal-runtime"));
+    let client = areal_runtime_client::Client::launch_with_command_path(
+        binary,
+        &binary.with_file_name("areal-runtime-fs"),
+        dir.path(),
+        true,
+        &Limits::default(),
+        "/usr/bin:/bin:/usr/sbin:/sbin",
+    )
+    .await
+    .unwrap();
+    let child = client
+        .create_scope(CreateScope {
+            operation_id: client.operation_id(),
+            parent_scope_id: client.info().root_scope_id.clone(),
+            owner: Owner {
+                task_id: "readonly-tools".into(),
+                plugin_instance_id: None,
+            },
+            permissions: PermissionRequest {
+                read_roots: Some(vec!["workspace://repo".into()]),
+                write_roots: Some(vec![]),
+                network: NetworkRequest::Deny,
+            },
+            limits: LimitRequest::default(),
+        })
+        .await
+        .unwrap();
+    let mut probes = Vec::new();
+    for scope in [&client.info().root_scope_id, &child.scope_id] {
+        for tool in &tools {
+            probes.push((scope.clone(), format!("{tool} --version"), true));
+        }
+    }
+    probes.extend([
+        (
+            child.scope_id.clone(),
+            "printf changed > source".into(),
+            false,
+        ),
+        (
+            child.scope_id.clone(),
+            format!("cat '{}'", outside.path().join("private").display()),
+            false,
+        ),
+        (
+            child.scope_id.clone(),
+            "node -e 'require(\"node:net\").createServer().listen(0,\"127.0.0.1\")'".into(),
+            false,
+        ),
+    ]);
+    let results: Vec<_> = stream::iter(probes)
+        .map(|(scope, code, allowed)| {
+            let client = client.clone();
+            async move {
+                let process = client
+                    .start(StartProcess {
+                        operation_id: client.operation_id(),
+                        scope_id: scope,
+                        argv: vec!["/bin/sh".into(), "-c".into(), code.clone()],
+                        cwd: "workspace://repo".into(),
+                        env: Default::default(),
+                        tty: false,
+                        pipe_stdin: false,
+                        limits: LimitRequest {
+                            wall_time_ms: Some(10_000),
+                            ..Default::default()
+                        },
+                    })
+                    .await
+                    .unwrap();
+                let result = client.wait(&process.process_id).await.unwrap();
+                if allowed && result.exit_code != Some(0) {
+                    let output: serde_json::Value = client
+                        .call(
+                            "output.read",
+                            serde_json::json!({"processId":process.process_id,"maxBytes":8192}),
+                        )
+                        .await
+                        .unwrap();
+                    eprintln!("failed-output {code:?} {output}");
+                }
+                eprintln!(
+                    "probe={code:?} allowed={allowed} exit={:?} cleanup={}",
+                    result.exit_code, result.cleanup_confirmed
+                );
+                (code, allowed, result)
+            }
+        })
+        .buffer_unordered(4)
+        .collect()
+        .await;
+    client.shutdown().await.unwrap();
+    for (code, allowed, result) in results {
+        assert_eq!(result.exit_code == Some(0), allowed, "{code}: {result:?}");
+        assert!(result.cleanup_confirmed);
+    }
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("source")).unwrap(),
+        "keep"
+    );
+}
+
 #[tokio::test]
 async fn trusted_launch_inherits_only_granted_network_and_child_scopes_can_deny_it() {
     for network in [NetworkRequest::Deny, NetworkRequest::Inherit] {

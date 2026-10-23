@@ -366,13 +366,21 @@ impl Engine {
         thread_id: &str,
         turn_id: &str,
         input: Vec<Input>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let thread_id = thread_id.to_owned();
         let turn_id = turn_id.to_owned();
-        self.mutate(move |engine| async move {
-            engine.steer_inner(&thread_id, &turn_id, input, true).await
-        })
-        .await
+        let result = self
+            .mutate(move |engine| async move {
+                engine.steer_inner(&thread_id, &turn_id, input, true).await
+            })
+            .await;
+        // 读取回执和持久化输入之间子任务可能已封闭；不启动新 Turn 或重放修订。
+        // 只有目标生命周期冲突属于未送达回执，其余校验/存储/额度错误仍向上传播。
+        match result {
+            Ok(()) => Ok(true),
+            Err(Error::Conflict) => Ok(false),
+            Err(error) => Err(error),
+        }
     }
 
     async fn steer_inner(

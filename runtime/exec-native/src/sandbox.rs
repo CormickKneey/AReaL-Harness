@@ -253,6 +253,9 @@ pub fn command(execution: &Execution, profile: Profile) -> Result<Vec<String>> {
     }
     let mut ancestors = BTreeSet::new();
     for (index, root) in execution.toolchain_roots.iter().enumerate() {
+        if root.canonicalize().ok().as_ref() != Some(root) {
+            return Err(invalid("toolchain root was redirected or removed"));
+        }
         command.push(format!(
             "-DTOOLCHAIN{index}=^{}(/|$)",
             escape(absolute_utf8(root)?)
@@ -411,6 +414,9 @@ fn linux_command(execution: &Execution) -> Result<Vec<String>> {
         }
     }
     for root in &execution.toolchain_roots {
+        if root.canonicalize().ok().as_ref() != Some(root) {
+            return Err(invalid("toolchain root was redirected or removed"));
+        }
         let path = absolute_utf8(root)?.to_owned();
         argv.extend(["--ro-bind".into(), path.clone(), path]);
     }
