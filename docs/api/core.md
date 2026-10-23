@@ -257,6 +257,8 @@ prompt 必须非空，委派输入文本合计最多 32000 字节。inspect 仅�
 
 Core 先检查父权限、Profile、写入授权、执行环境和源码快照能力。独立修改优先隔离；当前宿主环境依赖、紧耦合修改或可选隔离不可用时，选择共享独占作者。patch 或 requireTrustedChecks 不能因能力缺失变成共享写入。共享作者持有工作区独占租约，其他普通工具等待；它不能再次递归委派。隔离执行继承父工具和必须审批边界，采用 Headless，无法获得批准时拒绝执行。隔离源码快照、共享作者启动和交付都检查尚未结算的 Runtime 进程，不能把已返回句柄视作进程结束。
 
+`agent_wait` / `agent_wait_any` 在自动交付受阻时仍返回已确认的子任务结论和当前执行回执；`delivery.attemptError` 记录本次交付错误，`nextAction` 提供处理指引。权威交付状态、UNKNOWN、资源释放和完成门禁保持不变，等待返回成功不代表变更已应用。阻挡解除后复用原候选，不重新执行子任务。
+
 `agent_send_input` 可纠正共享子任务；回执中的 `capabilities.sendInput` 同时检查活动 Turn 是否封闭或已取消。调用返回 `inputAccepted:true` 表示修订已持久化；若读取状态后目标已关闭，则返回 `inputAccepted:false`、当前执行回执及 `nextAction`，不写入修订、不启动新 Turn、不增加重试。该未送达状态不能当作修订已执行。所有权、存储、额度和参数错误仍然报错，旧 threadId 协调入口使用同样语义。隔离任务契约已经冻结，需要先取消并确认结算，再提交新任务。取消会封闭共享子树准入并传播至后代；force 缩短收尾等待，不保证已发生的副作用回滚。统一执行历史记录中的 `cancelRequested` 持久化后不可撤销（查询投影字段为 `stopRequested`）：已完成但尚未交付的候选返回 `status=cancelled`、`delivery.status=cancelled`，等待、Turn 收尾及重启恢复均不再应用该候选。取消与交付并发时，已经开始的 Runtime 操作等待真实回执，之后不再启动下一项；`partial`、`unknown` 和已完成的 `applied` 回执保留，不伪装成未写入。取消候选仍可读取制品；需要修改或重新交付时提交新的执行。
 
 分析默认 `sharedReadOnly`；可信部署显式配置 `delegation.inspection_permissions="inherit"` 后为 `sharedInherited`。后者仍要求只交付报告，但不承诺源码不可写，不能取消父/Profile 的只读约束。可写继承子任务持久 `desktop.executionPolicy.deferredWrite=true`，首次潜在副作用取得工作区写租约直到该 Turn 资源与持久化结算；纯原生读取可并行，跨 Turn 服务和递归委派拒绝。`exclusiveWrite` 保留旧含义；旧快照缺失 deferredWrite 时按 false 读取。新快照和响应包含新增策略字段，客户端须使用同步 schema；不认识该字段的旧二进制不可降级打开，更不能删除字段以绕过执行策略。旧 sharedReadOnly 与研究 Agent 保持强制只读。TaskRun worker 同样在空 Thread 注册及首个模型请求前执行 scope.check。详见[权限配置](../guides/configuration.md#分析子任务的权限策略)。

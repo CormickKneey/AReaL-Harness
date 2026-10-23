@@ -6,6 +6,17 @@ use sha2::{Digest, Sha256};
 fn invalid(error: impl std::fmt::Display) -> Error {
     Error::Invalid(error.to_string())
 }
+fn receipt_version(value: &mut Value) -> Result<()> {
+    let mut version = value.clone();
+    for key in ["activity", "text", "offset", "nextOffset", "receiptVersion"] {
+        version.as_object_mut().unwrap().remove(key);
+    }
+    value["receiptVersion"] = json!(format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(&version).map_err(invalid)?)
+    ));
+    Ok(())
+}
 fn owner_key(owner: &ExecutionOwner) -> String {
     match owner {
         ExecutionOwner::Turn { thread_id, turn_id } => format!("{thread_id}/{turn_id}"),
@@ -698,14 +709,7 @@ impl Engine {
     ) -> Result<Value> {
         let mut value = self.project_execution_page_inner(record, offset).await?;
         // 版本只排除轮询瞬时活动与分页位置；来源、交付、清理与错误仍参与版本。
-        let mut version = value.clone();
-        for key in ["activity", "text", "offset", "nextOffset"] {
-            version.as_object_mut().unwrap().remove(key);
-        }
-        value["receiptVersion"] = json!(format!(
-            "{:x}",
-            Sha256::digest(serde_json::to_vec(&version).map_err(invalid)?)
-        ));
+        receipt_version(&mut value)?;
         Ok(value)
     }
     async fn project_execution_page_inner(
@@ -982,8 +986,18 @@ impl Engine {
             .execution_wait(parent, execution_id, timeout_ms)
             .await?;
         if value["status"] == "awaitingDelivery" {
-            self.finish_execution_delivery(parent, execution_id).await?;
-            return self.execution_read(parent, execution_id).await;
+            let attempted = self.finish_execution_delivery(parent, execution_id).await;
+            let mut current = self.execution_read(parent, execution_id).await?;
+            if let Err(error) = attempted {
+                // 交付被父进程、权限或未知日志阻挡时，仍交回子任务已经确认的结论。
+                // 只附本次尝试错误，不改写权威交付状态，也不把等待成功当成应用成功。
+                current["delivery"]["attemptError"] = json!(error.to_string());
+                current["delivery"]["nextAction"] = json!(
+                    "Delivery did not complete. Use the retained handoff and delivery status to resolve the reported blocker. Do not repeat the worker, infer application, or replay UNKNOWN effects."
+                );
+                receipt_version(&mut current)?;
+            }
+            return Ok(current);
         }
         Ok(value)
     }

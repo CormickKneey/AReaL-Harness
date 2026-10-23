@@ -112,6 +112,7 @@ impl Model for ModelFixture {
     }
 }
 struct WorkerFixture {
+    report: AtomicBool,
     probes: AtomicUsize,
     availability: std::sync::Mutex<Result<(), AvailabilityError>>,
     attempts: AtomicUsize,
@@ -124,6 +125,24 @@ struct WorkerFixture {
 struct FactoryFixture(Arc<WorkerFixture>);
 #[async_trait]
 impl Factory for FactoryFixture {
+    async fn handoff(
+        &self,
+        _: &Path,
+        _: &str,
+        _: u32,
+        offset: usize,
+    ) -> anyhow::Result<Option<Value>> {
+        if !self.0.report.load(Ordering::SeqCst) {
+            return Ok(None);
+        }
+        let text = "Worker boundary checked; parent integration remains.";
+        anyhow::ensure!(offset <= text.len());
+        Ok(Some(
+            json!({"text":&text[offset..],"source":"message","sourceItemId":"worker-report",
+            "offset":offset,"nextOffset":null,"textBytes":text.len(),"partial":false,
+            "activity":{"recordedItems":1}}),
+        ))
+    }
     async fn probe_availability(&self, _: &Path) -> Result<(), AvailabilityError> {
         self.0.probes.fetch_add(1, Ordering::SeqCst);
         self.0.availability.lock().unwrap().clone()
@@ -184,6 +203,7 @@ impl Executor for WorkerFixture {
 
 #[derive(Default)]
 struct ScopeFixture {
+    active_processes: AtomicUsize,
     unavailable: AtomicBool,
     checks: std::sync::Mutex<Vec<Value>>,
 }
@@ -208,7 +228,7 @@ async fn runtime_with_scope(
                     json!({"protocolVersion":"areal.runtime.v0","runtimeEpoch":epoch,"connectionId":"fixture","rootScopeId":root,"capabilities":{"methods":["scope.check","fs.execute"],"restrictedScopes":{"available":!scopes.unavailable.load(Ordering::SeqCst)},"filesystem":{"artifactDelivery":true}}})
                 }
                 "scope.create" | "scope.get" | "scope.revoke" | "scope.waitClosed" => {
-                    json!({"scopeId":root,"parentScopeId":null,"state":if method=="scope.waitClosed"{"closed"}else{"active"},"owner":{"taskId":"fixture"},"readRoots":["workspace://repo"],"writeRoots":["workspace://repo"],"network":"deny","limits":{"wallTimeMs":10000,"outputBytes":8388608,"maxProcesses":4},"activeProcesses":0,"outputBytes":0,"cleanupError":null})
+                    json!({"scopeId":root,"parentScopeId":null,"state":if method=="scope.waitClosed"{"closed"}else{"active"},"owner":{"taskId":"fixture"},"readRoots":["workspace://repo"],"writeRoots":["workspace://repo"],"network":"deny","limits":{"wallTimeMs":10000,"outputBytes":8388608,"maxProcesses":4},"activeProcesses":scopes.active_processes.load(Ordering::SeqCst),"outputBytes":0,"cleanupError":null})
                 }
                 "scope.check" => {
                     scopes
@@ -321,6 +341,7 @@ impl Fixture {
             advertised_tools: std::sync::Mutex::new(Vec::new()),
         });
         let worker = Arc::new(WorkerFixture {
+            report: AtomicBool::new(false),
             probes: AtomicUsize::new(0),
             availability: std::sync::Mutex::new(Ok(())),
             attempts: AtomicUsize::new(0),
@@ -691,6 +712,79 @@ async fn an_observed_settled_delivery_does_not_require_another_final_model_respo
         done.turns[0].error
     );
     assert_eq!(fixture.model.root_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        std::fs::read(fixture.root.path().join("repo/result.txt")).unwrap(),
+        b"candidate"
+    );
+    assert_eq!(fixture.worker.attempts.load(Ordering::SeqCst), 1);
+    fixture.close().await;
+}
+
+#[tokio::test]
+async fn blocked_delivery_retains_handoff_and_wait_receipt_without_restarting_worker() {
+    let fixture = Fixture::open(Some(false)).await;
+    fixture.worker.report.store(true, Ordering::SeqCst);
+    let mut request = fixture.request("blocked-delivery", "modify", "changes");
+    request.independent = true;
+    request.writes = vec!["result.txt".into()];
+    let execution = fixture.engine.delegate(request).await.unwrap();
+    let candidate = fixture.wait(&execution).await;
+    assert_eq!(candidate["status"], "awaitingDelivery");
+    fixture.scopes.active_processes.store(1, Ordering::SeqCst);
+    *fixture.model.read_execution.lock().unwrap() =
+        Some(execution["executionId"].as_str().unwrap().into());
+    fixture.model.release.add_permits(1);
+    tokio::time::timeout(Duration::from_secs(5), fixture.model.started.acquire())
+        .await
+        .unwrap()
+        .unwrap()
+        .forget();
+    let parent = fixture.engine.read(&fixture.parent, true).await.unwrap();
+    let tool = parent.turns[0]
+        .items
+        .iter()
+        .find_map(|item| match item {
+            Item::DynamicToolCall {
+                tool,
+                success,
+                content_items,
+                ..
+            } if tool == "agent_wait" => {
+                assert_eq!(*success, Some(true));
+                Some(
+                    serde_json::from_str::<Value>(
+                        content_items.as_ref().unwrap()[0]["text"].as_str().unwrap(),
+                    )
+                    .unwrap(),
+                )
+            }
+            _ => None,
+        })
+        .expect("wait must retain a structured delivery receipt");
+    assert_eq!(tool["status"], "awaitingDelivery");
+    assert_eq!(tool["settled"], false);
+    assert_eq!(tool["delivery"]["status"], "candidate");
+    assert!(
+        tool["delivery"]["attemptError"]
+            .as_str()
+            .unwrap()
+            .contains("workspace is busy")
+    );
+    assert_eq!(tool["text"], candidate["text"]);
+    assert_ne!(tool["receiptVersion"], candidate["receiptVersion"]);
+    assert!(!fixture.root.path().join("repo/result.txt").exists());
+    assert_eq!(fixture.worker.attempts.load(Ordering::SeqCst), 1);
+    fixture.scopes.active_processes.store(0, Ordering::SeqCst);
+    *fixture.model.read_execution.lock().unwrap() = None;
+    fixture.model.release.add_permits(8);
+    let completed = tokio::time::timeout(
+        Duration::from_secs(10),
+        fixture.engine.wait(&fixture.parent),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(completed.turns[0].status, TurnStatus::Completed);
     assert_eq!(
         std::fs::read(fixture.root.path().join("repo/result.txt")).unwrap(),
         b"candidate"
