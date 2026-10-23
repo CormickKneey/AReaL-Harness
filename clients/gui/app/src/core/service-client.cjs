@@ -344,15 +344,17 @@ class SharedCoreBackend {
   async init({ automatic = false } = {}) {
     if (this.disposed) throw new Error('GUI 连接已关闭');
     if (this.connecting) return this.connecting;
-    const control = await this.readControl();
-    this.loadReferences(control);
-    if (automatic && this.controlState === 'stopped') {
-      this.connectionState = { state: 'unavailable', message: '后台服务已停止，可按需重新连接' }; this.onChange(); return;
-    }
-    if (this.status.connected && !this.lifecycleReferences.size && !this.legacyControl) return;
-    this.clearReconnect(); this.initializing = true;
-    this.connectionState = { state: 'connecting' }; this.onChange();
+    // 控制文件读取也属于同一次连接尝试；首次 await 前建立共享门闩，避免并发调用互相关闭连接或重复启动后台。
     this.connecting = (async () => {
+      const control = await this.readControl();
+      if (this.disposed) throw new Error('GUI 连接已关闭');
+      this.loadReferences(control);
+      if (automatic && this.controlState === 'stopped') {
+        this.connectionState = { state: 'unavailable', message: '后台服务已停止，可按需重新连接' }; this.onChange(); return;
+      }
+      if (this.status.connected && !this.lifecycleReferences.size && !this.legacyControl) return;
+      this.clearReconnect(); this.initializing = true;
+      this.connectionState = { state: 'connecting' }; this.onChange();
       if (this.lifecycleReferences.size || this.legacyControl) {
         await this.checkLifecycle();
         const completedStop = this.lifecycleReferences.size > 0 && [...this.lifecycleReferences.values()].every(reference =>
