@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
-import { preserveSignedPaths } from "./macos-signing-paths.mjs";
+import { preserveSignedPaths, signLocalMacOSApp } from "./macos-signing-paths.mjs";
 
 test("outer signing preserves Core bytes through main and background-service resource paths", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "areal-sign-paths-"));
@@ -51,4 +51,58 @@ test("outer signing preserves Core bytes through main and background-service res
 
 test("missing protected input fails closed rather than silently ignoring another path", () => {
   assert.throws(() => preserveSignedPaths([join(tmpdir(), "absent-areal-signing-core", "areal")]));
+});
+
+test("local signing covers nested libraries before enclosing bundles without following resource aliases", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "areal-local-signing-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const app = join(root, "Candidate.app");
+  const frameworks = join(app, "Contents/Frameworks");
+  const libraries = [
+    "Electron.framework/Versions/A/Libraries/libmedia.dylib",
+    "Service.app/Contents/Frameworks/Native.framework/addon.node",
+  ];
+  for (const name of libraries) {
+    await mkdir(join(frameworks, name, ".."), { recursive: true });
+    await writeFile(join(frameworks, name), "native fixture");
+  }
+  const resources = join(app, "Contents/Resources");
+  await mkdir(resources);
+  await writeFile(join(resources, "core.dylib"), "protected Core bytes");
+  await symlink("../../../Resources", join(frameworks, "Service.app/Contents/Resources"));
+  await symlink("../../Resources", join(frameworks, "ResourceAlias"));
+  const calls = [];
+  await signLocalMacOSApp(app, (command, args) => calls.push({ command, args }));
+  assert.equal(calls.length, 6);
+  assert.deepEqual(
+    calls.filter((call) => call.args[0] === "--force").map((call) => call.args.at(-1)),
+    [...libraries.map((name) => join(frameworks, name)), app],
+  );
+  assert.equal(
+    calls.some((call) => call.args.at(-1).includes("ResourceAlias")),
+    false,
+  );
+  assert.equal(await readFile(join(resources, "core.dylib"), "utf8"), "protected Core bytes");
+  assert.deepEqual(calls.at(-1).args, ["--verify", "--deep", "--strict", app]);
+});
+
+test("a failed nested signature prevents sealing an incomplete local app", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "areal-failed-signing-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const app = join(root, "Candidate.app");
+  await mkdir(join(app, "Contents/Frameworks"), { recursive: true });
+  await writeFile(join(app, "Contents/Frameworks/library.dylib"), "fixture");
+  const calls = [];
+  await assert.rejects(
+    signLocalMacOSApp(app, (_command, args) => {
+      calls.push(args);
+      throw new Error("nested signing failed");
+    }),
+    /nested signing failed/,
+  );
+  assert.equal(calls.length, 1);
+  assert.equal(
+    calls.some((args) => args.at(-1) === app),
+    false,
+  );
 });

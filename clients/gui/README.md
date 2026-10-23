@@ -213,6 +213,8 @@ pnpm --dir clients/gui run sign:mac --app "/absolute/new-package/package/mac-arm
 
 构建候选包时，可用 `AREAL_GUI_CORE_BUNDLE=/absolute/core-bundle` 复用已冻结的 Core bundle；打包仍校验内嵌组件哈希，正式发布只接受 `release` Core。该设置仅影响打包输入。
 
+本地 ad-hoc 打包先显式签名 Frameworks 内主应用和后台服务的动态库及 Node 扩展，再封装签名外层应用；不沿资源符号链接修改 Core。单独通过 `codesign --verify --deep --strict` 不能证明 Chromium 受限子进程能够加载动态库，仍需真实启动并验证 Renderer、GPU、网络及后台服务。此流程不替代 Developer ID、公证或安装验收，也不关闭沙箱。
+
 `make gui-smoke` 使用真实 Electron/Core/Runtime 和确定性本地 HTTP 模型，原生沙箱保持启用；项目选择对话框注入临时工作区，测试目录隔离。本地模型请求直连 loopback，测试保留并合并已有 `NO_PROXY` / `no_proxy` 条目。截图及 `manifest.json` 留在命令打印的临时目录，清单记录运行前后的 Core 二进制校验和及失败原因。安装包测试可设置 `AREAL_GUI_EXECUTABLE=/absolute/App.app/Contents/MacOS/AReaL\ Harness\ GUI`，此时不使用外部 Core 路径。实际账号登录、付费模型、其他操作系统和签名安装分发须单独验收。
 
 更新恢复与菜单停止共用生命周期观察和停止流程。普通停止仍保护包含 pending 输入的暂停 Queue；明确取消会保留输入与安排，并将 cancel 意图传到最终公共服务宿主。确认后项目范围或 Core generation 变化会要求重新确认；多项目部分退出或未知结果不会显示成恢复正常。`pnpm --dir clients/gui run test:lifecycle` 验证真实 Core 的 Queue 保留、安全退出，以及隔离 Electron 的菜单取消、不同配置路径下接回原后台和更新恢复；普通重开不弹恢复对话框，明确停止的原生确认由 fixture 应答，不进行更新下载或安装。
