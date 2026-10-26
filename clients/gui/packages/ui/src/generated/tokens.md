@@ -1,24 +1,47 @@
 <!-- Generated from tokens.json and src/theme.ts. Run pnpm --dir clients/gui --filter @areal/ui generate. -->
 # @areal/ui Token 速查
 
-写样式时按用途选这里的变量，不写字面量。数值只在 [tokens.json](../../tokens.json) 修改；调色板派生在 [theme.ts](../theme.ts)。
+写样式时按用途选这里的变量，不写字面量。数值与派生公式只在 [tokens.json](../../tokens.json) 修改；[theme.ts](../theme.ts) 保留公开调用与 WCAG 算法，[palette.ts](palette.ts) 是构建时生成的普通 TypeScript。
 
 ## 字号
 
 | 变量 | 默认值 | 用途 |
 | --- | --- | --- |
-| `--ui-font-size` | `14px` | 界面默认字号；用户偏好可覆盖 |
+| `--ui-font-size` | `12px` | 界面默认字号；用户偏好可覆盖 |
 | `--ui-font-weight` | `400` | 界面常规字重 |
+| `--text-conversation` | `var(--content-font-size, 12px)` | 对话时间线字号：正文、活动行、子代理行与过程状态共用，跟随内容字号偏好 |
 | `--text-ui-xl` | `calc(var(--ui-font-size) + 4px)` | 区块标题 |
 | `--text-page-title` | `calc(var(--ui-font-size) + 8px)` | 页面标题、空态大标题 |
 | `--text-ui-lg` | `calc(var(--ui-font-size) + 2px)` | 输入框文字、卡片标题等较突出内容 |
 | `--text-ui-base` | `var(--ui-font-size)` | 界面正文、卡片内容、普通反馈；在消息正文内被重映射为内容字号 |
-| `--text-ui-caption` | `calc(var(--ui-font-size) - 1px)` | 按钮、菜单与紧凑标签 |
-| `--text-content-caption` | `max(12px, calc(var(--content-font-size, 14px) - 1px))` | 执行摘要、状态等过程附注，跟随内容字号而非界面字号 |
-| `--text-ui-sm` | `calc(var(--ui-font-size) - 2px)` | 说明文字、次要反馈、表格辅助列 |
+| `--text-ui-caption` | `max(12px, calc(var(--ui-font-size) - 1px))` | 按钮、菜单与紧凑标签 |
+| `--text-content-caption` | `max(12px, calc(var(--content-font-size, 12px) - 1px))` | 执行摘要、状态等过程附注，跟随内容字号而非界面字号 |
+| `--text-content-h1` | `calc(var(--content-font-size, 12px) + 10px)` | 阅读内容一级标题（文件阅读器、长文档），跟随内容字号；14px 时 24px |
+| `--text-content-h2` | `calc(var(--content-font-size, 12px) + 6px)` | 阅读内容二级标题，跟随内容字号；14px 时 20px |
+| `--text-content-h3` | `calc(var(--content-font-size, 12px) + 4px)` | 阅读内容三级标题，跟随内容字号；14px 时 18px |
+| `--text-content-h4` | `calc(var(--content-font-size, 12px) + 2px)` | 阅读内容四级标题，跟随内容字号；14px 时 16px |
+| `--text-ui-sm` | `max(12px, calc(var(--ui-font-size) - 2px))` | 说明文字、次要反馈、表格辅助列 |
 | `--text-ui-xs` | `max(11px, calc(var(--ui-font-size) - 3px))` | 来源细节、元信息；最小 11px，不用于正文 |
 | `--text-ui-2xs` | `calc(var(--ui-font-size) - 5px)` | 仅限工作流图轴面的例外刻度 |
 | `--text-mobile-input-safe` | `16px` | 移动端聚焦输入的安全字号下限 |
+| `--text-fixed-metadata` | `10px` | 标注编号、图表刻度与固定几何元信息。该角色固定像素，保持原行为；支持随用户字号变化的正文继续使用 text-ui/content 系列。 |
+| `--text-fixed-caption` | `12px` | 固定几何的紧凑说明与代码预览字号。该角色固定像素，保持原行为；支持随用户字号变化的正文继续使用 text-ui/content 系列。 |
+| `--text-fixed-label` | `13px` | 固定尺寸控件标签、附件文字和远程连接说明。该角色固定像素，保持原行为；支持随用户字号变化的正文继续使用 text-ui/content 系列。 |
+| `--text-fixed-body` | `14px` | 现有固定布局的正文与默认字号回退。该角色固定像素，保持原行为；支持随用户字号变化的正文继续使用 text-ui/content 系列。 |
+| `--text-fixed-control` | `15px` | 固定高度队列和远程设置控件文字。该角色固定像素，保持原行为；支持随用户字号变化的正文继续使用 text-ui/content 系列。 |
+| `--text-fixed-emphasis` | `16px` | 固定布局的强调文字。该角色固定像素，保持原行为；支持随用户字号变化的正文继续使用 text-ui/content 系列。 |
+| `--text-fixed-section-title` | `20px` | 固定布局的任务、远程和用量分区标题。该角色固定像素，保持原行为；支持随用户字号变化的正文继续使用 text-ui/content 系列。 |
+| `--text-fixed-dialog-title` | `22px` | 远程配对和连接卡片标题。该角色固定像素，保持原行为；支持随用户字号变化的正文继续使用 text-ui/content 系列。 |
+| `--text-fixed-page-title` | `28px` | 现有页面标题和新建任务提示。该角色固定像素，保持原行为；支持随用户字号变化的正文继续使用 text-ui/content 系列。 |
+| `--text-ui-fine` | `calc(var(--ui-font-size) - 3px)` | 插件次要标记，保留原 ui-font-size 减 3px，不额外加最小字号。 |
+| `--text-ui-section` | `calc(var(--ui-font-size) + 6px)` | 界面分区标题，跟随界面字号增加 6px。 |
+| `--text-ui-hero` | `calc(var(--ui-font-size) + 10px)` | 界面大标题，跟随界面字号增加 10px。 |
+| `--text-ui-display` | `calc(var(--ui-font-size) + 12px)` | 插件详情展示标题，跟随界面字号增加 12px。 |
+| `--text-compact-caption` | `0.75rem` | 紧凑说明与元信息，保持既有 text-xs 的 rem 缩放。 |
+| `--text-compact-caption--line-height` | `1rem` | 紧凑说明行高，保持既有 text-xs 的 1rem。 |
+| `--text-compact-body` | `0.875rem` | 紧凑正文，保持既有 text-sm 的 rem 缩放。 |
+| `--text-compact-body--line-height` | `1.25rem` | 紧凑正文行高，保持既有 text-sm 的 1.25rem。 |
+| `--text-user-message-heading` | `1.5em` | 用户消息 Markdown 一级标题相对于该消息正文的字号关系。 D2 保留 renderer/src/workbench.css 原几何。 |
 
 ## 行高与字重
 
@@ -27,6 +50,7 @@
 | `--line-height-ui` | `max(20px, calc(var(--ui-font-size) + 6px))` | 界面正文行高，随界面字号增长 |
 | `--line-height-ui-sm` | `max(18px, calc(var(--ui-font-size) + 4px))` | 紧凑说明行高 |
 | `--tracking-wf-label` | `0.09em` | 工作流图大写等宽微标签字距 |
+| `--line-height-code-example` | `22px` | 主题 Diff 缩略图代码行高，保留原固定 22px。 |
 
 ## 间距与尺寸
 
@@ -53,9 +77,25 @@
 | `--radius-pill` | `999px` | 胶囊形：发送等主动作、标签、计数徽标 |
 | `--radius-overlay` | `20px` | 大浮层与独立工作区：Worktree 设置、目录列表、定时任务 |
 | `--radius-navigation` | `12.5px` | 导航项、侧栏行与拖拽预览 |
-| `--radius-composer` | `22px` | 输入区外框 |
+| `--radius-composer` | `18px` | 输入区外框 |
 | `--radius-panel` | `12px` | 面板与分组卡片 |
 | `--radius-dialog` | `16px` | 对话框 |
+| `--radius-message` | `16px` | 用户消息气泡圆角 |
+| `--radius-compact` | `6px` | 紧凑工具按钮与小型输入的既有圆角。 D3 保留原几何，不改变数值。 |
+| `--radius-micro` | `4px` | 微型工具、缩略图内部和细粒度选择区圆角。 D3 保留原几何，不改变数值。 |
+| `--radius-compact-row` | `7px` | 紧凑队列和菜单行圆角。 D3 保留原几何，不改变数值。 |
+| `--radius-inline` | `5px` | 嵌入式输入和紧凑标注工具圆角。 D3 保留原几何，不改变数值。 |
+| `--radius-card` | `14px` | 中型资源列表与提示卡片圆角。 D3 保留原几何，不改变数值。 |
+| `--radius-choice` | `15px` | 选择菜单和主题预览卡片圆角。 D3 保留原几何，不改变数值。 |
+| `--radius-attachment` | `9px` | 图片附件与紧凑批注圆角。D3 保留原几何。 |
+| `--radius-feedback` | `11px` | 输入反馈与提示卡片圆角。D3 保留原几何。 |
+| `--radius-full` | `9999px` | 全圆角胶囊，保留原最大半径。D3 保留原几何。 |
+| `--radius-composer-large` | `28px` | 大输入区外框圆角。D3 保留原几何。 |
+| `--radius-status-dot` | `99px` | 供应商状态点的原固定圆角。 D2 保留 renderer/src/workbench.css 原几何。 |
+| `--radius-composer-queue-menu` | `17px` | 输入器队列菜单的原圆角。 D2 保留 renderer/src/workbench.css 原几何。 |
+| `--radius-turn-marker` | `1px` | 轮次导航细标记的原圆角。 D2 保留 renderer/src/workbench.css 原几何。 |
+| `--radius-inspection-dialog` | `24px` | Hook 统计检查对话框的原圆角。 D2 保留 renderer/src/workbench.css 原几何。 |
+| `--radius-context-category-dot` | `2px` | 上下文组成类别标记的原圆角。 D2 保留 renderer/src/workbench.css 原几何。 |
 
 ## 阴影
 
@@ -65,6 +105,17 @@
 | `--shadow-overlay` | `0 4px 12px rgb(0 0 0 / 10%), 0 14px 40px rgb(0 0 0 / 8%)` | Popover 与悬浮面板 |
 | `--shadow-composer` | `var(--composer-shadow-light)` | 输入区外框阴影，暗色由调色板切换 |
 | `--shadow-dialog` | `0 12px 32px rgb(0 0 0 / 20%)` | 对话框 |
+| `--shadow-inset-control` | `0 1px 1px rgba(0, 0, 0, 0.04)` | 微型设置按钮的轻投影。来源为迁移前对应 CSS 声明，保持原阴影几何与颜色。 |
+| `--shadow-raised-control` | `0 1px 2px rgba(0, 0, 0, 0.06)` | 设置控件的轻投影。来源为迁移前对应 CSS 声明，保持原阴影几何与颜色。 |
+| `--shadow-tooltip` | `0 5px 18px #00000014` | 时间线与更新提示的浮层投影。来源为迁移前对应 CSS 声明，保持原阴影几何与颜色。 |
+| `--shadow-large-overlay` | `0 16px 64px #0005` | 大预览浮层的投影。来源为迁移前对应 CSS 声明，保持原阴影几何与颜色。 |
+| `--shadow-menu-wide` | `0 8px 28px #0003` | 宽目录菜单的投影。来源为迁移前对应 CSS 声明，保持原阴影几何与颜色。 |
+| `--shadow-dark-control` | `0 8px 18px rgb(15 23 42 / 20%)` | 暗色快捷入口的投影。来源为迁移前对应 CSS 声明，保持原阴影几何与颜色。 |
+| `--shadow-menu-double-stroke` | `0 0 0 .5px color-mix(in srgb, var(--color-foreground) 8.2%, transparent), 0 0 0 .5px color-mix(in srgb, var(--color-foreground) 8.2%, transparent), 0 8px 16px -4px #0000001f` | 双层细描边菜单投影，保留既有重复描边和前景比例。来源为迁移前对应 CSS 声明，保持原阴影几何与颜色。 |
+| `--shadow-floating-toolbar` | `0 8px 24px #0002` | 浮动工具条投影。来源为迁移前对应 CSS 声明，保持原阴影几何与颜色。 |
+| `--shadow-elevated-chip` | `0 1px 4px #0003, 0 0 0 1px #0000000d` | 悬浮小控件投影与外描边。来源为迁移前对应 CSS 声明，保持原阴影几何与颜色。 |
+| `--shadow-leading-panel` | `-8px 0 16px -8px #0000002e` | 侧面板起始边投影。来源为迁移前对应 CSS 声明，保持原阴影几何与颜色。 |
+| `--shadow-compact-overlay` | `0 3px 12px #0003` | 紧凑浮层投影。来源为迁移前对应 CSS 声明，保持原阴影几何与颜色。 |
 
 ## 状态色与语义色
 
@@ -75,7 +126,7 @@
 | `--color-destructive` | `#e03131（暗色 #ff5c5c）` | 危险操作与错误；AReaL 明暗主题值 |
 | `--color-destructive-foreground` | `var(--color-foreground-inverse)` | 危险底色上的文字 |
 | `--color-warning` | `#e07b00（暗色 #ff8a30）` | 警告反馈；AReaL 明暗主题值 |
-| `--color-warning-foreground` | `var(--color-foreground-inverse)` | 警告底色上的文字 |
+| `--color-warning-foreground` | `#000000` | 警告橙色底上的高对比文字；明暗底色均使用黑色，D4可读性修订。 |
 | `--color-foreground-inverse` | `#ffffff（暗色 #000000）` | 强调底色上的反色文字；明暗主题各自取值 |
 | `--color-ring` | `var(--color-input-border-focused)` | 键盘焦点环颜色，跟随强调色 |
 | `--color-muted` | `var(--color-surface)` | 弱化区域底色 |
@@ -101,60 +152,253 @@
 | `--border-width-default` | `1px` | 描边、分隔线的默认宽度 |
 | `--font-sans` | `-apple-system, system-ui, "Segoe UI", "PingFang SC", "Microsoft YaHei UI", "Noto Sans CJK SC", sans-serif` | 基础界面字体及平台回退 |
 | `--font-mono` | `ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", monospace` | 代码字体及CJK无衬线回退 |
+| `--conversation-line` | `1.43` | 对话时间线行高（无单位比例）：14px 时为 20px；标题与更大的内容字号按比例增长 |
+| `--conversation-gap` | `12px` | 对话时间线块间距：段落、活动行、子代理行、状态行之间的统一节奏 |
+| `--browser-file-status-max-height` | `112px` | 浏览器文件交接状态列表的既有最大高度；来自renderer/src/BrowserFileHandoff.layout.css，D2保持原几何。 |
+| `--browser-file-status-inline-gap` | `6px` | 浏览器文件交接状态项的既有内容间距；来自renderer/src/BrowserFileHandoff.layout.css，D2保持原几何。 |
+| `--browser-file-status-block-padding` | `3px` | 浏览器文件交接状态项的既有纵向内边距；来自renderer/src/BrowserFileHandoff.layout.css，D2保持原几何。 |
+
+## 派生参数与来源
+
+公式限定为已有混色、透明材料、默认覆盖和阴影操作。生成时校验引用方向与循环，运行时不解释数据。来源未记录的旧参数明确保留旧实现证据，不补造截图编号。`palette.source.preMigration` 指向迁移前的纯函数及其哈希。
+
+{"owner":"src/theme.ts#paletteVariables","sha256":"fba6ef69d451085eb34854f4d06a891dfccea75bd23833221d4f9a15e790f83f","provenance":"原实现注释中的 Codex 参考未附截图编号，不补造截图来源。"}
+
+| 参数 | 记录 |
+| --- | --- |
+| `file-link-dark` | {"value":80,"source":"palette.source.preMigration"} |
+| `text-settled-dark` | {"contrast":{"base":55,"slope":0.15},"source":"D4可读性修订；design-system/accessibility.md#默认主题修订；保留contrast随偏好变化及各文字角色的强弱顺序。"} |
+| `text-subtle` | {"contrast":{"base":{"light":75,"dark":69.5},"slope":0.15},"source":"D4可读性修订；design-system/accessibility.md#默认主题修订；保留contrast随偏好变化及各文字角色的强弱顺序。"} |
+| `text-subtlest` | {"contrast":{"base":{"light":70,"dark":55},"slope":0.05},"source":"D4可读性修订；design-system/accessibility.md#默认主题修订；保留contrast随偏好变化及各文字角色的强弱顺序。"} |
+| `text-settings-dark` | {"contrast":{"base":65,"slope":0.15},"source":"design-system/exercises/settings-contrast.md 已接受的暗色设置说明 65% 前景层，保持原斜率。"} |
+| `raised` | {"ratio":[2100,231],"source":"旧 theme.ts 的历史过程、查看器和菜单抬升层。231 为默认 #181818 到 #ffffff 的通道范围，保留原除法精度。"} |
+| `shell` | {"ratio":[1200,231],"source":"旧 theme.ts 已接受的暗色 #242424 外壳；231 是默认前背景通道范围，截图编号未记录。"} |
+| `navigation` | {"ratio":[600,231],"source":"旧 theme.ts 的暗色 #1e1e1e 导航；231 是默认前背景通道范围。"} |
+| `settings-card` | {"ratio":[1100,231],"source":"旧 theme.ts 的暗色 #232323 设置组；231 是默认前背景通道范围。"} |
+| `settings-sidebar` | {"ratio":[3800,231],"source":"palette.source.preMigration"} |
+| `overlay` | {"ratio":[3000,231],"source":"palette.source.preMigration"} |
+| `catalog` | {"ratio":[2000,231],"source":"palette.source.preMigration"} |
+| `result-opacity` | {"value":50,"source":"palette.source.preMigration"} |
+| `result-icon-background` | {"value":83.333333,"source":"palette.source.preMigration"} |
+| `result-stroke` | {"contrast":{"base":{"light":8,"dark":15.6},"slope":0.08},"source":"palette.source.preMigration"} |
+| `accent` | {"value":6,"source":"palette.source.preMigration"} |
+| `secondary` | {"value":5,"source":"palette.source.preMigration"} |
+| `window-alt` | {"value":4,"source":"palette.source.preMigration"} |
+| `sidebar-opacity` | {"value":70,"source":"palette.source.preMigration"} |
+| `selected` | {"contrast":{"base":5.5,"slope":0.04},"source":"palette.source.preMigration"} |
+| `page-stroke` | {"value":{"light":8,"dark":6},"source":"palette.source.preMigration"} |
+| `composer-opacity` | {"value":{"light":86.4706,"dark":96},"source":"palette.source.preMigration"} |
+| `overlay-opacity` | {"value":96,"source":"palette.source.preMigration"} |
+| `composer-stroke` | {"value":20,"source":"palette.source.preMigration"} |
+| `background-alt` | {"value":3,"source":"palette.source.preMigration"} |
+| `menu-opacity` | {"value":90,"source":"palette.source.preMigration"} |
+| `menu-border` | {"contrast":{"base":{"light":8,"dark":8.2},"slope":0.08},"source":"palette.source.preMigration"} |
+| `menu-hover` | {"value":5.5,"source":"palette.source.preMigration"} |
+| `border` | {"contrast":{"base":{"light":7.8,"dark":8.4},"slope":0.08},"source":"palette.source.preMigration"} |
+| `border-hover` | {"contrast":{"base":11.7,"slope":0.1},"source":"palette.source.preMigration"} |
+| `surface` | {"contrast":{"base":3,"slope":0.03},"source":"palette.source.preMigration"} |
+| `navigation-selected` | {"ratio":[2400,231],"source":"palette.source.preMigration"} |
+
+## 参考值与语义派生
+
+参考输入为 background、foreground、accent 和 contrast；透明侧栏偏好选择已有材料。引用只允许参考值进入语义层，组件只映射语义层。
+
+| 参考值 | 值 | 来源 |
+| --- | --- | --- |
+| `black` | `#000000` | WCAG 黑白可读前景候选，既有算法边界。 |
+| `white` | `#ffffff` | WCAG 黑白可读前景候选，既有算法边界。 |
+| `transparent` | `transparent` | CSS 透明混色目标，保留浏览器色彩空间与预乘 alpha 语义。 |
+| `default-background-light` | `#ffffff` | themes.background 既有浅色默认覆盖匹配值；自定义输入不套用。 |
+| `default-background-dark` | `#181818` | themes.background 既有暗色默认覆盖匹配值；自定义输入不套用。 |
+| `default-foreground-dark` | `#ffffff` | themes.foreground 既有暗色默认覆盖匹配值。 |
+| `default-accent` | `#3a83f7` | themes.accent 既有默认覆盖匹配值。 |
+| `file-link-default` | `#2c67c5` | palette.source.preMigration |
+| `primary-text-default-dark` | `#2d2d2d` | palette.source.preMigration |
+| `user-message-default-dark` | `#173e76` | palette.source.preMigration |
+| `user-message-default-light` | `#e8f3fe` | palette.source.preMigration |
+| `user-text-default-dark` | `#f6fafe` | palette.source.preMigration |
+| `user-text-default-light` | `#0c274a` | palette.source.preMigration |
+| `settings-sidebar-default-solid` | `rgb(40 40 40 / 1)` | palette.source.preMigration |
+| `settings-sidebar-default-translucent` | `rgb(40 40 40 / 0.7)` | palette.source.preMigration |
+| `settings-row-default-dark` | `rgba(255, 255, 255, 0.08)` | palette.source.preMigration |
+| `page-shadow-ambient` | `#0000000d` | palette.source.preMigration |
+| `composer-shadow-light` | `var(--composer-shadow-light)` | renderer/src/styles.css 的既有浅色输入区阴影，仍由现有宿主变量提供。 |
+| `composer-shadow-dark` | `var(--composer-shadow-dark)` | renderer/src/styles.css 的既有暗色输入区阴影，仍由现有宿主变量提供。 |
+| `success` | `var(--color-success)` | foundation.color-success 已有成功反馈，不改变状态配色。 |
+| `warning` | `var(--color-warning)` | foundation.color-warning；subagent attention 与 UNKNOWN 的 warning toast 现有语义。 |
+| `error` | `var(--color-destructive)` | foundation.color-destructive 既有错误与危险反馈。 |
+| `result-shadow-near` | `#0000000a` | renderer/src/workbench.css 的原 review-comment-card 阴影，D3 保留。 |
+| `result-shadow-ambient` | `#0000000d` | renderer/src/workbench.css 的原 review-comment-card 阴影，D3 保留。 |
+| `settings-attention` | `#f59e0b` | 原 App.tsx 的 bg-amber-500 设置关注指示点；Tailwind amber-500 原值。 |
+| `workbench-dialog-backdrop` | `#0006` | renderer/src/workbench.css .dialog-backdrop；D2 精确迁移，值来自原字面量债务。 |
+| `workbench-control-thumb` | `white` | renderer/src/workbench.css .settings-page input[role="switch"]::after; .resource-switch::after; .composer-slider-shell input::-webkit-slider-thumb；D2 精确迁移，值来自原字面量债务。 |
+| `workbench-diff-count-added` | `#16a45d` | renderer/src/workbench.css .diff-count b；D2 精确迁移，值来自原字面量债务。 |
+| `workbench-diff-count-removed` | `#df515b` | renderer/src/workbench.css .diff-count em；D2 精确迁移，值来自原字面量债务。 |
+| `workbench-trajectory-match-ink` | `#e8a838` | renderer/src/workbench.css .trajectory-content mark；D2 精确迁移，值来自原字面量债务。 |
+| `workbench-inspection-scrim` | `rgb(0 0 0 / 15%)` | renderer/src/workbench.css .hook-stats-overlay；D2 精确迁移，值来自原字面量债务。 |
+| `workbench-shortcut-border` | `rgb(255 255 255 / 5%)` | renderer/src/workbench.css .new-task-shortcut；D2 精确迁移，值来自原字面量债务。 |
+| `workbench-shortcut-surface` | `#1b1b1b` | renderer/src/workbench.css .new-task-shortcut；D2 精确迁移，值来自原字面量债务。 |
+| `workbench-shortcut-foreground` | `#fff` | renderer/src/workbench.css .new-task-shortcut；D2 精确迁移，值来自原字面量债务。 |
+| `workbench-markdown-list-marker-dark` | `#ffffff7f` | renderer/src/workbench.css .dark .workspace-file-markdown .workspace-markdown-list-marker；D2 精确迁移，值来自原字面量债务。 |
+| `workbench-review-comment-surface` | `light-dark(rgba(0, 0, 0, 0.032), rgba(255, 255, 255, 0.032))` | renderer/src/workbench.css .review-comment-editor; .review-comment-card；D2 精确迁移，值来自原字面量债务。 |
+| `workbench-review-tree-guide-ink` | `#84848a` | renderer/src/workbench.css .review-tree-guide；D2 精确迁移，值来自原字面量债务。 |
+| `workbench-diff-modified` | `light-dark(#009fff, #69b1ff)` | renderer/src/workbench.css --diffs-modified-color-override；D2 精确迁移，值来自原字面量债务。 |
+| `workbench-diff-added` | `#40c977` | renderer/src/workbench.css --diffs-addition-color-override；D2 精确迁移，值来自原字面量债务。 |
+| `workbench-diff-removed` | `#fa423e` | renderer/src/workbench.css --diffs-deletion-color-override；D2 精确迁移，值来自原字面量债务。 |
+| `workbench-slider-selected-track` | `#ffffff80` | renderer/src/workbench.css .composer-slider-track i[data-selected=true]；D2 精确迁移，值来自原字面量债务。 |
+| `workbench-annotation-selected-foreground` | `#91c5ff` | renderer/src/workbench.css .browser-annotation-trigger[aria-pressed="true"]；D2 精确迁移，值来自原字面量债务。 |
+| `workbench-annotation-selected-surface` | `#4795ff26` | renderer/src/workbench.css .browser-annotation-trigger[aria-pressed="true"]；D2 精确迁移，值来自原字面量债务。 |
+
+| 语义角色 | 派生公式 | 默认主题覆盖 | 用途与来源 |
+| --- | --- | --- | --- |
+| `surface-base` | `{"input":"background"}` | `[]` | 基础阅读表面，卡片、面板和输入静止背景共用。 palette.source.preMigration |
+| `text-default` | `{"input":"foreground"}` | `[]` | 默认正文与中性主动作底色。 palette.source.preMigration |
+| `interaction-focus` | `{"input":"accent"}` | `[]` | 用户强调色和键盘焦点。 palette.source.preMigration |
+| `text-file-link` | `{"input":"accent"}` | `[{"match":{"accent":"default-accent"},"value":{"reference":"file-link-default"}}]` | 文件引用的基色。 palette.source.preMigration |
+| `text-file-link-on-surface` | `{"mode":{"light":{"semantic":"text-file-link"},"dark":{"mix":{"from":{"semantic":"text-file-link"},"into":{"semantic":"text-default"},"percent":"file-link-dark","space":"srgb"}}}}` | `[]` | 明暗阅读表面上的文件链接。 palette.source.preMigration |
+| `text-subtle` | `{"mix":{"from":{"input":"foreground"},"into":{"input":"background"},"percent":"text-subtle","space":"srgb"}}` | `[]` | 次要文字，适用进度和元信息。 palette.source.preMigration |
+| `text-subtlest` | `{"mix":{"from":{"input":"foreground"},"into":{"input":"background"},"percent":"text-subtlest","space":"srgb"}}` | `[]` | 可读的低强调元信息文字，与禁用状态区分。 design-system/accessibility.md#默认主题修订 |
+| `status-settled` | `{"mode":{"light":{"semantic":"text-subtle"},"dark":{"mix":{"from":{"input":"foreground"},"into":{"reference":"transparent"},"percent":"text-settled-dark","space":"srgb"}}}}` | `[]` | 已结算过程元信息，保留暗色半透明与浅色次要文字的区别。 palette.source.preMigration |
+| `surface-raised` | `{"mix":{"from":{"input":"foreground"},"into":{"input":"background"},"percent":"raised","space":"srgb"}}` | `[]` | 高于基础表面的实色抬升层。 palette.source.preMigration |
+| `surface-muted` | `{"mix":{"from":{"input":"foreground"},"into":{"reference":"transparent"},"percent":"surface","space":"srgb"}}` | `[]` | 弱化表面前景透明层。 palette.source.preMigration |
+| `surface-raised-translucent` | `{"mode":{"light":{"semantic":"surface-muted"},"dark":{"mix":{"from":{"semantic":"surface-raised"},"into":{"reference":"transparent"},"percent":"result-opacity","space":"srgb"}}}}` | `[]` | 已完成结果使用的半透明抬升表面。原配方对透明度有独立要求。 palette.source.preMigration |
+| `border-result` | `{"mix":{"from":{"input":"foreground"},"into":{"reference":"transparent"},"percent":"result-stroke","space":"srgb"}}` | `[]` | 已完成结果的细描边，保留其与通用边框不同的强度。 palette.source.preMigration |
+| `shadow-result` | `{"shadows":[{"geometry":"0 0 0 .5px","color":{"semantic":"border-result"}}]}` | `[]` | 已完成结果的半像素描边阴影。 palette.source.preMigration |
+| `surface-sunken` | `{"mode":{"light":{"semantic":"surface-base"},"dark":{"mix":{"from":{"semantic":"surface-base"},"into":{"reference":"black"},"percent":"result-icon-background","space":"srgb"}}}}` | `[]` | 暗色内凹图标底色，浅色沿用基础表面。 palette.source.preMigration |
+| `surface-history` | `{"mode":{"light":{"semantic":"surface-base"},"dark":{"semantic":"surface-raised"}}}` | `[]` | 历史过程实色抬升层，浅色沿用基础表面。 palette.source.preMigration |
+| `surface-control` | `{"mode":{"light":{"mix":{"from":{"input":"foreground"},"into":{"reference":"transparent"},"percent":"background-alt","space":"srgb"}},"dark":{"semantic":"surface-raised"}}}` | `[]` | 紧凑控件的抬升表面。 palette.source.preMigration |
+| `surface-overlay` | `{"mix":{"from":{"input":"foreground"},"into":{"input":"background"},"percent":"overlay","space":"srgb"}}` | `[]` | 暗色浮层的基础抬升色。 palette.source.preMigration |
+| `surface-history-hover` | `{"mode":{"light":{"semantic":"surface-base"},"dark":{"mix":{"from":{"semantic":"surface-overlay"},"into":{"reference":"transparent"},"percent":"overlay-opacity","space":"srgb"}}}}` | `[]` | 历史过程悬停使用的半透明浮层。 palette.source.preMigration |
+| `text-primary-inverse` | `{"readableForeground":{"semantic":"text-default"}}` | `[{"match":{"mode":"dark","foreground":"default-foreground-dark"},"value":{"reference":"primary-text-default-dark"}}]` | 中性主动作上的可读文字。 palette.source.preMigration |
+| `surface-accent` | `{"mix":{"from":{"input":"foreground"},"into":{"input":"background"},"percent":"accent","space":"srgb"}}` | `[]` | 弱强调背景。 palette.source.preMigration |
+| `surface-secondary` | `{"mix":{"from":{"input":"foreground"},"into":{"reference":"transparent"},"percent":"secondary","space":"srgb"}}` | `[]` | 次要控件的前景透明层。 palette.source.preMigration |
+| `surface-user-message` | `{"semantic":"surface-accent"}` | `[{"match":{"mode":"dark","background":"default-background-dark"},"value":{"reference":"user-message-default-dark"}},{"match":{"mode":"light","background":"default-background-light"},"value":{"reference":"user-message-default-light"}}]` | 用户消息区分层，默认主题保留已采纳蓝色。 palette.source.preMigration |
+| `text-user-message` | `{"semantic":"text-default"}` | `[{"match":{"mode":"dark","background":"default-background-dark"},"value":{"reference":"user-text-default-dark"}},{"match":{"mode":"light","background":"default-background-light"},"value":{"reference":"user-text-default-light"}}]` | 用户消息正文，默认主题保留蓝底配对前景。 palette.source.preMigration |
+| `surface-window-alt` | `{"mix":{"from":{"input":"foreground"},"into":{"input":"background"},"percent":"window-alt","space":"srgb"}}` | `[]` | 浅色外壳与次级窗口表面。 palette.source.preMigration |
+| `surface-shell` | `{"mode":{"light":{"semantic":"surface-window-alt"},"dark":{"mix":{"from":{"input":"foreground"},"into":{"input":"background"},"percent":"shell","space":"srgb"}}}}` | `[]` | 标题栏和外框表面。 palette.source.preMigration |
+| `surface-navigation` | `{"mode":{"light":{"translucent":{"solid":{"semantic":"surface-base"},"translucent":{"mix":{"from":{"semantic":"surface-base"},"into":{"reference":"transparent"},"percent":"sidebar-opacity","space":"oklab"}}}},"dark":{"mix":{"from":{"input":"foreground"},"into":{"input":"background"},"percent":"navigation","space":"srgb"}}}}` | `[]` | 导航表面。浅色透明材料保留 OKLab 混色。 palette.source.preMigration |
+| `interaction-selected` | `{"mix":{"from":{"input":"foreground"},"into":{"reference":"transparent"},"percent":"selected","space":"srgb"}}` | `[]` | 悬停、选中与表面交互的前景层。 palette.source.preMigration |
+| `interaction-navigation-selected` | `{"mode":{"light":{"semantic":"interaction-selected"},"dark":{"mix":{"from":{"input":"foreground"},"into":{"input":"background"},"percent":"navigation-selected","space":"srgb"}}}}` | `[]` | 导航选中层，暗色独立使用原有实色抬升。 palette.source.preMigration |
+| `shadow-page` | `{"shadows":[{"geometry":"0 0 0 .5px","color":{"mix":{"from":{"input":"foreground"},"into":{"reference":"transparent"},"percent":"page-stroke","space":"srgb"}}},{"geometry":"0 4px 16px","color":{"reference":"page-shadow-ambient"}}]}` | `[]` | 共享页面表面阴影。 palette.source.preMigration |
+| `surface-settings-sidebar` | `{"mode":{"light":{"translucent":{"solid":{"semantic":"surface-base"},"translucent":{"mix":{"from":{"semantic":"surface-base"},"into":{"reference":"transparent"},"percent":"sidebar-opacity","space":"srgb"}}}},"dark":{"translucent":{"solid":{"mix":{"from":{"input":"foreground"},"into":{"input":"background"},"percent":"settings-sidebar","space":"srgb"}},"translucent":{"mix":{"from":{"mix":{"from":{"input":"foreground"},"into":{"input":"background"},"percent":"settings-sidebar","space":"srgb"}},"into":{"reference":"transparent"},"percent":"sidebar-opacity","space":"srgb"}}}}}}` | `[{"match":{"mode":"dark","background":"default-background-dark"},"value":{"translucent":{"solid":{"reference":"settings-sidebar-default-solid"},"translucent":{"reference":"settings-sidebar-default-translucent"}}}}]` | 设置侧栏材料，保留其与导航表面的区别。 palette.source.preMigration |
+| `interaction-settings-row` | `{"semantic":"interaction-selected"}` | `[{"match":{"mode":"dark","background":"default-background-dark"},"value":{"reference":"settings-row-default-dark"}}]` | 设置侧栏行悬停层，默认暗色保留观察到的 8% 白色层。 palette.source.preMigration |
+| `surface-composer` | `{"mix":{"from":{"mode":{"light":{"semantic":"surface-base"},"dark":{"semantic":"surface-overlay"}}},"into":{"reference":"transparent"},"percent":"composer-opacity","space":"srgb"}}` | `[]` | 输入区半透明材料，明暗透明度不同。 palette.source.preMigration |
+| `shadow-composer` | `{"mode":{"light":{"reference":"composer-shadow-light"},"dark":{"shadows":[{"geometry":"inset 0 0 1px 0","color":{"mix":{"from":{"input":"foreground"},"into":{"reference":"transparent"},"percent":"composer-stroke","space":"srgb"}}}]}}}` | `[{"match":{"mode":"dark","background":"default-background-dark","foreground":"default-foreground-dark"},"value":{"reference":"composer-shadow-dark"}}]` | 输入区阴影，默认主题沿用宿主变量。 palette.source.preMigration |
+| `surface-alt` | `{"mix":{"from":{"input":"foreground"},"into":{"input":"background"},"percent":"background-alt","space":"srgb"}}` | `[]` | 基础表面之上的轻微分组层。 palette.source.preMigration |
+| `surface-settings-group` | `{"mode":{"light":{"semantic":"surface-base"},"dark":{"mix":{"from":{"input":"foreground"},"into":{"input":"background"},"percent":"settings-card","space":"srgb"}}}}` | `[]` | 设置组表面，暗色比通用抬升层更低。 palette.source.preMigration |
+| `surface-menu` | `{"mix":{"from":{"mode":{"light":{"semantic":"surface-base"},"dark":{"semantic":"surface-raised"}}},"into":{"reference":"transparent"},"percent":"menu-opacity","space":"srgb"}}` | `[]` | 菜单的半透明浮层材料。 palette.source.preMigration |
+| `border-menu` | `{"mix":{"from":{"input":"foreground"},"into":{"reference":"transparent"},"percent":"menu-border","space":"srgb"}}` | `[]` | 菜单描边，保留与通用边框不同的暗色强度。 palette.source.preMigration |
+| `interaction-menu-hover` | `{"mix":{"from":{"input":"foreground"},"into":{"reference":"transparent"},"percent":"menu-hover","space":"srgb"}}` | `[]` | 菜单行悬停层，不随 contrast 改变。 palette.source.preMigration |
+| `surface-catalog` | `{"mode":{"light":{"semantic":"surface-base"},"dark":{"mix":{"from":{"input":"foreground"},"into":{"input":"background"},"percent":"catalog","space":"srgb"}}}}` | `[]` | 目录选择器表面，保留与菜单不同的抬升高度。 palette.source.preMigration |
+| `text-settings-secondary` | `{"mode":{"light":{"semantic":"text-subtle"},"dark":{"mix":{"from":{"input":"foreground"},"into":{"reference":"transparent"},"percent":"text-settings-dark","space":"srgb"}}}}` | `[]` | 设置说明文字，暗色强于已结算过程元信息。 palette.source.preMigration |
+| `border-default` | `{"mix":{"from":{"input":"foreground"},"into":{"reference":"transparent"},"percent":"border","space":"srgb"}}` | `[]` | 通用边框。 palette.source.preMigration |
+| `border-hover` | `{"mix":{"from":{"input":"foreground"},"into":{"reference":"transparent"},"percent":"border-hover","space":"srgb"}}` | `[]` | 悬停边框。 palette.source.preMigration |
+| `status-running` | `{"semantic":"text-subtle"}` | `[]` | 运行中进度，复用现有 activity-status 和 execution-status 的次要文字。 conversation/activity-group/activity-group.css 与 renderer/src/workbench.css 的现有进度颜色。 |
+| `status-success` | `{"reference":"success"}` | `[]` | 成功反馈，不代表所有已结算状态都成功。 foundation.color-success 的现有成功语义。 |
+| `status-attention` | `{"reference":"warning"}` | `[]` | 需要用户关注或处理。 conversation/subagent-panel/subagent-panel.css 的 data-state=attention。 |
+| `status-unknown` | `{"reference":"warning"}` | `[]` | 执行结果未知，需要核对；沿用 warning 反馈。 renderer/src/WorktreeStatus.tsx 将 unknown toast 映射为 warning；不等同失败。 |
+| `status-error` | `{"reference":"error"}` | `[]` | 明确的错误或失败。 foundation.color-destructive 的既有错误反馈。 |
+| `shadow-result-raised` | `{"shadows":[{"geometry":"0 0 0 .5px","color":{"semantic":"border-result"}},{"geometry":"0 3px 7.5px","color":{"reference":"result-shadow-near"}},{"geometry":"0 0 20px","color":{"reference":"result-shadow-ambient"}}]}` | `[]` | 结果悬停层在语义结果边框上叠加近场与环境投影。 renderer/src/workbench.css 的原 review-comment-card box-shadow。 |
+| `interaction-pressed` | `{"semantic":"interaction-selected"}` | `[]` | 按下状态沿用既有选中前景层，不新增配色。 D3 D1 的 interaction.pressed 语义，保留现有 interaction-selected 同色关系。 |
+| `settings-attention-indicator` | `{"reference":"settings-attention"}` | `[]` | 设置入口的任务关注指示点，保留明暗主题下既有固定 amber 色。 renderer/src/views/WorkbenchChrome.tsx 从 App.tsx 提取的设置入口。 |
+| `surface-dialog-scrim` | `{"reference":"workbench-dialog-backdrop"}` | `[]` | 对话框遮罩，保留原 40% 黑色覆盖度。 renderer/src/workbench.css .dialog-backdrop；D2 精确迁移，值来自原字面量债务。 |
+| `surface-control-thumb` | `{"reference":"workbench-control-thumb"}` | `[]` | 原生开关与滑块的固定白色把手，独立于当前主题前景。 renderer/src/workbench.css .settings-page input[role="switch"]::after; .resource-switch::after; .composer-slider-shell input::-webkit-slider-thumb；D2 精确迁移，值来自原字面量债务。 |
+| `text-diff-count-added` | `{"reference":"workbench-diff-count-added"}` | `[]` | 差异行数中新增行的内容色。 renderer/src/workbench.css .diff-count b；D2 精确迁移，值来自原字面量债务。 |
+| `text-diff-count-removed` | `{"reference":"workbench-diff-count-removed"}` | `[]` | 差异行数中删除行的内容色。 renderer/src/workbench.css .diff-count em；D2 精确迁移，值来自原字面量债务。 |
+| `highlight-trajectory-match` | `{"reference":"workbench-trajectory-match-ink"}` | `[]` | 轨迹搜索高亮的墨色，调用方保持既有 35% srgb 透明混色。 renderer/src/workbench.css .trajectory-content mark；D2 精确迁移，值来自原字面量债务。 |
+| `surface-inspection-scrim` | `{"reference":"workbench-inspection-scrim"}` | `[]` | Hook 统计检查浮层的轻遮罩，保留原 15% 黑色。 renderer/src/workbench.css .hook-stats-overlay；D2 精确迁移，值来自原字面量债务。 |
+| `border-dark-shortcut` | `{"reference":"workbench-shortcut-border"}` | `[]` | 深色新建任务快捷入口的细边框。 renderer/src/workbench.css .new-task-shortcut；D2 精确迁移，值来自原字面量债务。 |
+| `surface-dark-shortcut` | `{"reference":"workbench-shortcut-surface"}` | `[]` | 新建任务快捷入口的固定深色背景。 renderer/src/workbench.css .new-task-shortcut；D2 精确迁移，值来自原字面量债务。 |
+| `text-dark-shortcut` | `{"reference":"workbench-shortcut-foreground"}` | `[]` | 固定深色快捷入口的白色文字。 renderer/src/workbench.css .new-task-shortcut；D2 精确迁移，值来自原字面量债务。 |
+| `text-content-list-marker-dark` | `{"reference":"workbench-markdown-list-marker-dark"}` | `[]` | 暗色可编辑 Markdown 列表标记的半透明白色。 renderer/src/workbench.css .dark .workspace-file-markdown .workspace-markdown-list-marker；D2 精确迁移，值来自原字面量债务。 |
+| `surface-review-comment` | `{"reference":"workbench-review-comment-surface"}` | `[]` | 批注编辑器与卡片的低对比表面，继续由浏览器 color-scheme 选择 light-dark 分支。 renderer/src/workbench.css .review-comment-editor; .review-comment-card；D2 精确迁移，值来自原字面量债务。 |
+| `border-review-tree-guide` | `{"reference":"workbench-review-tree-guide-ink"}` | `[]` | 文件评审树的引导线墨色，调用方保持既有 25% lab 透明混色。 renderer/src/workbench.css .review-tree-guide；D2 精确迁移，值来自原字面量债务。 |
+| `content-diff-modified` | `{"reference":"workbench-diff-modified"}` | `[]` | 代码差异阅读器的修改色，继续由浏览器 color-scheme 选择分支。 renderer/src/workbench.css --diffs-modified-color-override；D2 精确迁移，值来自原字面量债务。 |
+| `content-diff-added` | `{"reference":"workbench-diff-added"}` | `[]` | 代码差异阅读器的新增色，不等同于状态成功色。 renderer/src/workbench.css --diffs-addition-color-override；D2 精确迁移，值来自原字面量债务。 |
+| `content-diff-removed` | `{"reference":"workbench-diff-removed"}` | `[]` | 代码差异阅读器的删除色，不等同于危险操作色。 renderer/src/workbench.css --diffs-deletion-color-override；D2 精确迁移，值来自原字面量债务。 |
+| `interaction-slider-selected-track` | `{"reference":"workbench-slider-selected-track"}` | `[]` | 输入器推理档位中已选轨道的半透明填充。 renderer/src/workbench.css .composer-slider-track i[data-selected=true]；D2 精确迁移，值来自原字面量债务。 |
+| `text-annotation-selected` | `{"reference":"workbench-annotation-selected-foreground"}` | `[]` | 浏览器标注模式已选入口的文字色。 renderer/src/workbench.css .browser-annotation-trigger[aria-pressed="true"]；D2 精确迁移，值来自原字面量债务。 |
+| `surface-annotation-selected` | `{"reference":"workbench-annotation-selected-surface"}` | `[]` | 浏览器标注模式已选入口的透明背景色。 renderer/src/workbench.css .browser-annotation-trigger[aria-pressed="true"]；D2 精确迁移，值来自原字面量债务。 |
 
 ## 调色板（由主题输入派生，用户可在外观设置中覆盖）
 
-| 变量 | 默认亮色 | 默认暗色 |
-| --- | --- | --- |
-| `--color-background` | `#ffffff` | `#181818` |
-| `--color-foreground` | `#1a1c1f` | `#ffffff` |
-| `--color-brand` | `#3a83f7` | `#3a83f7` |
-| `--color-file-reference` | `#2c67c5` | `color-mix(in srgb, #2c67c5 80%, #ffffff)` |
-| `--color-process-settled` | `color-mix(in srgb, #1a1c1f 69.5%, #ffffff)` | `color-mix(in srgb, #ffffff 50%, transparent)` |
-| `--color-result-card` | `color-mix(in srgb, #1a1c1f 3%, transparent)` | `color-mix(in srgb, color-mix(in srgb, #ffffff 9.090909090909092%, #181818) 50%, transparent)` |
-| `--shadow-result-card` | `0 0 0 .5px color-mix(in srgb, #1a1c1f 8%, transparent)` | `0 0 0 .5px color-mix(in srgb, #ffffff 15.6%, transparent)` |
-| `--color-result-icon` | `#ffffff` | `color-mix(in srgb, #181818 83.333333%, #000000)` |
-| `--color-history-comment` | `#ffffff` | `color-mix(in srgb, #ffffff 9.090909090909092%, #181818)` |
-| `--color-viewer-control` | `color-mix(in srgb, #1a1c1f 3%, transparent)` | `color-mix(in srgb, #ffffff 9.090909090909092%, #181818)` |
-| `--color-history-comment-hover` | `#ffffff` | `color-mix(in srgb, color-mix(in srgb, #ffffff 12.987012987012987%, #181818) 96%, transparent)` |
-| `--color-primary` | `#1a1c1f` | `#ffffff` |
-| `--color-primary-foreground` | `#ffffff` | `#2d2d2d` |
-| `--color-composer-action` | `var(--color-primary)` | `var(--color-primary)` |
-| `--color-composer-action-foreground` | `var(--color-primary-foreground)` | `var(--color-primary-foreground)` |
-| `--color-accent` | `color-mix(in srgb, #1a1c1f 6%, #ffffff)` | `color-mix(in srgb, #ffffff 6%, #181818)` |
-| `--color-secondary` | `color-mix(in srgb, #1a1c1f 5%, transparent)` | `color-mix(in srgb, #ffffff 5%, transparent)` |
-| `--color-user-message` | `#e8f3fe` | `#173e76` |
-| `--color-user-message-text` | `#0c274a` | `#f6fafe` |
-| `--color-background-win-alt` | `color-mix(in srgb, #1a1c1f 4%, #ffffff)` | `color-mix(in srgb, #ffffff 4%, #181818)` |
-| `--color-shell` | `color-mix(in srgb, #1a1c1f 4%, #ffffff)` | `color-mix(in srgb, #ffffff 5.194805194805195%, #181818)` |
-| `--color-navigation-background` | `color-mix(in oklab, #ffffff 70%, transparent)` | `color-mix(in srgb, #ffffff 2.5974025974025974%, #181818)` |
-| `--color-navigation-selected` | `color-mix(in srgb, #1a1c1f 5.5%, transparent)` | `color-mix(in srgb, #ffffff 10.38961038961039%, #181818)` |
-| `--shadow-page-surface` | `0 0 0 .5px color-mix(in srgb, #1a1c1f 8%, transparent), 0 4px 16px #0000000d` | `0 0 0 .5px color-mix(in srgb, #ffffff 6%, transparent), 0 4px 16px #0000000d` |
-| `--color-sidebar` | `color-mix(in srgb, #ffffff 70%, transparent)` | `rgb(40 40 40 / 0.7)` |
-| `--color-sidebar-item` | `color-mix(in srgb, #1a1c1f 5.5%, transparent)` | `rgba(255, 255, 255, 0.08)` |
-| `--color-composer` | `color-mix(in srgb, #ffffff 86.4706%, transparent)` | `color-mix(in srgb, color-mix(in srgb, #ffffff 12.987012987012987%, #181818) 96%, transparent)` |
-| `--shadow-composer` | `var(--composer-shadow-light)` | `var(--composer-shadow-dark)` |
-| `--color-background-alt` | `color-mix(in srgb, #1a1c1f 3%, #ffffff)` | `color-mix(in srgb, #ffffff 3%, #181818)` |
-| `--color-card` | `#ffffff` | `#181818` |
-| `--color-settings-card` | `#ffffff` | `color-mix(in srgb, #ffffff 4.761904761904762%, #181818)` |
-| `--color-header` | `#ffffff` | `#181818` |
-| `--color-panel` | `#ffffff` | `#181818` |
-| `--color-popover` | `#ffffff` | `#181818` |
-| `--color-menu` | `color-mix(in srgb, #ffffff 90%, transparent)` | `color-mix(in srgb, color-mix(in srgb, #ffffff 9.090909090909092%, #181818) 90%, transparent)` |
-| `--color-menu-border` | `color-mix(in srgb, #1a1c1f 8%, transparent)` | `color-mix(in srgb, #ffffff 8.2%, transparent)` |
-| `--color-menu-hover` | `color-mix(in srgb, #1a1c1f 5.5%, transparent)` | `color-mix(in srgb, #ffffff 5.5%, transparent)` |
-| `--color-composer-catalog` | `#ffffff` | `color-mix(in srgb, #ffffff 8.658008658008658%, #181818)` |
-| `--color-input` | `#ffffff` | `#181818` |
-| `--color-input-focused` | `#ffffff` | `#181818` |
-| `--color-input-border` | `var(--color-border)` | `var(--color-border)` |
-| `--color-input-border-hover` | `var(--color-border-hover)` | `var(--color-border-hover)` |
-| `--color-foreground-subtle` | `color-mix(in srgb, #1a1c1f 69.5%, #ffffff)` | `color-mix(in srgb, #ffffff 69.5%, #181818)` |
-| `--color-foreground-subtlest` | `color-mix(in srgb, #1a1c1f 49.5%, #ffffff)` | `color-mix(in srgb, #ffffff 49.5%, #181818)` |
-| `--color-settings-secondary` | `color-mix(in srgb, #1a1c1f 69.5%, #ffffff)` | `color-mix(in srgb, #ffffff 65%, transparent)` |
-| `--color-border` | `color-mix(in srgb, #1a1c1f 7.8%, transparent)` | `color-mix(in srgb, #ffffff 8.4%, transparent)` |
-| `--color-border-hover` | `color-mix(in srgb, #1a1c1f 11.7%, transparent)` | `color-mix(in srgb, #ffffff 11.7%, transparent)` |
-| `--color-hover` | `color-mix(in srgb, #1a1c1f 5.5%, transparent)` | `color-mix(in srgb, #ffffff 5.5%, transparent)` |
-| `--color-selected` | `color-mix(in srgb, #1a1c1f 5.5%, transparent)` | `color-mix(in srgb, #ffffff 5.5%, transparent)` |
-| `--color-surface` | `color-mix(in srgb, #1a1c1f 3%, transparent)` | `color-mix(in srgb, #ffffff 3%, transparent)` |
-| `--color-surface-hover` | `color-mix(in srgb, #1a1c1f 5.5%, transparent)` | `color-mix(in srgb, #ffffff 5.5%, transparent)` |
-| `--color-input-border-focused` | `#3a83f7` | `#3a83f7` |
+| 变量 | 层与角色 | 语义引用与组件映射 | 默认亮色 | 默认暗色 |
+| --- | --- | --- | --- | --- |
+| `--color-background` | semantic · 基础阅读表面，卡片、面板和输入静止背景共用。 | surface-base  | `#ffffff` | `#181818` |
+| `--color-foreground` | semantic · 默认正文与中性主动作底色。 | text-default  | `#1a1c1f` | `#ffffff` |
+| `--color-brand` | semantic · 用户强调色和键盘焦点。 | interaction-focus  | `#3a83f7` | `#3a83f7` |
+| `--color-file-reference` | semantic · 明暗阅读表面上的文件链接。 | text-file-link-on-surface  | `#2c67c5` | `color-mix(in srgb, #2c67c5 80%, #ffffff)` |
+| `--color-process-settled` | component · 已结算过程元信息，保留暗色半透明与浅色次要文字的区别。 | status-settled 保留已有组件变量名；仅引用 status-settled。已结算过程元信息，保留暗色半透明与浅色次要文字的区别。 | `color-mix(in srgb, #1a1c1f 75%, #ffffff)` | `color-mix(in srgb, #ffffff 55%, transparent)` |
+| `--color-result-card` | component · 已完成结果使用的半透明抬升表面。原配方对透明度有独立要求。 | surface-raised-translucent 保留已有组件变量名；仅引用 surface-raised-translucent。已完成结果使用的半透明抬升表面。原配方对透明度有独立要求。 | `color-mix(in srgb, #1a1c1f 3%, transparent)` | `color-mix(in srgb, color-mix(in srgb, #ffffff 9.090909090909092%, #181818) 50%, transparent)` |
+| `--shadow-result-card` | component · 已完成结果的半像素描边阴影。 | shadow-result 保留已有组件变量名；仅引用 shadow-result。已完成结果的半像素描边阴影。 | `0 0 0 .5px color-mix(in srgb, #1a1c1f 8%, transparent)` | `0 0 0 .5px color-mix(in srgb, #ffffff 15.6%, transparent)` |
+| `--color-result-icon` | component · 暗色内凹图标底色，浅色沿用基础表面。 | surface-sunken 保留已有组件变量名；仅引用 surface-sunken。暗色内凹图标底色，浅色沿用基础表面。 | `#ffffff` | `color-mix(in srgb, #181818 83.333333%, #000000)` |
+| `--color-history-comment` | component · 历史过程实色抬升层，浅色沿用基础表面。 | surface-history 保留已有组件变量名；仅引用 surface-history。历史过程实色抬升层，浅色沿用基础表面。 | `#ffffff` | `color-mix(in srgb, #ffffff 9.090909090909092%, #181818)` |
+| `--color-viewer-control` | component · 紧凑控件的抬升表面。 | surface-control 保留已有组件变量名；仅引用 surface-control。紧凑控件的抬升表面。 | `color-mix(in srgb, #1a1c1f 3%, transparent)` | `color-mix(in srgb, #ffffff 9.090909090909092%, #181818)` |
+| `--color-history-comment-hover` | component · 历史过程悬停使用的半透明浮层。 | surface-history-hover 保留已有组件变量名；仅引用 surface-history-hover。历史过程悬停使用的半透明浮层。 | `#ffffff` | `color-mix(in srgb, color-mix(in srgb, #ffffff 12.987012987012987%, #181818) 96%, transparent)` |
+| `--color-primary` | semantic · 默认正文与中性主动作底色。 | text-default  | `#1a1c1f` | `#ffffff` |
+| `--color-primary-foreground` | semantic · 中性主动作上的可读文字。 | text-primary-inverse  | `#ffffff` | `#2d2d2d` |
+| `--color-composer-action` | component · 默认正文与中性主动作底色。 | text-default 保留已有组件变量名；仅引用 text-default。默认正文与中性主动作底色。 | `var(--color-primary)` | `var(--color-primary)` |
+| `--color-composer-action-foreground` | component · 中性主动作上的可读文字。 | text-primary-inverse 保留已有组件变量名；仅引用 text-primary-inverse。中性主动作上的可读文字。 | `var(--color-primary-foreground)` | `var(--color-primary-foreground)` |
+| `--color-accent` | semantic · 弱强调背景。 | surface-accent  | `color-mix(in srgb, #1a1c1f 6%, #ffffff)` | `color-mix(in srgb, #ffffff 6%, #181818)` |
+| `--color-secondary` | semantic · 次要控件的前景透明层。 | surface-secondary  | `color-mix(in srgb, #1a1c1f 5%, transparent)` | `color-mix(in srgb, #ffffff 5%, transparent)` |
+| `--color-user-message` | component · 用户消息区分层，默认主题保留已采纳蓝色。 | surface-user-message 保留已有组件变量名；仅引用 surface-user-message。用户消息区分层，默认主题保留已采纳蓝色。 | `#e8f3fe` | `#173e76` |
+| `--color-user-message-text` | component · 用户消息正文，默认主题保留蓝底配对前景。 | text-user-message 保留已有组件变量名；仅引用 text-user-message。用户消息正文，默认主题保留蓝底配对前景。 | `#0c274a` | `#f6fafe` |
+| `--color-background-win-alt` | semantic · 浅色外壳与次级窗口表面。 | surface-window-alt  | `color-mix(in srgb, #1a1c1f 4%, #ffffff)` | `color-mix(in srgb, #ffffff 4%, #181818)` |
+| `--color-shell` | semantic · 标题栏和外框表面。 | surface-shell  | `color-mix(in srgb, #1a1c1f 4%, #ffffff)` | `color-mix(in srgb, #ffffff 5.194805194805195%, #181818)` |
+| `--color-navigation-background` | semantic · 导航表面。浅色透明材料保留 OKLab 混色。 | surface-navigation  | `color-mix(in oklab, #ffffff 70%, transparent)` | `color-mix(in srgb, #ffffff 2.5974025974025974%, #181818)` |
+| `--color-navigation-selected` | semantic · 导航选中层，暗色独立使用原有实色抬升。 | interaction-navigation-selected  | `color-mix(in srgb, #1a1c1f 5.5%, transparent)` | `color-mix(in srgb, #ffffff 10.38961038961039%, #181818)` |
+| `--shadow-page-surface` | component · 共享页面表面阴影。 | shadow-page 保留已有组件变量名；仅引用 shadow-page。共享页面表面阴影。 | `0 0 0 .5px color-mix(in srgb, #1a1c1f 8%, transparent), 0 4px 16px #0000000d` | `0 0 0 .5px color-mix(in srgb, #ffffff 6%, transparent), 0 4px 16px #0000000d` |
+| `--color-sidebar` | component · 设置侧栏材料，保留其与导航表面的区别。 | surface-settings-sidebar 保留已有组件变量名；仅引用 surface-settings-sidebar。设置侧栏材料，保留其与导航表面的区别。 | `color-mix(in srgb, #ffffff 70%, transparent)` | `rgb(40 40 40 / 0.7)` |
+| `--color-sidebar-item` | component · 设置侧栏行悬停层，默认暗色保留观察到的 8% 白色层。 | interaction-settings-row 保留已有组件变量名；仅引用 interaction-settings-row。设置侧栏行悬停层，默认暗色保留观察到的 8% 白色层。 | `color-mix(in srgb, #1a1c1f 5.5%, transparent)` | `rgba(255, 255, 255, 0.08)` |
+| `--color-composer` | component · 输入区半透明材料，明暗透明度不同。 | surface-composer 保留已有组件变量名；仅引用 surface-composer。输入区半透明材料，明暗透明度不同。 | `color-mix(in srgb, #ffffff 86.4706%, transparent)` | `color-mix(in srgb, color-mix(in srgb, #ffffff 12.987012987012987%, #181818) 96%, transparent)` |
+| `--shadow-composer` | component · 输入区阴影，默认主题沿用宿主变量。 | shadow-composer 保留已有组件变量名；仅引用 shadow-composer。输入区阴影，默认主题沿用宿主变量。 | `var(--composer-shadow-light)` | `var(--composer-shadow-dark)` |
+| `--color-background-alt` | semantic · 基础表面之上的轻微分组层。 | surface-alt  | `color-mix(in srgb, #1a1c1f 3%, #ffffff)` | `color-mix(in srgb, #ffffff 3%, #181818)` |
+| `--color-card` | semantic · 基础阅读表面，卡片、面板和输入静止背景共用。 | surface-base  | `#ffffff` | `#181818` |
+| `--color-settings-card` | component · 设置组表面，暗色比通用抬升层更低。 | surface-settings-group 保留已有组件变量名；仅引用 surface-settings-group。设置组表面，暗色比通用抬升层更低。 | `#ffffff` | `color-mix(in srgb, #ffffff 4.761904761904762%, #181818)` |
+| `--color-header` | semantic · 基础阅读表面，卡片、面板和输入静止背景共用。 | surface-base  | `#ffffff` | `#181818` |
+| `--color-panel` | semantic · 基础阅读表面，卡片、面板和输入静止背景共用。 | surface-base  | `#ffffff` | `#181818` |
+| `--color-popover` | semantic · 基础阅读表面，卡片、面板和输入静止背景共用。 | surface-base  | `#ffffff` | `#181818` |
+| `--color-menu` | component · 菜单的半透明浮层材料。 | surface-menu 保留已有组件变量名；仅引用 surface-menu。菜单的半透明浮层材料。 | `color-mix(in srgb, #ffffff 90%, transparent)` | `color-mix(in srgb, color-mix(in srgb, #ffffff 9.090909090909092%, #181818) 90%, transparent)` |
+| `--color-menu-border` | component · 菜单描边，保留与通用边框不同的暗色强度。 | border-menu 保留已有组件变量名；仅引用 border-menu。菜单描边，保留与通用边框不同的暗色强度。 | `color-mix(in srgb, #1a1c1f 8%, transparent)` | `color-mix(in srgb, #ffffff 8.2%, transparent)` |
+| `--color-menu-hover` | component · 菜单行悬停层，不随 contrast 改变。 | interaction-menu-hover 保留已有组件变量名；仅引用 interaction-menu-hover。菜单行悬停层，不随 contrast 改变。 | `color-mix(in srgb, #1a1c1f 5.5%, transparent)` | `color-mix(in srgb, #ffffff 5.5%, transparent)` |
+| `--color-composer-catalog` | component · 目录选择器表面，保留与菜单不同的抬升高度。 | surface-catalog 保留已有组件变量名；仅引用 surface-catalog。目录选择器表面，保留与菜单不同的抬升高度。 | `#ffffff` | `color-mix(in srgb, #ffffff 8.658008658008658%, #181818)` |
+| `--color-input` | semantic · 基础阅读表面，卡片、面板和输入静止背景共用。 | surface-base  | `#ffffff` | `#181818` |
+| `--color-input-focused` | semantic · 基础阅读表面，卡片、面板和输入静止背景共用。 | surface-base  | `#ffffff` | `#181818` |
+| `--color-input-border` | semantic · 通用边框。 | border-default  | `var(--color-border)` | `var(--color-border)` |
+| `--color-input-border-hover` | semantic · 悬停边框。 | border-hover  | `var(--color-border-hover)` | `var(--color-border-hover)` |
+| `--color-foreground-subtle` | semantic · 次要文字，适用进度和元信息。 | text-subtle  | `color-mix(in srgb, #1a1c1f 75%, #ffffff)` | `color-mix(in srgb, #ffffff 69.5%, #181818)` |
+| `--color-foreground-subtlest` | semantic · 最弱元信息文字，未声明满足正文对比度。 | text-subtlest  | `color-mix(in srgb, #1a1c1f 70%, #ffffff)` | `color-mix(in srgb, #ffffff 55%, #181818)` |
+| `--color-settings-secondary` | component · 设置说明文字，暗色强于已结算过程元信息。 | text-settings-secondary 保留已有组件变量名；仅引用 text-settings-secondary。设置说明文字，暗色强于已结算过程元信息。 | `color-mix(in srgb, #1a1c1f 75%, #ffffff)` | `color-mix(in srgb, #ffffff 65%, transparent)` |
+| `--color-border` | semantic · 通用边框。 | border-default  | `color-mix(in srgb, #1a1c1f 7.8%, transparent)` | `color-mix(in srgb, #ffffff 8.4%, transparent)` |
+| `--color-border-hover` | semantic · 悬停边框。 | border-hover  | `color-mix(in srgb, #1a1c1f 11.7%, transparent)` | `color-mix(in srgb, #ffffff 11.7%, transparent)` |
+| `--color-hover` | semantic · 悬停、选中与表面交互的前景层。 | interaction-selected  | `color-mix(in srgb, #1a1c1f 5.5%, transparent)` | `color-mix(in srgb, #ffffff 5.5%, transparent)` |
+| `--color-selected` | semantic · 悬停、选中与表面交互的前景层。 | interaction-selected  | `color-mix(in srgb, #1a1c1f 5.5%, transparent)` | `color-mix(in srgb, #ffffff 5.5%, transparent)` |
+| `--color-surface` | semantic · 弱化表面前景透明层。 | surface-muted  | `color-mix(in srgb, #1a1c1f 3%, transparent)` | `color-mix(in srgb, #ffffff 3%, transparent)` |
+| `--color-surface-hover` | semantic · 悬停、选中与表面交互的前景层。 | interaction-selected  | `color-mix(in srgb, #1a1c1f 5.5%, transparent)` | `color-mix(in srgb, #ffffff 5.5%, transparent)` |
+| `--color-input-border-focused` | semantic · 用户强调色和键盘焦点。 | interaction-focus  | `#3a83f7` | `#3a83f7` |
+| `--color-status-running` | semantic · 运行中进度，复用现有 activity-status 和 execution-status 的次要文字。 | status-running  | `color-mix(in srgb, #1a1c1f 75%, #ffffff)` | `color-mix(in srgb, #ffffff 69.5%, #181818)` |
+| `--color-status-success` | semantic · 成功反馈，不代表所有已结算状态都成功。 | status-success  | `var(--color-success)` | `var(--color-success)` |
+| `--color-status-attention` | semantic · 需要用户关注或处理。 | status-attention  | `var(--color-warning)` | `var(--color-warning)` |
+| `--color-status-unknown` | semantic · 执行结果未知，需要核对；沿用 warning 反馈。 | status-unknown  | `var(--color-warning)` | `var(--color-warning)` |
+| `--color-status-error` | semantic · 明确的错误或失败。 | status-error  | `var(--color-destructive)` | `var(--color-destructive)` |
+| `--color-status-settled` | semantic · 已结算过程元信息，保留暗色半透明与浅色次要文字的区别。 | status-settled  | `color-mix(in srgb, #1a1c1f 75%, #ffffff)` | `color-mix(in srgb, #ffffff 55%, transparent)` |
+| `--shadow-result-raised` | semantic · 结果悬停投影，全部依赖语义边框与已有参考色。 | shadow-result-raised  | `0 0 0 .5px color-mix(in srgb, #1a1c1f 8%, transparent), 0 3px 7.5px #0000000a, 0 0 20px #0000000d` | `0 0 0 .5px color-mix(in srgb, #ffffff 15.6%, transparent), 0 3px 7.5px #0000000a, 0 0 20px #0000000d` |
+| `--color-settings-attention-indicator` | component · 设置入口的任务关注指示点。 | settings-attention-indicator 设置入口只引用对应语义角色，保留原 bg-amber-500 像素值。 | `#f59e0b` | `#f59e0b` |
+| `--color-dialog-backdrop` | semantic · 对话框遮罩，保留原 40% 黑色覆盖度。 | surface-dialog-scrim  | `#0006` | `#0006` |
+| `--color-control-thumb` | semantic · 原生开关与滑块的固定白色把手，独立于当前主题前景。 | surface-control-thumb  | `white` | `white` |
+| `--color-diff-count-added` | component · 差异行数中新增行的内容色。 | text-diff-count-added 仅引用对应内容或控件语义角色，保留原值与浏览器色彩空间。 | `#16a45d` | `#16a45d` |
+| `--color-diff-count-removed` | component · 差异行数中删除行的内容色。 | text-diff-count-removed 仅引用对应内容或控件语义角色，保留原值与浏览器色彩空间。 | `#df515b` | `#df515b` |
+| `--color-trajectory-match-ink` | component · 轨迹搜索高亮的墨色，调用方保持既有 35% srgb 透明混色。 | highlight-trajectory-match 仅引用对应内容或控件语义角色，保留原值与浏览器色彩空间。 | `#e8a838` | `#e8a838` |
+| `--color-inspection-scrim` | semantic · Hook 统计检查浮层的轻遮罩，保留原 15% 黑色。 | surface-inspection-scrim  | `rgb(0 0 0 / 15%)` | `rgb(0 0 0 / 15%)` |
+| `--color-shortcut-border` | component · 深色新建任务快捷入口的细边框。 | border-dark-shortcut 仅引用对应内容或控件语义角色，保留原值与浏览器色彩空间。 | `rgb(255 255 255 / 5%)` | `rgb(255 255 255 / 5%)` |
+| `--color-shortcut-surface` | component · 新建任务快捷入口的固定深色背景。 | surface-dark-shortcut 仅引用对应内容或控件语义角色，保留原值与浏览器色彩空间。 | `#1b1b1b` | `#1b1b1b` |
+| `--color-shortcut-foreground` | component · 固定深色快捷入口的白色文字。 | text-dark-shortcut 仅引用对应内容或控件语义角色，保留原值与浏览器色彩空间。 | `#fff` | `#fff` |
+| `--color-markdown-list-marker-dark` | component · 暗色可编辑 Markdown 列表标记的半透明白色。 | text-content-list-marker-dark 仅引用对应内容或控件语义角色，保留原值与浏览器色彩空间。 | `#ffffff7f` | `#ffffff7f` |
+| `--color-review-comment-surface` | component · 批注编辑器与卡片的低对比表面，继续由浏览器 color-scheme 选择 light-dark 分支。 | surface-review-comment 仅引用对应内容或控件语义角色，保留原值与浏览器色彩空间。 | `light-dark(rgba(0, 0, 0, 0.032), rgba(255, 255, 255, 0.032))` | `light-dark(rgba(0, 0, 0, 0.032), rgba(255, 255, 255, 0.032))` |
+| `--color-review-tree-guide-ink` | component · 文件评审树的引导线墨色，调用方保持既有 25% lab 透明混色。 | border-review-tree-guide 仅引用对应内容或控件语义角色，保留原值与浏览器色彩空间。 | `#84848a` | `#84848a` |
+| `--color-diff-modified` | component · 代码差异阅读器的修改色，继续由浏览器 color-scheme 选择分支。 | content-diff-modified 仅引用对应内容或控件语义角色，保留原值与浏览器色彩空间。 | `light-dark(#009fff, #69b1ff)` | `light-dark(#009fff, #69b1ff)` |
+| `--color-content-diff-added` | component · 代码差异阅读器的新增色，不等同于状态成功色。 | content-diff-added 仅引用对应内容或控件语义角色，保留原值与浏览器色彩空间。 | `#40c977` | `#40c977` |
+| `--color-content-diff-removed` | component · 代码差异阅读器的删除色，不等同于危险操作色。 | content-diff-removed 仅引用对应内容或控件语义角色，保留原值与浏览器色彩空间。 | `#fa423e` | `#fa423e` |
+| `--color-slider-selected-track` | component · 输入器推理档位中已选轨道的半透明填充。 | interaction-slider-selected-track 仅引用对应内容或控件语义角色，保留原值与浏览器色彩空间。 | `#ffffff80` | `#ffffff80` |
+| `--color-annotation-selected-foreground` | component · 浏览器标注模式已选入口的文字色。 | text-annotation-selected 仅引用对应内容或控件语义角色，保留原值与浏览器色彩空间。 | `#91c5ff` | `#91c5ff` |
+| `--color-annotation-selected-surface` | component · 浏览器标注模式已选入口的透明背景色。 | surface-annotation-selected 仅引用对应内容或控件语义角色，保留原值与浏览器色彩空间。 | `#4795ff26` | `#4795ff26` |

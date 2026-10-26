@@ -13,6 +13,8 @@
 
 只验证上述架构，不提供 Windows、macOS Intel 或 Linux arm64 包。**npm 与 `cargo install` 尚未提供完整发行包**，不能作为安装渠道。Homebrew 和独立安装器二选一，不应同时管理同一个 PATH 入口。每个包包含 `bin/areal`、`libexec/areal/{areal-runtime,areal-runtime-fs}`、LICENSE 和文件 SHA256 manifest；Linux 包另外包含同目录的 `areal-runtime-reaper`，不要只复制 `areal`。安装后无需 Rust/Cargo；macOS 仍需要可用的 `/usr/bin/python3`（Command Line Tools），运行自定义 Node/Python 工具需对应解释器。
 
+macOS GUI 在启动新后台前检查开发工具和系统 Python，缺少依赖时显示安装引导。安装完成后点击重新检测。系统解释器仍是运行前提，完整包的 `manifest.json` 声明该依赖。
+
 macOS 包采用 ad-hoc 签名，尚无 Developer ID 签名和公证。Linux 默认 YOLO/full-access 以当前用户权限运行；受限/只读 Scope 需要 `/usr/bin/bwrap` 及可用 user namespace。Ubuntu 可安装 `bubblewrap`；系统禁用 user namespace 或 AppArmor 拒绝时，受限操作会失败，不自动放宽权限。完整边界见 [Runtime 部署](runtime.md)。
 
 ## Homebrew（macOS / Linux）

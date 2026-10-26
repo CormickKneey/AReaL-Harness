@@ -1,5 +1,13 @@
+import type { Attachment } from "@areal/workbench/desktop-contract/conversation";
+import type { QueueEditInput } from "./Queue.js";
 import { composerDraftStorage } from "./composerDraftStorage.js";
-import { imageAnnotationText, sentImageAnnotations, serializeImageAnnotations, snapshotImageAnnotations, type SentImageAnnotation } from "./imageAnnotations.js";
+import {
+  imageAnnotationText,
+  sentImageAnnotations,
+  serializeImageAnnotations,
+  snapshotImageAnnotations,
+  type SentImageAnnotation,
+} from "./imageAnnotations.js";
 import { useRef, useState, useEffect } from "react";
 import type { RefObject } from "react";
 import type { Action, Data } from "./services.js";
@@ -45,7 +53,7 @@ export function useComposerQueueEdit({
   setText: (text: string) => void;
   setFiles: (files: ComposerDraftAttachment[]) => void;
   setGoalMode: (enabled: boolean) => void;
-  uploadFiles: (files: File[]) => Promise<Data[]>;
+  uploadFiles: (files: File[]) => Promise<Attachment[]>;
   inFlight: boolean;
   setInFlight: (active: boolean) => void;
   annotationBlocked: boolean;
@@ -122,10 +130,30 @@ export function useComposerQueueEdit({
     sync();
     if (owner.current) setError(message);
   };
-  const enter = (record: QueueEdit, confirmed: Data, input: Data[]) => {
+  const enter = (record: QueueEdit, confirmed: Data, input: unknown[]) => {
     if (!confirmed.paused) throw new Error("队列未确认暂停，原草稿已保留");
-    const parsed = sentImageAnnotations(input.filter(part => part.type === "text").map(part => part.text).join("\n"), record.attachments);
-    saveRecord({ ...record, imageNotes: parsed.notes, revision: confirmed.revision, phase: "editing", unknown: undefined });
+    const parsed = sentImageAnnotations(
+      input
+        .flatMap((part) =>
+          part &&
+          typeof part === "object" &&
+          "type" in part &&
+          part.type === "text" &&
+          "text" in part &&
+          typeof part.text === "string"
+            ? [part.text]
+            : [],
+        )
+        .join("\n"),
+      record.attachments,
+    );
+    saveRecord({
+      ...record,
+      imageNotes: parsed.notes,
+      revision: confirmed.revision,
+      phase: "editing",
+      unknown: undefined,
+    });
     composerDraftStorage.setItem(draftKey, parsed.text);
     composerDraftStorage.removeItem(`${draftKey}:skills`);
     composerDraftStorage.removeItem(`${draftKey}:goal`);
@@ -134,19 +162,17 @@ export function useComposerQueueEdit({
   };
   const mutation = (
     record: QueueEdit,
-    operation: "pause" | "update" | "resume",
-    values: Data = {},
+    request: Extract<QueueEditInput, { operation: "pause" | "update" | "resume" }>,
   ) => {
     const requestId = crypto.randomUUID();
     // 请求发出前保留业务键；切换任务或重新挂载后只读核对原请求。
-    saveRecord({ ...record, unknown: { requestId, operation } });
+    saveRecord({ ...record, unknown: { requestId, operation: request.operation } });
     return action("queueEdit", {
       projectId: project.id,
       threadId,
       expectedRevision: record.revision,
       requestId,
-      operation,
-      ...values,
+      ...request,
     });
   };
   const unknown = (
@@ -163,7 +189,8 @@ export function useComposerQueueEdit({
     if (owner.current) setError(cause.message);
   };
   const begin = async (target: Data) => {
-    if (edit || busy || pending || annotationBlocked || !connected || target.status !== "pending") return;
+    if (edit || busy || pending || annotationBlocked || !connected || target.status !== "pending")
+      return;
     const record: QueueEdit = {
       id: target.id,
       revision: queue.revision,
@@ -183,7 +210,7 @@ export function useComposerQueueEdit({
     try {
       const paused = queue.paused
         ? await readAction("queue", { projectId: project.id, threadId })
-        : await mutation(record, "pause");
+        : await mutation(record, { operation: "pause" });
       if (
         paused.revision !== record.revision + (record.wasPaused ? 0 : 1) ||
         paused.items.find((row: Data) => row.id === target.id)?.status !== "pending"
@@ -209,7 +236,7 @@ export function useComposerQueueEdit({
         restoreLocal(record, "原草稿已恢复；队列状态已有更新，保持当前状态。");
         return;
       }
-      await mutation({ ...record, phase: "restoring" }, "resume");
+      await mutation({ ...record, phase: "restoring" }, { operation: "resume" });
       restoreLocal(record);
     } catch (cause) {
       const failure = cause as Error & { submissionUnknown?: boolean; requestId?: string };
@@ -234,12 +261,22 @@ export function useComposerQueueEdit({
     const record = { ...edit, phase: "saving" as const };
     saveRecord(record);
     try {
-      const input = composerInput(composerDraftStorage.getItem(draftKey) ?? "", draftFiles.get(draftKey) ?? []);
+      const input = composerInput(
+        composerDraftStorage.getItem(draftKey) ?? "",
+        draftFiles.get(draftKey) ?? [],
+      );
       const imageSnapshot = snapshotImageAnnotations(input.files);
       const additions = await uploadFiles(input.files);
-      const updated = await mutation(record, "update", {
+      const updated = await mutation(record, {
+        operation: "update",
         queueItemId: record.id,
-        text: [input.text, imageAnnotationText(record.imageNotes ?? []), serializeImageAnnotations(imageSnapshot, additions, record.attachments.length)].filter(Boolean).join("\n\n"),
+        text: [
+          input.text,
+          imageAnnotationText(record.imageNotes ?? []),
+          serializeImageAnnotations(imageSnapshot, additions, record.attachments.length),
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
         attachments: additions,
         retainedInput: record.attachments,
       });
@@ -264,18 +301,27 @@ export function useComposerQueueEdit({
     setBusy(true);
     try {
       const result = await action("reconcile", { projectId: project.id });
-      const known = recoveredOutcome({ outcomes: result.outcomes }, edit.unknown.requestId, threadId,
-        result.outcomes?.[edit.unknown.requestId]?.operation ? { requestId: edit.unknown.requestId,
-          method: `areal/queue/${edit.unknown.operation}`, target: { kind: "thread", threadId } } : undefined);
-      const observed =
-        known ??
-        (await readAction("queue", {
-          projectId: project.id,
-          threadId,
-          requestId: edit.unknown.requestId,
-          operation: edit.unknown.operation,
-        }));
-      const outcome = known || observed.confirmed ? observed : null;
+      const known = recoveredOutcome(
+        { outcomes: result.outcomes },
+        edit.unknown.requestId,
+        threadId,
+        result.outcomes?.[edit.unknown.requestId]?.operation
+          ? {
+              requestId: edit.unknown.requestId,
+              method: `areal/queue/${edit.unknown.operation}`,
+              target: { kind: "thread", threadId },
+            }
+          : undefined,
+      );
+      const observed = known
+        ? null
+        : await readAction("queue", {
+            projectId: project.id,
+            threadId,
+            requestId: edit.unknown.requestId,
+            operation: edit.unknown.operation,
+          });
+      const outcome = known ?? (observed?.confirmed ? observed : null);
       if (!outcome) {
         setError("Core 尚未确认原请求，请继续保留编辑内容并核对状态。");
         return;
@@ -288,17 +334,22 @@ export function useComposerQueueEdit({
           setError(outcome.message ?? "队列操作执行失败，编辑内容已保留。");
         }
       } else if (edit.unknown.operation === "pause") {
+        // 恢复日志只保留受理版本；完整队列始终从原 Thread 的权威读取获取。
+        const revision = outcome.result?.revision;
+        if (typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < 0)
+          throw new Error("原队列回执不完整，请继续核对原请求。");
         const latest = await readAction("queue", { projectId: project.id, threadId });
-        if (
-          latest.revision !== outcome.result.revision ||
-          latest.items.find((row: Data) => row.id === record.id)?.status !== "pending"
-        ) {
+        const item = latest.items.find((row) => row.id === record.id);
+        if (latest.revision !== revision || !item || item.status !== "pending") {
           saveRecord(record);
           setError("暂停已确认，但队列随后更新；原草稿已保留，请取消后核对。");
-        } else enter(record, latest, latest.items.find((row: Data) => row.id === record.id).input);
-      } else if (edit.unknown.operation === "update")
-        await finish({ ...record, revision: outcome.result.revision });
-      else restoreLocal(record);
+        } else enter(record, latest, item.input);
+      } else if (edit.unknown.operation === "update") {
+        const revision = outcome.result?.revision;
+        if (typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < 0)
+          throw new Error("原队列回执不完整，请继续核对原请求。");
+        await finish({ ...record, revision });
+      } else restoreLocal(record);
     } catch (cause) {
       setError((cause as Error).message);
     } finally {
@@ -316,10 +367,26 @@ export function useComposerQueueEdit({
     reconcile,
     locked: !!edit && (edit.phase !== "editing" || !!edit.unknown),
     saveDisabled:
-      annotationBlocked || busy || pending || !connected || conflict || edit?.phase !== "editing" || !!edit?.unknown,
+      annotationBlocked ||
+      busy ||
+      pending ||
+      !connected ||
+      conflict ||
+      edit?.phase !== "editing" ||
+      !!edit?.unknown,
     removeAttachment: (index: number) => {
       if (edit && !busy && !edit.unknown)
-        saveRecord({ ...edit, attachments: edit.attachments.filter((_, at) => at !== index), imageNotes: (edit.imageNotes ?? []).filter(note => note.attachmentIndex !== index).map(note => ({ ...note, attachmentIndex: note.attachmentIndex > index ? note.attachmentIndex - 1 : note.attachmentIndex })) });
+        saveRecord({
+          ...edit,
+          attachments: edit.attachments.filter((_, at) => at !== index),
+          imageNotes: (edit.imageNotes ?? [])
+            .filter((note) => note.attachmentIndex !== index)
+            .map((note) => ({
+              ...note,
+              attachmentIndex:
+                note.attachmentIndex > index ? note.attachmentIndex - 1 : note.attachmentIndex,
+            })),
+        });
     },
   };
 }

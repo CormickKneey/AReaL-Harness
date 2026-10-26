@@ -1,8 +1,7 @@
-
-
-
 /* The app rail and titlebar keep the same geometry in settings and workspaces. */
-.settings-sidebar { user-select: none; }
+.settings-sidebar {
+  user-select: none;
+}
 
 .settings-sidebar .settings-sidebar-header {
   display: flex;
@@ -22,14 +21,16 @@
 
 .settings-sidebar .settings-navigation-search input {
   height: 36px;
-  border-radius: 9999px;
+  border-radius: var(--radius-full);
   background: var(--color-sidebar-item);
   border: 1px solid transparent;
   font-size: var(--text-ui-base);
   line-height: calc(var(--ui-font-size) + 4px);
   padding-left: 36px;
   color: var(--color-foreground);
-  transition: border-color 0.15s ease, background-color 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease;
 }
 
 .settings-sidebar .settings-navigation-search input:focus {
@@ -48,7 +49,11 @@
   padding: 8px;
 }
 
-.settings-sidebar .settings-category-navigation section { display: flex; flex-direction: column; gap: 1px; }
+.settings-sidebar .settings-category-navigation section {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
 
 .settings-sidebar .settings-group-label {
   font-size: var(--text-ui-base);
@@ -78,7 +83,9 @@
   font-weight: 400;
   text-align: left;
   cursor: var(--interactive-cursor, pointer);
-  transition: background-color 0.12s ease, color 0.12s ease;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
 }
 
 .settings-sidebar .settings-navigation-item svg {
@@ -121,4 +128,96 @@
   font-size: var(--text-ui-caption);
   color: var(--color-muted-foreground);
   text-align: center;
+}
+
+@media (max-width: 640px) {
+  .settings-sidebar .settings-category-navigation {
+    display: flex;
+    flex: none;
+    gap: 4px;
+    overflow-x: auto;
+    padding-bottom: 8px;
+  }
+}
+@media (max-width: 640px) {
+  .settings-sidebar .settings-category-navigation section {
+    display: contents;
+  }
+}
+@media (max-width: 640px) {
+  .settings-sidebar .settings-category-navigation button {
+    width: auto;
+    flex-shrink: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .settings-sidebar .settings-navigation-item {
+    width: auto;
+  }
+}
+@media (max-width: 640px) {
+  .settings-sidebar .settings-group-label {
+    display: none;
+  }
+}
+@media (max-width: 640px) {
+  .settings-sidebar .settings-category-navigation {
+    flex: none;
+    flex-direction: row;
+    gap: 4px;
+    overflow-x: auto;
+    padding-bottom: 8px;
+  }
+}
+@media (max-width: 640px) {
+  .settings-sidebar .settings-category-navigation section {
+    display: contents;
+  }
+}
+
+@media (max-width: 640px) {
+  .settings-sidebar {
+    width: 156px;
+  }
+}
+@media (max-width: 640px) {
+  .settings-navigation-search {
+    flex-shrink: 0;
+  }
+}
+
+.workspace-navigation {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.workspace-navigation button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.icon-button {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-control);
+  color: var(--color-foreground-subtle);
+  background: transparent;
+  border: 0;
+  cursor: var(--interactive-cursor, pointer);
+  flex-shrink: 0;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease;
+}
+.icon-button:hover:not(:disabled) {
+  color: var(--color-foreground);
+  background: var(--color-hover);
+}
+.icon-button.active {
+  color: var(--color-foreground);
+  background: var(--color-selected);
 }

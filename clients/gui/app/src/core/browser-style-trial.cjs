@@ -1,29 +1,62 @@
-'use strict';
+// @ts-check
+"use strict";
 
 // This is a Main-owned, human-only edit vocabulary. No selector, CSS text,
 // script, or object id crosses the Renderer IPC boundary.
-const properties = new Set(['text', 'color', 'background-color', 'font-size', 'font-weight',
-  'font-family', 'letter-spacing', 'line-height', 'margin', 'margin-top', 'margin-right',
-  'margin-bottom', 'margin-left', 'padding', 'padding-top', 'padding-right',
-  'padding-bottom', 'padding-left', 'width', 'height']);
+const properties = new Set([
+  "text",
+  "color",
+  "background-color",
+  "font-size",
+  "font-weight",
+  "font-family",
+  "letter-spacing",
+  "line-height",
+  "margin",
+  "margin-top",
+  "margin-right",
+  "margin-bottom",
+  "margin-left",
+  "padding",
+  "padding-top",
+  "padding-right",
+  "padding-bottom",
+  "padding-left",
+  "width",
+  "height",
+]);
 const color = /^(?:#[0-9a-fA-F]{3,8}|(?:rgb|rgba|hsl|hsla)\([0-9.,%\s]+\))$/;
-const length = /^(?:0|(?:0|[1-9]\d{0,3})(?:\.\d{1,2})?(?:px|rem|em|%|vh|vw))(?:\s+(?:0|(?:0|[1-9]\d{0,3})(?:\.\d{1,2})?(?:px|rem|em|%|vh|vw))){0,3}$/;
+const length =
+  /^(?:0|(?:0|[1-9]\d{0,3})(?:\.\d{1,2})?(?:px|rem|em|%|vh|vw))(?:\s+(?:0|(?:0|[1-9]\d{0,3})(?:\.\d{1,2})?(?:px|rem|em|%|vh|vw))){0,3}$/;
+/** @param {string} property @param {unknown} value */
 function validateEdit(property, value) {
-  if (!properties.has(property) || typeof value !== 'string' || value.length > 500) throw new Error('不支持此页面试改');
-  if (property === 'text') {
-    if (value.length > 500 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(value)) throw new Error('无效文本');
-  } else if (property === 'color' || property === 'background-color') {
-    if (!color.test(value)) throw new Error('无效颜色');
-  } else if (property === 'font-family') {
-    if (!/^[a-zA-Z][a-zA-Z\d -]{0,79}$/.test(value)) throw new Error('无效字体');
-  } else if (property === 'font-weight') {
-    if (!/^(?:normal|bold|[1-9]00)$/.test(value)) throw new Error('无效字重');
-  } else if (property === 'line-height') {
-    if (!length.test(value) && !/^(?:normal|[1-9](?:\.\d{1,2})?)$/.test(value)) throw new Error('无效行高');
-  } else if (!length.test(value)) throw new Error('无效尺寸或间距');
+  if (!properties.has(property) || typeof value !== "string" || value.length > 500)
+    throw new Error("不支持此页面试改");
+  if (property === "text") {
+    if (
+      value.length > 500 ||
+      Array.from(value).some(
+        (character) =>
+          character.charCodeAt(0) < 32 && ![9, 10, 13].includes(character.charCodeAt(0)),
+      )
+    )
+      throw new Error("无效文本");
+  } else if (property === "color" || property === "background-color") {
+    if (!color.test(value)) throw new Error("无效颜色");
+  } else if (property === "font-family") {
+    if (!/^[a-zA-Z][a-zA-Z\d -]{0,79}$/.test(value)) throw new Error("无效字体");
+  } else if (property === "font-weight") {
+    if (!/^(?:normal|bold|[1-9]00)$/.test(value)) throw new Error("无效字重");
+  } else if (property === "line-height") {
+    if (!length.test(value) && !/^(?:normal|[1-9](?:\.\d{1,2})?)$/.test(value))
+      throw new Error("无效行高");
+  } else if (!length.test(value)) throw new Error("无效尺寸或间距");
   // Text is assigned to an existing text node, never parsed as CSS or HTML.
-  if (property !== 'text' && /(?:url\s*\(|@import|expression\s*\(|javascript:|[;{}\\])/i.test(value))
-    throw new Error('页面试改不能包含脚本或外部资源');
+  if (
+    property !== "text" &&
+    /(?:url\s*\(|@import|expression\s*\(|javascript:|[;{}\\])/i.test(value)
+  )
+    throw new Error("页面试改不能包含脚本或外部资源");
 }
 
 // Fixed trusted code runs in a Chromium isolated world against a node resolved
@@ -54,24 +87,44 @@ const inspect = `function(property, checks, replacement) {
   return { stale: false, before: current, after };
 }`;
 
+/** @param {import("electron").WebContents} c @param {number} backendNodeId @param {string} property
+ * @param {{property:string,expected:import("./preview-native/model.js").StyleValue}[]} checks
+ * @param {import("./preview-native/model.js").StyleValue|null} replacement
+ * @param {import("./preview-native/model.js").PromiseBound} bounded
+ * @returns {Promise<{stale:true}|{stale:false,before:import("./preview-native/model.js").StyleValue,after:import("./preview-native/model.js").StyleValue}>}
+ */
 async function mutate(c, backendNodeId, property, checks, replacement, bounded) {
-  if (c.debugger.isAttached()) throw new Error('页面正由其他原生操作占用');
-  c.debugger.attach('1.3');
+  if (c.debugger.isAttached()) throw new Error("页面正由其他原生操作占用");
+  c.debugger.attach("1.3");
   try {
+    /** @type {import("electron").WebContents["debugger"]["sendCommand"]} */
     const send = (method, params = {}) => bounded(c.debugger.sendCommand(method, params));
-    const frames = await send('Page.getFrameTree');
+    const frames = await send("Page.getFrameTree");
     const frameId = frames.frameTree?.frame?.id;
-    if (!frameId) throw new Error('页面文档不可用');
-    const world = await send('Page.createIsolatedWorld', { frameId, worldName: 'areal-human-style-trial' });
-    const resolved = await send('DOM.resolveNode', { backendNodeId, executionContextId: world.executionContextId });
+    if (!frameId) throw new Error("页面文档不可用");
+    const world = await send("Page.createIsolatedWorld", {
+      frameId,
+      worldName: "areal-human-style-trial",
+    });
+    const resolved = await send("DOM.resolveNode", {
+      backendNodeId,
+      executionContextId: world.executionContextId,
+    });
     if (!resolved.object?.objectId) return { stale: true };
-    const result = await send('Runtime.callFunctionOn', { objectId: resolved.object.objectId,
-      functionDeclaration: inspect, arguments: [property, checks, replacement].map(value => ({ value })),
-      returnByValue: true, silent: true });
+    const result = await send("Runtime.callFunctionOn", {
+      objectId: resolved.object.objectId,
+      functionDeclaration: inspect,
+      arguments: [property, checks, replacement].map((value) => ({ value })),
+      returnByValue: true,
+      silent: true,
+    });
     if (result.exceptionDetails || !result.result?.value) return { stale: true };
     return result.result.value;
-  } catch { return { stale: true }; }
-  finally { if (!c.isDestroyed() && c.debugger.isAttached()) c.debugger.detach(); }
+  } catch {
+    return { stale: true };
+  } finally {
+    if (!c.isDestroyed() && c.debugger.isAttached()) c.debugger.detach();
+  }
 }
 
 module.exports = { validateEdit, mutate };

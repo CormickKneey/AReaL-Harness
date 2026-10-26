@@ -1,24 +1,71 @@
+import { SettingsRow } from "@areal/ui/compositions";
 import { useI18n, UiMessageError, formatUiMessage, type UiMessage } from "../i18n/IntlProvider.js";
 import { useRef, useState } from "react";
 import type { PlatformServices } from "../services.js";
 import { Button } from "../components/ui/button.js";
-import { SettingsRow } from "./SettingsPageParts.js";
 
-export function ProjectlessDirectorySetting({ directory, choose, connected }: {
-  directory?: string; choose?: PlatformServices["chooseProjectlessDirectory"]; connected: boolean;
+export function ProjectlessDirectorySetting({
+  directory,
+  choose,
+  connected,
+}: {
+  directory?: string;
+  choose?: PlatformServices["chooseProjectlessDirectory"];
+  connected: boolean;
 }) {
   const { t } = useI18n();
-  const [busy, setBusy] = useState(false), [error, setError] = useState<string | UiMessage>("");
+  const [busy, setBusy] = useState(false),
+    [error, setError] = useState<string | UiMessage>("");
   const pending = useRef(false);
   const change = async () => {
     if (!choose || !connected || pending.current) return;
-    pending.current = true; setBusy(true); setError("");
-    try { await choose(); } catch (cause) { setError(cause instanceof UiMessageError ? cause.descriptor : cause instanceof Error ? cause.message : { id: "settings.projectlessDirectorySetting.directorySettingWasNotSaved" }); }
-    finally { pending.current = false; setBusy(false); }
+    pending.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      await choose();
+    } catch (cause) {
+      setError(
+        cause instanceof UiMessageError
+          ? cause.descriptor
+          : cause instanceof Error
+            ? cause.message
+            : { id: "settings.projectlessDirectorySetting.directorySettingWasNotSaved" },
+      );
+    } finally {
+      pending.current = false;
+      setBusy(false);
+    }
   };
-  return <>
-    <SettingsRow label={t("settings.projectlessDirectorySetting.folderForTasksOutsideProjects")} description={t("settings.projectlessDirectorySetting.newTasksOutsideProjectsAreSavedIn")}
-      control={<div className="flex min-w-0 items-center gap-2"><span className="max-w-60 truncate text-xs" title={directory}>{directory ?? t("settings.projectlessDirectorySetting.disconnected")}</span><Button size="sm" variant="outline" aria-label={t("settings.projectlessDirectorySetting.changeFolderForTasksOutsideProjects")} disabled={!connected || !choose || busy} onClick={() => void change()}>{t("settings.projectlessDirectorySetting.change")}</Button></div>} />
-    {error && <p role="alert" className="px-4 py-2 text-destructive">{formatUiMessage(t, error)}</p>}
-  </>;
+  return (
+    <>
+      <SettingsRow
+        label={t("settings.projectlessDirectorySetting.folderForTasksOutsideProjects")}
+        description={t("settings.projectlessDirectorySetting.newTasksOutsideProjectsAreSavedIn")}
+        control={
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="max-w-60 truncate text-compact-caption" title={directory}>
+              {directory ?? t("settings.projectlessDirectorySetting.disconnected")}
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              aria-label={t(
+                "settings.projectlessDirectorySetting.changeFolderForTasksOutsideProjects",
+              )}
+              disabled={!connected || !choose || busy}
+              onClick={() => void change()}
+            >
+              {t("settings.projectlessDirectorySetting.change")}
+            </Button>
+          </div>
+        }
+      />
+      {error && (
+        <p role="alert" className="px-4 py-2 text-destructive">
+          {formatUiMessage(t, error)}
+        </p>
+      )}
+    </>
+  );
 }

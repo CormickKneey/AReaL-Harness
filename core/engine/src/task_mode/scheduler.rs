@@ -102,14 +102,15 @@ impl Engine {
 
     pub(super) async fn edit_task(&self, id: &str, edit: impl FnOnce(&mut Task)) -> Result<()> {
         let mut state = self.task_modes.state.lock().await;
-        let mut candidate = state.clone();
-        let task = candidate.tasks.get_mut(id).ok_or(Error::NotFound)?;
+        let mut task = state.tasks.get(id).cloned().ok_or(Error::NotFound)?;
         let previous = serde_json::to_value(&task).map_err(invalid)?;
-        edit(task);
+        edit(&mut task);
         if previous == serde_json::to_value(&task).map_err(invalid)? {
             return Ok(());
         }
         task.revision += 1;
+        let mut candidate = state.clone();
+        candidate.tasks.insert(id.into(), task);
         self.save_tasks(&mut state, candidate, id, true).await
     }
 

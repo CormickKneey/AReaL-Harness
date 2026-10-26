@@ -1,6 +1,6 @@
 /* Generated from @areal/ui/tokens.json. Run pnpm --dir clients/gui --filter @areal/ui generate. */
 :root {
-  --ui-font-size: 14px;
+  --ui-font-size: 12px;
   --ui-font-weight: 400;
   --motion-fast: 100ms;
   --motion-normal: 160ms;
@@ -28,7 +28,7 @@
   --radius-pill: 999px;
   --radius-overlay: 20px;
   --radius-navigation: 12.5px;
-  --radius-composer: 22px;
+  --radius-composer: 18px;
   --radius-panel: 12px;
   --radius-dialog: 16px;
   --shadow-menu: 0 0 0 0.5px var(--color-menu-border, var(--color-border)), 0 8px 16px -4px rgb(0 0 0 / 12%);
@@ -39,13 +39,21 @@
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", monospace;
   --line-height-ui: max(20px, calc(var(--ui-font-size) + 6px));
   --line-height-ui-sm: max(18px, calc(var(--ui-font-size) + 4px));
+  --text-conversation: var(--content-font-size, 12px);
+  --conversation-line: 1.43;
+  --conversation-gap: 12px;
+  --radius-message: 16px;
   --text-ui-xl: calc(var(--ui-font-size) + 4px);
   --text-page-title: calc(var(--ui-font-size) + 8px);
   --text-ui-lg: calc(var(--ui-font-size) + 2px);
   --text-ui-base: var(--ui-font-size);
-  --text-ui-caption: calc(var(--ui-font-size) - 1px);
-  --text-content-caption: max(12px, calc(var(--content-font-size, 14px) - 1px));
-  --text-ui-sm: calc(var(--ui-font-size) - 2px);
+  --text-ui-caption: max(12px, calc(var(--ui-font-size) - 1px));
+  --text-content-caption: max(12px, calc(var(--content-font-size, 12px) - 1px));
+  --text-content-h1: calc(var(--content-font-size, 12px) + 10px);
+  --text-content-h2: calc(var(--content-font-size, 12px) + 6px);
+  --text-content-h3: calc(var(--content-font-size, 12px) + 4px);
+  --text-content-h4: calc(var(--content-font-size, 12px) + 2px);
+  --text-ui-sm: max(12px, calc(var(--ui-font-size) - 2px));
   --text-ui-xs: max(11px, calc(var(--ui-font-size) - 3px));
   --text-ui-2xs: calc(var(--ui-font-size) - 5px);
   --tracking-wf-label: 0.09em;
@@ -53,12 +61,60 @@
   --color-destructive: #e03131;
   --color-destructive-foreground: var(--color-foreground-inverse);
   --color-warning: #e07b00;
-  --color-warning-foreground: var(--color-foreground-inverse);
+  --color-warning-foreground: #000000;
   --color-foreground-inverse: #ffffff;
   --color-ring: var(--color-input-border-focused);
   --color-muted: var(--color-surface);
   --color-muted-foreground: var(--color-foreground-subtle);
   --color-success: #1e8a3e;
+  --radius-compact: 6px;
+  --radius-micro: 4px;
+  --radius-compact-row: 7px;
+  --radius-inline: 5px;
+  --radius-card: 14px;
+  --radius-choice: 15px;
+  --text-fixed-metadata: 10px;
+  --text-fixed-caption: 12px;
+  --text-fixed-label: 13px;
+  --text-fixed-body: 14px;
+  --text-fixed-control: 15px;
+  --text-fixed-emphasis: 16px;
+  --text-fixed-section-title: 20px;
+  --text-fixed-dialog-title: 22px;
+  --text-fixed-page-title: 28px;
+  --text-ui-fine: calc(var(--ui-font-size) - 3px);
+  --text-ui-section: calc(var(--ui-font-size) + 6px);
+  --text-ui-hero: calc(var(--ui-font-size) + 10px);
+  --text-ui-display: calc(var(--ui-font-size) + 12px);
+  --line-height-code-example: 22px;
+  --shadow-inset-control: 0 1px 1px rgba(0, 0, 0, 0.04);
+  --shadow-raised-control: 0 1px 2px rgba(0, 0, 0, 0.06);
+  --shadow-tooltip: 0 5px 18px #00000014;
+  --shadow-large-overlay: 0 16px 64px #0005;
+  --shadow-menu-wide: 0 8px 28px #0003;
+  --shadow-dark-control: 0 8px 18px rgb(15 23 42 / 20%);
+  --shadow-menu-double-stroke: 0 0 0 .5px color-mix(in srgb, var(--color-foreground) 8.2%, transparent), 0 0 0 .5px color-mix(in srgb, var(--color-foreground) 8.2%, transparent), 0 8px 16px -4px #0000001f;
+  --shadow-floating-toolbar: 0 8px 24px #0002;
+  --shadow-elevated-chip: 0 1px 4px #0003, 0 0 0 1px #0000000d;
+  --shadow-leading-panel: -8px 0 16px -8px #0000002e;
+  --shadow-compact-overlay: 0 3px 12px #0003;
+  --radius-attachment: 9px;
+  --radius-feedback: 11px;
+  --radius-full: 9999px;
+  --radius-composer-large: 28px;
+  --text-compact-caption: 0.75rem;
+  --text-compact-caption--line-height: 1rem;
+  --text-compact-body: 0.875rem;
+  --text-compact-body--line-height: 1.25rem;
+  --text-user-message-heading: 1.5em;
+  --radius-status-dot: 99px;
+  --radius-composer-queue-menu: 17px;
+  --radius-turn-marker: 1px;
+  --radius-inspection-dialog: 24px;
+  --radius-context-category-dot: 2px;
+  --browser-file-status-max-height: 112px;
+  --browser-file-status-inline-gap: 6px;
+  --browser-file-status-block-padding: 3px;
 }
 .dark {
   --color-destructive: #ff5c5c;
@@ -67,3 +123,4 @@
   --color-success: #46bf72;
 }
 :root[data-reduced-motion="true"] { --motion-fast: 0ms; --motion-normal: 0ms; --motion-slow: 0ms; }
+@media (prefers-reduced-motion: reduce) { :root:not([data-reduced-motion="false"]) { --motion-fast: 0ms; --motion-normal: 0ms; --motion-slow: 0ms; } }

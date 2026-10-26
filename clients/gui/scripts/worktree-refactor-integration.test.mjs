@@ -27,7 +27,7 @@ test("refactored journal model persists physical thread ownership for logical pr
   const project = await backend.loadProjectJournal(physical);
   assert.equal(await backend.loadProjectJournal(physical), project);
   project.model.replace({ id: "journal-thread", sessionId: "session", turns: [], desktop: {} });
-  await Promise.all([...backend.saves.values()]);
+  await Promise.all(backend.saves.values());
   assert.equal(backend.worktrees.threadOwners.get("journal-thread"), physical);
   assert.deepEqual(
     JSON.parse(await readFile(join(home, "thread-owners", physical + ".json"), "utf8")),
@@ -104,7 +104,7 @@ test("refactored notifications keep physical task ownership and logical user-fac
   backend.taskWorkspaceOwners.observeProject = async (owner) => events.push(["task", owner.id]);
   backend.onMcpPageToolNotice = (notice) => events.push(["mcp", notice.projectId]);
   backend.observations.notification(project, project.client, "areal/task/changed", {
-    task: { id: "task" },
+    task: { id: "task", revision: 1 },
   });
   backend.observations.notification(project, project.client, "areal/mcp/app/tools/pending", {});
   await new Promise((resolve) => setImmediate(resolve));

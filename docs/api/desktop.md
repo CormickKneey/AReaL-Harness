@@ -10,6 +10,12 @@ Web/PWA Remote 使用独立的受限 [areal.remote.v2 契约](remote-control.md)
 
 Thread 快照和 Item 通知支持可选 `agentMessage.phase`，生命周期、示例与旧数据兼容规则见 [Core 消息阶段](core.md#agent-message-phase)。此响应字段为兼容性新增，保持 `areal.core.v1` 版本。
 
+## 桌面宿主任务目录兼容性
+
+桌面后台的 `service.commandContract` 为 `areal.desktop-commands.v3` 时，支持带 `requestId`、`viewEpoch` 的 `tasks.preview` 与 `tasks.observe`。`preview` 只读已发布快照；`observe` 对已连接 owner 读取实时目录，对冷 owner 读取快照，不启动项目 Core。旧后台可以继续连接和承载已有任务，但 Main 不向缺失或不同命令契约的后台发送这两种查询，返回 `SERVICE_COMMAND_UNSUPPORTED`，不改用可能启动项目的 `list`。
+
+任务中心发现命令契约不兼容时保留已加载任务，显示通过设置“后台服务”安全更新的提示，不逐项目重试或声称没有任务。更新仍需显式操作，并使用已有生命周期资源检查和结算流程，不自动停止运行中的工作。部署身份包含 `desktop-contract` 入口及其拆分目录的协议文件内容；修改拆分协议也会使旧后台显示待更新，而不是继续冒充同一部署。
+
 ## 桌面宿主 Worktree 契约
 
 本节属于 `clients/gui` 的认证桌面宿主 `command` 合同，不新增 `areal.core.v1` Rust RPC。宿主继续通过现有 Core 方法管理每个执行目录，Core 仍持有线程和执行历史。共享桌面类型与校验位于 `clients/gui/packages/workbench/client/desktop-contract.cjs`。
@@ -40,7 +46,7 @@ Thread 快照和 Item 通知支持可选 `agentMessage.phase`，生命周期、�
 
 后续请求继续使用逻辑 `projectId`，由 `threadId`、`sourceThreadId`、`parentThreadId`、任务归属或原请求收据定位执行宿主。跨宿主目标不能混在一次请求中。任务归属索引持久记录实际宿主及可选的 Core 线程锚点；无索引时查询同一逻辑项目的宿主，任何离线、超时或冲突均不能当作任务不存在而回退。宿主注入可信线程锚点，调用者提供不一致的 `threadId` 会被拒绝。无法确认归属时返回 `TASK_WORKSPACE_UNAVAILABLE`；`taskRunNow`、`taskResumeRun`、`taskReply` 和 `taskResume` 缺少锚点也不派发。
 
-`manage.taskCreate` 的 `scheduled` 模式及 `manage.taskDraftConfirm` 使用专用调度准入。一个任务家庭须预约自动分配、非已有的项目外目录，共用目录作者登记；先预约，再创建或核对执行锚点和任务，并绑定原创建收据。只读规划和自动保存确认继续可用。宿主在 `areal/task/prepare` 的 `start` 与 `resume` 回调核对 Task、run、锚点和实际 cwd 后才放行。共享或用户选择的已有目录、没有原预约的旧安排不能启用，返回 `SCHEDULE_WORKSPACE_REQUIRED` 或相应作者错误；暂停与取消保留。可信锚点的 foreground/background 操作继续沿普通准入。原生 Core 及已准备的旧自主调度不因此获得追溯保证。每次目录作者准入均分页读取同 checkout 的权威 Task 目录；未取消的 scheduled 任务即使暂停或休眠也不释放未来执行资格，仅原预约 token、绑定 Task 与锚点可匹配该家庭。读取失败或分页不完整时不派发。
+`manage.taskCreate` 的 `scheduled` 模式及 `manage.taskDraftConfirm` 使用专用调度准入。一个任务家庭须预约自动分配、非已有的项目外目录，共用目录作者登记；先预约，再创建或核对执行锚点和任务，并绑定原创建收据。只读规划和自动保存确认继续可用。宿主在 `areal/task/prepare` 的 `start` 与 `resume` 回调核对 Task、run、锚点和实际 cwd 后才放行。普通会话经 Core 工具创建的安排使用派生共享准入：核对桌面 owner、来源 Thread、执行锚点及同一实际 cwd 后，允许在当前项目或已选 Worktree 中执行，同一来源可有多个安排。它不创建或迁移独占预约。既无可核对普通来源身份、也无原预约的旧安排不能启用，返回 `SCHEDULE_WORKSPACE_REQUIRED` 或相应作者错误；暂停与取消保留。可信锚点的 foreground/background 操作继续沿普通准入。原生 Core 及已准备的旧自主调度不因此获得追溯保证。每次目录作者准入均分页读取同 checkout 的权威 Task 目录；未取消的旧独占 scheduled 任务即使暂停或休眠也不释放未来执行资格，仅原预约 token、绑定 Task 与锚点可匹配该家庭；普通来源安排须重新核对 Core 身份才能与目录内其他会话共享。读取失败或分页不完整时不派发。
 
 `ScheduleAdmission.authorForSession` 只为 `respond` 和 `continue` 核对当前任务家庭，要求唯一活动 Run、精确 goal/Turn/cwd、已登记 worker 及有界父链。`respond` 还要求精确且未过期的 pending interaction（thread、Turn、requestId、回答种类）；其他 Session、旧请求、取消或暂停 Run 不映射。send、编辑及普通 manage 不能使用调度家庭作者映射，native Task Agent 的研究和工具限制不变，不授权递归委派。
 
@@ -114,6 +120,8 @@ Core 返回可选 `EffectiveConfig.permissions: {resources:"workspace"|"deployme
 <a id="submissions"></a>
 ## 提交、配置与恢复
 
+Desktop 的 `reconcile` 接受 `{projectId, requestId?}`。携带原 `requestId` 时，现有请求归属路由选择实际执行宿主，再核对该宿主的收据；省略时保留项目级核对。核查不会重新提交创建或发送草稿。旧 Worktree 的独立创建保留在插件设置的历史创建记录中，不作为新草稿的操作提示；当前草稿独占本次创建的未知结果提示。缺少收据时保留原请求及资源，不推断成功或失败。
+
 requestId 是持久业务键，RPC id 只关联响应。相同身份、方法、键和规范参数返回原结果；参数不同冲突。Thread 最多 1024 收据，管理日志 4096；容量满拒绝而不遗忘旧键。重启后 accepted 但无结果的管理记录为 UNKNOWN，不重新执行。
 
 `features.taskRequestReceipts` 扩展 `areal/request/read`，统一查询当前身份的 Thread、管理和 Task 回执，仍保留旧字段。每条记录增加 `operation:{method,requestId,target}` 和 `status:admitted|completed|failed|unconfirmed`；完成时提供原始 `result` 或 `error`。Task 方法名统一为公开 RPC 名称，创建结果保留原始 Task ID。查询还检查 Task 及其所有 Run 的 Thread 可见范围。带 `threadId` 时限定 Thread 和 Task 回执，并兼容附带同身份、同请求键的部署管理回执；受限 principal 仍只能取得可见 Thread 的记录。`retention:threadAndDeploymentLifetime` 与 `capacities:{thread:1024,management:4096,task:8192}` 分别说明保留范围与容量。恢复需匹配方法、身份、目标和已有 digest，空结果仍是未确认。归档后的 Thread 仍可查询保留回执。
@@ -185,7 +193,9 @@ Desktop 的只读 `history` 命令接受 `{projectId,threadId,viewId,operation:"
 
 旧页游标失效只重建对应聊天基线；条目版本变化丢弃已读片段并至多从 Core 提供的 `restartCursor` 重读一次。加载中保留真实占位项和进度，错误不伪装为 Agent 消息。自动文件变更摘要只读取已加载显示内容；大型工具记录尚未加载时明确提示先展开，不通过完整 `thread/read` 绕过预算。所有历史读取均不重放提交。
 
-Desktop 按已认证 socket 管理阅读视图，客户端断开会释放其全部引用；迟到的 acquire 不能恢复已关闭的视图，也不能释放另一客户端的同名视图。重建基线会让 Renderer 重新获取视图。完成轮次后，如果显示历史超过 1 MiB，会重取有界基线，并释放旧页及显式展开内容，用户可再次按需读取；显式展开不能豁免后续完成历史的容量限制。
+桌面 `workspace.turnReview` 使用不可变文件工具回执和前像构建历史比较。某个文件的版本链因格式化或其他外部编辑断开时，仅将该文件列入 `unavailableFiles: [{path,reason}]`，其余可验证文件继续返回 Diff 和行数。摘要明确标记部分统计；未验证文件不视为零改动，审查面板显式说明排除项。单次工具比较仍严格校验；不读取当前磁盘补齐历史，也不将版本链中间的外部修改归为工具修改。
+
+Desktop 按已认证 socket 管理阅读视图，客户端断开会释放其全部引用；迟到的 acquire 不能恢复已关闭的视图，也不能释放另一客户端的同名视图。重建基线会让 Renderer 重新登记视图，不先释放。同一连接、未失效的重建保留已显示的上一轮边界条目，并在新基线补全追上之前沿用原显示边界，不在已显示内容上方重复出现恢复提示；“加载更早”读到的旧页仍随重建释放。会话内容与 `displayHistory` 同次发布。完成轮次后，如果显示历史超过 1 MiB，会重取有界基线，并释放旧页及显式展开内容，用户可再次按需读取；显式展开不能豁免后续完成历史的容量限制。
 
 Desktop → Main 延续 256 MiB 单帧边界。发送端每连接最多一个正在发送的帧、一份合并后的待发状态，以及总序列化字节不超过 32 MiB 的有序普通回包队列。投影只在实际发送时编码；大条目状态等待发送回调后才发送下一帧，避免将合法大帧后的命令回包误判为慢消费者。发送错误、超时或队列超限关闭连接并释放缓存；现有请求超时仍生效。
 

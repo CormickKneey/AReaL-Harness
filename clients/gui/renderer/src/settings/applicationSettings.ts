@@ -59,7 +59,7 @@ export type ApplicationSettings = {
 };
 export const DEFAULT_APPLICATION_SETTINGS: ApplicationSettings = {
   locale: "zh-CN",
-  contentSize: 14,
+  contentSize: 12,
   pointerCursor: false,
   fontSmoothing: true,
   reducedMotion: "system",
@@ -79,21 +79,23 @@ export function normalizeApplicationSettings(raw: any): ApplicationSettings {
   const result = { ...DEFAULT_APPLICATION_SETTINGS };
   result.locale = saved.locale === "en" ? "en" : "zh-CN";
   result.contentSize =
-    Number.isFinite(saved.contentSize) &&
-    saved.contentSize >= 12 &&
-    saved.contentSize <= 24
+    Number.isFinite(saved.contentSize) && saved.contentSize >= 12 && saved.contentSize <= 24
       ? saved.contentSize
-      : 14;
+      : DEFAULT_APPLICATION_SETTINGS.contentSize;
   result.nextPromptSuggestions = saved.nextPromptSuggestions !== false;
-  result.sendShortcut =
-    saved.sendShortcut === "modifier" ? "modifier" : "enter";
+  result.sendShortcut = saved.sendShortcut === "modifier" ? "modifier" : "enter";
   result.pointerCursor = saved.pointerCursor === true;
   result.fontSmoothing = saved.fontSmoothing !== false;
-  result.reducedMotion = saved.reducedMotion === "on" || saved.reducedMotion === "off" ? saved.reducedMotion : "system";
+  result.reducedMotion =
+    saved.reducedMotion === "on" || saved.reducedMotion === "off" ? saved.reducedMotion : "system";
   result.diffMarkers = saved.diffMarkers === "signs" ? "signs" : "color";
   result.followUp = saved.followUp === "steer" ? "steer" : "queue";
-  result.defaultPermissionPreset = saved.defaultPermissionPreset === "ask" || saved.defaultPermissionPreset === "autoReview" || saved.defaultPermissionPreset === "fullAccess"
-    ? saved.defaultPermissionPreset : "autoReview";
+  result.defaultPermissionPreset =
+    saved.defaultPermissionPreset === "ask" ||
+    saved.defaultPermissionPreset === "autoReview" ||
+    saved.defaultPermissionPreset === "fullAccess"
+      ? saved.defaultPermissionPreset
+      : "autoReview";
   // Preserve the existing shortcut location for installations without a choice.
   result.terminalLocation = saved.terminalLocation === "bottom" ? "bottom" : "right";
   result.showBottomPanelControl = saved.showBottomPanelControl !== false;
@@ -121,9 +123,6 @@ export function normalizeApplicationSettings(raw: any): ApplicationSettings {
   }
   return result;
 }
-export function shouldSteer(
-  followUp: ApplicationSettings["followUp"],
-  invert = false,
-) {
+export function shouldSteer(followUp: ApplicationSettings["followUp"], invert = false) {
   return (followUp === "steer") !== invert;
 }

@@ -144,7 +144,8 @@ export function TerminalSession({
   const exitedMessageRef = useRef("");
   const exitHandlerRef = useRef(onExit);
   const openBrowserUrlRef = useRef(onOpenBrowserUrl);
-  const createErrorRef = useRef(onCreateError); createErrorRef.current = onCreateError;
+  const createErrorRef = useRef(onCreateError);
+  createErrorRef.current = onCreateError;
   const terminalProfileThemeRef = useRef<ITheme | undefined>(undefined);
   const pendingInputFallbacksRef = useRef<PendingTerminalInputFallback[]>([]);
   const inputFallbackKeydownCandidateRef = useRef<TerminalInputFallbackKeydownCandidate | null>(
@@ -353,7 +354,8 @@ export function TerminalSession({
         terminalIdRef.current = existingEntry.terminalId || undefined;
         el.appendChild(existingEntry.hostEl);
         void existingEntry.ready?.then(() => {
-          if (detached || sidePaneTerminalSessionRegistry.get(persistentKey) !== existingEntry) return;
+          if (detached || sidePaneTerminalSessionRegistry.get(persistentKey) !== existingEntry)
+            return;
           terminalIdRef.current = existingEntry.terminalId || undefined;
           scheduleFitAndResize("init");
           if (isVisibleRef.current) requestFocus();
@@ -409,7 +411,7 @@ export function TerminalSession({
       const localDisposers: IDisposable[] = [];
 
       const term = new XTerm({
-        fontSize: 13,
+        fontSize: 12,
         fontFamily: DEFAULT_TERMINAL_FONT_FAMILY,
         theme: mergeTerminalTheme(terminalProfileThemeRef.current),
         linkHandler: {
@@ -510,16 +512,14 @@ export function TerminalSession({
               term.buffer.active,
               bufferLineNumber,
               term.cols,
-            )?.map(
-              (link): ILink => ({
-                ...link,
-                activate(event, text) {
-                  event.preventDefault();
-                  logger.debug("[Terminal] open plain http link", { url: text });
-                  openBrowserUrlRef.current(text);
-                },
-              }),
-            );
+            )?.map((link): ILink => ({
+              ...link,
+              activate(event, text) {
+                event.preventDefault();
+                logger.debug("[Terminal] open plain http link", { url: text });
+                openBrowserUrlRef.current(text);
+              },
+            }));
             callback(links);
           },
         }),
@@ -560,7 +560,13 @@ export function TerminalSession({
       // 创建 PTY（异步）
       const initialCreateSize = initialTerminalSize ?? { cols: term.cols, rows: term.rows };
       entry.ready = services.terminalService
-        .create({ cols: initialCreateSize.cols, rows: initialCreateSize.rows, cwd, lifetime, clientId: persistentKey ?? sessionId })
+        .create({
+          cols: initialCreateSize.cols,
+          rows: initialCreateSize.rows,
+          cwd,
+          lifetime,
+          clientId: persistentKey ?? sessionId,
+        })
         .then(({ id, shell, fontFamily, fontSize, theme, fontFamilySource, windowsPty }) => {
           if (ptyCancelled) {
             // cleanup 已发生：杀掉这个孤儿 PTY，不进 entry
@@ -620,7 +626,9 @@ export function TerminalSession({
                 return;
               }
               // side pane Terminal 不传 onExit，保留退出提示。
-              term.write(`\r\n${exitedMessageRef.current}${exitCode === null ? " · 退出码不可用" : ` · 退出码 ${exitCode}`}\r\n`);
+              term.write(
+                `\r\n${exitedMessageRef.current}${exitCode === null ? " · 退出码不可用" : ` · 退出码 ${exitCode}`}\r\n`,
+              );
             }),
           );
 
@@ -707,7 +715,8 @@ export function TerminalSession({
             };
             textarea.addEventListener("input", handleInput as EventListener, true);
             registryDisposers.push({
-              dispose: () => textarea.removeEventListener("input", handleInput as EventListener, true),
+              dispose: () =>
+                textarea.removeEventListener("input", handleInput as EventListener, true),
             } as IDisposable);
           }
         })
@@ -771,7 +780,7 @@ export function TerminalSession({
     terminalProfileThemeRef.current = undefined;
 
     const term = new XTerm({
-      fontSize: 13,
+      fontSize: 12,
       fontFamily: DEFAULT_TERMINAL_FONT_FAMILY,
       theme: mergeTerminalTheme(terminalProfileThemeRef.current),
       linkHandler: {
@@ -877,16 +886,14 @@ export function TerminalSession({
             term.buffer.active,
             bufferLineNumber,
             term.cols,
-          )?.map(
-            (link): ILink => ({
-              ...link,
-              activate(event, text) {
-                event.preventDefault();
-                logger.debug("[Terminal] open plain http link", { url: text });
-                openBrowserUrlRef.current(text);
-              },
-            }),
-          );
+          )?.map((link): ILink => ({
+            ...link,
+            activate(event, text) {
+              event.preventDefault();
+              logger.debug("[Terminal] open plain http link", { url: text });
+              openBrowserUrlRef.current(text);
+            },
+          }));
 
           callback(links);
         },
@@ -896,7 +903,13 @@ export function TerminalSession({
     // 优先使用 workspace 路径作为 terminal 工作目录，未设置时后端回退到 HOME
     const initialCreateSize = initialTerminalSize ?? { cols: term.cols, rows: term.rows };
     terminalService
-      .create({ cols: initialCreateSize.cols, rows: initialCreateSize.rows, cwd, lifetime, clientId: persistentKey ?? sessionId })
+      .create({
+        cols: initialCreateSize.cols,
+        rows: initialCreateSize.rows,
+        cwd,
+        lifetime,
+        clientId: persistentKey ?? sessionId,
+      })
       .then(({ id, shell, fontFamily, fontSize, theme, fontFamilySource, windowsPty }) => {
         if (disposed) {
           terminalService.dispose({ id });
@@ -953,7 +966,9 @@ export function TerminalSession({
             }
 
             // side pane Terminal 不属于底部 tab registry，未传 onExit 时继续保留退出提示。
-            term.write(`\r\n${exitedMessageRef.current}${exitCode === null ? " · 退出码不可用" : ` · 退出码 ${exitCode}`}\r\n`);
+            term.write(
+              `\r\n${exitedMessageRef.current}${exitCode === null ? " · 退出码不可用" : ` · 退出码 ${exitCode}`}\r\n`,
+            );
           }),
         );
 
@@ -1040,7 +1055,8 @@ export function TerminalSession({
 
           textarea.addEventListener("input", handleInput as EventListener, true);
           disposables.push({
-            dispose: () => textarea.removeEventListener("input", handleInput as EventListener, true),
+            dispose: () =>
+              textarea.removeEventListener("input", handleInput as EventListener, true),
           } as IDisposable);
         }
       })

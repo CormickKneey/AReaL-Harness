@@ -1,199 +1,47 @@
 # 复合任务动态信息流题
 
-问题ID：`Q-CONVERSATION-COMPOSITE-06`；输入快照`d817751e`、Base候选0.1.3。它延续`Q-CONVERSATION-DYNAMIC-05`的阅读/收敛验证，补齐命令、子代理和图片的连续场景。候选版本不因新增fixture而提升；完整P-CONVERSATION仍未准入，视觉基线也未冻结。
-
-入口`design-system.html?conversation-exercise`。默认填入有意义的任务，点击发送后自动推进；可暂停、逐事件检查或重置。提前点击“投影完成”只是跳到终态，不能作为完整旅程证据。反例在独立运行中验证，不继承前一运行的人工选择。静态`?conversation`仅保留为组件目录，不能替代本题。
+本页为迁移入口，保留一个迁移周期。固定题目与单次运行记录属于过程证据。完整内容见[归档原文](../../../../design/archive/gui/exercises/conversation-flow.md)。当前规则从[使用者入口](../../packages/ui/README.md)或[维护者入口](../README.md)读取。
 
 ## 输入和所有权
 
-任务：读取项目说明和两份水果清单，启动汇总命令，同时委派子代理独立核对，查看蓝色卡片图片，最终汇总16个苹果、16个梨、共32个水果。场景输入来自`renderer/src/design-system/conversationScenario.ts`，是根据已观察任务编写的确定性fixture，不是从Codex导出的内部事件。
-
-| 范围 | 所有者 |
-| --- | --- |
-| 输入到达、暂停/自动推进、父子投影及本地面板选择 | ConversationFlowExercise / conversationScenario，仅用于设计预览 |
-| 分批进程结果归并 | conversationPresentation.processItems，沿用原始processId和cursor |
-| 分组、收敛、阅读锚点及返回最新 | Messages / TurnProgress / TurnExecution |
-| 原命令、连续输出、终态与人工展开 | ToolEvent / CommandDetails |
-| 子代理身份、独立消息及状态 | AgentIdentity / AgentConversationPane |
-| 图像字节、预览、关闭与焦点返回 | SentAttachment / 原图片Dialog |
-
-预览不建立历史store、页面DSL或第二套滚动/展开机制。仅响应绑定到本场景的子对话读取和媒体读取；其它Action明确拒绝。宽容器并排展示父子对话，窄容器覆盖主视图但保持父阅读所有者挂载。该容器只属于预览，不据此声称生产App的宿主已经验收。
+见[原文段落](../../../../design/archive/gui/exercises/conversation-flow.md#输入和所有权)。
 
 ## 固定事件序列
 
-| 步骤 | 输入事实 | 应可观察的结果 |
-| --- | --- | --- |
-| 0 | 一轮已有历史和未发送任务 | 任务未受理，Composer可编辑 |
-| 1 | 接受新消息，读取README | 本轮身份出现，生产回复占位与运行状态存在 |
-| 2 | 命令启动，子代理创建成功 | 命令仍执行；子代理独立显示执行中，可打开真实子对话组件 |
-| 3 | 第一批进程输出到达 | alpha数量出现在同一命令卡，读取不产生第二张命令卡 |
-| 4 | 第二批输出、图片资源就绪 | 输出依序累加；能实际打开蓝色卡片图片 |
-| 5 | 进程终态和汇总输出到达 | 命令退出0，子代理仍执行；图片打开期间后台可推进 |
-| 6 | 子代理自己的最终回答到达 | 子对话已完成，父轮次仍执行且尚无final |
-| 7–11 | 父最终回答分段增长 | 可回看历史、保持可见锚点；明确返回后继续跟随 |
-| 12 | 父轮次完成 | 常规过程收敛，final独立；重开原命令和子对话可回看 |
-
-自动推进只是演示节奏，不代表实测参考耗时。展示的终态用时36秒和子任务11秒来自固定fixture；不能用于性能结论。减少动态效果只改变视觉动效，不省略数据事件。停止按钮停止本地演示，不调用Core或声称已终止真实进程。
+见[原文段落](../../../../design/archive/gui/exercises/conversation-flow.md#固定事件序列)。
 
 ## 逐状态对照
 
-参考均为Codex26.1013.31256的既有本地材料；run2与dynamic/retry2不是同一段连续录制。对照关注语义状态与组合层级，参考英文、实现中文，应用外壳、字体及内容长度也不同，不能做逐像素相等判断。
-
-| 实现检查点 / 帧ID | 参考状态 | 采用 / 保留差异 / 未知 |
-| --- | --- | --- |
-| accepted / 01 | run2/01-sent | 采纳用户消息、短过程、停止入口；预览边框与演示控件不属于生产设计 |
-| parallel / 02 | run2/02-live及08-subagent | 采纳子代理入口及独立右侧对话；参考08为完成态，运行中侧栏组合属于本产品选择 |
-| command-output / 03、05 | run2/09-command | 采纳Shell原命令、输出和终态；参考没有连续捕获所有增量，分批输出时序来自本仓进程合同 |
-| image-open / 04 | run2/06-image | 采纳独立图片模态及关闭/下载；补齐共享缩放比例、100%实际大小、适应窗口和有界平移；默认适应及倍率步长属于本产品选择，不记为完整视觉等同 |
-| child-completed / 06、11 | run2/08-subagent | 独立子对话、自己的完成组与final；保留本产品Agent身份和标题样式 |
-| reading / 07、following / 08 | dynamic/retry2 | 采纳可见历史锚点与显式返回；正文不同，分别记录实际几何和增长，不移植0.5px样本值 |
-| completed / 09 | run2/11-final-overview | 采纳过程总组默认收敛和独立标题/表格/final；保留产品字体、图标、密度和动作 |
-| expanded / 10 | run2/04-completed-expanded及09-command | 恢复过程与Shell详情；跨完成保留人工展开是本产品选择，参考仍未知 |
-
-每次实现验收把这些帧ID关联到同一run的实际截图、事件与录像时间。逐状态审阅需打开contact sheet，并对Shell、图片和子对话补看原图；不能仅凭DOM通过宣布高保真。差异若影响用户识别任务状态、父子归属或返回路径，须在共享所有者修正；不以页面CSS掩盖。
+见[原文段落](../../../../design/archive/gui/exercises/conversation-flow.md#逐状态对照)。
 
 ## 反证与验收
 
-| 失败方式 | 独立验收结果 |
-| --- | --- |
-| 命令读取变成多次执行或输出丢失 | 只有原命令卡；alpha、beta、汇总依序累加，退出码可查 |
-| 创建成功冒充子任务完成 | 同一帧父命令与子任务均运行；另一帧命令完成而子任务仍运行 |
-| 子任务完成冒充父任务完成 | 子final已出现，父轮次仍执行且还没有final |
-| 资源仅有状态文字 | 图片真实加载到预览；子任务真实挂载独立Messages，而非“已打开”提示 |
-| 查看资源导致重复提交或父视图重建 | 本地调用只允许open/media读取；父阅读DOM保持挂载，关闭恢复焦点/上下文 |
-| 回看被后续输出拉走 | 当前final仍增长，至少两个后续样本中同一可见旧段落保持锚点 |
-| 点击返回就误报跟随恢复 | 等实际到达底部，再观察至少两个后续增量的bottomGap |
-| 完成丢失final或人工选择 | final在总组外；重新打开原父组后，同一命令的人工详情保留 |
-| final掩盖执行异常 | 独立失败、UNKNOWN、未结算反例的过程保持可发现 |
-
-代表条件：暗色14px宽容器完成整条旅程；明亮14px宽、暗色18px窄且减少动态效果，补查子面板、返回、完成、键盘与无横向溢出。条件记录实际计算字号、宽度、主题、DPR和运动偏好，不仅记录控件值。主对照viewport1509×949、DPR2；18px窄容器的辅助截图使用1509×1200，避免目录说明和样板下缘超出取景，不冒充同尺寸参考。
+见[原文段落](../../../../design/archive/gui/exercises/conversation-flow.md#反证与验收)。
 
 ## 复验与证据边界
 
-```sh
-pnpm --dir clients/gui verify:design
-pnpm --dir clients/gui typecheck
-pnpm --dir clients/gui design:build
-pnpm --dir clients/gui test:design --conversation-exercise
-```
-
-复用现有runner，输出源码/工作树/构建摘要、浏览器身份、动作、实际投影、回复长度、可见锚点、截图哈希、trace和录像。主复合旅程在一次运行中完成；异常、条件和自动播放抽查分别登记，不拼成一次无缺口的参考旅程。录像需解码并按事件时钟核对，失败运行保留。
-
-本题只证明生产renderer组件在确定性输入下的组合与阅读行为。它不证明真实命令、供应商、Core/Runtime、生产App面板宿主、重连、独立网页面板、Electron原生或安装包。参考图片手势/具体平移机制、更多并行子任务及运行中人工展开跨完成的参考事实仍有缺口；不能据本题完成宣布整个对话设计系统冻结。
-
+见[原文段落](../../../../design/archive/gui/exercises/conversation-flow.md#复验与证据边界)。
 
 ## 视频分析辅助的双路线实验
 
-`Q-CONVERSATION-VIDEO-AB-07`固定同一份Base候选0.1.3、任务brief及三段独立录像。A由视频模型直接生成独立HTML与设计规则；B仅让模型提名事件与差异，核查后沿共享所有者修改。A不读取现有源码，原始输出与修订分开保留；B不因模型声称缺失便重建已存在的子面板、完成收敛或阅读逻辑。
-
-五条候选差异中，图片检查缺少缩放控制在原始帧中成立；其余建议混淆已存在的子对话、人工展开和主动回看，未进入实现。共享MessageAttachment新增缩放比例、实际尺寸、适应窗口和可滚动/鼠标拖移的检查视口，复用原媒体与Dialog焦点生命周期。参考的100%控制为直接观察；适应策略、倍率范围和拖移实现是本产品选择，不能称为参考机制已经实测。视频/OCR将100%误读为190%的原始判断也保留拒绝记录。
-
-验收先在保存的旧构建确认缺少缩放控件，再于新构建重放整条旅程；图片放大后的几何、100%自然宽度、平移边界、适应窗口、关闭焦点和父子独立执行均需可观测证据。A的生成规则与实际行为分别审查；文字承诺、状态属性或样板色块不能代替真实展开、停止、图片加载和键盘行为。
-
-此实验比较交付路线：A为独立首次实现，B继承现有生产组件并经过主代理审阅，两者成本与已有保障不同；不能据单个样本推导模型总体准确率或效率提升。原始模型结果、被拒绝建议、修订反馈、源码差分、运行截图和录像分别留在本地证据目录。实验不提高Base版本，也不批准A自动创造的新版本、数值或状态机为生产规范。
+见[原文段落](../../../../design/archive/gui/exercises/conversation-flow.md#视频分析辅助的双路线实验)。
 
 ## 真实 Electron 专项 E1
 
-问题ID：`Q-CONVERSATION-ELECTRON-07`。沿用本题的组合目标，通过现有 `migration-smoke` 的 `--conversation-journey` 场景验证真实应用；本页上方的浏览器 fixture 和其 surface 合同仍保持原运行边界。先构建当前源码的 Core/Runtime 和 renderer，`AREAL_CORE_BIN` 可指向已核对身份的固定产物，从仓库根运行：
-
-```sh
-node clients/gui/scripts/migration-smoke.mjs --conversation-journey
-```
-
-该入口复用原启动、隔离和清理；外部模型为确定性本地 SSE，命令及子 Thread 经真实 Core/Runtime，消息和图片经生产 UI 发送/上传。首批 stdout、进程终态及后续读取归并为同一命令，不能将模型文字当作命令结果。项目选择器与退出确认被注入，上传经文件 input；不据此声称原生对话框、真实供应商、OS 文件沙箱或安装包通过。
-
-| 旅程 | 验收内容与边界 |
-| --- | --- |
-| 单进程主旅程 | 既有历史 → UI发送 → 命令两批结果与子代理并行 → 图片加载/缩放/关闭返回 → 子对话独立完成 → 正文增长中回看 → 返回并继续跟随 → 父完成收敛 → 过程/子对话重访 |
-| 独立暂停异常变体 | 实际命令进入后点击“暂停执行”；核对 Core 中断原因、终态与工具结算。可能出现 failed + userPause + UNKNOWN，此时保留暂停原因和核查入口，不改写成 interrupted 或成功 |
-| UNKNOWN 核查 | 先读取实际合成启动标记，再通过原核查 UI 记录事实；确认后原结果仍 UNKNOWN，模型请求数不增长。只证明该隔离材料的核查，不证明命令已确认终止 |
-| GUI 恢复变体 | 关闭自有 Electron，Core在后台完成，再以新 Electron 进程读取同一隔离历史；轮次数和模型请求数不增加。与主旅程分别标注，不拼接为一个进程的录像 |
-
-暂停检查点在数据到达后等待绘制帧，并记录中断标题、Composer及祖先滚动容器的实际几何，另采Electron的webContents原图；DOM可见断言不能替代处于实际视口内的原图核查。
-
-`journey-events.json`保存动作、父子/进程身份、权威快照、阅读锚点及增长样本、关键帧和宿主时间；`journey-host.json`保存窗口、Electron版本、userData与安全选项；原 `manifest.json`保存源码/dirty文件摘要、Core哈希、检查和失败。`video/`保留各 Electron 进程的录像，不能假定事件时钟与视频零点精确相等；按可见检查点核对关联。
-
-Codex参考继续通过已授权的常驻CDP实例采集，逐次记录真实版本与条件。参考媒体与实现媒体分别归属运行；参考编码失败保留原件并标注，再在独立运行中调整采集参数。低帧率完整旅程可用于行为顺序核查，不能据此通过百毫秒级连续动效验收。
-
-当前E1已在macOS、暗色代表条件中通过。已确认并修复的规则切片为 `CONV-PARALLEL-01` 的创建入口辨识，以及 `CONV-OWNER-01` 的暂停原因/UNKNOWN独立表达；主旅程和暂停/继续既有回归分别验收。完整P-CONVERSATION、Base冻结、所有主题/字号/宽度、原生宿主及连续动效仍按[推进计划](../roadmap.md)保留后续准入。
-
+见[原文段落](../../../../design/archive/gui/exercises/conversation-flow.md#真实-electron-专项-e1)。
 
 ## 真实 Electron 连续动效专项 E2
 
-沿 E1 的启动/隔离/Core/清理和本页 B 差异裁决，运行 `node clients/gui/scripts/migration-smoke.mjs --conversation-motion`。先构建当前 renderer，并将 `AREAL_CORE_BIN` 指向已核对身份的真实产物。该模式保留 E1 主旅程和暂停 UNKNOWN 核查，另验快速反向、reduced-motion 与分片正文；GUI 重开属于 E1 独立变体，不拼入此连续录像。
-
-`motion/frames/` 保存 change-driven CDP 原始 JPEG；`motion/motion.json` 记录每帧来源时间/接收时间、RAF 样本、真实输入、动作区间、动画及滚动/焦点/几何。采集只读观察，不能设置产品滚动值、内部状态或虚拟时钟。为避免编码回压，录制时先落原帧，再依真实帧间隔离线编码；保留原件和编码参数、解码及 PTS 误差。RAF 是 renderer 回调，CDP 是内容帧，两者都不能独立证明显示器/GPU 无丢帧；静态空隙也不自动等于掉帧。
-
-| 切片 | 可观察验收 |
-| --- | --- |
-| 命令/过程展开与收起 | 触发前、至少一个实际中间高度、稳定态；快速反向从中间高度返回，最终 aria/可见状态一致；不重新执行 |
-| 子对话与图片 | 正反向开关、缩放、退出焦点与父阅读保持；减少动态效果仍能操作；不同资源不强制采用同一动效 |
-| 流式阅读 | 至少一段实际分片 SSE 正文增长；回看同一段落不漂移，返回后新输出继续跟随。模型分片节奏是确定性场景条件，不作为 Codex 推理延迟 |
-| 等待与完成/暂停 | 运行、工具结果、子任务与父任务独立收敛；停止动画不改写状态。reduced-motion 下正文/侧栏等待循环停止；UNKNOWN 仍走原核查路径 |
-| Chrome 边界 | 连续观测 Composer 在窗口内、外层 conversation-pane 不滚动；重访子对话后再次发送不能把整个对话推走 |
-
-本轮 Codex 版本的命令详情观测到 300ms 高度/箭头过渡、过程箭头约 150ms；文字按英文词淡入约 700ms，图片进退/缩放没有同类持续过渡。AReaL 保留已有中文逐字淡入 360ms、12ms stagger/80ms backlog 和显式返回最新的即时滚动：它们是现有产品选择及尚未关闭的一致性差异，不将不同语言/内容等同，不凭参数照抄便宣布参考一致。E2 不自动提升 Base。
-
-参考暂停后本版本显示 Resume；驱动假设 Send 的等待失败必须保留，不能折算为整段通过。可独立确认已有连续暂停观察和同实例后续回读，不自动点击 Resume，也不把参考的纯正文暂停等同于本仓原生命令 UNKNOWN。参考里的预测输入仍不是用户提交。
-
-当前 macOS 暗色指定旅程的连续采集、反向/reduced-motion 与修复后重放已通过；窗口/IME/原生视图、真实供应商、其他代表条件和新内容回归仍归 E3。原图、采样缺口、失败、保留差异及最终源码哈希随本地报告保存，不将私人录像放入公开仓库。
-
+见[原文段落](../../../../design/archive/gui/exercises/conversation-flow.md#真实-electron-连续动效专项-e2)。
 
 ## 真实 Electron 宿主与新内容专项 E3
 
-沿 E1/E2 同一隔离入口运行 `node clients/gui/scripts/migration-smoke.mjs --conversation-host`，模型场景由 `scripts/conversation-host.mjs` 提供。外部模型仍是本地确定性 SSE；真实 Core/Runtime 执行命令及独立子 Thread。新题为图书借阅：技术书18−5=13，文学书7−2=5，净借出18；带长中文、表格、列表和 JSON，不为新内容加入页面 CSS 或新组件。
-
-| 操作 | 必须核对的结果 |
-| --- | --- |
-| UI发送新题 | 等待本次新 turn 身份受理及其完成，不能误等历史 completed；命令实际落下 proof，子结果独立；正文末标记只能在当前助手内容中判断 |
-| 子对话进退 | 从实际委派入口打开；关闭后同一入口获焦，恢复不滚动；保留父消息和人工展开，不重新调用模型 |
-| 真实窗口尺寸 | 1509×949、1000×720、1280×840内容区代表尺寸；Composer 在视口内，外层不滚动，草稿保留；窄窗侧面板仍有可达关闭入口 |
-| 真实内容缩放 | 通过 webContents 设125%再还原，记录实际 CSS viewport/DPR；不把它当作窗口尺寸或系统文字大小 |
-| 编辑与快捷键 | Shift+Enter保留多行草稿；Cmd+,可见进入设置；Escape返回同会话输入位置并保留草稿；宿主操作不产生额外模型请求 |
-| 原生中文组合 | 用 OS 按键驱动已有输入法，关联 composition/keydown、真实上屏内容和截图；组合中 Enter/Space 不发送，编辑时第一次 Escape 只取消组合，第二次非组合 Escape 才取消编辑 |
-
-原生步骤是单独可归属的观察：`AREAL_E3_NATIVE=1` 会在同一自有进程创建 `native-ready.json` 并有界等待操作方的 `native-done.json`；可用 `AREAL_E3_CDP_PORT` 暴露本次隔离进程。不要在没有实际操作和原图时填入成功回执。主流程无此步骤仍可跑，但不能据此声称原生 IME 通过。
-
-`input-events.json` 保存组合、输入、按键和焦点的时间/目标/内容；`journey-events.json`、原帧和 `motion.json` 关联同一 run。捕获阶段的 `defaultPrevented` 是事件处理前值，不是业务处理结论；`isTrusted` 也不能独立证明 OS 输入法。125%缩放下 Playwright 的 CSS-scale截图可能裁切；补采 `webContents.capturePage` 原图并核对输入区几何，不能把采集裁切当作产品布局故障。原生键盘工具的逐键分词可能与人工连续输入不同，结果原样保留，不修饰成预期词。
-
-本次已观察 macOS 豆包拼音的组合输入、Enter/Space 上屏且不发送，以及编辑 Escape 的修复前后。应用截图没有覆盖独立候选浮窗，因此候选选择、候选遮挡及普通连续拼音的完整体验仍未验收。Codex 新内容通过真实供应商/命令/子代理采样；参考窗口 CDP API 不支持原生尺寸，本轮对应尺寸为 renderer 模拟，且 CDP Cmd+, 未打开设置，不声明参考原生快捷键通过。
-
-E3 本轮只关闭已复现的子代理焦点、设置返回焦点和编辑组合 Escape。深色指定尺寸/125%与新内容的结果独立登记；明亮、大字号、reduced-motion已有其他专项，但不折算为本次宿主全组合通过。窗口切换、多显示器、原生浏览器/文件视图、安装包和其它平台仍按推进计划验收。Base保持0.1.3，完整P-CONVERSATION与公共视觉基线未自动准入。
-
+见[原文段落](../../../../design/archive/gui/exercises/conversation-flow.md#真实-electron-宿主与新内容专项-e3)。
 
 ## 原生宿主补充 E4
 
-问题 `Q-CONVERSATION-NATIVE-10`，复用E3新内容与隔离进程，不新增页面模式。自动回归从仓库根运行：
-
-```sh
-AREAL_E4_NATIVE=1 AREAL_E4_OPERATOR=0 node clients/gui/scripts/migration-smoke.mjs --conversation-host
-```
-
-省略 `AREAL_E4_OPERATOR=0` 时，在窗口/预览阶段之后写出 `native-ready.json` 并等待人工原生操作（上限15分钟）；只在实际观察后写 `native-done.json`，其中可记录失败或未验证，文件存在不代表候选浮窗通过。`AREAL_E3_CDP_PORT` 可暴露该次隔离进程供采集。自动模式明确跳过人工阶段，不能借用先前人工记录声称本次IME已验证。
-
-| 状态 | 本次证据与结论 |
-| --- | --- |
-| 主窗口→自有辅助窗口→主窗口 | 真实BrowserWindow激活与focus/blur事件；返回输入区焦点、草稿及第6节可见阅读锚点分别通过。仅为同应用窗口切片，未执行物理Cmd+Tab或跨应用切换 |
-| 原生网页打开与交互 | 从Composer用Cmd+T打开实际面板，地址栏导航本地合成页；独立WebContents原图、正文与实际按钮结果核对，产品bridge为undefined。开发Origin许可沿既有fixture精确注入，不验收许可弹窗 |
-| 原生网页返回 | 修复前关闭面板丢失Composer焦点；App原面板所有者补记浏览器打开入口并恢复同会话焦点。修复后焦点、草稿、阅读锚点、原生视图隐藏和无重新提交分别核对；主窗口及原生网页截图分开保留 |
-| 中文候选浮窗 | 本次人工确认只看到了输入文字；原图为ni AReaL Harness，没有候选列表。保留UNVERIFIED，未验收候选选择/遮挡，不用组合事件、中文粘贴或已有E3上屏结果顶替 |
-
-Codex参考本次应用包为26.1013.40934（20770），在已授权验证聊天中打开浏览器页签，导航同内容的独立本地合成网页；网页按钮结果直接可见，隐藏面板后Composer获焦。两边网页尺寸不同，不做像素等同判断；原生OS窗口激活与IME候选的Codex对照仍不可用。E4只关闭本次预览返回缺陷与指定窗口/网页切片，文件预览、候选浮窗、跨应用/显示器、安装包和其它平台仍未覆盖。Base与完整P-CONVERSATION准入状态不变。
-
+见[原文段落](../../../../design/archive/gui/exercises/conversation-flow.md#原生宿主补充-e4)。
 
 ## 现有对话目录迁移样板
 
-`design-system.html?conversation` 对应原有 `ConversationTimelinePreview`，本次迁移仍使用原父消息、工具ID、命令结果、图片资源、19秒演示时长及live/completed投影。采用已有 `CONV-GROUP-01`、`CONV-DISCLOSURE-01`、`CONV-RESOURCE-01` 与宿主返回约束，组合生产Messages、ConversationComposer、AgentConversationPane、CodeViewer和DiffViewer；不新增主题数值或执行状态机。
-
-迁移前只有内容卡及“预览打开”提示；迁移后有独立时间线滚动、固定输入区和可返回的子对话/文件/变更面板。图片沿用原生产查看器。输入区保留未发送草稿，发送禁用；顶部开关和“结束本地演示”只改变本地fixture，不连接Core。子对话的补充内容与代码/Diff读取使用明确合成fixture，不能称为真实工具结果。
-
-同状态对照先冻结**当前迁移前**的完整构建与源摘要，再建立新版；不回退其它已完成的共享组件修复来夸大差异。旧新版固定父内容、状态、主题、实际字号、viewport与DPR，分别记录滚动所有者及视图尺寸变化。截图对照可切换完成、执行中、展开过程、命令、打开子代理/文件和明亮窄窗；原始截图与两个可运行构建留在本地证据目录，公开源码不保存复制的旧组件。
-
-```sh
-pnpm --dir clients/gui design:build
-pnpm --dir clients/gui test:design --conversation-demo
-```
-
-该选项复用原design-system-smoke入口，只验证这个目录样板；默认目录验收调用同一检查。`AREAL_DESIGN_PREVIEW_DIST` 可选冻结旧构建作失败反证，报告绑定实际资产摘要。检查实际子对话、文件/Diff、返回入口焦点、草稿、图片和宽窄明暗；不能只断言提示文字变化。
-
-目录样板只覆盖静态投影的执行中/完成及资源进退；完整流式追加、并行到达、失败/UNKNOWN和正文增长中回看仍由上文动态题覆盖，本次不冒充完整P-CONVERSATION准入或Electron新验收。Base版本不变。
+见[原文段落](../../../../design/archive/gui/exercises/conversation-flow.md#现有对话目录迁移样板)。

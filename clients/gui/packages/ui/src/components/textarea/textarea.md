@@ -27,19 +27,21 @@ exports: ["Textarea"]
 
 ## 行为
 
-保持原生textarea事件与field-sizing，不承担草稿持久化或发送。
+`R-TEXTAREA-001` 保持原生textarea事件与field-sizing，不承担草稿持久化或发送。
 
 ## 内容
 
-名称、值、说明和反馈来自宿主；长标签与18px字号不得挤掉实际动作。
+引用 [R-UI-COMMON-001](../../../README.md#共同合同)。
 
 ## 可访问性
 
-保留现有原生/Base UI/cmdk键盘语义和ref；实际输入/触发器由宿主提供label，禁用不只改变颜色。
+引用 [R-UI-COMMON-002](../../../README.md#共同合同)。
 
 ## 规则
 
-从@areal/ui/wip导入，基础样式使用styles.css。原renderer路径转接同一实现；包不导入Intl、服务、凭据或存储。未提升稳定API或Base准入。
+引用 [R-UI-COMMON-003](../../../README.md#共同合同)。
+
+`R-TEXTAREA-002` `unstyled` 用于已经由所属组合定义完整外观的编辑区，例如审批回复、标注笔记和配置文本。它保留原生 textarea、输入法、事件、disabled 与 ref，不应用尺寸、自动高度或外观 recipe。组合负责布局和可见焦点。普通多行字段继续使用默认外观。
 
 ## 示例
 

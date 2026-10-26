@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import type { Action } from "../services.js";
 
-export type DiscoveryConnection = {
-  protocol: "chatCompletions" | "responses";
-  baseUrl: string;
-  credential: { kind: "none" } | { kind: "draft"; value: string }
-    | { kind: "saved"; providerId: string; expectedRevision: string };
-};
-type DiscoveryState = { kind: "idle" | "loading" } | { kind: "failed"; message: string }
-  | { kind: "ready"; models: string[]; modelParameters?: Record<string, { contextWindowTokens: number }> };
+export type { DiscoveryConnection } from "@areal/workbench/desktop-contract/provider";
+import type {
+  DiscoveryConnection,
+  ModelParameters,
+} from "@areal/workbench/desktop-contract/provider";
+type DiscoveryState =
+  | { kind: "idle" | "loading" }
+  | { kind: "failed"; message: string }
+  | { kind: "ready"; models: string[]; modelParameters?: Record<string, ModelParameters> };
 
 export function useProviderDiscovery(action: Action, connection: DiscoveryConnection | null) {
   const current = useRef({ action, connection });
@@ -26,10 +27,19 @@ export function useProviderDiscovery(action: Action, connection: DiscoveryConnec
     if (!input || request !== epoch.current) return;
     setState({ kind: "loading" });
     try {
-      const result = await current.current.action("providers", { operation: "discover", connection: input });
-      if (request === epoch.current) setState({ kind: "ready", models: [...new Set<string>(result.models)], modelParameters: result.modelParameters });
+      const result = await current.current.action("providers", {
+        operation: "discover",
+        connection: input,
+      });
+      if (request === epoch.current)
+        setState({
+          kind: "ready",
+          models: [...new Set<string>(result.models)],
+          modelParameters: result.modelParameters,
+        });
     } catch (error) {
-      if (request === epoch.current) setState({ kind: "failed", message: (error as Error).message });
+      if (request === epoch.current)
+        setState({ kind: "failed", message: (error as Error).message });
     }
   };
   useEffect(() => {
@@ -37,6 +47,18 @@ export function useProviderDiscovery(action: Action, connection: DiscoveryConnec
     const timer = setTimeout(() => void fetch(automatic), 500);
     return () => clearTimeout(timer);
   }, [automatic]);
-  useEffect(() => () => { epoch.current++; }, []);
-  return { state, invalidate, refresh: () => { invalidate(); void fetch(epoch.current); } };
+  useEffect(
+    () => () => {
+      epoch.current++;
+    },
+    [],
+  );
+  return {
+    state,
+    invalidate,
+    refresh: () => {
+      invalidate();
+      void fetch(epoch.current);
+    },
+  };
 }

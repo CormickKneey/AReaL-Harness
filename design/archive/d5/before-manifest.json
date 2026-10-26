@@ -1,0 +1,917 @@
+[
+  {
+    "path": "clients/gui/design-system/README.md",
+    "bytes": 12694,
+    "sha256": "9117b2e264ee983c935f0db588f5b6ebe3283b9d2f6dac3b6d0ac2ab71418e11",
+    "active": true
+  },
+  {
+    "path": "clients/gui/design-system/accessibility.en.md",
+    "bytes": 1905,
+    "sha256": "6d0b5aceaed8669ccc39630f00c2593c7d2ca2f97d3c7fef4b7bf4c889ce4560",
+    "active": true
+  },
+  {
+    "path": "clients/gui/design-system/accessibility.md",
+    "bytes": 2189,
+    "sha256": "750686ed0ff52e6dceabffec7b031352e0aa6afa0f79c63be65716952c774222",
+    "active": true
+  },
+  {
+    "path": "clients/gui/design-system/architecture.md",
+    "bytes": 14363,
+    "sha256": "704f3b804591e1e815940f9be2c093fb28acd19accac818e06a070c297c065e5",
+    "active": true
+  },
+  {
+    "path": "clients/gui/design-system/automation.md",
+    "bytes": 11869,
+    "sha256": "a2aad3dd0805ea27fa90ba3c55c229bb0e1000b8a5856c9cfaeb624e9e4b115c",
+    "active": true
+  },
+  {
+    "path": "clients/gui/design-system/base-evidence.md",
+    "bytes": 10156,
+    "sha256": "70284abf30d06bd699fcf257f149fb6d7e9b0fc1974e9ae6b8ad6597db5744bf",
+    "active": true
+  },
+  {
+    "path": "clients/gui/design-system/base.md",
+    "bytes": 13264,
+    "sha256": "2a9f389b267229f1c2b665339f545727c706eb835f7c00d893f08ecef42b9869",
+    "active": true
+  },
+  {
+    "path": "clients/gui/design-system/conversation-flow.md",
+    "bytes": 27577,
+    "sha256": "ddea2789280052731335fe8dc0e706e7863999d6a2197d44556b9f5f866df530",
+    "active": true
+  },
+  {
+    "path": "clients/gui/design-system/exercises/conversation-flow.md",
+    "bytes": 23969,
+    "sha256": "b0dc204807858fa00b7ebc32a0b3f028c9ad2448d00930a488078ef2ce2fd0ac",
+    "active": true
+  },
+  {
+    "path": "clients/gui/design-system/exercises/conversation-stage2.en.md",
+    "bytes": 4483,
+    "sha256": "fb2896bfb1b01647471580ced9fc82865cba3450d51f7bb9003960ac6f4771df",
+    "active": true
+  },
+  {
+    "path": "clients/gui/design-system/exercises/conversation-stage2.md",
+    "bytes": 4294,
+    "sha256": "628372af475ad6fd135a9d0909fae65244d0e7176097975a242e9d73c7e10873",
+    "active": true
+  },
+  {
+    "path": "clients/gui/design-system/exercises/decision-transfer.md",
+    "bytes": 1858,
+    "sha256": "e4eb7f63e6ba8a1e6b1a98d91ccd50dd00dca67417bd2036b53b556c61474315",
+    "active": true
+  },
+  {
+    "path": "clients/gui/design-system/exercises/settings-contrast.md",
+    "bytes": 2207,
+    "sha256": "2e98977e2d9cf19fcbd809707ea884feea93e5dc2bf52e2c6d2a2014e5bd9a49",
+    "active": true
+  },
+  {
+    "path": "clients/gui/design-system/exercises/settings-reflow.md",
+    "bytes": 3221,
+    "sha256": "8ea56c58eb819b101f37265b87f3031529e8688852fa5670cd12ab42c82ee5be",
+    "active": true
+  },
+  {
+    "path": "clients/gui/design-system/exercises/settings-stage1.en.md",
+    "bytes": 3950,
+    "sha256": "b9ac15b5fcba874b3e5574f2736bb6fd5cf85e9c048ca5442a918f4c9e9f379b",
+    "active": true
+  },
+  {
+    "path": "clients/gui/design-system/exercises/settings-stage1.md",
+    "bytes": 4583,
+    "sha256": "a80106d179acf9a8dc25b4d5f8206718a83889034c5dbd6b6ea4708f2d111f6d",
+    "active": true
+  },
+  {
+    "path": "clients/gui/design-system/exercises/shared-workspace.en.md",
+    "bytes": 4242,
+    "sha256": "424c6158aae3885d0cb5ea18e0af8734e0115b6919df6c2513276737d52e060b",
+    "active": true
+  },
+  {
+    "path": "clients/gui/design-system/exercises/shared-workspace.md",
+    "bytes": 4010,
+    "sha256": "467645fc403e12aa989e35e94ba9ef40479b7a36188a8b9b736b6b7cb6a32ea1",
+    "active": true
+  },
+  {
+    "path": "clients/gui/design-system/exercises/worktrees.md",
+    "bytes": 5661,
+    "sha256": "78f1a7c7ee5952cba88558556433e301340e78d9fe343f2c668caf5368f31f5a",
+    "active": true
+  },
+  {
+    "path": "clients/gui/design-system/foundations.md",
+    "bytes": 5347,
+    "sha256": "bdaae4fcd1a80b7c4114bab893df7b5c644cef07796bb05a3623cbf662714489",
+    "active": true
+  },
+  {
+    "path": "clients/gui/design-system/governance.md",
+    "bytes": 11259,
+    "sha256": "17819c22c6c4678a3d85dd21c458d5b2268f8ec9db6d5f7852fcba5c92bc9468",
+    "active": true
+  },
+  {
+    "path": "clients/gui/design-system/interactions.en.md",
+    "bytes": 7154,
+    "sha256": "2c47c2d8d81a0654db5d814250f15e4864dd04ada89a044b183f10801f10cee3",
+    "active": true
+  },
+  {
+    "path": "clients/gui/design-system/interactions.md",
+    "bytes": 12010,
+    "sha256": "399f0eb4f3719445d1d3e3318ad9b93e0eadb16a4931e01765c08e30bc94a2c2",
+    "active": true
+  },
+  {
+    "path": "clients/gui/design-system/inventory.md",
+    "bytes": 6638,
+    "sha256": "b28707e34f9db166852455a875bef6bfc8630924b96fdd59fbe3e4ad0268fe7f",
+    "active": true
+  },
+  {
+    "path": "clients/gui/design-system/patterns.md",
+    "bytes": 35238,
+    "sha256": "9c02589ffb9cdd8eb07ecc50dd47beb5a4105297ee7d253655fc46d29f51cb68",
+    "active": true
+  },
+  {
+    "path": "clients/gui/design-system/references.md",
+    "bytes": 15777,
+    "sha256": "6f31284f51f61401b9ea45e859aa9ab193380b78fabdcd471dd1bf3fbe9c97fb",
+    "active": true
+  },
+  {
+    "path": "clients/gui/design-system/structured-flow.md",
+    "bytes": 11094,
+    "sha256": "4b23d98625f6d12804bfd7d96cf6e11a6a9806dd79050c5758515b11b58049a1",
+    "active": true
+  },
+  {
+    "path": "clients/gui/design-system/templates/video-analysis.prompt.md",
+    "bytes": 3524,
+    "sha256": "fcab0ef1759e0b8f63a14c796c581a63b10e72233e73890abbad3759ed141ded",
+    "active": true
+  },
+  {
+    "path": "clients/gui/design-system/worktrees.md",
+    "bytes": 29880,
+    "sha256": "f5b2771dcf0750ab6e0ae90319a6299173865b4567f8469ee4b830120e408a53",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/README.en.md",
+    "bytes": 3352,
+    "sha256": "e9b14794b1fabfc7659ea4cf6b002a64127db8ab5863c7709c15cf184c2d6c07",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/README.md",
+    "bytes": 3053,
+    "sha256": "d7bd8b698cbb3bd19e10e8602d7ddcfd89777b24f1fa3548387166339c37d895",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/agent-guide.md",
+    "bytes": 1634,
+    "sha256": "8b54fd01b6f632fb6e9811671a9d178eccc13c080c2e8a7740a01c551668c5d6",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/action-button/action-button.md",
+    "bytes": 1201,
+    "sha256": "75a8e7d4aaa284e1b6092176f168721ffd123bc51ef24b618af30d3cef7f79b1",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/button/button.md",
+    "bytes": 2481,
+    "sha256": "92f5d54c9c6b309226338430ae8ff07405ac1cc34ab3a20796d74357de9847c1",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/card/card.md",
+    "bytes": 1351,
+    "sha256": "870b5b40dcd0772e7879a1000a1035fa87518b762d0247e2981efc79a13e27fd",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/code-viewer/code-viewer.md",
+    "bytes": 1947,
+    "sha256": "199517c562c1d9721799f7d304f32d3642f136569a1984945d55fa367bb756c7",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/command/command.md",
+    "bytes": 1465,
+    "sha256": "43a89cfc5b0321f57d7fde9df19608e73bea8f8208a1f3dee732afb22cac85ee",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/context-menu/context-menu.md",
+    "bytes": 1467,
+    "sha256": "51e167fcf9fe8f9eb8d1c71647a8dbd72e975c0686c657978896946f3fec09dd",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/control-hint-tooltip/control-hint-tooltip.md",
+    "bytes": 1390,
+    "sha256": "5b0df41d76ed89ed08ecef03fab8287db7014ad03dfd212f695f25508b9b15aa",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/dialog/dialog.md",
+    "bytes": 1531,
+    "sha256": "0956741256ee3b4adfc40c16ebf379e696c0158bb8a6b1cf7807df3c4499eac1",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/diff-viewer/diff-viewer.md",
+    "bytes": 1480,
+    "sha256": "e2b6806e9e1c35aaee529a80317a80a2a46abe27f8e5ae0649bb583363929dfe",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/disclosure/disclosure.md",
+    "bytes": 1844,
+    "sha256": "da766cef38eed6eac72588bca6e547952d388bf7e4147cc08134313b6d55e30b",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/dropdown-menu/dropdown-menu.md",
+    "bytes": 1858,
+    "sha256": "42c381c1c90fc7a48f9d1c93ec24ed9cf57be4b58aa119c0af639891b0399a6e",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/feedback-notice/feedback-notice.md",
+    "bytes": 1607,
+    "sha256": "230443beefad6c6d8d940a7b6602b0ffe01f8f5839d6b13aebaeff2f9c68889d",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/input/input.md",
+    "bytes": 1487,
+    "sha256": "ea8dd039f497f2dce797272640187a6625d4a5828f16b8e951ae2cd45441964f",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/input-group/input-group.md",
+    "bytes": 1409,
+    "sha256": "b4c91a5af2dfa78bfce87d5eeddd55af5151a7bffa05b5e550e41e303b22390c",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/notification-toast/notification-toast.md",
+    "bytes": 2104,
+    "sha256": "4fcabe0446106b682a6a2ac070d69b390120bdc32e810590bf53444d96c2e848",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/popover/popover.md",
+    "bytes": 1357,
+    "sha256": "f0c9d6220e517ad6716b81e1b4ced89fe748584036a67dd97c2851d05f146c8b",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/select/select.md",
+    "bytes": 1467,
+    "sha256": "ef0379445693761818447f4abafa95a95f387e011d494fd3349d097147c74625",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/settings-disclosure/settings-disclosure.md",
+    "bytes": 1499,
+    "sha256": "dbfbe98295a8edd7b1cff784970212e562f8406e1ec86cb5d2111ff484aefd79",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/spinner/spinner.md",
+    "bytes": 1196,
+    "sha256": "a207cb656267e845b3d5f82155573a227d287225f772c534913e5595c614b867",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/switch/switch.md",
+    "bytes": 1135,
+    "sha256": "5427735f1009138c65faa18d8ff09c30ae1ca2960cb0190b71ac29932d701fe0",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/tabs/tabs.md",
+    "bytes": 1298,
+    "sha256": "6bf868404b82d685017e6edbea2d29c97044871c44aa4198d8219c80c51a10c0",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/textarea/textarea.md",
+    "bytes": 1488,
+    "sha256": "ca748cbadb7ba8cbfaa0b410faf18afa92c1fded878b640679c608503f8e0e15",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/tooltip/tooltip.md",
+    "bytes": 1266,
+    "sha256": "31157e6e62af55fc02008eb82ecb38776229cf6429342ba8e1325fd22b69f9d6",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/activity-group/activity-group.md",
+    "bytes": 1937,
+    "sha256": "ab710f80152aaf19c30b01c14dc4a887f84b526533cc9353d984a5775908c9d2",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/attachment-card/attachment-card.md",
+    "bytes": 1449,
+    "sha256": "1ef4b0364ca40915a13cd792730a4a07505e6fff66c200720a22e9ca691b2cfd",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/collapsible-text/collapsible-text.md",
+    "bytes": 3688,
+    "sha256": "c895ca5bac89d61d03438b674579cf71e8e05d967b95b711fbf8dcce04a51058",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/command-details/command-details.md",
+    "bytes": 1445,
+    "sha256": "4c15114ce3a2d85d48aeaaca34fad408ad1130e82eecbc7c0d50f1470b126f5f",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/composer-surface/composer-surface.md",
+    "bytes": 1947,
+    "sha256": "77ad1ee8e9dd9d35f3a82b9d188a1f39ba3865f61a4053b220ebce6174f03187",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/composer-toolbar/composer-toolbar.md",
+    "bytes": 1883,
+    "sha256": "516222d9761cc0cfc601173f9750ed29698f0fcf3c8e5d14dc3669cf5b115452",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/decision-card/decision-card.md",
+    "bytes": 2034,
+    "sha256": "e53d873e4f05aa8f987c40a8cbe7c4f490a6e4a70f4a005e0e8f8b568973c026",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/image-disclosure/image-disclosure.md",
+    "bytes": 1754,
+    "sha256": "62d309f590e944302648b2d98feff4502729842898828c5243d1a4eba7952b55",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/markdown-blockquote/markdown-blockquote.md",
+    "bytes": 1345,
+    "sha256": "b67f869adaef40269e2003052609eb840835693a3d6cb5ac072dd04662bd66f3",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/markdown-list/markdown-list.md",
+    "bytes": 1463,
+    "sha256": "f35d6c1c954a167278dc0bbbb0487110200eeb25cb8f83da75cefdd08dd85cbc",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/markdown-surface/markdown-surface.md",
+    "bytes": 1479,
+    "sha256": "83a85c752848d67d760dec27cb76ff53023bfa0596ee24ddf442d692887afbe5",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/markdown-table/markdown-table.md",
+    "bytes": 2303,
+    "sha256": "acde8b2a3d4eb8412c944d82d645d3a16eb8ff3134609fb89cb4b6a280a18a88",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/message-attachments/message-attachments.md",
+    "bytes": 1685,
+    "sha256": "e24c975262ae53a8ee35fce793e5da1bbb0388a24fe938c872fe8c7e2fe5bf44",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/message-code-block/message-code-block.md",
+    "bytes": 1740,
+    "sha256": "1ae0dbb9f60fb4a7b4656b8bb43215d561a66a42420a78d5de698816804ac460",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/native-content/native-content.md",
+    "bytes": 1994,
+    "sha256": "498b0f9573259e5d19af6cb15af0e2e432babd55e0a8c09bf5b7c03199ea8422",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/question-card/question-card.md",
+    "bytes": 1632,
+    "sha256": "c30a7ea3e1679c0c4a25370ed9a7f6c8b2fd27daa2edbaa237d52e9ebec98ef1",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/subagent-panel/subagent-panel.md",
+    "bytes": 2415,
+    "sha256": "35b5324bef38d37cd3675cc53fd740ba893becaa952b48ff4eb81fb488dc2131",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/task-context/task-context.md",
+    "bytes": 3145,
+    "sha256": "178d98e4fcf974eb7ca2d24f49dbd3ddfd730b92a34237e456f90fab89e81063",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/thinking-status/thinking-status.md",
+    "bytes": 2030,
+    "sha256": "a8003b80d52582fa8c146933512dddba1e618eeb26bc21699124569f3304f649",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/generated/tokens.md",
+    "bytes": 47873,
+    "sha256": "9d9c9ee9382be9c108707c2ee0029a43a3da912c6d1fffd4fc2ee982ba6ee93a",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/settings/settings-dialog/settings-dialog.md",
+    "bytes": 1609,
+    "sha256": "34ce84ee33ce3157b56ebffc3c0efcaee8fb58950f033a746820cc0c7d9ce9b4",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/settings/settings-group-card/settings-group-card.md",
+    "bytes": 1491,
+    "sha256": "0239defe92cc5032f736ea54e2783ab965e41b7ccef606edabf0575651aa28bc",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/settings/settings-page/settings-page.md",
+    "bytes": 1775,
+    "sha256": "e99a123094fc8520219719d7fd00858cefcf7e38eef164a8e8e41f379f6cfd97",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/settings/settings-row/settings-row.md",
+    "bytes": 1780,
+    "sha256": "ee6aea2ca1a7289004c5637ce56d378ca462e3fd3ab05795588fb736b42d2560",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/settings/settings-search-input/settings-search-input.md",
+    "bytes": 1535,
+    "sha256": "ff4eb71406eba50162a81856ef1e88db8b64a57c8e76596b797b3a5505043147",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/settings/settings-section/settings-section.md",
+    "bytes": 1442,
+    "sha256": "cca23dbf16def524d8ea26c1f82a385e0e07ab4666de9cc1c070633a12eb33cd",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/settings/settings-segmented-tabs/settings-segmented-tabs.md",
+    "bytes": 1499,
+    "sha256": "f4a98aceeadf7755223c036814fb764deb550aa4a62bfb8dbe2233e469b7f11e",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/settings/settings-select/settings-select.md",
+    "bytes": 1736,
+    "sha256": "3dbc5e179575c841a1016fa70e6305a175aa85feca854a2bdfa62cd8373e1dd1",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/workbench/resource-controls/resource-controls.md",
+    "bytes": 1424,
+    "sha256": "5ad7cfb2896f65ec734a81db9198a950998f6232b958cf5a4b9f5dcbc0e4fb74",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/workbench/scheduled-workspace/scheduled-workspace.md",
+    "bytes": 2004,
+    "sha256": "9e5afe1efd24505d783cff9d5a214e90e13dcab844bbebf700431762cbcf30a9",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/workbench/settings-navigation/settings-navigation.md",
+    "bytes": 1406,
+    "sha256": "0642ac536b52b91e93b17d9e716b5e2e7ed9360ce026bfbd73ebd2b86f14c0dd",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/workbench/side-pane-frame/side-pane-frame.md",
+    "bytes": 1488,
+    "sha256": "b0326335aa853190021094215a05969057ae61eb56ad0a2c722b5ddb28d23c88",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/workbench/side-pane-launcher/side-pane-launcher.md",
+    "bytes": 1348,
+    "sha256": "8aebbb25f4a8f04e55204ef3fb9a9001606f2283b3ded0047ed96f4223d05dac",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/workbench/task-list-item/task-list-item.md",
+    "bytes": 1497,
+    "sha256": "c2668d7d9f6d707523159fe3dd9a7d58eea4a10eddf5cee977c222ccb9d6ede7",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/workbench/task-title-overflow/task-title-overflow.md",
+    "bytes": 1442,
+    "sha256": "b85d88b5ce4ec5b63b4263b54a40f077f4629124a25fc6e15551e0f632795e26",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/workbench/workbench-shell/workbench-shell.md",
+    "bytes": 1619,
+    "sha256": "20fc6cde7c71779ecdf297511eb40d6ccb97ecd34dea512ce376f3da7c6b31fa",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/worktree/worktree-directory/worktree-directory.md",
+    "bytes": 1536,
+    "sha256": "61be27a2eb4f0948987be0f2cec9b061870e0a5da956e128d9d27b4a71dda11c",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/worktree/worktree-picker/worktree-picker.md",
+    "bytes": 1776,
+    "sha256": "a518fbc72293fd4193c811985d19849910f78bbd5e96074bd4cd18bc972d82f8",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/worktree/worktree-settings/worktree-settings.md",
+    "bytes": 1732,
+    "sha256": "b99b36b506f479060cfdab359799ad5244357106804aa5420d36f6ce85b86a98",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/worktree/worktree-status/worktree-status.md",
+    "bytes": 1696,
+    "sha256": "a850f5964231e09b713c0e16f59f8a600577f77a506b0785abc171cad626897a",
+    "active": true
+  },
+  {
+    "path": "clients/gui/packages/ui/src/worktree/worktree-workspace/worktree-workspace.md",
+    "bytes": 1559,
+    "sha256": "0eb51f4672d8bee0765055a3d6d277eb5bb90809a71f04329374385154fb18dc",
+    "active": true
+  },
+  {
+    "path": "design/README.md",
+    "bytes": 5074,
+    "sha256": "da2bae089435c8367275e27dbb062ea1e8171d88ff0c36c22dd8a657b0f333a6",
+    "active": true
+  },
+  {
+    "path": "design/Raft 设计系统拆解.md",
+    "bytes": 19240,
+    "sha256": "e1767053af90515fadf6dfedba1883a71d90769dd626f2db8ee0fb3463da548a",
+    "active": true
+  },
+  {
+    "path": "design/architecture.md",
+    "bytes": 5532,
+    "sha256": "38c67fb0e5c2a8e9fc634408318f2e47fa3aa14d590816ae782c7f7731043cac",
+    "active": true
+  },
+  {
+    "path": "design/archive/README.md",
+    "bytes": 1585,
+    "sha256": "36cc08e31e1dce0e3d4b03da3dfc47044375f70f2c7f6cd2885b29834f90ff12",
+    "active": false
+  },
+  {
+    "path": "design/archive/content/codex-typography-review.md",
+    "bytes": 1569,
+    "sha256": "1d128c2769315ed1b4621041a898004a20c92debfe41eb28de396dfaff703c26",
+    "active": false
+  },
+  {
+    "path": "design/archive/content/interactive-content-research.md",
+    "bytes": 10743,
+    "sha256": "36854d9ada449ef10e1edb4f7cd253083046aad2051c8485f79aef49bacfc1d6",
+    "active": false
+  },
+  {
+    "path": "design/archive/content/markdown-reuse-review.md",
+    "bytes": 11656,
+    "sha256": "3b707d6800fd9475523198fed501de60b6f9f51385d40c8396da9459add0ce95",
+    "active": false
+  },
+  {
+    "path": "design/archive/content/native-content-reference-review.md",
+    "bytes": 8364,
+    "sha256": "a953eacf8c1a413fac152b574c482557af8b779ab17a908c8d75892b27f4d993",
+    "active": false
+  },
+  {
+    "path": "design/archive/gui/component-migration.md",
+    "bytes": 5682,
+    "sha256": "5d78fa2a0c978ab83d7cbad9552a478b59dde22f3e3840be7d0f432abb778f04",
+    "active": false
+  },
+  {
+    "path": "design/archive/gui/delivery.md",
+    "bytes": 5044,
+    "sha256": "db4e0373380df55776809c6f19c4c8c371e3fecc768ec7c55721bc5692e31bb8",
+    "active": false
+  },
+  {
+    "path": "design/archive/gui/roadmap.en.md",
+    "bytes": 9266,
+    "sha256": "27507a71b799882a75d503c2839027a600b1623230955b6aae3b538cc34b1750",
+    "active": false
+  },
+  {
+    "path": "design/archive/gui/roadmap.md",
+    "bytes": 8269,
+    "sha256": "201ac7e31834446f6465c9d9cfa17f57b2aee5bd09a46c72cdfdbe18095b3f6a",
+    "active": false
+  },
+  {
+    "path": "design/components/README.md",
+    "bytes": 4901,
+    "sha256": "bd26d6679b49506cfdd9ad31de644bcd2ea2f14e53037c05e644b84a8d86a1db",
+    "active": true
+  },
+  {
+    "path": "design/components/controls.md",
+    "bytes": 2258,
+    "sha256": "677e2090c78017ba1f5ed6bf1957f1686dd10a5a368b74db8d71e4a62e26485a",
+    "active": true
+  },
+  {
+    "path": "design/components/reuse-exercise.md",
+    "bytes": 4745,
+    "sha256": "3f85849dbddea7660228995d671658e8652d7289aef48f53bc7de1ebcf3c320d",
+    "active": true
+  },
+  {
+    "path": "design/components/reuse-result.md",
+    "bytes": 6673,
+    "sha256": "4011c44be524845b375c54b919d8caaa033a0820b5d11decb2293fe2a4e3cc93",
+    "active": true
+  },
+  {
+    "path": "design/content/README.md",
+    "bytes": 1276,
+    "sha256": "59ca978fec21c68777078299d75a6995109bcfe2ccd765fdaac97e91e6cd765d",
+    "active": true
+  },
+  {
+    "path": "design/content/conversation-content-system.md",
+    "bytes": 15234,
+    "sha256": "e3d54115dee54171782085b2ead82a1fcc761d087dfc50eb51d0bbe48905d294",
+    "active": true
+  },
+  {
+    "path": "design/content/interface-copy.md",
+    "bytes": 3821,
+    "sha256": "561e3c7f8fa177ba157e0bd96d9abb9bfa13545c6aa6a81c362b3e4e27dbce80",
+    "active": true
+  },
+  {
+    "path": "design/content/terminology.md",
+    "bytes": 3253,
+    "sha256": "55df8ae0b09190186619ca4d2d5adb0887cd1a967c7fd9ff3cec37b3e9f6c36f",
+    "active": true
+  },
+  {
+    "path": "design/contributing.md",
+    "bytes": 1803,
+    "sha256": "63294c15ac8207cc6cf8eb5d6fd8389ccbd82eafd4b9b9bcdb5b0d02f22b6a1d",
+    "active": true
+  },
+  {
+    "path": "design/decisions/001-shared-design-knowledge.md",
+    "bytes": 976,
+    "sha256": "656a9ec44b3f6072e3f514f549303789f7965e0d698c6c3a312b2e2f3c774511",
+    "active": true
+  },
+  {
+    "path": "design/decisions/002-shared-semantics.md",
+    "bytes": 1176,
+    "sha256": "a4df3c2746d5dc14f09e4fefba59997d1e281c3ee06fb0ed3a8bf2a283b2ab15",
+    "active": true
+  },
+  {
+    "path": "design/decisions/003-whole-candidate-and-migration.md",
+    "bytes": 568,
+    "sha256": "482d2b50e5d7febdcd511a42141d496a398a5a597d494e87efb8952c62f1908a",
+    "active": true
+  },
+  {
+    "path": "design/decisions/004-local-ui-package.md",
+    "bytes": 4376,
+    "sha256": "94b85da9a8291503e771ed9b26e1557e1906e3f98931e69838d8cf9478a25945",
+    "active": true
+  },
+  {
+    "path": "design/decisions/README.md",
+    "bytes": 903,
+    "sha256": "c35b001f2c10b8efd746e7aa76096cfb29d07d52cbbec386df6553cd8b389dee",
+    "active": true
+  },
+  {
+    "path": "design/foundations/README.md",
+    "bytes": 1871,
+    "sha256": "9e44de33176f2397fde8322275d06693c04bef061ffd9af81d6c89d905d16dd0",
+    "active": true
+  },
+  {
+    "path": "design/foundations/roles.md",
+    "bytes": 4605,
+    "sha256": "c02fd495c22ae75a588b836a0852cbd0dce33151795cfac8c96f4648c5ea590c",
+    "active": true
+  },
+  {
+    "path": "design/foundations/tokens.md",
+    "bytes": 5918,
+    "sha256": "d43f134ac2d4e6004e711bf315eb1325a9c77811a328e4f1bc56236b8fd30236",
+    "active": true
+  },
+  {
+    "path": "design/patterns/README.md",
+    "bytes": 1814,
+    "sha256": "9ebde5f201fe785e80d2ee1af84b93f2846ce90791dcf88b98062dbeea4faef7",
+    "active": true
+  },
+  {
+    "path": "design/patterns/feedback-and-recovery.md",
+    "bytes": 3739,
+    "sha256": "cb30438a30c92542ee7e3df8a3646200c12f88ed4508c1dd9b3998bba93689d5",
+    "active": true
+  },
+  {
+    "path": "design/patterns/inspect-and-return.md",
+    "bytes": 2565,
+    "sha256": "ddc795ea55d885e71118f17aab0042d0d390daa059fdfeea632fd19ccb570092",
+    "active": true
+  },
+  {
+    "path": "design/patterns/intents.md",
+    "bytes": 2043,
+    "sha256": "f8880e8f6eb171781577c1a732370e46e2656d9a76a93ef2a5e496c72c7eceb0",
+    "active": true
+  },
+  {
+    "path": "design/patterns/plugin-resources.md",
+    "bytes": 2706,
+    "sha256": "ec27cf723abc5088a37c1219101a7066e13b10824a0ce52b1d6edd68f9959146",
+    "active": true
+  },
+  {
+    "path": "design/patterns/settings.md",
+    "bytes": 2366,
+    "sha256": "1d5f772ef6a59f706a25097e78185e4e62c02e360bc4884c040e0e8747b3aa5a",
+    "active": true
+  },
+  {
+    "path": "design/patterns/task-progress.md",
+    "bytes": 1954,
+    "sha256": "68fd9d96430caabcebfa20c0b84c941dbcfd81b863490f7ad793b61b0b50a7f1",
+    "active": true
+  },
+  {
+    "path": "design/people-and-agents/README.md",
+    "bytes": 1670,
+    "sha256": "4950b65414c0a2e85c30466ca50dd3794aaa394b68f60ea0076a8aee3289403d",
+    "active": true
+  },
+  {
+    "path": "design/people-and-agents/context-and-evidence.md",
+    "bytes": 2464,
+    "sha256": "7c20fdf5f4252b7186e38a2029ad5687f168e43a0768462ea4740ada6325be8f",
+    "active": true
+  },
+  {
+    "path": "design/people-and-agents/control-and-approval.md",
+    "bytes": 2775,
+    "sha256": "1308e7ab431b70bdefb18e9429c94335b49db1779bb878dcc39089b6dac4cd43",
+    "active": true
+  },
+  {
+    "path": "design/people-and-agents/delegation-and-handoff.md",
+    "bytes": 2471,
+    "sha256": "ea27ea974b6ce7babceb41471886f4a31c7aa3ad5a61da08c6ab3ed068955c6f",
+    "active": true
+  },
+  {
+    "path": "design/people-and-agents/identity-and-ownership.md",
+    "bytes": 2393,
+    "sha256": "0f778e0255e061fcc4e3c135146b267c33ae8c7d04f7768ad517a6c8f6e0f113",
+    "active": true
+  },
+  {
+    "path": "design/principles/README.md",
+    "bytes": 2360,
+    "sha256": "bd077a23dc7b799a39276631f0edaf073d3a844ab83432f3fd91ec3c00b67266",
+    "active": true
+  },
+  {
+    "path": "design/products/README.md",
+    "bytes": 663,
+    "sha256": "8b88958bcc7397964bd555cf044ce1e2c3766dd96e91d3c93af8200ae17d5bfc",
+    "active": true
+  },
+  {
+    "path": "design/products/workbench/README.md",
+    "bytes": 5826,
+    "sha256": "964dbdde0f26907afc7a37a3c62767cbb76278d58c46863445af43b7b09ba6a8",
+    "active": true
+  },
+  {
+    "path": "design/products/workbench/candidate.md",
+    "bytes": 5456,
+    "sha256": "26cb67aee8af2fa5b15e88c2666e69f13ea973540d33470bc3f30750904e718d",
+    "active": true
+  },
+  {
+    "path": "design/roadmap.md",
+    "bytes": 6113,
+    "sha256": "d5241e085e4a81e51e65c4fec2a2b355ef3b66c06b88e19d85f4028ff23a6243",
+    "active": true
+  },
+  {
+    "path": "clients/gui/renderer/src/CollapsibleText.md",
+    "bytes": 960,
+    "sha256": "92e8d9cee9cd80fcba0b7e928b79266c74550adc6e52ddae7ca3f9ceb91f35ef",
+    "active": true,
+    "sourceRevision": "6e06c3fbd43e1a267b1a74de713a289f45bd7674"
+  },
+  {
+    "path": "clients/gui/renderer/src/DecisionCard.md",
+    "bytes": 2275,
+    "sha256": "b5c905d9a3a447a359c9327ab06a720fe7b7e07557f0571439c476fc257b5180",
+    "active": true,
+    "sourceRevision": "6e06c3fbd43e1a267b1a74de713a289f45bd7674"
+  },
+  {
+    "path": "clients/gui/renderer/src/Messages.md",
+    "bytes": 4390,
+    "sha256": "b5fd8f545170920113a53f4af69e41cf3b6ed8e9ae92d399bdda25b636595a21",
+    "active": true,
+    "sourceRevision": "6e06c3fbd43e1a267b1a74de713a289f45bd7674"
+  },
+  {
+    "path": "clients/gui/renderer/src/components/ui/action-button.md",
+    "bytes": 1054,
+    "sha256": "c33442b08392a32bc6c8ce2d42200351035bc92d194b1b9604fefaccea928f6e",
+    "active": true,
+    "sourceRevision": "6e06c3fbd43e1a267b1a74de713a289f45bd7674"
+  },
+  {
+    "path": "clients/gui/renderer/src/components/ui/feedback.md",
+    "bytes": 1399,
+    "sha256": "80d627f2f9768e271db52eb16ea4e290eea6cc5a68080c855098cd2f23aaccb5",
+    "active": true,
+    "sourceRevision": "6e06c3fbd43e1a267b1a74de713a289f45bd7674"
+  },
+  {
+    "path": "clients/gui/renderer/src/components/ui/select.md",
+    "bytes": 1000,
+    "sha256": "377c1ad0161854d2ff6428266aeade69154eeead882f41fe1688b3ef555b2dec",
+    "active": true,
+    "sourceRevision": "6e06c3fbd43e1a267b1a74de713a289f45bd7674"
+  },
+  {
+    "path": "clients/gui/renderer/src/components/ui/switch.md",
+    "bytes": 901,
+    "sha256": "b1499482d8467dcb157aa5021d86be42e0e4e9bce1b78494ed7c4ac29ded178b",
+    "active": true,
+    "sourceRevision": "6e06c3fbd43e1a267b1a74de713a289f45bd7674"
+  },
+  {
+    "path": "clients/gui/renderer/src/settings/SettingsPageParts.md",
+    "bytes": 3353,
+    "sha256": "2bf85056ddcfc4663dc7fbb3d017c81aecfb2ad4079b39802acf10e21469cc9e",
+    "active": true,
+    "sourceRevision": "6e06c3fbd43e1a267b1a74de713a289f45bd7674"
+  },
+  {
+    "path": "clients/gui/renderer/src/settings/SettingsSearchInput.md",
+    "bytes": 1208,
+    "sha256": "54ff926e9684fe23f0297345d2a2e2aec300f71c948c2f54234ccef917dca7d5",
+    "active": true,
+    "sourceRevision": "6e06c3fbd43e1a267b1a74de713a289f45bd7674"
+  }
+]

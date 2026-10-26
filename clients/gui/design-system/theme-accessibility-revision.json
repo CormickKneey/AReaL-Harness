@@ -1,0 +1,898 @@
+{
+  "baseVersion": "0.4.1",
+  "source": "D4 accessibility correction; original theme-baseline.json remains frozen.",
+  "roles": [
+    {
+      "name": "--color-foreground-subtle",
+      "reason": "Maintain text hierarchy above the corrected metadata role."
+    },
+    {
+      "name": "--color-foreground-subtlest",
+      "reason": "Meet 4.5:1 for active small metadata at every default contrast level."
+    },
+    {
+      "name": "--color-process-settled",
+      "reason": "Keep settled status distinct from disabled controls while making its text readable."
+    },
+    {
+      "name": "--color-settings-secondary",
+      "reason": "Follow the corrected secondary text role on light settings cards."
+    }
+  ],
+  "samples": [
+    {
+      "input": {
+        "id": "default-light",
+        "dark": false,
+        "background": "#ffffff",
+        "foreground": "#1a1c1f",
+        "accent": "#3a83f7",
+        "contrast": 0,
+        "translucentSidebar": true
+      },
+      "colors": {
+        "--color-foreground-subtle": {
+          "color": "color(srgb 0.387088 0.392441 0.400471)",
+          "rgba": [99, 100, 102, 255]
+        },
+        "--color-foreground-subtlest": {
+          "color": "color(srgb 0.391578 0.396892 0.404863)",
+          "rgba": [100, 101, 103, 255]
+        },
+        "--color-process-settled": {
+          "color": "color(srgb 0.387088 0.392441 0.400471)",
+          "rgba": [99, 100, 102, 255]
+        },
+        "--color-settings-secondary": {
+          "color": "color(srgb 0.387088 0.392441 0.400471)",
+          "rgba": [99, 100, 102, 255]
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "default-light",
+        "dark": false,
+        "background": "#ffffff",
+        "foreground": "#1a1c1f",
+        "accent": "#3a83f7",
+        "contrast": 0,
+        "translucentSidebar": false
+      },
+      "colors": {
+        "--color-foreground-subtle": {
+          "color": "color(srgb 0.387088 0.392441 0.400471)",
+          "rgba": [99, 100, 102, 255]
+        },
+        "--color-foreground-subtlest": {
+          "color": "color(srgb 0.391578 0.396892 0.404863)",
+          "rgba": [100, 101, 103, 255]
+        },
+        "--color-process-settled": {
+          "color": "color(srgb 0.387088 0.392441 0.400471)",
+          "rgba": [99, 100, 102, 255]
+        },
+        "--color-settings-secondary": {
+          "color": "color(srgb 0.387088 0.392441 0.400471)",
+          "rgba": [99, 100, 102, 255]
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "default-light",
+        "dark": false,
+        "background": "#ffffff",
+        "foreground": "#1a1c1f",
+        "accent": "#3a83f7",
+        "contrast": 45,
+        "translucentSidebar": true
+      },
+      "colors": {
+        "--color-foreground-subtle": {
+          "color": "color(srgb 0.326471 0.332353 0.341176)",
+          "rgba": [83, 85, 87, 255]
+        },
+        "--color-foreground-subtlest": {
+          "color": "color(srgb 0.371373 0.376863 0.385098)",
+          "rgba": [95, 96, 98, 255]
+        },
+        "--color-process-settled": {
+          "color": "color(srgb 0.326471 0.332353 0.341176)",
+          "rgba": [83, 85, 87, 255]
+        },
+        "--color-settings-secondary": {
+          "color": "color(srgb 0.326471 0.332353 0.341176)",
+          "rgba": [83, 85, 87, 255]
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "default-light",
+        "dark": false,
+        "background": "#ffffff",
+        "foreground": "#1a1c1f",
+        "accent": "#3a83f7",
+        "contrast": 45,
+        "translucentSidebar": false
+      },
+      "colors": {
+        "--color-foreground-subtle": {
+          "color": "color(srgb 0.326471 0.332353 0.341176)",
+          "rgba": [83, 85, 87, 255]
+        },
+        "--color-foreground-subtlest": {
+          "color": "color(srgb 0.371373 0.376863 0.385098)",
+          "rgba": [95, 96, 98, 255]
+        },
+        "--color-process-settled": {
+          "color": "color(srgb 0.326471 0.332353 0.341176)",
+          "rgba": [83, 85, 87, 255]
+        },
+        "--color-settings-secondary": {
+          "color": "color(srgb 0.326471 0.332353 0.341176)",
+          "rgba": [83, 85, 87, 255]
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "default-light",
+        "dark": false,
+        "background": "#ffffff",
+        "foreground": "#1a1c1f",
+        "accent": "#3a83f7",
+        "contrast": 100,
+        "translucentSidebar": true
+      },
+      "colors": {
+        "--color-foreground-subtle": {
+          "color": "color(srgb 0.252382 0.258912 0.268706)",
+          "rgba": [64, 66, 69, 255]
+        },
+        "--color-foreground-subtlest": {
+          "color": "color(srgb 0.346676 0.352382 0.360941)",
+          "rgba": [88, 90, 92, 255]
+        },
+        "--color-process-settled": {
+          "color": "color(srgb 0.252382 0.258912 0.268706)",
+          "rgba": [64, 66, 69, 255]
+        },
+        "--color-settings-secondary": {
+          "color": "color(srgb 0.252382 0.258912 0.268706)",
+          "rgba": [64, 66, 69, 255]
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "default-light",
+        "dark": false,
+        "background": "#ffffff",
+        "foreground": "#1a1c1f",
+        "accent": "#3a83f7",
+        "contrast": 100,
+        "translucentSidebar": false
+      },
+      "colors": {
+        "--color-foreground-subtle": {
+          "color": "color(srgb 0.252382 0.258912 0.268706)",
+          "rgba": [64, 66, 69, 255]
+        },
+        "--color-foreground-subtlest": {
+          "color": "color(srgb 0.346676 0.352382 0.360941)",
+          "rgba": [88, 90, 92, 255]
+        },
+        "--color-process-settled": {
+          "color": "color(srgb 0.252382 0.258912 0.268706)",
+          "rgba": [64, 66, 69, 255]
+        },
+        "--color-settings-secondary": {
+          "color": "color(srgb 0.252382 0.258912 0.268706)",
+          "rgba": [64, 66, 69, 255]
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "default-dark",
+        "dark": true,
+        "background": "#181818",
+        "foreground": "#ffffff",
+        "accent": "#3a83f7",
+        "contrast": 0,
+        "translucentSidebar": true
+      },
+      "colors": {
+        "--color-foreground-subtle": {
+          "color": "color(srgb 0.642176 0.642176 0.642176)",
+          "rgba": [164, 164, 164, 255]
+        },
+        "--color-foreground-subtlest": {
+          "color": "color(srgb 0.565176 0.565176 0.565176)",
+          "rgba": [144, 144, 144, 255]
+        },
+        "--color-process-settled": {
+          "color": "color(srgb 1 1 1 / 0.46)",
+          "rgba": [255, 255, 255, 117]
+        },
+        "--color-settings-secondary": {
+          "color": "color(srgb 1 1 1 / 0.56)",
+          "rgba": [255, 255, 255, 143]
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "default-dark",
+        "dark": true,
+        "background": "#181818",
+        "foreground": "#ffffff",
+        "accent": "#3a83f7",
+        "contrast": 0,
+        "translucentSidebar": false
+      },
+      "colors": {
+        "--color-foreground-subtle": {
+          "color": "color(srgb 0.642176 0.642176 0.642176)",
+          "rgba": [164, 164, 164, 255]
+        },
+        "--color-foreground-subtlest": {
+          "color": "color(srgb 0.565176 0.565176 0.565176)",
+          "rgba": [144, 144, 144, 255]
+        },
+        "--color-process-settled": {
+          "color": "color(srgb 1 1 1 / 0.46)",
+          "rgba": [255, 255, 255, 117]
+        },
+        "--color-settings-secondary": {
+          "color": "color(srgb 1 1 1 / 0.56)",
+          "rgba": [255, 255, 255, 143]
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "default-dark",
+        "dark": true,
+        "background": "#181818",
+        "foreground": "#ffffff",
+        "accent": "#3a83f7",
+        "contrast": 60,
+        "translucentSidebar": true
+      },
+      "colors": {
+        "--color-foreground-subtle": {
+          "color": "color(srgb 0.723706 0.723706 0.723706)",
+          "rgba": [185, 185, 185, 255]
+        },
+        "--color-foreground-subtlest": {
+          "color": "color(srgb 0.592353 0.592353 0.592353)",
+          "rgba": [151, 151, 151, 255]
+        },
+        "--color-process-settled": {
+          "color": "color(srgb 1 1 1 / 0.55)",
+          "rgba": [255, 255, 255, 140]
+        },
+        "--color-settings-secondary": {
+          "color": "color(srgb 1 1 1 / 0.65)",
+          "rgba": [255, 255, 255, 166]
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "default-dark",
+        "dark": true,
+        "background": "#181818",
+        "foreground": "#ffffff",
+        "accent": "#3a83f7",
+        "contrast": 60,
+        "translucentSidebar": false
+      },
+      "colors": {
+        "--color-foreground-subtle": {
+          "color": "color(srgb 0.723706 0.723706 0.723706)",
+          "rgba": [185, 185, 185, 255]
+        },
+        "--color-foreground-subtlest": {
+          "color": "color(srgb 0.592353 0.592353 0.592353)",
+          "rgba": [151, 151, 151, 255]
+        },
+        "--color-process-settled": {
+          "color": "color(srgb 1 1 1 / 0.55)",
+          "rgba": [255, 255, 255, 140]
+        },
+        "--color-settings-secondary": {
+          "color": "color(srgb 1 1 1 / 0.65)",
+          "rgba": [255, 255, 255, 166]
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "default-dark",
+        "dark": true,
+        "background": "#181818",
+        "foreground": "#ffffff",
+        "accent": "#3a83f7",
+        "contrast": 100,
+        "translucentSidebar": true
+      },
+      "colors": {
+        "--color-foreground-subtle": {
+          "color": "color(srgb 0.778059 0.778059 0.778059)",
+          "rgba": [198, 198, 198, 255]
+        },
+        "--color-foreground-subtlest": {
+          "color": "color(srgb 0.610471 0.610471 0.610471)",
+          "rgba": [156, 156, 156, 255]
+        },
+        "--color-process-settled": {
+          "color": "color(srgb 1 1 1 / 0.61)",
+          "rgba": [255, 255, 255, 156]
+        },
+        "--color-settings-secondary": {
+          "color": "color(srgb 1 1 1 / 0.71)",
+          "rgba": [255, 255, 255, 181]
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "default-dark",
+        "dark": true,
+        "background": "#181818",
+        "foreground": "#ffffff",
+        "accent": "#3a83f7",
+        "contrast": 100,
+        "translucentSidebar": false
+      },
+      "colors": {
+        "--color-foreground-subtle": {
+          "color": "color(srgb 0.778059 0.778059 0.778059)",
+          "rgba": [198, 198, 198, 255]
+        },
+        "--color-foreground-subtlest": {
+          "color": "color(srgb 0.610471 0.610471 0.610471)",
+          "rgba": [156, 156, 156, 255]
+        },
+        "--color-process-settled": {
+          "color": "color(srgb 1 1 1 / 0.61)",
+          "rgba": [255, 255, 255, 156]
+        },
+        "--color-settings-secondary": {
+          "color": "color(srgb 1 1 1 / 0.71)",
+          "rgba": [255, 255, 255, 181]
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "custom-blue-dark",
+        "dark": true,
+        "background": "#142030",
+        "foreground": "#dae5f5",
+        "accent": "#88bbff",
+        "contrast": 0,
+        "translucentSidebar": true
+      },
+      "colors": {
+        "--color-foreground-subtle": {
+          "color": "color(srgb 0.548196 0.592882 0.655627)",
+          "rgba": [140, 151, 167, 255]
+        },
+        "--color-foreground-subtlest": {
+          "color": "color(srgb 0.482196 0.527216 0.589961)",
+          "rgba": [123, 134, 150, 255]
+        },
+        "--color-process-settled": {
+          "color": "color(srgb 0.854902 0.898039 0.960784 / 0.46)",
+          "rgba": [218, 229, 244, 117]
+        },
+        "--color-settings-secondary": {
+          "color": "color(srgb 0.854902 0.898039 0.960784 / 0.56)",
+          "rgba": [218, 228, 244, 143]
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "custom-blue-dark",
+        "dark": true,
+        "background": "#142030",
+        "foreground": "#dae5f5",
+        "accent": "#88bbff",
+        "contrast": 0,
+        "translucentSidebar": false
+      },
+      "colors": {
+        "--color-foreground-subtle": {
+          "color": "color(srgb 0.548196 0.592882 0.655627)",
+          "rgba": [140, 151, 167, 255]
+        },
+        "--color-foreground-subtlest": {
+          "color": "color(srgb 0.482196 0.527216 0.589961)",
+          "rgba": [123, 134, 150, 255]
+        },
+        "--color-process-settled": {
+          "color": "color(srgb 0.854902 0.898039 0.960784 / 0.46)",
+          "rgba": [218, 229, 244, 117]
+        },
+        "--color-settings-secondary": {
+          "color": "color(srgb 0.854902 0.898039 0.960784 / 0.56)",
+          "rgba": [218, 228, 244, 143]
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "custom-blue-dark",
+        "dark": true,
+        "background": "#142030",
+        "foreground": "#dae5f5",
+        "accent": "#88bbff",
+        "contrast": 60,
+        "translucentSidebar": true
+      },
+      "colors": {
+        "--color-foreground-subtle": {
+          "color": "color(srgb 0.618078 0.662412 0.725157)",
+          "rgba": [158, 169, 185, 255]
+        },
+        "--color-foreground-subtlest": {
+          "color": "color(srgb 0.50549 0.550392 0.613137)",
+          "rgba": [129, 140, 156, 255]
+        },
+        "--color-process-settled": {
+          "color": "color(srgb 0.854902 0.898039 0.960784 / 0.55)",
+          "rgba": [219, 230, 246, 140]
+        },
+        "--color-settings-secondary": {
+          "color": "color(srgb 0.854902 0.898039 0.960784 / 0.65)",
+          "rgba": [218, 229, 244, 166]
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "custom-blue-dark",
+        "dark": true,
+        "background": "#142030",
+        "foreground": "#dae5f5",
+        "accent": "#88bbff",
+        "contrast": 60,
+        "translucentSidebar": false
+      },
+      "colors": {
+        "--color-foreground-subtle": {
+          "color": "color(srgb 0.618078 0.662412 0.725157)",
+          "rgba": [158, 169, 185, 255]
+        },
+        "--color-foreground-subtlest": {
+          "color": "color(srgb 0.50549 0.550392 0.613137)",
+          "rgba": [129, 140, 156, 255]
+        },
+        "--color-process-settled": {
+          "color": "color(srgb 0.854902 0.898039 0.960784 / 0.55)",
+          "rgba": [219, 230, 246, 140]
+        },
+        "--color-settings-secondary": {
+          "color": "color(srgb 0.854902 0.898039 0.960784 / 0.65)",
+          "rgba": [218, 229, 244, 166]
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "custom-blue-dark",
+        "dark": true,
+        "background": "#142030",
+        "foreground": "#dae5f5",
+        "accent": "#88bbff",
+        "contrast": 100,
+        "translucentSidebar": true
+      },
+      "colors": {
+        "--color-foreground-subtle": {
+          "color": "color(srgb 0.664667 0.708765 0.77151)",
+          "rgba": [169, 181, 197, 255]
+        },
+        "--color-foreground-subtlest": {
+          "color": "color(srgb 0.52102 0.565843 0.628588)",
+          "rgba": [133, 144, 160, 255]
+        },
+        "--color-process-settled": {
+          "color": "color(srgb 0.854902 0.898039 0.960784 / 0.61)",
+          "rgba": [217, 229, 245, 156]
+        },
+        "--color-settings-secondary": {
+          "color": "color(srgb 0.854902 0.898039 0.960784 / 0.71)",
+          "rgba": [218, 230, 245, 181]
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "custom-blue-dark",
+        "dark": true,
+        "background": "#142030",
+        "foreground": "#dae5f5",
+        "accent": "#88bbff",
+        "contrast": 100,
+        "translucentSidebar": false
+      },
+      "colors": {
+        "--color-foreground-subtle": {
+          "color": "color(srgb 0.664667 0.708765 0.77151)",
+          "rgba": [169, 181, 197, 255]
+        },
+        "--color-foreground-subtlest": {
+          "color": "color(srgb 0.52102 0.565843 0.628588)",
+          "rgba": [133, 144, 160, 255]
+        },
+        "--color-process-settled": {
+          "color": "color(srgb 0.854902 0.898039 0.960784 / 0.61)",
+          "rgba": [217, 229, 245, 156]
+        },
+        "--color-settings-secondary": {
+          "color": "color(srgb 0.854902 0.898039 0.960784 / 0.71)",
+          "rgba": [218, 230, 245, 181]
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "custom-cool-light",
+        "dark": false,
+        "background": "#f2f6fb",
+        "foreground": "#203040",
+        "accent": "#4355aa",
+        "contrast": 0,
+        "translucentSidebar": true
+      },
+      "colors": {
+        "--color-foreground-subtle": {
+          "color": "color(srgb 0.386961 0.434765 0.483814)",
+          "rgba": [99, 111, 123, 255]
+        },
+        "--color-foreground-subtlest": {
+          "color": "color(srgb 0.391078 0.438647 0.48748)",
+          "rgba": [100, 112, 124, 255]
+        },
+        "--color-process-settled": {
+          "color": "color(srgb 0.386961 0.434765 0.483814)",
+          "rgba": [99, 111, 123, 255]
+        },
+        "--color-settings-secondary": {
+          "color": "color(srgb 0.386961 0.434765 0.483814)",
+          "rgba": [99, 111, 123, 255]
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "custom-cool-light",
+        "dark": false,
+        "background": "#f2f6fb",
+        "foreground": "#203040",
+        "accent": "#4355aa",
+        "contrast": 0,
+        "translucentSidebar": false
+      },
+      "colors": {
+        "--color-foreground-subtle": {
+          "color": "color(srgb 0.386961 0.434765 0.483814)",
+          "rgba": [99, 111, 123, 255]
+        },
+        "--color-foreground-subtlest": {
+          "color": "color(srgb 0.391078 0.438647 0.48748)",
+          "rgba": [100, 112, 124, 255]
+        },
+        "--color-process-settled": {
+          "color": "color(srgb 0.386961 0.434765 0.483814)",
+          "rgba": [99, 111, 123, 255]
+        },
+        "--color-settings-secondary": {
+          "color": "color(srgb 0.386961 0.434765 0.483814)",
+          "rgba": [99, 111, 123, 255]
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "custom-cool-light",
+        "dark": false,
+        "background": "#f2f6fb",
+        "foreground": "#203040",
+        "accent": "#4355aa",
+        "contrast": 45,
+        "translucentSidebar": true
+      },
+      "colors": {
+        "--color-foreground-subtle": {
+          "color": "color(srgb 0.331373 0.382353 0.434314)",
+          "rgba": [85, 98, 111, 255]
+        },
+        "--color-foreground-subtlest": {
+          "color": "color(srgb 0.372549 0.421176 0.47098)",
+          "rgba": [95, 107, 120, 255]
+        },
+        "--color-process-settled": {
+          "color": "color(srgb 0.331373 0.382353 0.434314)",
+          "rgba": [85, 98, 111, 255]
+        },
+        "--color-settings-secondary": {
+          "color": "color(srgb 0.331373 0.382353 0.434314)",
+          "rgba": [85, 98, 111, 255]
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "custom-cool-light",
+        "dark": false,
+        "background": "#f2f6fb",
+        "foreground": "#203040",
+        "accent": "#4355aa",
+        "contrast": 45,
+        "translucentSidebar": false
+      },
+      "colors": {
+        "--color-foreground-subtle": {
+          "color": "color(srgb 0.331373 0.382353 0.434314)",
+          "rgba": [85, 98, 111, 255]
+        },
+        "--color-foreground-subtlest": {
+          "color": "color(srgb 0.372549 0.421176 0.47098)",
+          "rgba": [95, 107, 120, 255]
+        },
+        "--color-process-settled": {
+          "color": "color(srgb 0.331373 0.382353 0.434314)",
+          "rgba": [85, 98, 111, 255]
+        },
+        "--color-settings-secondary": {
+          "color": "color(srgb 0.331373 0.382353 0.434314)",
+          "rgba": [85, 98, 111, 255]
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "custom-cool-light",
+        "dark": false,
+        "background": "#f2f6fb",
+        "foreground": "#203040",
+        "accent": "#4355aa",
+        "contrast": 100,
+        "translucentSidebar": true
+      },
+      "colors": {
+        "--color-foreground-subtle": {
+          "color": "color(srgb 0.263431 0.318294 0.373814)",
+          "rgba": [67, 81, 95, 255]
+        },
+        "--color-foreground-subtlest": {
+          "color": "color(srgb 0.349902 0.399824 0.450814)",
+          "rgba": [89, 102, 115, 255]
+        },
+        "--color-process-settled": {
+          "color": "color(srgb 0.263431 0.318294 0.373814)",
+          "rgba": [67, 81, 95, 255]
+        },
+        "--color-settings-secondary": {
+          "color": "color(srgb 0.263431 0.318294 0.373814)",
+          "rgba": [67, 81, 95, 255]
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "custom-cool-light",
+        "dark": false,
+        "background": "#f2f6fb",
+        "foreground": "#203040",
+        "accent": "#4355aa",
+        "contrast": 100,
+        "translucentSidebar": false
+      },
+      "colors": {
+        "--color-foreground-subtle": {
+          "color": "color(srgb 0.263431 0.318294 0.373814)",
+          "rgba": [67, 81, 95, 255]
+        },
+        "--color-foreground-subtlest": {
+          "color": "color(srgb 0.349902 0.399824 0.450814)",
+          "rgba": [89, 102, 115, 255]
+        },
+        "--color-process-settled": {
+          "color": "color(srgb 0.263431 0.318294 0.373814)",
+          "rgba": [67, 81, 95, 255]
+        },
+        "--color-settings-secondary": {
+          "color": "color(srgb 0.263431 0.318294 0.373814)",
+          "rgba": [67, 81, 95, 255]
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "custom-warm-light",
+        "dark": false,
+        "background": "#fff4df",
+        "foreground": "#442a19",
+        "accent": "#b65424",
+        "contrast": 0,
+        "translucentSidebar": true
+      },
+      "colors": {
+        "--color-foreground-subtle": {
+          "color": "color(srgb 0.4995 0.416216 0.344569)",
+          "rgba": [127, 106, 88, 255]
+        },
+        "--color-foreground-subtlest": {
+          "color": "color(srgb 0.503167 0.420176 0.348451)",
+          "rgba": [128, 107, 89, 255]
+        },
+        "--color-process-settled": {
+          "color": "color(srgb 0.4995 0.416216 0.344569)",
+          "rgba": [127, 106, 88, 255]
+        },
+        "--color-settings-secondary": {
+          "color": "color(srgb 0.4995 0.416216 0.344569)",
+          "rgba": [127, 106, 88, 255]
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "custom-warm-light",
+        "dark": false,
+        "background": "#fff4df",
+        "foreground": "#442a19",
+        "accent": "#b65424",
+        "contrast": 0,
+        "translucentSidebar": false
+      },
+      "colors": {
+        "--color-foreground-subtle": {
+          "color": "color(srgb 0.4995 0.416216 0.344569)",
+          "rgba": [127, 106, 88, 255]
+        },
+        "--color-foreground-subtlest": {
+          "color": "color(srgb 0.503167 0.420176 0.348451)",
+          "rgba": [128, 107, 89, 255]
+        },
+        "--color-process-settled": {
+          "color": "color(srgb 0.4995 0.416216 0.344569)",
+          "rgba": [127, 106, 88, 255]
+        },
+        "--color-settings-secondary": {
+          "color": "color(srgb 0.4995 0.416216 0.344569)",
+          "rgba": [127, 106, 88, 255]
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "custom-warm-light",
+        "dark": false,
+        "background": "#fff4df",
+        "foreground": "#442a19",
+        "accent": "#b65424",
+        "contrast": 45,
+        "translucentSidebar": true
+      },
+      "colors": {
+        "--color-foreground-subtle": {
+          "color": "color(srgb 0.45 0.362745 0.292157)",
+          "rgba": [115, 92, 75, 255]
+        },
+        "--color-foreground-subtlest": {
+          "color": "color(srgb 0.486667 0.402353 0.33098)",
+          "rgba": [124, 103, 84, 255]
+        },
+        "--color-process-settled": {
+          "color": "color(srgb 0.45 0.362745 0.292157)",
+          "rgba": [115, 92, 75, 255]
+        },
+        "--color-settings-secondary": {
+          "color": "color(srgb 0.45 0.362745 0.292157)",
+          "rgba": [115, 92, 75, 255]
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "custom-warm-light",
+        "dark": false,
+        "background": "#fff4df",
+        "foreground": "#442a19",
+        "accent": "#b65424",
+        "contrast": 45,
+        "translucentSidebar": false
+      },
+      "colors": {
+        "--color-foreground-subtle": {
+          "color": "color(srgb 0.45 0.362745 0.292157)",
+          "rgba": [115, 92, 75, 255]
+        },
+        "--color-foreground-subtlest": {
+          "color": "color(srgb 0.486667 0.402353 0.33098)",
+          "rgba": [124, 103, 84, 255]
+        },
+        "--color-process-settled": {
+          "color": "color(srgb 0.45 0.362745 0.292157)",
+          "rgba": [115, 92, 75, 255]
+        },
+        "--color-settings-secondary": {
+          "color": "color(srgb 0.45 0.362745 0.292157)",
+          "rgba": [115, 92, 75, 255]
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "custom-warm-light",
+        "dark": false,
+        "background": "#fff4df",
+        "foreground": "#442a19",
+        "accent": "#b65424",
+        "contrast": 100,
+        "translucentSidebar": true
+      },
+      "colors": {
+        "--color-foreground-subtle": {
+          "color": "color(srgb 0.3895 0.297392 0.228098)",
+          "rgba": [99, 76, 58, 255]
+        },
+        "--color-foreground-subtlest": {
+          "color": "color(srgb 0.4665 0.380569 0.309627)",
+          "rgba": [119, 97, 79, 255]
+        },
+        "--color-process-settled": {
+          "color": "color(srgb 0.3895 0.297392 0.228098)",
+          "rgba": [99, 76, 58, 255]
+        },
+        "--color-settings-secondary": {
+          "color": "color(srgb 0.3895 0.297392 0.228098)",
+          "rgba": [99, 76, 58, 255]
+        }
+      }
+    },
+    {
+      "input": {
+        "id": "custom-warm-light",
+        "dark": false,
+        "background": "#fff4df",
+        "foreground": "#442a19",
+        "accent": "#b65424",
+        "contrast": 100,
+        "translucentSidebar": false
+      },
+      "colors": {
+        "--color-foreground-subtle": {
+          "color": "color(srgb 0.3895 0.297392 0.228098)",
+          "rgba": [99, 76, 58, 255]
+        },
+        "--color-foreground-subtlest": {
+          "color": "color(srgb 0.4665 0.380569 0.309627)",
+          "rgba": [119, 97, 79, 255]
+        },
+        "--color-process-settled": {
+          "color": "color(srgb 0.3895 0.297392 0.228098)",
+          "rgba": [99, 76, 58, 255]
+        },
+        "--color-settings-secondary": {
+          "color": "color(srgb 0.3895 0.297392 0.228098)",
+          "rgba": [99, 76, 58, 255]
+        }
+      }
+    }
+  ],
+  "sourceFilesSha256": {
+    "src/theme.ts": "a6b13af325feb87e8c1cea3a60ebc437247209f3225a1d36b00bc97b8b79028b",
+    "src/generated/palette.ts": "bd2908dc5610a5ba180f72642b19659584b945e989d19d4050da7aab9f67904f"
+  }
+}

@@ -101,10 +101,24 @@ try {
       id: "fixture",
       root: "/fixture",
       name: "反馈验证",
-      core: { instanceId: "fixture", connectionGeneration: 1, features: { sidePreview: true } },
+      core: {
+        binary: "fixture",
+        apiVersion: null,
+        runtimeEpoch: null,
+        runtimeAvailable: true,
+        instanceId: "fixture",
+        connectionGeneration: 1,
+        features: { sidePreview: true },
+      },
       state: { connected: true, threads: { main: thread }, interactions: {}, queues: {} },
       models: [
-        { providerId: "fixture", modelId: "model", available: true, displayName: "Fixture" },
+        {
+          providerId: "fixture",
+          providerRevision: 1,
+          modelId: "model",
+          available: true,
+          displayName: "Fixture",
+        },
       ],
       profiles: [],
       configurations: { main: config },
@@ -116,12 +130,33 @@ try {
     window.fixtureSnapshot = {
       projects: [project],
       connection: { state: "ready" },
-      library: { projects: {}, threads: {}, projectOrder: [], settings: {} },
+      library: {
+        projects: {},
+        threads: {},
+        projectOrder: [],
+        settings: {},
+        sidebarThreadOrder: [],
+        sidebarRevision: 0,
+        sections: [],
+      },
     };
     window.calls = [];
     window.drafts = {};
     window.available = true;
     window.optedIn = true;
+    let projectionListener,
+      sequence = 0;
+    const projection = (requestId) => ({
+      ...(requestId === undefined ? {} : { requestId }),
+      frame: {
+        projection: 1,
+        stream: "feedback-fixture",
+        sequence: ++sequence,
+        kind: "full",
+        snapshot: structuredClone(window.fixtureSnapshot),
+      },
+    });
+    window.publish = () => projectionListener(projection());
     window.finishPolish = () => {
       const side = project.state.threads.side;
       side.turns.at(-1).status = "completed";
@@ -136,18 +171,27 @@ try {
       window.publish();
     };
     window.arealDesktop = {
-      snapshot: async () => structuredClone(window.fixtureSnapshot),
-      onState: (listener) => {
-        window.publish = () => listener(structuredClone(window.fixtureSnapshot));
+      onProjection: (listener) => {
+        projectionListener = listener;
         return () => {};
       },
+      requestProjection: (requestId) => projectionListener(projection(requestId)),
       theme: async () => ({ platform: "darwin", dark: false, id: "light" }),
       onTheme: () => () => {},
+      setInterfaceLocale: () => {},
+      onQuitRequested: () => () => {},
+      onQuitProgress: () => () => {},
+      onPreviewEvent: () => () => {},
+      onUpdate: () => () => {},
+      onNotificationOpen: () => () => {},
+      onMcpAppDeepLink: () => () => {},
       onMcpAppEvent: () => () => {},
       presentReady: async () => {},
       preview: async () => ({}),
       command: async (name, params) => {
         window.calls.push({ name, params });
+        if (["connect", "list", "open"].includes(name))
+          return { ok: true, value: structuredClone(window.fixtureSnapshot) };
         if (name === "trajectory")
           return {
             ok: true,
@@ -183,6 +227,9 @@ try {
                 enabled: window.available,
                 connected: window.available,
                 opted_in: window.optedIn,
+                installation: null,
+                account: null,
+                destination: null,
               },
             };
           if (params.operation === "preference") {
@@ -193,16 +240,26 @@ try {
                 enabled: window.available,
                 connected: window.available,
                 opted_in: window.optedIn,
+                installation: null,
+                account: null,
+                destination: null,
               },
             };
           }
           if (params.operation === "prepare") {
             const draft = {
               id: crypto.randomUUID(),
+              projectId: params.projectId,
+              threadId: params.threadId,
+              turnId: params.turnId,
+              itemId: params.itemId,
               rating: params.rating,
               reason: "",
               analysis: "",
               state: "draft",
+              contextSha256: "fixture-context",
+              createdAt: Date.now(),
+              submissionUnknown: false,
             };
             window.drafts[draft.id] = draft;
             return { ok: true, value: structuredClone(draft) };
@@ -250,7 +307,7 @@ try {
             ],
           });
           window.publish();
-          return { ok: true, value: {} };
+          return { ok: true, value: { threadId: "main", turn: structuredClone(turns.at(-1)) } };
         }
         return { ok: true, value: { data: [], projects: [], pendingApply: false } };
       },

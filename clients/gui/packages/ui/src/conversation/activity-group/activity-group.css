@@ -1,9 +1,97 @@
-.areal-activity-group { min-width: 0; }
-.areal-activity-list { max-height: 240px; overflow-y: auto; overflow-x: hidden; min-width: 0; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--color-border) transparent; padding: var(--spacing-inline) var(--spacing-inline) var(--spacing-inline) 0; overflow-wrap: anywhere; }
-.areal-activity-list > * { margin-block: var(--spacing-inline); }
-.areal-activity-list :is(pre, code) { max-width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; }
-.areal-activity-status { min-width: 0; font-size: var(--text-content-caption); line-height: 1.6; color: var(--color-foreground-subtle); }
-.areal-activity-status p { margin-block: var(--spacing-inline); }
-.areal-activity-list:focus-visible { outline: var(--focus-width, 2px) solid var(--color-foreground); outline-offset: var(--focus-offset, 2px); }
+/* 摘要与活动行同为一行对话文字高；不加底色，展开态只靠箭头表达。 */
+.areal-activity-group {
+  min-width: 0;
+}
+.areal-activity-group > .areal-disclosure {
+  margin-block: 0;
+}
+.areal-activity-group > .areal-disclosure > .areal-disclosure-trigger {
+  gap: 6px;
+  width: auto;
+  max-width: 100%;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  font-size: var(--text-conversation);
+  line-height: var(--conversation-line);
+  color: var(--activity-foreground, var(--color-foreground-subtle));
+}
+.areal-activity-group
+  > .areal-disclosure
+  > .areal-disclosure-trigger:is(:hover, [aria-expanded="true"]) {
+  background: transparent;
+}
+.areal-activity-group > .areal-disclosure > .areal-disclosure-trigger:hover {
+  color: var(--color-foreground);
+}
+/* 通用按钮会把内部图标压到 14px；活动图标与行内图标同为 16px，箭头 14px，保证文字起点对齐。 */
+.areal-activity-group > .areal-disclosure > .areal-disclosure-trigger > svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+.areal-activity-group
+  > .areal-disclosure
+  > .areal-disclosure-trigger
+  > .areal-disclosure-indicator
+  > svg {
+  width: 14px;
+  height: 14px;
+}
+.areal-activity-group
+  > .areal-disclosure
+  > .areal-disclosure-trigger
+  > .areal-disclosure-indicator {
+  display: inline-flex;
+  opacity: 0;
+}
+.areal-activity-group
+  > .areal-disclosure
+  > .areal-disclosure-trigger:is(:hover, :focus-visible, [aria-expanded="true"])
+  > .areal-disclosure-indicator {
+  opacity: 1;
+}
+.areal-activity-list {
+  max-height: 240px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-width: 0;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+  padding: 0 var(--spacing-inline) 0 0;
+  overflow-wrap: anywhere;
+}
+.areal-activity-list :is(pre, code) {
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+.areal-activity-status {
+  min-width: 0;
+  font-size: var(--text-conversation);
+  line-height: var(--conversation-line);
+  color: var(--color-status-running);
+}
+.areal-activity-status p {
+  margin-block: var(--spacing-inline);
+}
+/* 展开后子项与摘要文字对齐（16px 图标 + 6px 间距），标题与子项、子项之间各隔一个行内间距。 */
+.areal-activity-group:not([data-presentation="inline"]) .areal-activity-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-inline);
+  margin-top: var(--spacing-inline);
+  padding-left: calc(16px + 6px);
+}
+.areal-activity-list:focus-visible {
+  outline: var(--focus-width, 2px) solid var(--color-foreground);
+  outline-offset: var(--focus-offset, 2px);
+}
 
-.areal-activity-group[data-presentation="inline"] .areal-activity-list { max-height: none; overflow: visible; padding: 0; }
+.areal-activity-group[data-presentation="inline"] .areal-activity-list {
+  max-height: none;
+  overflow: visible;
+  padding: 0;
+}

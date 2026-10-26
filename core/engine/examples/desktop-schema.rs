@@ -183,6 +183,24 @@ fn desktop_schema() -> Value {
     for action in ["areal/task/list", "areal/inbox/list"] {
         add!(action, areal_protocol::tasks::TaskList);
     }
+    add!(
+        "areal/task/directory/list",
+        areal_protocol::tasks::TaskDirectoryList
+    );
+    add!(
+        "areal/task/directory/read",
+        areal_protocol::tasks::TaskDirectoryRead
+    );
+    add!(
+        "areal/task/attention/read",
+        areal_protocol::tasks::OwnerAttentionRead
+    );
+    for method in ["areal/owner/watch", "areal/owner/unwatch"] {
+        methods.insert(
+            method.into(),
+            json!({"type":"object","additionalProperties":false}),
+        );
+    }
     add!("areal/channel/read", areal_protocol::tasks::ChannelRead);
     add!("areal/channel/reply", areal_protocol::tasks::ChannelReply);
     add!("areal/goal/update", areal_protocol::goals::GoalUpdate);

@@ -1,7 +1,8 @@
+import { makeTempDir } from "./support/temp.mjs";
 import { assertApplicationStopped } from "./application-cleanup.mjs";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { mkdtemp, mkdir, readFile, writeFile, cp, readdir, lstat } from "node:fs/promises";
+import { mkdir, readFile, writeFile, cp, readdir, lstat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
@@ -23,7 +24,7 @@ const executablePath = values.executable || process.env.AREAL_GUI_EXECUTABLE;
 const binary = executablePath
   ? resolve(dirname(executablePath), "../Resources/areal-core/bin/areal")
   : process.env.AREAL_CORE_BIN || resolve(gui, "../../target/debug/areal");
-const scratch = await mkdtemp("/private/tmp/ahc-");
+const scratch = await makeTempDir("ahc-");
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const hashes = new Map(),
   copyHashes = new Map(),
@@ -246,7 +247,11 @@ try {
     for (const id of sessions.get(project.id))
       assert.ok(restored.state.threads[id], "Existing session was not restored");
     if (sessions.get(project.id).length === 0)
-      assert.equal(Object.keys(restored.state.threads).length, 0, "Empty project acquired sessions");
+      assert.equal(
+        Object.keys(restored.state.threads).length,
+        0,
+        "Empty project acquired sessions",
+      );
     checks.push({
       projectId: project.id,
       sessions: sessions.get(project.id).length,
@@ -271,10 +276,16 @@ try {
   if (page) await captureSmokeFailure(page, scratch, error);
 } finally {
   try {
-    const meta = await readFile(join(scratch, "core/service.json"), "utf8").then(JSON.parse)
-      .catch(error => { if (error.code === "ENOENT") return null; throw error; });
+    const meta = await readFile(join(scratch, "core/service.json"), "utf8")
+      .then(JSON.parse)
+      .catch((error) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      });
     if (app) {
-      await app.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 1 }); });
+      await app.evaluate(({ dialog }) => {
+        dialog.showMessageBox = async () => ({ response: 1 });
+      });
       await withSmokeDeadline("history application quit", () => app.close(), 120000);
     }
     if (env) await assertApplicationStopped(binary, env, meta);
@@ -284,7 +295,11 @@ try {
   await new Promise((resolve) => server.close(resolve));
   try {
     for (const [relative, entries] of stateDirectories)
-      assert.deepEqual(await stateEntries(source, relative), entries, "Source state entries changed");
+      assert.deepEqual(
+        await stateEntries(source, relative),
+        entries,
+        "Source state entries changed",
+      );
     sourceUnchanged =
       (await unchanged(source)) &&
       (!projectIndexHash ||

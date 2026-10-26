@@ -1,12 +1,15 @@
+import { makeTempDir } from "./support/temp.mjs";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { mkdir, mkdtemp, readFile, writeFile, readdir } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { applicationFixture } from "./application-fixture.mjs";
-import { assertApplicationStopped } from "./application-cleanup.mjs";
-const root = resolve("."),
+import { withSmokeDeadline } from "./smoke-deadline.mjs";
+import { assertApplicationStopped, closeSmokeApplication } from "./application-cleanup.mjs";
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../.."),
   gui = process.env.AREAL_COLD_GUI_ROOT
     ? resolve(process.env.AREAL_COLD_GUI_ROOT)
     : process.env.AREAL_VERIFY_ROOT
@@ -14,16 +17,29 @@ const root = resolve("."),
       : join(root, "clients/gui");
 const require = createRequire(join(root, "clients/gui/app/package.json"));
 const { _electron: electron } = require("playwright-core");
+const { ServiceConnection, waitForServiceExit } = require(
+  join(gui, "app/src/core/service-client.cjs"),
+);
 const binary = resolve(process.env.AREAL_CORE_BIN || join(root, "target/debug/areal"));
-const scratch = await mkdtemp("/private/tmp/areal-cold-red-");
+const seed = process.env.AREAL_COLD_FIXTURE_MANIFEST
+  ? JSON.parse(await readFile(process.env.AREAL_COLD_FIXTURE_MANIFEST, "utf8"))
+  : undefined;
+if (seed) {
+  assert.match(seed.scratch, /^\/private\/tmp\/areal-cold-red-[A-Za-z0-9]+$/);
+  assert.ok(
+    seed.cleanup.length && seed.cleanup.every((entry) => entry.stopped),
+    "only a stopped owned cold fixture may be reused",
+  );
+}
+const scratch = seed?.scratch ?? (await makeTempDir("areal-cold-red-"));
 const evidence = process.env.AREAL_COLD_EVIDENCE
   ? resolve(process.env.AREAL_COLD_EVIDENCE)
   : await mkdtemp(join(root, ".scratch/task-catalog-cold-"));
 await mkdir(evidence, { recursive: true });
 const primary = join(scratch, "primary"),
   user = join(scratch, "user");
-await mkdir(primary);
-await mkdir(user);
+await mkdir(primary, { recursive: true });
+await mkdir(user, { recursive: true });
 const config = join(scratch, "config.toml");
 await writeFile(
   config,
@@ -43,7 +59,22 @@ const env = {
   AREAL_CORE_CONFIG: config,
   AREAL_CORE_BIN: binary,
 };
-const fixture = await applicationFixture(gui, join(scratch, "app"));
+const startTrace = join(evidence, "owner-starts.jsonl");
+await writeFile(startTrace, "");
+const fixture = await applicationFixture(
+  gui,
+  join(scratch, "app"),
+  `
+const { CoreBackend } = require(${JSON.stringify(join(gui, "app/src/core/backend.cjs"))});
+const originalStart = CoreBackend.prototype.startProject;
+CoreBackend.prototype.startProject = function(id) {
+  require("node:fs").appendFileSync(${JSON.stringify(startTrace)}, JSON.stringify({projectId:id,at:Date.now()})+"\\n");
+  return originalStart.call(this, id);
+};
+`,
+);
+const irrelevantOwners = [],
+  scheduledOwners = [];
 const identity = {
   sourceCommit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
   sourceStatus: execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" }),
@@ -129,52 +160,101 @@ async function launch() {
 async function close() {
   if (!app) return;
   const metadata = await readFile(join(scratch, "core/service.json"), "utf8").then(JSON.parse);
-  await app.evaluate(({ dialog }) => {
-    dialog.showMessageBox = async (...args) => ({
-      response: ["确认取消后台任务？", "退出 AReaL Harness？"].includes(args.at(-1).message)
-        ? 1
-        : (args.at(-1).cancelId ?? 0),
-    });
-  });
-  await app.evaluate(({ app }) => app.quit()).catch(() => {});
-  await app.close().catch(() => {});
+  await page.getByRole("button", { name: "首页", exact: true }).click();
+  const connection = new ServiceConnection();
+  try {
+    await connection.connect(metadata);
+    const hello = await until(async () => {
+      const value = await connection.request("hello", {
+        protocol: metadata.protocol,
+        identity: metadata.identity,
+      });
+      return !value.service.activeCommands && !value.service.starting && value;
+    }, "all submitted catalog and control commands settle before fixture shutdown");
+    await connection.request(
+      "stopService",
+      {
+        protocol: metadata.protocol,
+        cancel: true,
+        expectedDesktopGeneration: metadata.desktopGeneration,
+        expectedTargets: hello.service.targets,
+      },
+      true,
+    );
+    await waitForServiceExit(join(scratch, "core"), metadata);
+  } finally {
+    connection.close();
+  }
+  await withSmokeDeadline(
+    "catalog fixture exit",
+    () => app.evaluate(({ app }) => app.exit(0)),
+    5000,
+  ).catch(() => {});
+  await closeSmokeApplication(app);
   app = null;
   await assertApplicationStopped(binary, env, metadata);
-  cleanup.push({ pid: metadata.pid, stopped: true });
+  cleanup.push({
+    pid: metadata.pid,
+    stopped: true,
+    method:
+      "identity-checked service stop and fixture exit; product quit is outside this catalog check",
+  });
 }
 try {
-  await launch();
-  await app.evaluate(({ dialog }, directory) => {
-    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [directory] });
-  }, primary);
-  await page.evaluate(() => window.arealDesktop.chooseProject());
-  primaryId = (
-    await until(
-      async () => (await snapshot()).projects.find((p) => p.root === primary && p.state?.connected),
-      "primary ready",
-    )
-  ).id;
-  const prepared = await call("projectless", { operation: "prepare", requestId: randomUUID() });
-  taskOwner = prepared.projectId;
-  await call("connect", { projectId: taskOwner });
-  await until(
-    async () => (await snapshot()).projects.find((p) => p.id === taskOwner)?.state?.connected,
-    "task owner ready",
-  );
-  const source = await call("create", { projectId: taskOwner, requestId: randomUUID() });
-  task = await call("manage", {
-    operation: "taskCreate",
-    projectId: taskOwner,
-    requestId: randomUUID(),
-    mode: "scheduled",
-    objective,
-    sourceThreadId: source.threadId,
-    interactionMode: "interactive",
-    schedule: { at: Math.floor(Date.now() / 1000) + 86400 },
-  });
-  await writeFile(join(evidence, "saved-task.json"), JSON.stringify(task, null, 2));
-  await page.evaluate((id) => localStorage.setItem("areal-gui:project", id), primaryId);
-  await close();
+  if (!seed) {
+    await launch();
+    await app.evaluate(({ dialog }, directory) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [directory] });
+    }, primary);
+    await page.evaluate(() => window.arealDesktop.chooseProject());
+    primaryId = (
+      await until(
+        async () =>
+          (await snapshot()).projects.find((p) => p.root === primary && p.state?.connected),
+        "primary ready",
+      )
+    ).id;
+    for (let index = 0; index < 30; index++) {
+      const owner = await call("projectless", { operation: "prepare", requestId: randomUUID() });
+      irrelevantOwners.push(owner.projectId);
+    }
+    for (let index = 0; index < 3; index++) {
+      const prepared = await call("projectless", { operation: "prepare", requestId: randomUUID() });
+      taskOwner = prepared.projectId;
+      await call("connect", { projectId: taskOwner });
+      await until(
+        async () => (await snapshot()).projects.find((p) => p.id === taskOwner)?.state?.connected,
+        "task owner ready",
+      );
+      const source = await call("create", { projectId: taskOwner, requestId: randomUUID() });
+      task = await call("manage", {
+        operation: "taskCreate",
+        projectId: taskOwner,
+        requestId: randomUUID(),
+        mode: "scheduled",
+        objective: index === 2 ? objective : `${objective}_${index}`,
+        sourceThreadId: source.threadId,
+        interactionMode: "interactive",
+        schedule: { at: Math.floor(Date.now() / 1000) + 86400 },
+      });
+      scheduledOwners.push(taskOwner);
+    }
+    await writeFile(join(evidence, "saved-task.json"), JSON.stringify(task, null, 2));
+    await page.evaluate((id) => localStorage.setItem("areal-gui:project", id), primaryId);
+    await close();
+  } else {
+    taskOwner = seed.taskOwner;
+    task = { id: seed.taskId };
+    irrelevantOwners.push(...seed.irrelevantOwners);
+    scheduledOwners.push(...seed.scheduledOwners);
+    const owners = JSON.parse(await readFile(join(scratch, "core/projects.json"), "utf8"));
+    primaryId = owners.find((owner) => owner.root === primary).id;
+    assert.equal(
+      seed.identity.sha256,
+      identity.sha256,
+      "reused fixture keeps the same Core binary",
+    );
+  }
   await launch();
   await call("connect", { projectId: primaryId });
   await until(
@@ -186,6 +266,7 @@ try {
     false,
     "scheduled owner cold before click",
   );
+  await writeFile(startTrace, "");
   const projectionSource = await readFile(
     join(gui, "packages/workbench/client/state-projection.cjs"),
     "utf8",
@@ -258,6 +339,14 @@ try {
   await row.waitFor({ timeout: 60000 });
   await page.waitForFunction(() => window.__coldTaskTiming.visibleAt !== null);
   observation = await page.evaluate(() => window.__coldTaskTiming);
+  await writeFile(
+    join(evidence, "observation.json"),
+    JSON.stringify(
+      { ...observation, visibleMs: observation.visibleAt - observation.clickedAt },
+      null,
+      2,
+    ),
+  );
   assert.ok(
     !observation.owner?.core?.runtimeEpoch,
     "Persisted task must be visible before execution Core authenticates",
@@ -282,7 +371,7 @@ try {
     "Opening the preview must exercise the unobserved connecting state",
   );
   assert.ok(
-    /连接|更新任务状态/.test(previewDetail.text),
+    /连接|更新任务状态|尚未确认/.test(previewDetail.text),
     "Published task opens a connecting placeholder",
   );
   assert.ok(
@@ -298,12 +387,49 @@ try {
     join(evidence, "preview-connecting.aria.txt"),
     await page.locator("body").ariaSnapshot(),
   );
+  const coldStarts = (await readFile(startTrace, "utf8"))
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map(JSON.parse);
+  assert.deepEqual(
+    coldStarts.filter((entry) =>
+      [...irrelevantOwners, ...scheduledOwners].includes(entry.projectId),
+    ),
+    [],
+    "catalog and selection never start any cold owner",
+  );
+  await writeFile(join(evidence, "passive-starts.json"), JSON.stringify(coldStarts, null, 2));
+  await page.getByRole("button", { name: "刷新这个项目", exact: true }).last().click();
   await until(
     async () => (await snapshot()).projects.find((p) => p.id === taskOwner)?.state?.connected,
-    "live owner ready",
+    "explicitly refreshed owner ready",
+  );
+  const explicitStarts = (await readFile(startTrace, "utf8"))
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map(JSON.parse);
+  assert.equal(
+    explicitStarts.filter((entry) => irrelevantOwners.includes(entry.projectId)).length,
+    0,
+    "explicit refresh leaves unrelated owners cold",
   );
   await until(() => row.isEnabled(), "management row enabled");
   if ((await row.getAttribute("aria-pressed")) !== "true") await row.click();
+  const currentTask = (await call("tasks", { operation: "list", projectId: taskOwner })).data.find(
+    (value) => value.id === task.id,
+  );
+  if (currentTask.paused) {
+    await page.getByRole("button", { name: "开启", exact: true }).click();
+    await until(
+      async () =>
+        !(await call("tasks", { operation: "list", projectId: taskOwner })).data.find(
+          (value) => value.id === task.id,
+        ).paused,
+      "reused task enabled before pause acceptance",
+    );
+  }
   await page.getByRole("button", { name: "暂停", exact: true }).click();
   const readback = await until(async () => {
     const r = await call("tasks", { operation: "list", projectId: taskOwner });
@@ -320,7 +446,7 @@ try {
   );
   assert.ok(
     observation.statuses.some((text) =>
-      /状态.*刷新|刷新.*状态|正在更新任务状态|尚未确认最新状态/.test(text),
+      /状态.*刷新|刷新.*状态|正在更新任务状态|尚未确认最新状态|上次记录|本次读取/.test(text),
     ),
     "Persisted preview explicitly identifies status refresh",
   );
@@ -362,6 +488,8 @@ try {
         sourceAfter,
         scratch,
         taskOwner,
+        irrelevantOwners,
+        scheduledOwners,
         taskId: task?.id,
         observation,
         previewDetail,
@@ -377,6 +505,16 @@ try {
       2,
     ),
   );
-  console.log(JSON.stringify({ evidence, scratch, observation, cleanup, errors, drift, failure }));
+  console.log(
+    JSON.stringify({
+      evidence,
+      scratch,
+      visibleMs: observation && observation.visibleAt - observation.clickedAt,
+      cleanup,
+      errors,
+      drift,
+      failure,
+    }),
+  );
   if (failure) process.exitCode = 1;
 }

@@ -3,7 +3,7 @@ id: dialog
 title: Dialog
 summary: 模态对话框，沿用现有生产实现与交互。
 status: experimental
-entry: wip
+entry: experimental
 layer: core
 category: overlay
 aliases: ["模态对话框"]
@@ -15,7 +15,7 @@ exports: ["Dialog", "DialogClose", "DialogContent", "DialogDescription", "Dialog
 
 ## 何时使用
 
-需要专注填写或确认的内容。
+`R-DIALOG-001` 需要专注填写或确认的内容。
 
 ## 组成
 
@@ -27,19 +27,19 @@ exports: ["Dialog", "DialogClose", "DialogContent", "DialogDescription", "Dialog
 
 ## 行为
 
-保留Base UI焦点约束与恢复；本地化关闭文案由原renderer适配传入。业务busy/dirty守卫由宿主负责。
+`R-DIALOG-002` 保留Base UI焦点约束与恢复；本地化关闭文案由原renderer适配传入。业务busy/dirty守卫由宿主负责。
 
 ## 内容
 
-名称、值、说明和反馈来自宿主；长标签与18px字号不得挤掉实际动作。
+引用 [R-UI-COMMON-001](../../../README.md#共同合同)。
 
 ## 可访问性
 
-保留现有原生/Base UI/cmdk键盘语义和ref；实际输入/触发器由宿主提供label，禁用不只改变颜色。
+引用 [R-UI-COMMON-002](../../../README.md#共同合同)。
 
 ## 规则
 
-从@areal/ui/wip导入，基础样式使用styles.css。原renderer路径转接同一实现；包不导入Intl、服务、凭据或存储。未提升稳定API或Base准入。
+引用 [R-UI-COMMON-004](../../../README.md#共同合同)。
 
 ## 示例
 

@@ -1,4 +1,3 @@
-
 .slash-command-menu {
   --slash-surface: var(--color-background);
   --slash-border: color-mix(in srgb, var(--color-foreground) 8%, transparent);
@@ -8,7 +7,7 @@
   margin-bottom: 8px;
   padding: 4px;
   border: 1px solid var(--slash-border);
-  border-radius: 20px;
+  border-radius: var(--radius-overlay);
   background: var(--slash-surface);
   color: var(--color-foreground);
   font-size: var(--text-ui-caption);
@@ -30,13 +29,24 @@
   scrollbar-width: none;
   --fade-top: black;
   --fade-bottom: black;
-  mask-image: linear-gradient(to bottom, var(--fade-top), black 16px, black calc(100% - 16px), var(--fade-bottom));
+  mask-image: linear-gradient(
+    to bottom,
+    var(--fade-top),
+    black 16px,
+    black calc(100% - 16px),
+    var(--fade-bottom)
+  );
 }
-.slash-command-scroll[data-above="true"] { --fade-top: transparent; }
-.slash-command-scroll[data-below="true"] { --fade-bottom: transparent; }
-.slash-command-row, .slash-command-empty {
+.slash-command-scroll[data-above="true"] {
+  --fade-top: transparent;
+}
+.slash-command-scroll[data-below="true"] {
+  --fade-bottom: transparent;
+}
+.slash-command-row,
+.slash-command-empty {
   padding: 5px 8px;
-  border-radius: 15px;
+  border-radius: var(--radius-choice);
   text-align: left;
 }
 .slash-command-row {
@@ -46,10 +56,34 @@
   width: 100%;
   white-space: nowrap;
 }
-.slash-command-row[aria-selected="true"] { background: var(--slash-selected); }
-.slash-command-icon { display: flex; flex: 0 0 16px; width: 16px; height: 16px; }
-.slash-command-icon svg { width: 16px; height: 16px; }
-.slash-command-label { flex: 0 1 auto; max-width: 60%; }
-.slash-command-description { flex: 1; font-size: var(--text-ui-sm); }
-.slash-command-description, .slash-command-empty { color: color-mix(in srgb, var(--color-foreground) 49.8%, transparent); }
-.slash-command-label, .slash-command-description { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.slash-command-row[aria-selected="true"] {
+  background: var(--slash-selected);
+}
+.slash-command-icon {
+  display: flex;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+}
+.slash-command-icon svg {
+  width: 16px;
+  height: 16px;
+}
+.slash-command-label {
+  flex: 0 1 auto;
+  max-width: 60%;
+}
+.slash-command-description {
+  flex: 1;
+  font-size: var(--text-ui-sm);
+}
+.slash-command-description,
+.slash-command-empty {
+  color: color-mix(in srgb, var(--color-foreground) 49.8%, transparent);
+}
+.slash-command-label,
+.slash-command-description {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

@@ -13,12 +13,13 @@ const { byteChannel, createIdentity, identityId, secureChannel } =
 const hostIdentity = await createIdentity();
 const deviceIdentity = await createIdentity();
 const devicePeerId = identityId(deviceIdentity);
+const privateRoot = resolve("remote-observation-fixture");
 const backend = {
-  home: "/private/tmp/remote-observation-fixture",
+  home: join(privateRoot, "home"),
   saved: [
-    { id: "project-a", root: "/private/tmp/secret-root" },
-    { id: "project-b", root: "/private/tmp/other-root" },
-    { id: "project-c", root: "/private/tmp/third-root" },
+    { id: "project-a", root: join(privateRoot, "secret-root") },
+    { id: "project-b", root: join(privateRoot, "other-root") },
+    { id: "project-c", root: join(privateRoot, "third-root") },
   ],
   library: {
     value: {
@@ -97,7 +98,7 @@ try {
     (await messages.next()).value.result.projects.map((project) => project.projectId),
     ["project-c"],
   );
-  assert.equal(JSON.stringify([ready, projects]).includes("/private/tmp"), false);
+  assert.equal(JSON.stringify([ready, projects]).includes(privateRoot), false);
   secure.send({
     id: "two",
     method: "project.list",

@@ -1,13 +1,7 @@
+import { Button } from "@areal/ui";
 import { useReducedMotion } from "./settings/applicationPreferences.js";
 import { createPortal } from "react-dom";
-import {
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type RefObject,
-} from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import type { Data } from "./services.js";
 import { goalContinuationLabel } from "./conversationPresentation.js";
 
@@ -34,7 +28,7 @@ export function TurnNavigation({
   const rail = useRef<HTMLElement>(null);
   const tooltip = useRef<HTMLDivElement>(null);
   const interaction = useRef({ pointer: false, focus: false });
-  const ids: string[] = turns.map(turn => turn.id);
+  const ids: string[] = turns.map((turn) => turn.id);
   const identity = JSON.stringify(ids);
   const latest = useRef({ ids, reducedMotion, preview, activeId });
   latest.current = { ids, reducedMotion, preview, activeId };
@@ -63,9 +57,10 @@ export function TurnNavigation({
         marker.length = target;
         marker.velocity = 0;
       } else {
-        marker.velocity = (marker.velocity + (target - marker.length) * .19 * dt) * Math.pow(.64, dt);
+        marker.velocity =
+          (marker.velocity + (target - marker.length) * 0.19 * dt) * Math.pow(0.64, dt);
         marker.length += marker.velocity * dt;
-        if (Math.abs(target - marker.length) > .015 || Math.abs(marker.velocity) > .015) {
+        if (Math.abs(target - marker.length) > 0.015 || Math.abs(marker.velocity) > 0.015) {
           moving = true;
         } else {
           marker.length = target;
@@ -73,7 +68,10 @@ export function TurnNavigation({
         }
       }
       marker.element.style.transform = `scaleX(${marker.length / 6})`;
-      marker.element.style.setProperty("--turn-opacity", String(position === null ? .55 : .4 + .6 * proximity));
+      marker.element.style.setProperty(
+        "--turn-opacity",
+        String(position === null ? 0.55 : 0.4 + 0.6 * proximity),
+      );
     });
     if (moving && !reducedMotion) state.frame = requestAnimationFrame(tickWave);
     else state.lastTime = null;
@@ -101,19 +99,29 @@ export function TurnNavigation({
   }
 
   function buttonFor(id: string) {
-    return [...(rail.current?.querySelectorAll("button") ?? [])].find(button => button.dataset.navTurnId === id);
+    return [...(rail.current?.querySelectorAll("button") ?? [])].find(
+      (button) => button.dataset.navTurnId === id,
+    );
   }
 
   function revealTurn(id: string) {
-    const element = rail.current, button = buttonFor(id);
+    const element = rail.current,
+      button = buttonFor(id);
     if (!element || !button) return;
-    const bounds = element.getBoundingClientRect(), rect = button.getBoundingClientRect();
-    if (rect.top < bounds.top) element.scrollTo({ top: element.scrollTop + rect.top - bounds.top, behavior: "instant" });
-    else if (rect.bottom > bounds.bottom) element.scrollTo({ top: element.scrollTop + rect.bottom - bounds.bottom, behavior: "instant" });
+    const bounds = element.getBoundingClientRect(),
+      rect = button.getBoundingClientRect();
+    if (rect.top < bounds.top)
+      element.scrollTo({ top: element.scrollTop + rect.top - bounds.top, behavior: "instant" });
+    else if (rect.bottom > bounds.bottom)
+      element.scrollTo({
+        top: element.scrollTop + rect.bottom - bounds.bottom,
+        behavior: "instant",
+      });
   }
 
   function releaseRail() {
-    if (!interaction.current.pointer && !interaction.current.focus && latest.current.activeId) revealTurn(latest.current.activeId);
+    if (!interaction.current.pointer && !interaction.current.focus && latest.current.activeId)
+      revealTurn(latest.current.activeId);
   }
 
   function focusTurn(id: string) {
@@ -125,35 +133,57 @@ export function TurnNavigation({
 
   function measurePreview() {
     const current = latest.current.preview;
-    const element = tooltip.current, track = rail.current;
+    const element = tooltip.current,
+      track = rail.current;
     const shell = container.current?.closest<HTMLElement>(".messages-shell");
     const button = current && buttonFor(current.turnId);
     if (!current || !element || !track || !shell || !button) {
-      setPlacement(previous => previous === null ? previous : null);
+      setPlacement((previous) => (previous === null ? previous : null));
       return;
     }
-    const bounds = shell.getBoundingClientRect(), railBounds = track.getBoundingClientRect(), anchor = button.getBoundingClientRect();
-    const left = Math.max(0, bounds.left) + 8, right = Math.min(window.innerWidth, bounds.right) - 8;
-    const top = Math.max(0, bounds.top) + 8, bottom = Math.min(window.innerHeight, bounds.bottom) - 8;
-    const width = Math.min(280, right - left), maxHeight = bottom - top;
-    if (width <= 0 || maxHeight <= 0 || anchor.bottom <= Math.max(railBounds.top, top) || anchor.top >= Math.min(railBounds.bottom, bottom)) {
-      setPlacement(previous => previous === null ? previous : null);
+    const bounds = shell.getBoundingClientRect(),
+      railBounds = track.getBoundingClientRect(),
+      anchor = button.getBoundingClientRect();
+    const left = Math.max(0, bounds.left) + 8,
+      right = Math.min(window.innerWidth, bounds.right) - 8;
+    const top = Math.max(0, bounds.top) + 8,
+      bottom = Math.min(window.innerHeight, bounds.bottom) - 8;
+    const width = Math.min(280, right - left),
+      maxHeight = bottom - top;
+    if (
+      width <= 0 ||
+      maxHeight <= 0 ||
+      anchor.bottom <= Math.max(railBounds.top, top) ||
+      anchor.top >= Math.min(railBounds.bottom, bottom)
+    ) {
+      setPlacement((previous) => (previous === null ? previous : null));
       return;
     }
     element.style.width = `${width}px`;
     element.style.maxHeight = `${maxHeight}px`;
     const measured = element.getBoundingClientRect();
     if (measured.width > right - left || measured.height > maxHeight) {
-      setPlacement(previous => previous === null ? previous : null);
+      setPlacement((previous) => (previous === null ? previous : null));
       return;
     }
     const height = measured.height;
     const next = {
-      turnId: current.turnId, width, maxHeight,
+      turnId: current.turnId,
+      width,
+      maxHeight,
       left: Math.max(left, Math.min(right - width, anchor.right + 8)),
-      top: Math.max(top, Math.min(bottom - height, anchor.top - height * .43)),
+      top: Math.max(top, Math.min(bottom - height, anchor.top - height * 0.43)),
     };
-    setPlacement(previous => previous && previous.turnId === next.turnId && previous.left === next.left && previous.top === next.top && previous.width === width && previous.maxHeight === maxHeight ? previous : next);
+    setPlacement((previous) =>
+      previous &&
+      previous.turnId === next.turnId &&
+      previous.left === next.left &&
+      previous.top === next.top &&
+      previous.width === width &&
+      previous.maxHeight === maxHeight
+        ? previous
+        : next,
+    );
   }
 
   useLayoutEffect(() => {
@@ -178,11 +208,14 @@ export function TurnNavigation({
     animateWave();
   }, [identity, reducedMotion]);
 
-  useLayoutEffect(() => () => {
-    const state = wave.current;
-    if (state.frame !== null) cancelAnimationFrame(state.frame);
-    state.frame = state.lastTime = null;
-  }, []);
+  useLayoutEffect(
+    () => () => {
+      const state = wave.current;
+      if (state.frame !== null) cancelAnimationFrame(state.frame);
+      state.frame = state.lastTime = null;
+    },
+    [],
+  );
 
   useEffect(() => {
     const element = container.current;
@@ -190,8 +223,13 @@ export function TurnNavigation({
     const update = () => {
       const top = element.getBoundingClientRect().top + 72;
       const sections = [...element.querySelectorAll<HTMLElement>("[data-turn-id]")];
-      const atBottom = element.scrollHeight > element.clientHeight && element.scrollHeight - element.clientHeight - element.scrollTop <= 2;
-      const current = atBottom ? sections.at(-1) : sections.findLast(section => section.getBoundingClientRect().top <= top) ?? sections[0];
+      const atBottom =
+        element.scrollHeight > element.clientHeight &&
+        element.scrollHeight - element.clientHeight - element.scrollTop <= 2;
+      const current = atBottom
+        ? sections.at(-1)
+        : (sections.findLast((section) => section.getBoundingClientRect().top <= top) ??
+          sections[0]);
       const next = current?.dataset.turnId;
       if (latest.current.activeId !== next) {
         latest.current.activeId = next;
@@ -209,7 +247,10 @@ export function TurnNavigation({
     const resize = new ResizeObserver(update);
     resize.observe(element);
     if (element.firstElementChild) resize.observe(element.firstElementChild);
-    return () => { element.removeEventListener("scroll", scroll); resize.disconnect(); };
+    return () => {
+      element.removeEventListener("scroll", scroll);
+      resize.disconnect();
+    };
   }, [container, identity]);
 
   useEffect(() => {
@@ -226,7 +267,9 @@ export function TurnNavigation({
     return () => document.removeEventListener("keydown", dismiss);
   }, [preview]);
 
-  useLayoutEffect(() => { measurePreview(); });
+  useLayoutEffect(() => {
+    measurePreview();
+  });
   useLayoutEffect(() => {
     if (!preview) return;
     const resize = new ResizeObserver(measurePreview);
@@ -235,115 +278,189 @@ export function TurnNavigation({
     if (rail.current) resize.observe(rail.current);
     if (tooltip.current) resize.observe(tooltip.current);
     window.addEventListener("resize", measurePreview);
-    return () => { resize.disconnect(); window.removeEventListener("resize", measurePreview); };
+    return () => {
+      resize.disconnect();
+      window.removeEventListener("resize", measurePreview);
+    };
   }, [preview?.turnId, preview?.source, container]);
 
   if (!turns.length) return null;
-  const prompt = (turn: Data) => goalContinuationLabel(turn) ?? ((turn.items ?? []).find((item: Data) => item.type === "userMessage")?.content ?? [])
-    .filter((part: Data) => part.type === "text").map((part: Data) => part.text).join(" ");
+  const prompt = (turn: Data) =>
+    goalContinuationLabel(turn) ??
+    ((turn.items ?? []).find((item: Data) => item.type === "userMessage")?.content ?? [])
+      .filter((part: Data) => part.type === "text")
+      .map((part: Data) => part.text)
+      .join(" ");
   const previewIndex = preview ? ids.indexOf(preview.turnId) : -1;
   const previewTurn = turns[previewIndex];
-  const tabStopId = rovingId && ids.includes(rovingId) ? rovingId : activeId && ids.includes(activeId) ? activeId : ids[0];
-  return <>
-    <nav
-      className="turn-navigation"
-      aria-label="对话轮次"
-      ref={rail}
-      onPointerEnter={() => { interaction.current.pointer = true; }}
-      onPointerLeave={() => {
-        interaction.current.pointer = false;
-        if (latest.current.preview?.source === "pointer") selectPreview(null);
-        releaseRail();
-      }}
-      onPointerMove={event => {
-        if (event.pointerType === "touch") return;
-        const first = rail.current?.querySelector("button")?.getBoundingClientRect();
-        if (!first) return;
-        const position = Math.max(0, Math.min(ids.length - 1, (event.clientY - first.top - first.height / 2) / first.height));
-        const index = Math.round(position);
-        selectPreview({ turnId: ids[index], source: "pointer" }, position - index);
-      }}
-      onBlur={event => {
-        if (event.currentTarget.contains(event.relatedTarget)) return;
-        interaction.current.focus = false;
-        if (latest.current.preview?.source === "keyboard") selectPreview(null);
-        releaseRail();
-      }}
-      onScroll={() => {
-        if (latest.current.preview?.source === "keyboard") measurePreview();
-        else if (latest.current.preview) selectPreview(null);
-      }}
-      onKeyDown={event => {
-        if (event.key === "Escape") {
+  const tabStopId =
+    rovingId && ids.includes(rovingId)
+      ? rovingId
+      : activeId && ids.includes(activeId)
+        ? activeId
+        : ids[0];
+  return (
+    <>
+      <nav
+        className="turn-navigation"
+        aria-label="对话轮次"
+        ref={rail}
+        onPointerEnter={() => {
+          interaction.current.pointer = true;
+        }}
+        onPointerLeave={() => {
+          interaction.current.pointer = false;
+          if (latest.current.preview?.source === "pointer") selectPreview(null);
+          releaseRail();
+        }}
+        onPointerMove={(event) => {
+          if (event.pointerType === "touch") return;
+          const first = rail.current?.querySelector("button")?.getBoundingClientRect();
+          if (!first) return;
+          const position = Math.max(
+            0,
+            Math.min(ids.length - 1, (event.clientY - first.top - first.height / 2) / first.height),
+          );
+          const index = Math.round(position);
+          selectPreview({ turnId: ids[index], source: "pointer" }, position - index);
+        }}
+        onBlur={(event) => {
+          if (event.currentTarget.contains(event.relatedTarget)) return;
+          interaction.current.focus = false;
+          if (latest.current.preview?.source === "keyboard") selectPreview(null);
+          releaseRail();
+        }}
+        onScroll={() => {
+          if (latest.current.preview?.source === "keyboard") measurePreview();
+          else if (latest.current.preview) selectPreview(null);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            selectPreview(null);
+            return;
+          }
+          const button = event.target instanceof Element ? event.target.closest("button") : null;
+          const index = Math.max(0, ids.indexOf(button?.dataset.navTurnId ?? tabStopId));
+          const next =
+            event.key === "ArrowUp"
+              ? Math.max(0, index - 1)
+              : event.key === "ArrowDown"
+                ? Math.min(ids.length - 1, index + 1)
+                : event.key === "Home"
+                  ? 0
+                  : event.key === "End"
+                    ? ids.length - 1
+                    : null;
+          if (next === null) return;
           event.preventDefault();
           event.stopPropagation();
-          selectPreview(null);
-          return;
-        }
-        const button = event.target instanceof Element ? event.target.closest("button") : null;
-        const index = Math.max(0, ids.indexOf(button?.dataset.navTurnId ?? tabStopId));
-        const next = event.key === "ArrowUp" ? Math.max(0, index - 1) : event.key === "ArrowDown" ? Math.min(ids.length - 1, index + 1) : event.key === "Home" ? 0 : event.key === "End" ? ids.length - 1 : null;
-        if (next === null) return;
-        event.preventDefault();
-        event.stopPropagation();
-        focusTurn(ids[next]);
-      }}
-    >
-      {turns.map((turn, index) => {
-        const text = prompt(turn);
-        return <button
-          type="button"
-          key={turn.id}
-          data-nav-turn-id={turn.id}
-          aria-label={`第 ${index + 1} 轮${text ? `：${text.slice(0, 80)}` : ""}`}
-          aria-current={activeId === turn.id ? "step" : undefined}
-          aria-describedby={previewTurn && preview?.turnId === turn.id && placement?.turnId === turn.id ? previewId : undefined}
-          data-running={turn.status === "inProgress"}
-          tabIndex={tabStopId === turn.id ? 0 : -1}
-          onFocus={() => {
-            interaction.current.focus = true;
-            setRovingId(turn.id);
-            if (latest.current.preview?.source !== "pointer" || latest.current.preview.turnId !== turn.id) {
-              selectPreview({ turnId: turn.id, source: "keyboard" });
+          focusTurn(ids[next]);
+        }}
+      >
+        {turns.map((turn, index) => {
+          const text = prompt(turn);
+          return (
+            <Button
+              unstyled
+              data-slot={undefined}
+              type="button"
+              key={turn.id}
+              data-nav-turn-id={turn.id}
+              aria-label={`第 ${index + 1} 轮${text ? `：${text.slice(0, 80)}` : ""}`}
+              aria-current={activeId === turn.id ? "step" : undefined}
+              aria-describedby={
+                previewTurn && preview?.turnId === turn.id && placement?.turnId === turn.id
+                  ? previewId
+                  : undefined
+              }
+              data-running={turn.status === "inProgress"}
+              tabIndex={tabStopId === turn.id ? 0 : -1}
+              onFocus={() => {
+                interaction.current.focus = true;
+                setRovingId(turn.id);
+                if (
+                  latest.current.preview?.source !== "pointer" ||
+                  latest.current.preview.turnId !== turn.id
+                ) {
+                  selectPreview({ turnId: turn.id, source: "keyboard" });
+                }
+              }}
+              onClick={() => {
+                const parent = container.current;
+                const section = [
+                  ...(parent?.querySelectorAll<HTMLElement>("[data-turn-id]") ?? []),
+                ].find((item) => item.dataset.turnId === turn.id);
+                if (!parent || !section) return;
+                const anchor = section.querySelector<HTMLElement>(".user-message") ?? section;
+                onNavigate();
+                parent.scrollTo({
+                  top:
+                    anchor.getBoundingClientRect().top -
+                    parent.getBoundingClientRect().top +
+                    parent.scrollTop -
+                    24,
+                  behavior: reducedMotion ? "instant" : "smooth",
+                });
+              }}
+            >
+              <span
+                className="turn-marker"
+                ref={(element) => {
+                  if (!element) return;
+                  const marker = wave.current.markers.get(turn.id);
+                  if (marker) {
+                    marker.element = element;
+                    element.style.transform = `scaleX(${marker.length / 6})`;
+                  } else {
+                    wave.current.markers.set(turn.id, { element, length: 6, velocity: 0 });
+                  }
+                }}
+              />
+            </Button>
+          );
+        })}
+      </nav>
+      {previewTurn &&
+        preview &&
+        createPortal(
+          <div
+            id={previewId}
+            role="tooltip"
+            className="turn-preview"
+            ref={tooltip}
+            style={
+              placement?.turnId === preview.turnId
+                ? {
+                    top: placement.top,
+                    left: placement.left,
+                    width: placement.width,
+                    maxHeight: placement.maxHeight,
+                  }
+                : { visibility: "hidden" }
             }
-          }}
-          onClick={() => {
-            const parent = container.current;
-            const section = [...(parent?.querySelectorAll<HTMLElement>("[data-turn-id]") ?? [])].find(item => item.dataset.turnId === turn.id);
-            if (!parent || !section) return;
-            const anchor = section.querySelector<HTMLElement>(".user-message") ?? section;
-            onNavigate();
-            parent.scrollTo({
-              top: anchor.getBoundingClientRect().top - parent.getBoundingClientRect().top + parent.scrollTop - 24,
-              behavior: reducedMotion ? "instant" : "smooth",
-            });
-          }}
-        >
-          <span className="turn-marker" ref={element => {
-            if (!element) return;
-            const marker = wave.current.markers.get(turn.id);
-            if (marker) {
-              marker.element = element;
-              element.style.transform = `scaleX(${marker.length / 6})`;
-            } else {
-              wave.current.markers.set(turn.id, { element, length: 6, velocity: 0 });
-            }
-          }} />
-        </button>;
-      })}
-    </nav>
-    {previewTurn && preview && createPortal(<div
-      id={previewId}
-      role="tooltip"
-      className="turn-preview"
-      ref={tooltip}
-      style={placement?.turnId === preview.turnId ? { top: placement.top, left: placement.left, width: placement.width, maxHeight: placement.maxHeight } : { visibility: "hidden" }}
-    >
-      <small>第 {previewIndex + 1} / {turns.length} 轮</small>
-      <strong>{prompt(previewTurn) || `第 ${previewIndex + 1} 轮`}</strong>
-      <p>{(previewTurn.items ?? []).filter((item: Data) => item.type === "agentMessage" && item.text).map((item: Data) => item.text).join(" ").replace(/\s+/g, " ") || ({
-        inProgress: "正在执行…", failed: "本轮执行失败", interrupted: "本轮已停止",
-      }[previewTurn.status as string] ?? "暂无助手回复")}</p>
-    </div>, document.body)}
-  </>;
+          >
+            <small>
+              第 {previewIndex + 1} / {turns.length} 轮
+            </small>
+            <strong>{prompt(previewTurn) || `第 ${previewIndex + 1} 轮`}</strong>
+            <p>
+              {(previewTurn.items ?? [])
+                .filter((item: Data) => item.type === "agentMessage" && item.text)
+                .map((item: Data) => item.text)
+                .join(" ")
+                .replace(/\s+/g, " ") ||
+                ({
+                  inProgress: "正在执行…",
+                  failed: "本轮执行失败",
+                  interrupted: "本轮已停止",
+                }[previewTurn.status as string] ??
+                  "暂无助手回复")}
+            </p>
+          </div>,
+          document.body,
+        )}
+    </>
+  );
 }

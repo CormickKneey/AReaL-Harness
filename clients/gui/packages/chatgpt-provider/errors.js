@@ -1,3 +1,6 @@
+// @ts-check
+import { record } from "./subscription-contract.js";
+
 const messages = {
   temporarily_unavailable: "ChatGPT 暂时不可用，请检查网络后重试；登录凭据已保留。",
   reauth_required: "ChatGPT 授权已终止，请重新登录。",
@@ -38,6 +41,7 @@ const known = new Set([
   "subscription_sharing_user_unavailable",
 ]);
 export class ProviderError extends Error {
+  /** @param {string} code @param {{phase?:string,httpStatus?:number|null,requestId?:string|null,state?:keyof typeof messages}} [options] */
   constructor(code, { phase = "transport", httpStatus = null, requestId = null, state } = {}) {
     code = known.has(code) ? code : "http_error";
     state ??=
@@ -53,7 +57,11 @@ export class ProviderError extends Error {
               ? "permission_denied"
               : "temporarily_unavailable";
     super(messages[state]);
-    Object.assign(this, { code, state, phase, httpStatus, requestId });
+    this.code = code;
+    this.state = state;
+    this.phase = phase;
+    this.httpStatus = httpStatus;
+    this.requestId = requestId;
   }
   diagnostic() {
     return {
@@ -65,13 +73,15 @@ export class ProviderError extends Error {
     };
   }
 }
+/** @param {unknown} error */
 export function providerError(error, phase = "transport") {
   if (error instanceof ProviderError) return error;
+  const value = record(error) ? error : {};
   return new ProviderError(
-    error?.name === "AbortError"
+    value.name === "AbortError"
       ? "cancelled"
-      : known.has(error?.code)
-        ? error.code
+      : typeof value.code === "string" && known.has(value.code)
+        ? value.code
         : phase === "storage"
           ? "storage_locked"
           : "network_error",
@@ -79,10 +89,11 @@ export function providerError(error, phase = "transport") {
   );
 }
 // 只保留固定错误码与经过过滤的 request ID，不透传供应商消息或 token 响应。
+/** @param {Response} response @param {string} phase @param {(string|null|undefined)[]} [secrets] */
 export async function responseError(response, phase, secrets = []) {
-  let data = null,
-    size = 0,
-    chunks = [];
+  /** @type {unknown} */ let data = null;
+  let size = 0;
+  const chunks = [];
   try {
     if (response.body)
       for await (const chunk of response.body) {
@@ -95,7 +106,13 @@ export async function responseError(response, phase, secrets = []) {
   } finally {
     await response.body?.cancel().catch(() => {});
   }
-  const raw = typeof data?.error === "string" ? data.error : data?.error?.code;
+  const raw = record(data)
+    ? typeof data.error === "string"
+      ? data.error
+      : record(data.error)
+        ? data.error.code
+        : undefined
+    : undefined;
   const id = response.headers.get("x-request-id");
   const requestId =
     typeof id === "string" &&
@@ -103,13 +120,17 @@ export async function responseError(response, phase, secrets = []) {
     !secrets.some((secret) => secret && id.includes(secret))
       ? id
       : null;
-  const failure = new ProviderError(known.has(raw) ? raw : "http_error", {
-    phase,
-    httpStatus: response.status,
-    requestId,
-  });
+  const failure = new ProviderError(
+    typeof raw === "string" && known.has(raw) ? raw : "http_error",
+    {
+      phase,
+      httpStatus: response.status,
+      requestId,
+    },
+  );
   return failure;
 }
+/** @param {ProviderError} error */
 export function safeRefresh(error) {
   return (
     error.phase === "catalog" &&

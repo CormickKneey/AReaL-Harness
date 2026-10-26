@@ -1,3 +1,4 @@
+import { Textarea } from "@areal/ui";
 import { useI18n } from "../i18n/IntlProvider.js";
 import { SettingsSelect } from "./SettingsPageParts.js";
 import { SettingsDisclosure } from "./SettingsDisclosure.js";
@@ -19,14 +20,11 @@ export function McpConfigEditor({
   let config: Data | null = null;
   try {
     const parsed = JSON.parse(value);
-    if (parsed?.transport && typeof parsed.transport === "object")
-      config = parsed;
+    if (parsed?.transport && typeof parsed.transport === "object") config = parsed;
   } catch {}
-  const update = (patch: Data) =>
-    onChange(JSON.stringify({ ...config, ...patch }, null, 2));
+  const update = (patch: Data) => onChange(JSON.stringify({ ...config, ...patch }, null, 2));
   const transport = config?.transport ?? {};
-  const updateTransport = (patch: Data) =>
-    update({ transport: { ...transport, ...patch } });
+  const updateTransport = (patch: Data) => update({ transport: { ...transport, ...patch } });
   return (
     <>
       <SettingsSegmentedTabs
@@ -39,7 +37,10 @@ export function McpConfigEditor({
       />
       {mode === "json" || !config ? (
         <label>
-          {t("settings.mcpConfigEditor.mcpConfigurationJSON")}<textarea
+          {t("settings.mcpConfigEditor.mcpConfigurationJSON")}
+          <Textarea
+            unstyled
+            data-slot={undefined}
             rows={12}
             spellCheck={false}
             value={value}
@@ -50,12 +51,19 @@ export function McpConfigEditor({
       ) : (
         <>
           <div className="settings-choice-field">
-            {t("settings.mcpConfigEditor.type")}<SettingsSelect aria-label={t("settings.mcpConfigEditor.type")} value={transport.type} onValueChange={selectedValue => update({
+            {t("settings.mcpConfigEditor.type")}
+            <SettingsSelect
+              aria-label={t("settings.mcpConfigEditor.type")}
+              value={transport.type}
+              onValueChange={(selectedValue) =>
+                update({
                   transport:
                     selectedValue === "stdio"
                       ? { type: "stdio", command: "", args: [] }
                       : { type: "streamableHttp", url: "" },
-                })}>
+                })
+              }
+            >
               <option value="stdio">{t("settings.mcpConfigEditor.stdioLocalCommand")}</option>
               <option value="streamableHttp">{t("settings.mcpConfigEditor.streamableHttp")}</option>
             </SettingsSelect>
@@ -63,7 +71,8 @@ export function McpConfigEditor({
           {transport.type === "stdio" ? (
             <>
               <label>
-                {t("settings.mcpConfigEditor.command")}<Input
+                {t("settings.mcpConfigEditor.command")}
+                <Input
                   required
                   value={transport.command ?? ""}
                   onChange={(e) => updateTransport({ command: e.target.value })}
@@ -71,7 +80,10 @@ export function McpConfigEditor({
                 />
               </label>
               <label>
-                {t("settings.mcpConfigEditor.argumentsOnePerLine")}<textarea
+                {t("settings.mcpConfigEditor.argumentsOnePerLine")}
+                <Textarea
+                  unstyled
+                  data-slot={undefined}
                   rows={2}
                   value={(transport.args ?? []).join("\n")}
                   onChange={(e) =>
@@ -86,7 +98,8 @@ export function McpConfigEditor({
           ) : (
             <>
               <label>
-                {t("settings.mcpConfigEditor.serverURL")}<Input
+                {t("settings.mcpConfigEditor.serverURL")}
+                <Input
                   required
                   type="url"
                   value={transport.url ?? ""}
@@ -95,11 +108,10 @@ export function McpConfigEditor({
                 />
               </label>
               <label>
-                {t("settings.mcpConfigEditor.authenticationEnvironmentVariableOptional")}<Input
+                {t("settings.mcpConfigEditor.authenticationEnvironmentVariableOptional")}
+                <Input
                   value={transport.bearerTokenEnv ?? ""}
-                  onChange={(e) =>
-                    updateTransport({ bearerTokenEnv: e.target.value || null })
-                  }
+                  onChange={(e) => updateTransport({ bearerTokenEnv: e.target.value || null })}
                   placeholder="MY_SERVICE_TOKEN"
                 />
               </label>
@@ -107,59 +119,63 @@ export function McpConfigEditor({
           )}
           <SettingsDisclosure title={<> {t("settings.mcpConfigEditor.advancedSettings")}</>}>
             <div className="settings-form mt-3">
-              {transport.type === "stdio" && <>
+              {transport.type === "stdio" && (
+                <>
+                  <label>
+                    {t("settings.mcpConfigEditor.workingDirectoryOptional")}
+                    <Input
+                      value={transport.cwd ?? ""}
+                      onChange={(e) => updateTransport({ cwd: e.target.value || null })}
+                    />
+                  </label>
+                  <label>
+                    {t("settings.mcpConfigEditor.inheritedEnvironmentVariablesOneNamePerLine")}
+                    <Textarea
+                      unstyled
+                      data-slot={undefined}
+                      rows={2}
+                      value={(transport.envVars ?? []).join("\n")}
+                      onChange={(e) =>
+                        updateTransport({
+                          envVars: e.target.value ? e.target.value.split("\n") : [],
+                        })
+                      }
+                      placeholder="MY_SERVICE_TOKEN"
+                    />
+                    <small>
+                      {t("settings.mcpConfigEditor.enterVariableNamesFromTheStartupEnvironment")}
+                    </small>
+                  </label>
+                </>
+              )}
               <label>
-                {t("settings.mcpConfigEditor.workingDirectoryOptional")}<Input
-                  value={transport.cwd ?? ""}
+                {t("settings.mcpConfigEditor.startupTimeoutMs")}
+                <Input
+                  type="number"
+                  min={1}
+                  placeholder="30000"
+                  value={config.startupTimeoutMs ?? ""}
                   onChange={(e) =>
-                    updateTransport({ cwd: e.target.value || null })
-                  }
-                />
-              </label>
-              <label>
-                {t("settings.mcpConfigEditor.inheritedEnvironmentVariablesOneNamePerLine")}<textarea
-                  rows={2}
-                  value={(transport.envVars ?? []).join("\n")}
-                  onChange={(e) =>
-                    updateTransport({
-                      envVars: e.target.value ? e.target.value.split("\n") : [],
+                    update({
+                      startupTimeoutMs: e.target.value ? Number(e.target.value) : undefined,
                     })
                   }
-                  placeholder="MY_SERVICE_TOKEN"
                 />
-                <small>{t("settings.mcpConfigEditor.enterVariableNamesFromTheStartupEnvironment")}</small>
               </label>
-              </>}
-          <label>
-            {t("settings.mcpConfigEditor.startupTimeoutMs")}<Input
-              type="number"
-              min={1}
-              placeholder="30000"
-              value={config.startupTimeoutMs ?? ""}
-              onChange={(e) =>
-                update({
-                  startupTimeoutMs: e.target.value
-                    ? Number(e.target.value)
-                    : undefined,
-                })
-              }
-            />
-          </label>
-          <label>
-            {t("settings.mcpConfigEditor.callTimeoutMs")}<Input
-              type="number"
-              min={1}
-              placeholder="120000"
-              value={config.callTimeoutMs ?? ""}
-              onChange={(e) =>
-                update({
-                  callTimeoutMs: e.target.value
-                    ? Number(e.target.value)
-                    : undefined,
-                })
-              }
-            />
-          </label>
+              <label>
+                {t("settings.mcpConfigEditor.callTimeoutMs")}
+                <Input
+                  type="number"
+                  min={1}
+                  placeholder="120000"
+                  value={config.callTimeoutMs ?? ""}
+                  onChange={(e) =>
+                    update({
+                      callTimeoutMs: e.target.value ? Number(e.target.value) : undefined,
+                    })
+                  }
+                />
+              </label>
             </div>
           </SettingsDisclosure>
         </>

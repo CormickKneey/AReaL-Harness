@@ -1,6 +1,7 @@
+import { makeTempDir } from "./support/temp.mjs";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
@@ -8,7 +9,7 @@ const gui = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const modulePath = join(gui, "app/src/core/core-process.cjs");
 const require = createRequire(import.meta.url);
 const { executeCore } = require(modulePath);
-const scratch = await mkdtemp("/private/tmp/areal-core-process-");
+const scratch = await makeTempDir("areal-core-process-");
 const fixture = join(scratch, "fixture.py");
 await writeFile(
   fixture,

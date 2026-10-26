@@ -5,6 +5,9 @@ import { getCACertificates } from "node:tls";
 import { readFileSync } from "node:fs";
 import { BlockList, isIP } from "node:net";
 
+/** @typedef {{method?:string,headers?:Record<string,string>,body?:string|URLSearchParams,signal?:AbortSignal|null,redirect?:'error'|'follow'|'manual'}} RequestOptions */
+/** @typedef {(url:string|URL,init?:RequestOptions)=>Promise<Response>} SubscriptionFetch */
+/** @param {string|URL} url @param {NodeJS.ProcessEnv} [source] */
 export function proxyForUrl(url, source = process.env) {
   const target = new URL(url),
     host = target.hostname.replace(/^\[|\]$/g, "").toLowerCase();
@@ -62,20 +65,26 @@ export function proxyForUrl(url, source = process.env) {
 }
 
 // 请求独占 agent，使用可信适配器传入的代理快照，不修改全局 fetch 或环境。
+/** @param {NodeJS.ProcessEnv} [source] */
 export function subscriptionNetwork(source = process.env) {
+  /** @type {ProxyAgent|undefined} */
   let agent;
   // 构造适配器不应访问系统 Keychain；仅在真正发起请求时加载系统信任根。
   // 继续保留系统、内置和额外 CA，绝不关闭 TLS 或主机名校验。
   function transport() {
     if (!agent) {
-      const extra = [...new Set([source.SSL_CERT_FILE, source.NODE_EXTRA_CA_CERTS].filter(Boolean))]
-        .map(path => readFileSync(path, "utf8"));
-      const ca = [...new Set([...getCACertificates("default"), ...getCACertificates("system"), ...extra])];
+      const extra = [
+        ...new Set([source.SSL_CERT_FILE, source.NODE_EXTRA_CA_CERTS].filter(Boolean)),
+      ].map((path) => readFileSync(path, "utf8"));
+      const ca = [
+        ...new Set([...getCACertificates("default"), ...getCACertificates("system"), ...extra]),
+      ];
       agent = new ProxyAgent({ ca, getProxyForUrl: (url) => proxyForUrl(url, source) });
     }
     return agent;
   }
   return {
+    /** @param {string|URL} url @param {RequestOptions} [init] @returns {Promise<Response>} */
     async fetch(url, init = {}) {
       if (source.AREAL_CHATGPT_PROXY_ERROR) throw new Error("ChatGPT proxy unavailable");
       const response = await nodeFetch(url, { ...init, agent: transport(), redirect: "error" });

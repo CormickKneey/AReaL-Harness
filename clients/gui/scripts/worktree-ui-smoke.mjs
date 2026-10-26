@@ -5,10 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import {
-  createServer,
-  transformWithEsbuild,
-} from "../renderer/node_modules/vite/dist/node/index.js";
+import { createServer, transformWithOxc } from "vite-plus";
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(join(gui, "app/package.json"));
 const { chromium } = require("playwright-core");
@@ -56,6 +53,7 @@ const action=async(name,params={})=>{
  if(name==='create'&&params.requestId&&window.fixturePending)return {threadId:'fresh-created'};
  if(window.fixtureRecovery)throw Object.assign(new Error('Original request still uncertain'),{submissionUnknown:true,requestId:params.requestId});
  if(window.fixtureFail)throw new Error('Fixture directory unavailable');
+ if(params.operation==='worktreeOptions'&&window.fixtureHoldOptions)await new Promise(resolve=>{window.fixtureResolveOptions=resolve;});
  if(params.operation==='worktreeOptions')return {worktrees:[{root:'/fixture/source',branch:'main',head:'a'.repeat(40),dirty:true},{root:'/fixture/existing',branch:'feature/source',head:'b'.repeat(40)}],branches:['main','release','feature/a-very-long-branch-name-that-must-remain-readable-when-focused',...Array.from({length:30},(_,index)=>'feature/local-'+index),'origin/main','origin/release'],settings:listing.settings,environments,environmentRevision:1};
  if(params.operation==='worktreeList')return structuredClone(listing);
  if(params.operation==='worktreeDelete')return {deleted:false,deletion:{blockers:['Fixture blocker: uncommitted changes remain in this directory']}};
@@ -94,9 +92,8 @@ const vite = await createServer({
       },
       async load(id) {
         if (id === virtual)
-          return transformWithEsbuild(entry, "worktree-fixture.tsx", {
-            loader: "tsx",
-            jsx: "automatic",
+          return transformWithOxc(entry, "worktree-fixture.tsx", {
+            jsx: { runtime: "automatic" },
           });
       },
       configureServer(server) {
@@ -117,7 +114,8 @@ const vite = await createServer({
     },
   ],
 });
-let browser, page,
+let browser,
+  page,
   passed = false;
 const checks = [],
   frames = [],
@@ -136,9 +134,19 @@ try {
     const path = join(evidence, name + ".png");
     await page.screenshot({ path, fullPage: true, animations: "disabled" });
     await writeFile(join(evidence, name + ".aria.txt"), await page.locator("body").ariaSnapshot());
-    frames.push({ name, path, sha256: createHash("sha256").update(await readFile(path)).digest("hex") });
+    frames.push({
+      name,
+      path,
+      sha256: createHash("sha256")
+        .update(await readFile(path))
+        .digest("hex"),
+    });
   };
-  const noOverflow = async () => assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "page must not overflow horizontally");
+  const noOverflow = async () =>
+    assert.ok(
+      await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
+      "page must not overflow horizontally",
+    );
   const trigger = () => page.getByRole("button", { name: "新会话工作区", exact: true });
   const branch = () => page.getByRole("button", { name: "起始分支", exact: true });
   const environment = () => page.getByRole("button", { name: "项目环境", exact: true });
@@ -149,298 +157,676 @@ try {
     await inherited.getByText("Inherited ancestor prompt", { exact: true }).waitFor();
     await local.getByText("First own local prompt", { exact: true }).waitFor();
     await capture("messages-inherited-first-own");
-    assert.equal(await inherited.getByTestId("worktree-status").count(), 0, "worktree preparation must not attach to an inherited ancestor prompt");
-    assert.equal(await local.getByTestId("worktree-status").count(), 1, "worktree preparation belongs to first own local prompt");
-    assert.equal(await local.evaluate(element => !!(element.querySelector('.user-message').compareDocumentPosition(element.querySelector('[data-testid="worktree-status"]')) & Node.DOCUMENT_POSITION_FOLLOWING)), true);
+    assert.equal(
+      await inherited.getByTestId("worktree-status").count(),
+      0,
+      "worktree preparation must not attach to an inherited ancestor prompt",
+    );
+    assert.equal(
+      await local.getByTestId("worktree-status").count(),
+      1,
+      "worktree preparation belongs to first own local prompt",
+    );
+    assert.equal(
+      await local.evaluate(
+        (element) =>
+          !!(
+            element
+              .querySelector(".user-message")
+              .compareDocumentPosition(element.querySelector('[data-testid="worktree-status"]')) &
+            Node.DOCUMENT_POSITION_FOLLOWING
+          ),
+      ),
+      true,
+    );
     await page.goto(base + "?messages=partial");
     await page.getByText("Later paginated local prompt", { exact: true }).waitFor();
     await capture("messages-partial-history");
-    assert.equal(await page.getByTestId("worktree-status").count(), 0, "partial history must not identify a later visible user as the first local prompt");
+    assert.equal(
+      await page.getByTestId("worktree-status").count(),
+      0,
+      "partial history must not identify a later visible user as the first local prompt",
+    );
     await page.goto(base + "?messages=complete");
     await page.getByText("First own local prompt", { exact: true }).waitFor();
-    assert.equal(await page.locator('[data-turn-id="local-own"]').getByTestId("worktree-status").count(), 1);
+    assert.equal(
+      await page.locator('[data-turn-id="local-own"]').getByTestId("worktree-status").count(),
+      1,
+    );
     await capture("messages-complete-first-own");
-    checks.push("production Messages anchors preparation after the first own local user and never under inherited or partially loaded later prompts");
+    checks.push(
+      "production Messages anchors preparation after the first own local user and never under inherited or partially loaded later prompts",
+    );
   };
   await page.goto(base + "?unrelated-pending");
   await page.getByTestId("chat-input").waitFor();
   await page.getByTestId("chat-input").locator('[data-mention-category="sessions"]').waitFor();
   await capture("draft-with-unrelated-pending");
-  assert.equal(await page.getByTestId("chat-input").getAttribute("contenteditable"), "true", "unrelated project submission must not lock a restored draft");
+  assert.equal(
+    await page.getByTestId("chat-input").getAttribute("contenteditable"),
+    "true",
+    "unrelated project submission must not lock a restored draft",
+  );
   await page.getByTestId("chat-input").press("End");
   await page.keyboard.type(" 编辑草稿");
   assert.match(await page.getByTestId("chat-input").textContent(), /编辑草稿$/);
-  assert.deepEqual(await page.evaluate(() => window.fixtureCalls.filter(call => ["create", "send"].includes(call.name))), [], "editing never replays the original request");
+  assert.deepEqual(
+    await page.evaluate(() =>
+      window.fixtureCalls.filter((call) => ["create", "send"].includes(call.name)),
+    ),
+    [],
+    "editing never replays the original request",
+  );
   const originalPending = await page.evaluate(() => structuredClone(window.fixturePending));
-  assert.equal(await page.getByTestId("chat-send-button").isEnabled(), true, "an unrelated valid creation must allow a fresh draft send with a model");
+  assert.equal(
+    await page.getByTestId("chat-send-button").isEnabled(),
+    true,
+    "an unrelated valid creation must allow a fresh draft send with a model",
+  );
   await page.getByTestId("chat-send-button").click();
-  await page.waitForFunction(() => window.fixtureCalls.some(call => call.name === "send"));
-  const submitted = await page.evaluate(() => window.fixtureCalls.filter(call => ["create", "send"].includes(call.name)));
-  assert.equal(submitted.filter(call => call.name === "create").length, 1);
-  assert.equal(submitted.filter(call => call.name === "send").length, 1);
-  assert.notEqual(submitted.find(call => call.name === "create").params.requestId, originalPending[0].params.requestId);
-  assert.deepEqual(await page.evaluate(() => window.fixturePending), originalPending, "new send retains original unconfirmed creation");
+  await page.waitForFunction(() => window.fixtureCalls.some((call) => call.name === "send"));
+  const submitted = await page.evaluate(() =>
+    window.fixtureCalls.filter((call) => ["create", "send"].includes(call.name)),
+  );
+  assert.equal(submitted.filter((call) => call.name === "create").length, 1);
+  assert.equal(submitted.filter((call) => call.name === "send").length, 1);
+  assert.notEqual(
+    submitted.find((call) => call.name === "create").params.requestId,
+    originalPending[0].params.requestId,
+  );
+  assert.deepEqual(
+    await page.evaluate(() => window.fixturePending),
+    originalPending,
+    "new send retains original unconfirmed creation",
+  );
   await page.goto(base + "?unrelated-pending=invalid");
   await page.getByTestId("chat-input").waitFor();
-  assert.equal(await page.getByTestId("chat-send-button").isEnabled(), false, "unrecognized original request remains blocking");
+  assert.equal(
+    await page.getByTestId("chat-send-button").isEnabled(),
+    false,
+    "unrecognized original request remains blocking",
+  );
   await page.goto(base + "?unrelated-pending=own");
   await page.getByTestId("chat-input").waitFor();
-  assert.equal(await page.getByTestId("chat-input").getAttribute("contenteditable"), "false", "the draft's own UNKNOWN remains locked with a connected model");
+  assert.equal(
+    await page.getByTestId("chat-input").getAttribute("contenteditable"),
+    "false",
+    "the draft's own UNKNOWN remains locked with a connected model",
+  );
   assert.equal(await page.getByTestId("chat-send-button").isEnabled(), false);
-  assert.deepEqual(await page.evaluate(() => window.fixtureCalls.filter(call => ["create", "send"].includes(call.name))), []);
-  checks.push("a fresh modeled draft creates and sends once despite unrelated valid creation, retains original pending, and blocks malformed or own identity");
+  assert.deepEqual(
+    await page.evaluate(() =>
+      window.fixtureCalls.filter((call) => ["create", "send"].includes(call.name)),
+    ),
+    [],
+  );
+  checks.push(
+    "a fresh modeled draft creates and sends once despite unrelated valid creation, retains original pending, and blocks malformed or own identity",
+  );
   await messagesAcceptance();
   if (process.env.AREAL_WORKTREE_UI_MESSAGES_ONLY === "1") {
-    assert.deepEqual(errors, []); passed = true;
+    assert.deepEqual(errors, []);
+    passed = true;
   } else {
-  await page.goto(base);
-  await trigger().waitFor();
-  await capture("picker-closed");
-  await trigger().click();
-  await branch().waitFor();
-  await environment().waitFor();
-  assert.equal(await environment().isDisabled(), true, "environment is disabled while worktree is off");
-  await capture("picker-off");
-  await page.getByRole("switch", { name: "在新 Worktree 中工作", exact: true }).click();
-  await capture("picker-on");
-  const anchor = await page.getByRole("dialog").boundingBox();
-  await branch().click();
-  assert.equal(await page.getByRole("dialog").count(), 1, "subpage replaces the anchored popover");
-  const subpage = await page.getByRole("dialog").boundingBox();
-  assert.ok(Math.abs(anchor.x + anchor.width - subpage.x - subpage.width) < 2, "submenu keeps the same anchor edge");
-  await capture("picker-branches");
-  assert.equal(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight + 1), true, "picker composition preserves the overlay viewport without adding page scroll");
-  await page.getByRole("searchbox", { name: "搜索分支", exact: true }).fill("no-branch-matches");
-  await page.getByText("没有匹配的分支", { exact: true }).waitFor();
-  await capture("picker-branch-search-empty");
-  await page.getByRole("searchbox", { name: "搜索分支", exact: true }).fill("release");
-  await page.getByRole("option", { name: "release", exact: true }).click();
-  await branch().waitFor();
-  await capture("picker-branch-selected");
-  await branch().click();
-  assert.equal(await page.getByRole("option", { name: "release", exact: true }).getAttribute("aria-selected"), "true");
-  await page.keyboard.press("Escape");
-  await branch().waitFor();
-  await environment().click();
-  await capture("picker-environments");
-  await page.getByRole("option", { name: "Development", exact: true }).click();
-  await environment().waitFor();
-  await capture("picker-configured");
-  await page.keyboard.press("Escape");
-  await page.getByRole("dialog").waitFor({ state: "hidden" });
-  assert.equal(await trigger().evaluate(element => element === document.activeElement), true, "closing returns focus to gear");
-  const selection = await page.evaluate(() => window.fixtureSelection);
-  assert.equal(selection.ref, "release");
-  assert.equal(selection.mode, "worktree");
-  assert.equal(selection.environmentId, "dev");
-  assert.equal(selection.environmentRevision, 1);
-  assert.equal((await page.evaluate(() => window.fixtureCalls)).some(call => ["create", "send"].includes(call.name) || ["worktreeCreate", "worktreeOpen"].includes(call.params.operation)), false);
-  checks.push("production picker preserves three rows, replaces anchored subpages, searches and selects, restores focus, and never creates or sends during configuration");
-  for (const state of ["creating", "created", "binding", "settingUp", "cancelling", "cancelled", "ready", "failed", "unknown"]) {
-    await page.evaluate(state => window.updateEvents([{ id: state, state, message: state === "failed" ? "Fixture creation failed" : undefined, setup: { output: "Fixture setup output\n" + "long-command-output ".repeat(60) } }], { state, directory: "/fixture/new-trees/task-proof", branch: "areal/gui-proof", automatic: true }), state);
-    const status = page.locator(`[data-worktree-state="${state}"]`);
-    await status.waitFor();
-    if (state === "creating") {
-      assert.equal(await page.getByLabel("操作输出", { exact: true }).isVisible(), false, "logs start collapsed");
-      await capture("state-creating");
-      await page.getByRole("button", { name: "查看创建详情", exact: true }).click();
-      await page.getByLabel("操作输出", { exact: true }).waitFor();
-      await capture("state-creating-log-details");
-      await page.evaluate(() => window.updateEvents([{ id: "creating", state: "creating", setup: { output: "Fixture setup output\nAppended output remains expanded" } }], { state: "creating" }));
-      await page.getByText("Appended output remains expanded", { exact: false }).waitFor();
-      assert.equal(await page.getByRole("button", { name: "收起创建详情", exact: true }).getAttribute("aria-expanded"), "true");
-      await page.getByRole("button", { name: "收起创建详情", exact: true }).click();
-    }
-    if (state === "ready") {
-      await page.getByText("Worktree 已创建", { exact: true }).waitFor();
-      assert.equal(await page.getByText("/fixture/new-trees/task-proof", { exact: true }).isVisible(), false);
-    }
-    if (state === "failed") await page.getByText("Fixture creation failed", { exact: true }).waitFor();
-    if (state !== "creating") await capture("state-" + state);
-  }
-  checks.push("production status keeps logs collapsed, preserves manual expansion across incremental output, distinguishes all preparation and terminal facts, and converges ready to a light summary");
-  await page.evaluate(() => { window.fixtureFail = true; });
-  await trigger().click();
-  await page.getByRole("alert").getByText("Fixture directory unavailable").waitFor();
-  await capture("picker-read-failed");
-  await page.keyboard.press("Escape");
-  await page.getByRole("dialog").waitFor({ state: "hidden" });
-  await page.evaluate(() => { window.fixtureFail = false; });
-  checks.push("source-query failure remains distinct from an empty collection and Escape returns accessibly");
-  await page.goto(base + "?sidebar=1");
-  const badge = page.getByTestId("task-worktree-badge").first();
-  await badge.waitFor();
-  assert.match(await badge.getAttribute("aria-label"), /Worktree.*areal\/a-very-long-branch-name/);
-  assert.equal((await badge.innerText()).trim(), "", "sidebar identity is an icon instead of a persistent branch text line");
-  await capture("sidebar-identity");
-  checks.push("production sidebar keeps the title primary with an accessible compact worktree identity alongside running and unread states");
-  await page.goto(base + "?settings=1");
-  const settings = page.getByTestId("worktrees-settings");
-  await settings.locator('input[aria-label="Worktree 根目录"]').waitFor();
-  await settings.getByRole("button", { name: /^删除 / }).first().waitFor();
-  await capture("settings-general");
-  await settings.getByRole("button", { name: /^查看详情 / }).first().click();
-  await capture("settings-directory-details");
-  const deleteButton = settings.getByRole("button", { name: /^删除 / }).first();
-  page.once("dialog", dialog => dialog.accept());
-  await deleteButton.click();
-  await settings.getByText("Fixture blocker: uncommitted changes remain in this directory", { exact: true }).waitFor();
-  await deleteButton.waitFor();
-  await capture("settings-delete-blocked");
-  assert.equal(await settings.getByRole("button", { name: /^删除 / }).count(), 2);
-  await settings.getByRole("tab", { name: "环境", exact: true }).click();
-  await settings.getByRole("button", { name: "配置环境 AReaL Harness long project title with production components", exact: true }).waitFor();
-  await capture("settings-environment-projects");
-  await settings.getByRole("button", { name: "配置环境 AReaL Harness long project title with production components", exact: true }).click();
-  await settings.getByRole("button", { name: "编辑环境 Development", exact: true }).waitFor();
-  await capture("settings-environment-list");
-  await settings.getByRole("button", { name: "编辑环境 Development", exact: true }).click();
-  await settings.getByRole("textbox", { name: "环境名称", exact: true }).waitFor();
-  await capture("settings-editor-actions-empty");
-  await settings.getByRole("button", { name: "添加操作", exact: true }).scrollIntoViewIfNeeded();
-  await capture("settings-actions-empty");
-  const setupTabs = settings.getByRole("tablist", { name: "设置脚本平台", exact: true });
-  const cleanupTabs = settings.getByRole("tablist", { name: "清理脚本平台", exact: true });
-  await setupTabs.getByRole("tab", { name: "macOS", exact: true }).click();
-  await settings.getByRole("tabpanel", { name: "macOS", exact: true }).getByRole("textbox", { name: "设置脚本", exact: true }).fill("echo unsaved mac setup");
-  await cleanupTabs.getByRole("tab", { name: "Linux", exact: true }).click();
-  await settings.getByRole("tabpanel", { name: "Linux", exact: true }).getByRole("textbox", { name: "清理脚本", exact: true }).fill("echo unsaved linux cleanup");
-  assert.equal(await setupTabs.getByRole("tab", { name: "macOS", exact: true }).getAttribute("aria-selected"), "true");
-  assert.equal(await settings.getByRole("textbox", { name: "设置脚本", exact: true }).inputValue(), "echo unsaved mac setup");
-  await settings.getByRole("button", { name: "变量", exact: true }).click();
-  await page.getByText("AREAL_WORKTREE_PATH", { exact: true }).waitFor();
-  await capture("settings-editor-variables");
-  await page.keyboard.press("Escape");
-  await capture("settings-platform-independent");
-  await settings.getByRole("navigation", { name: "环境导航", exact: true }).getByRole("button", { name: "环境", exact: true }).click();
-  const dirtyDialog = page.getByRole("dialog");
-  await dirtyDialog.getByRole("button", { name: "继续编辑", exact: true }).waitFor();
-  await capture("settings-navigation-dirty");
-  await dirtyDialog.getByRole("button", { name: "继续编辑", exact: true }).click();
-  assert.equal(await settings.getByRole("textbox", { name: "设置脚本", exact: true }).inputValue(), "echo unsaved mac setup");
-  await settings.getByRole("button", { name: "保存", exact: true }).click();
-  await settings.getByRole("button", { name: "编辑环境 Quality", exact: true }).waitFor();
-  const saved = await page.evaluate(() => window.fixtureCalls.findLast(call => call.params.operation === "worktreeEnvironmentSave"));
-  assert.equal(saved.params.environment.setup.macos, "echo unsaved mac setup");
-  assert.equal(saved.params.environment.cleanup.linux, "echo unsaved linux cleanup");
-  assert.equal(saved.params.environment.setup.default, "echo default setup");
-  await settings.getByRole("button", { name: "编辑环境 Quality", exact: true }).click();
-  await settings.getByRole("button", { name: "编辑操作 Build", exact: true }).scrollIntoViewIfNeeded();
-  await capture("settings-actions-full");
-  await settings.getByRole("tablist", { name: "设置脚本平台", exact: true }).getByRole("tab", { name: "macOS", exact: true }).click();
-  await settings.getByRole("tabpanel", { name: "macOS", exact: true }).getByRole("textbox", { name: "设置脚本", exact: true }).fill("echo quality mac setup");
-  await settings.getByRole("tablist", { name: "清理脚本平台", exact: true }).getByRole("tab", { name: "Linux", exact: true }).click();
-  await settings.getByRole("tabpanel", { name: "Linux", exact: true }).getByRole("textbox", { name: "清理脚本", exact: true }).fill("echo quality linux cleanup");
-  await settings.getByRole("button", { name: "编辑操作 Build", exact: true }).click();
-  await settings.getByRole("tabpanel", { name: "默认", exact: true }).getByRole("textbox", { name: "操作脚本 Build", exact: true }).fill("echo unsaved action default");
-  assert.equal(await settings.getByRole("tablist", { name: "设置脚本平台", exact: true }).getByRole("tab", { name: "macOS", exact: true }).getAttribute("aria-selected"), "true");
-  assert.equal(await settings.getByRole("tablist", { name: "清理脚本平台", exact: true }).getByRole("tab", { name: "Linux", exact: true }).getAttribute("aria-selected"), "true");
-  assert.equal(await settings.getByRole("textbox", { name: "设置脚本", exact: true }).inputValue(), "echo quality mac setup");
-  assert.equal(await settings.getByRole("textbox", { name: "清理脚本", exact: true }).inputValue(), "echo quality linux cleanup");
-  await capture("settings-action-editor");
-  assert.equal((await page.evaluate(() => window.fixtureCalls)).some(call => call.params.operation === "worktreeAction" || ["send", "create"].includes(call.name)), false, "settings only configures scripts");
-  checks.push("production settings separates project/list/editor pages, preserves rejected-delete identity, protects dirty navigation, keeps script platform choices independent, and saves configuration without execution");
-  await settings.getByRole("navigation", { name: "环境导航", exact: true }).getByRole("button", { name: "AReaL Harness long project title with production components", exact: true }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "放弃修改并继续", exact: true }).click();
-  await settings.getByRole("button", { name: "编辑环境 Quality", exact: true }).click();
-  for (const variant of [{ name: "light-14-wide", dark: false, size: 14, width: 1100, reducedMotion: false }, { name: "dark-18-wide", dark: true, size: 18, width: 1100, reducedMotion: true }, { name: "light-18-narrow", dark: false, size: 18, width: 390, reducedMotion: true }, { name: "dark-14-narrow", dark: true, size: 14, width: 390, reducedMotion: false }]) {
-    await page.setViewportSize({ width: variant.width, height: 844 });
-    await page.evaluate(variant => window.setFixtureAppearance(variant), variant);
-    await noOverflow();
-    assert.ok(await page.locator(".settings-workspace").evaluate(element => element.scrollWidth <= element.clientWidth + 1), "settings scroll owner must not overflow horizontally");
-    await capture("settings-" + variant.name);
-    await settings.getByRole("button", { name: "保存", exact: true }).scrollIntoViewIfNeeded();
-    await capture("settings-" + variant.name + "-footer");
     await page.goto(base);
     await trigger().waitFor();
-    await page.evaluate(variant => window.setFixtureAppearance(variant), variant);
+    await capture("picker-closed");
+    for (const phase of ["initial", "refresh"]) {
+      await page.evaluate(() => {
+        window.fixtureHoldOptions = true;
+      });
+      await trigger().click();
+      await page.getByRole("status").filter({ hasText: "正在读取 Worktree 与分支…" }).waitFor();
+      assert.equal(await branch().isDisabled(), true);
+      await capture("picker-loading-" + phase);
+      const loadingBox = await page.getByRole("dialog").boundingBox();
+      await page.evaluate(() => {
+        window.fixtureHoldOptions = false;
+        window.fixtureResolveOptions();
+      });
+      await branch().and(page.locator(":enabled")).waitFor();
+      await capture("picker-loaded-" + phase);
+      const loadedBox = await page.getByRole("dialog").boundingBox();
+      for (const key of ["x", "y", "width", "height"]) {
+        assert.ok(
+          Math.abs(loadedBox[key] - loadingBox[key]) <= 1,
+          `${phase}: loading must not change popup ${key}: ${loadingBox[key]} -> ${loadedBox[key]}`,
+        );
+      }
+      await page.keyboard.press("Escape");
+    }
+    checks.push(
+      "initial and refreshed worktree options preserve popup geometry while loading and keep controls disabled until ready",
+    );
     await trigger().click();
     await branch().waitFor();
-    await noOverflow();
-    const box = await page.getByRole("dialog").boundingBox();
-    assert.ok(box.x >= -1 && box.x + box.width <= variant.width + 1, "picker stays within viewport");
-    assert.equal(await page.evaluate(() => document.documentElement.dataset.reducedMotion), String(variant.reducedMotion));
-    await capture("picker-" + variant.name);
+    await environment().waitFor();
+    assert.equal(
+      await environment().isDisabled(),
+      true,
+      "environment is disabled while worktree is off",
+    );
+    await capture("picker-off");
+    await page.getByRole("switch", { name: "在新 Worktree 中工作", exact: true }).click();
+    await capture("picker-on");
+    const anchor = await page.getByRole("dialog").boundingBox();
+    await branch().click();
+    assert.equal(
+      await page.getByRole("dialog").count(),
+      1,
+      "subpage replaces the anchored popover",
+    );
+    const subpage = await page.getByRole("dialog").boundingBox();
+    assert.ok(
+      Math.abs(anchor.x + anchor.width - subpage.x - subpage.width) < 2,
+      "submenu keeps the same anchor edge",
+    );
+    await capture("picker-branches");
+    assert.equal(
+      await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight + 1),
+      true,
+      "picker composition preserves the overlay viewport without adding page scroll",
+    );
+    await page.getByRole("searchbox", { name: "搜索分支", exact: true }).fill("no-branch-matches");
+    await page.getByText("没有匹配的分支", { exact: true }).waitFor();
+    await capture("picker-branch-search-empty");
+    await page.getByRole("searchbox", { name: "搜索分支", exact: true }).fill("release");
+    await page.getByRole("option", { name: "release", exact: true }).click();
+    await branch().waitFor();
+    await capture("picker-branch-selected");
+    await branch().click();
+    assert.equal(
+      await page
+        .getByRole("option", { name: "release", exact: true })
+        .getAttribute("aria-selected"),
+      "true",
+    );
     await page.keyboard.press("Escape");
-    await page.goto(base + "?settings=1");
-    await settings.getByRole("tab", { name: "环境", exact: true }).click();
-    await settings.getByRole("button", { name: "配置环境 AReaL Harness long project title with production components", exact: true }).click();
-    await settings.getByRole("button", { name: "编辑环境 Quality", exact: true }).click();
-  }
-  checks.push("light/dark, 14/18 UI font, wide/narrow and reduced-motion representative combinations retain readable controls and no horizontal page overflow");
-  await page.goto(base + "?actions=empty");
-  await page.getByRole("button", { name: "Worktree 分支 areal/gui-proof", exact: true }).click();
-  await page.getByText("/fixture/new-trees/task-proof", { exact: true }).waitFor();
-  assert.equal(await page.getByRole("button", { name: "Build", exact: true }).count(), 0);
-  await capture("workspace-actions-empty");
-  await page.goto(base + "?actions=full");
-  await page.getByRole("button", { name: "Worktree 分支 areal/gui-proof", exact: true }).click();
-  await page.getByRole("button", { name: "Build", exact: true }).waitFor();
-  await capture("workspace-actions-full");
-  for (const result of ["succeeded", "failed", "unknown"]) {
-    await page.evaluate(result => { window.fixtureActionState = result; }, result);
-    await page.getByRole("button", { name: "Build", exact: true }).click();
-    await page.getByRole("status").getByText("正在运行操作…", { exact: true }).waitFor();
-    assert.equal(await page.getByRole("button", { name: "Build", exact: true }).isDisabled(), true);
-    await capture("workspace-action-running-" + result);
-    await page.evaluate(() => window.resolveFixtureAction());
-    await page.getByLabel("操作输出", { exact: true }).waitFor();
-    if (result !== "succeeded") {
-      const notice = page.getByTestId("toast");
-      await notice.getByRole(result === "unknown" ? "status" : "alert").waitFor();
-      assert.equal(await notice.getAttribute("data-tone"), result === "unknown" ? "warning" : "error");
+    await branch().waitFor();
+    await environment().click();
+    await capture("picker-environments");
+    await page.getByRole("option", { name: "Development", exact: true }).click();
+    await environment().waitFor();
+    await capture("picker-configured");
+    await page.keyboard.press("Escape");
+    await page.getByRole("dialog").waitFor({ state: "hidden" });
+    assert.equal(
+      await trigger().evaluate((element) => element === document.activeElement),
+      true,
+      "closing returns focus to gear",
+    );
+    const selection = await page.evaluate(() => window.fixtureSelection);
+    assert.equal(selection.ref, "release");
+    assert.equal(selection.mode, "worktree");
+    assert.equal(selection.environmentId, "dev");
+    assert.equal(selection.environmentRevision, 1);
+    assert.equal(
+      (await page.evaluate(() => window.fixtureCalls)).some(
+        (call) =>
+          ["create", "send"].includes(call.name) ||
+          ["worktreeCreate", "worktreeOpen"].includes(call.params.operation),
+      ),
+      false,
+    );
+    checks.push(
+      "production picker preserves three rows, replaces anchored subpages, searches and selects, restores focus, and never creates or sends during configuration",
+    );
+    for (const state of [
+      "creating",
+      "created",
+      "binding",
+      "settingUp",
+      "cancelling",
+      "cancelled",
+      "ready",
+      "failed",
+      "unknown",
+    ]) {
+      await page.evaluate(
+        (state) =>
+          window.updateEvents(
+            [
+              {
+                id: state,
+                state,
+                message: state === "failed" ? "Fixture creation failed" : undefined,
+                setup: { output: "Fixture setup output\n" + "long-command-output ".repeat(60) },
+              },
+            ],
+            {
+              state,
+              directory: "/fixture/new-trees/task-proof",
+              branch: "areal/gui-proof",
+              automatic: true,
+            },
+          ),
+        state,
+      );
+      const status = page.locator(`[data-worktree-state="${state}"]`);
+      await status.waitFor();
+      if (state === "creating") {
+        assert.equal(
+          await page.getByLabel("操作输出", { exact: true }).isVisible(),
+          false,
+          "logs start collapsed",
+        );
+        await capture("state-creating");
+        await page.getByRole("button", { name: "查看创建详情", exact: true }).click();
+        await page.getByLabel("操作输出", { exact: true }).waitFor();
+        await capture("state-creating-log-details");
+        await page.evaluate(() =>
+          window.updateEvents(
+            [
+              {
+                id: "creating",
+                state: "creating",
+                setup: { output: "Fixture setup output\nAppended output remains expanded" },
+              },
+            ],
+            { state: "creating" },
+          ),
+        );
+        await page.getByText("Appended output remains expanded", { exact: false }).waitFor();
+        assert.equal(
+          await page
+            .getByRole("button", { name: "收起创建详情", exact: true })
+            .getAttribute("aria-expanded"),
+          "true",
+        );
+        await page.getByRole("button", { name: "收起创建详情", exact: true }).click();
+      }
+      if (state === "ready") {
+        await page.getByText("Worktree 已创建", { exact: true }).waitFor();
+        assert.equal(
+          await page.getByText("/fixture/new-trees/task-proof", { exact: true }).isVisible(),
+          false,
+        );
+      }
+      if (state === "failed")
+        await page.getByText("Fixture creation failed", { exact: true }).waitFor();
+      if (state !== "creating") await capture("state-" + state);
     }
-    await capture("workspace-action-" + result);
-  }
-  checks.push("production workspace details expose only saved actions and distinguish running, succeeded, failed and unknown service results without duplicate submission");
-  await page.goto(base + "?recovery=accepted");
-  await page.waitForFunction(() => window.fixtureCalls.some(call => call.name === 'opened'));
-  assert.equal(await page.evaluate(() => localStorage.getItem('fixture-draft:pending-create')), null);
-  assert.equal(await page.evaluate(() => window.fixtureCalls.filter(call => call.name === 'opened').length), 1);
-  assert.equal(await page.evaluate(() => window.fixtureCalls.some(call => ['create','send'].includes(call.name))), false);
-  checks.push('a known creation receipt converges despite an unrelated pending project request, without create/send replay');
-  await page.goto(base + "?toast=1");
-  await page.getByTestId('toast').waitFor();
-  assert.equal(await page.locator('[data-recovery-request-id="same-request"]').count(), 1);
-  assert.equal(await page.getByTestId('feedback-notice').count(), 0);
-  await page.getByRole('button', { name: '核对通知', exact: true }).click();
-  assert.equal(await page.evaluate(() => window.fixtureCalls.filter(call => call.name === 'check').length), 1);
-  await page.getByRole('button', { name: '更新快照', exact: true }).click();
-  await page.mouse.move(0, 0);
-  await page.getByTestId('toast').waitFor({ state: 'hidden', timeout: 8000 });
-  await page.getByRole('button', { name: '更新快照', exact: true }).click();
-  assert.equal(await page.getByTestId('toast').count(), 0, 'same receipt is not announced again on snapshot updates');
-  await page.getByRole('button', { name: '更新快照', exact: true }).click();
-  await page.locator('[data-testid="toast"][data-tone="error"]').waitFor();
-  checks.push('same-request notices deduplicate into one actionable toast, expire and do not reappear on unrelated snapshots');
-  await page.goto(base + "?recovery=1");
-  await page.getByRole("button", { name: "检查操作状态", exact: true }).click();
-  await page.getByRole("button", { name: "操作待确认", exact: true }).click();
-  const recover = page.getByRole("menuitem", { name: "保留原结果，返回草稿", exact: true });
-  await recover.waitFor();
-  page.once("dialog", dialog => dialog.dismiss());
-  await recover.click();
-  assert.notEqual(await page.evaluate(() => localStorage.getItem("fixture-draft:pending-create")), null);
-  page.once("dialog", dialog => dialog.accept());
-  await page.getByRole("button", { name: "操作待确认", exact: true }).click();
-  await recover.click();
-  assert.equal(await page.evaluate(() => localStorage.getItem("fixture-draft:pending-create")), null);
-  assert.equal(await page.evaluate(() => localStorage.getItem("fixture-draft")), "retain this input");
-  assert.ok(await page.evaluate(() => localStorage.getItem("fixture-draft:retained-create:00000000-0000-4000-a000-000000000001")));
-  const recoveryCalls = await page.evaluate(() => window.fixtureCalls);
-  assert.equal(recoveryCalls.filter(call => call.name === "create").length, 0);
-  assert.deepEqual(recoveryCalls.find(call => call.params.operation === "worktreeRead").params, { projectId: "logical", operation: "worktreeRead", requestId: "00000000-0000-4000-a000-000000000001" });
-  assert.equal(recoveryCalls.some(call => call.name === "send"), false);
-  await capture("unknown-explicit-recovery-draft-preserved");
-  checks.push("production DraftComposer inspects original UUID before explicit recovery, retains draft and archived request, and never replays create or sends uncertain input");
-  assert.deepEqual(errors, []);
-  passed = true;
+    checks.push(
+      "production status keeps logs collapsed, preserves manual expansion across incremental output, distinguishes all preparation and terminal facts, and converges ready to a light summary",
+    );
+    await page.evaluate(() => {
+      window.fixtureFail = true;
+    });
+    await trigger().click();
+    await page.getByRole("alert").getByText("Fixture directory unavailable").waitFor();
+    await capture("picker-read-failed");
+    await page.keyboard.press("Escape");
+    await page.getByRole("dialog").waitFor({ state: "hidden" });
+    await page.evaluate(() => {
+      window.fixtureFail = false;
+    });
+    checks.push(
+      "source-query failure remains distinct from an empty collection and Escape returns accessibly",
+    );
+    await page.goto(base + "?sidebar=1");
+    const badge = page.getByTestId("task-worktree-badge").first();
+    await badge.waitFor();
+    assert.match(
+      await badge.getAttribute("aria-label"),
+      /Worktree.*areal\/a-very-long-branch-name/,
+    );
+    assert.equal(
+      (await badge.innerText()).trim(),
+      "",
+      "sidebar identity is an icon instead of a persistent branch text line",
+    );
+    await capture("sidebar-identity");
+    checks.push(
+      "production sidebar keeps the title primary with an accessible compact worktree identity alongside running and unread states",
+    );
+    await page.goto(base + "?settings=1");
+    const settings = page.getByTestId("worktrees-settings");
+    await settings.locator('input[aria-label="Worktree 根目录"]').waitFor();
+    await settings
+      .getByRole("button", { name: /^删除 / })
+      .first()
+      .waitFor();
+    await capture("settings-general");
+    await settings
+      .getByRole("button", { name: /^查看详情 / })
+      .first()
+      .click();
+    await capture("settings-directory-details");
+    const deleteButton = settings.getByRole("button", { name: /^删除 / }).first();
+    page.once("dialog", (dialog) => dialog.accept());
+    await deleteButton.click();
+    await settings
+      .getByText("Fixture blocker: uncommitted changes remain in this directory", { exact: true })
+      .waitFor();
+    await deleteButton.waitFor();
+    await capture("settings-delete-blocked");
+    assert.equal(await settings.getByRole("button", { name: /^删除 / }).count(), 2);
+    await settings.getByRole("tab", { name: "环境", exact: true }).click();
+    await settings
+      .getByRole("button", {
+        name: "配置环境 AReaL Harness long project title with production components",
+        exact: true,
+      })
+      .waitFor();
+    await capture("settings-environment-projects");
+    await settings
+      .getByRole("button", {
+        name: "配置环境 AReaL Harness long project title with production components",
+        exact: true,
+      })
+      .click();
+    await settings.getByRole("button", { name: "编辑环境 Development", exact: true }).waitFor();
+    await capture("settings-environment-list");
+    await settings.getByRole("button", { name: "编辑环境 Development", exact: true }).click();
+    await settings.getByRole("textbox", { name: "环境名称", exact: true }).waitFor();
+    await capture("settings-editor-actions-empty");
+    await settings.getByRole("button", { name: "添加操作", exact: true }).scrollIntoViewIfNeeded();
+    await capture("settings-actions-empty");
+    const setupTabs = settings.getByRole("tablist", { name: "设置脚本平台", exact: true });
+    const cleanupTabs = settings.getByRole("tablist", { name: "清理脚本平台", exact: true });
+    await setupTabs.getByRole("tab", { name: "macOS", exact: true }).click();
+    await settings
+      .getByRole("tabpanel", { name: "macOS", exact: true })
+      .getByRole("textbox", { name: "设置脚本", exact: true })
+      .fill("echo unsaved mac setup");
+    await cleanupTabs.getByRole("tab", { name: "Linux", exact: true }).click();
+    await settings
+      .getByRole("tabpanel", { name: "Linux", exact: true })
+      .getByRole("textbox", { name: "清理脚本", exact: true })
+      .fill("echo unsaved linux cleanup");
+    assert.equal(
+      await setupTabs
+        .getByRole("tab", { name: "macOS", exact: true })
+        .getAttribute("aria-selected"),
+      "true",
+    );
+    assert.equal(
+      await settings.getByRole("textbox", { name: "设置脚本", exact: true }).inputValue(),
+      "echo unsaved mac setup",
+    );
+    await settings.getByRole("button", { name: "变量", exact: true }).click();
+    await page.getByText("AREAL_WORKTREE_PATH", { exact: true }).waitFor();
+    await capture("settings-editor-variables");
+    await page.keyboard.press("Escape");
+    await capture("settings-platform-independent");
+    await settings
+      .getByRole("navigation", { name: "环境导航", exact: true })
+      .getByRole("button", { name: "环境", exact: true })
+      .click();
+    const dirtyDialog = page.getByRole("dialog");
+    await dirtyDialog.getByRole("button", { name: "继续编辑", exact: true }).waitFor();
+    await capture("settings-navigation-dirty");
+    await dirtyDialog.getByRole("button", { name: "继续编辑", exact: true }).click();
+    assert.equal(
+      await settings.getByRole("textbox", { name: "设置脚本", exact: true }).inputValue(),
+      "echo unsaved mac setup",
+    );
+    await settings.getByRole("button", { name: "保存", exact: true }).click();
+    await settings.getByRole("button", { name: "编辑环境 Quality", exact: true }).waitFor();
+    const saved = await page.evaluate(() =>
+      window.fixtureCalls.findLast((call) => call.params.operation === "worktreeEnvironmentSave"),
+    );
+    assert.equal(saved.params.environment.setup.macos, "echo unsaved mac setup");
+    assert.equal(saved.params.environment.cleanup.linux, "echo unsaved linux cleanup");
+    assert.equal(saved.params.environment.setup.default, "echo default setup");
+    await settings.getByRole("button", { name: "编辑环境 Quality", exact: true }).click();
+    await settings
+      .getByRole("button", { name: "编辑操作 Build", exact: true })
+      .scrollIntoViewIfNeeded();
+    await capture("settings-actions-full");
+    await settings
+      .getByRole("tablist", { name: "设置脚本平台", exact: true })
+      .getByRole("tab", { name: "macOS", exact: true })
+      .click();
+    await settings
+      .getByRole("tabpanel", { name: "macOS", exact: true })
+      .getByRole("textbox", { name: "设置脚本", exact: true })
+      .fill("echo quality mac setup");
+    await settings
+      .getByRole("tablist", { name: "清理脚本平台", exact: true })
+      .getByRole("tab", { name: "Linux", exact: true })
+      .click();
+    await settings
+      .getByRole("tabpanel", { name: "Linux", exact: true })
+      .getByRole("textbox", { name: "清理脚本", exact: true })
+      .fill("echo quality linux cleanup");
+    await settings.getByRole("button", { name: "编辑操作 Build", exact: true }).click();
+    await settings
+      .getByRole("tabpanel", { name: "默认", exact: true })
+      .getByRole("textbox", { name: "操作脚本 Build", exact: true })
+      .fill("echo unsaved action default");
+    assert.equal(
+      await settings
+        .getByRole("tablist", { name: "设置脚本平台", exact: true })
+        .getByRole("tab", { name: "macOS", exact: true })
+        .getAttribute("aria-selected"),
+      "true",
+    );
+    assert.equal(
+      await settings
+        .getByRole("tablist", { name: "清理脚本平台", exact: true })
+        .getByRole("tab", { name: "Linux", exact: true })
+        .getAttribute("aria-selected"),
+      "true",
+    );
+    assert.equal(
+      await settings.getByRole("textbox", { name: "设置脚本", exact: true }).inputValue(),
+      "echo quality mac setup",
+    );
+    assert.equal(
+      await settings.getByRole("textbox", { name: "清理脚本", exact: true }).inputValue(),
+      "echo quality linux cleanup",
+    );
+    await capture("settings-action-editor");
+    assert.equal(
+      (await page.evaluate(() => window.fixtureCalls)).some(
+        (call) =>
+          call.params.operation === "worktreeAction" || ["send", "create"].includes(call.name),
+      ),
+      false,
+      "settings only configures scripts",
+    );
+    checks.push(
+      "production settings separates project/list/editor pages, preserves rejected-delete identity, protects dirty navigation, keeps script platform choices independent, and saves configuration without execution",
+    );
+    await settings
+      .getByRole("navigation", { name: "环境导航", exact: true })
+      .getByRole("button", {
+        name: "AReaL Harness long project title with production components",
+        exact: true,
+      })
+      .click();
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "放弃修改并继续", exact: true })
+      .click();
+    await settings.getByRole("button", { name: "编辑环境 Quality", exact: true }).click();
+    for (const variant of [
+      { name: "light-14-wide", dark: false, size: 14, width: 1100, reducedMotion: false },
+      { name: "dark-18-wide", dark: true, size: 18, width: 1100, reducedMotion: true },
+      { name: "light-18-narrow", dark: false, size: 18, width: 390, reducedMotion: true },
+      { name: "dark-14-narrow", dark: true, size: 14, width: 390, reducedMotion: false },
+    ]) {
+      await page.setViewportSize({ width: variant.width, height: 844 });
+      await page.evaluate((variant) => window.setFixtureAppearance(variant), variant);
+      await noOverflow();
+      assert.ok(
+        await page
+          .locator(".settings-workspace")
+          .evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
+        "settings scroll owner must not overflow horizontally",
+      );
+      await capture("settings-" + variant.name);
+      await settings.getByRole("button", { name: "保存", exact: true }).scrollIntoViewIfNeeded();
+      await capture("settings-" + variant.name + "-footer");
+      await page.goto(base);
+      await trigger().waitFor();
+      await page.evaluate((variant) => window.setFixtureAppearance(variant), variant);
+      await trigger().click();
+      await branch().waitFor();
+      await noOverflow();
+      const box = await page.getByRole("dialog").boundingBox();
+      assert.ok(
+        box.x >= -1 && box.x + box.width <= variant.width + 1,
+        "picker stays within viewport",
+      );
+      assert.equal(
+        await page.evaluate(() => document.documentElement.dataset.reducedMotion),
+        String(variant.reducedMotion),
+      );
+      await capture("picker-" + variant.name);
+      await page.keyboard.press("Escape");
+      await page.goto(base + "?settings=1");
+      await settings.getByRole("tab", { name: "环境", exact: true }).click();
+      await settings
+        .getByRole("button", {
+          name: "配置环境 AReaL Harness long project title with production components",
+          exact: true,
+        })
+        .click();
+      await settings.getByRole("button", { name: "编辑环境 Quality", exact: true }).click();
+    }
+    checks.push(
+      "light/dark, 14/18 UI font, wide/narrow and reduced-motion representative combinations retain readable controls and no horizontal page overflow",
+    );
+    await page.goto(base + "?actions=empty");
+    await page.getByRole("button", { name: "Worktree 分支 areal/gui-proof", exact: true }).click();
+    await page.getByText("/fixture/new-trees/task-proof", { exact: true }).waitFor();
+    assert.equal(await page.getByRole("button", { name: "Build", exact: true }).count(), 0);
+    await capture("workspace-actions-empty");
+    await page.goto(base + "?actions=full");
+    await page.getByRole("button", { name: "Worktree 分支 areal/gui-proof", exact: true }).click();
+    await page.getByRole("button", { name: "Build", exact: true }).waitFor();
+    await capture("workspace-actions-full");
+    for (const result of ["succeeded", "failed", "unknown"]) {
+      await page.evaluate((result) => {
+        window.fixtureActionState = result;
+      }, result);
+      await page.getByRole("button", { name: "Build", exact: true }).click();
+      await page.getByRole("status").getByText("正在运行操作…", { exact: true }).waitFor();
+      assert.equal(
+        await page.getByRole("button", { name: "Build", exact: true }).isDisabled(),
+        true,
+      );
+      await capture("workspace-action-running-" + result);
+      await page.evaluate(() => window.resolveFixtureAction());
+      await page.getByLabel("操作输出", { exact: true }).waitFor();
+      if (result !== "succeeded") {
+        const notice = page.getByTestId("toast");
+        await notice.getByRole(result === "unknown" ? "status" : "alert").waitFor();
+        assert.equal(
+          await notice.getAttribute("data-tone"),
+          result === "unknown" ? "warning" : "error",
+        );
+      }
+      await capture("workspace-action-" + result);
+    }
+    checks.push(
+      "production workspace details expose only saved actions and distinguish running, succeeded, failed and unknown service results without duplicate submission",
+    );
+    await page.goto(base + "?recovery=accepted");
+    await page.waitForFunction(() => window.fixtureCalls.some((call) => call.name === "opened"));
+    assert.equal(
+      await page.evaluate(() => localStorage.getItem("fixture-draft:pending-create")),
+      null,
+    );
+    assert.equal(
+      await page.evaluate(
+        () => window.fixtureCalls.filter((call) => call.name === "opened").length,
+      ),
+      1,
+    );
+    assert.equal(
+      await page.evaluate(() =>
+        window.fixtureCalls.some((call) => ["create", "send"].includes(call.name)),
+      ),
+      false,
+    );
+    checks.push(
+      "a known creation receipt converges despite an unrelated pending project request, without create/send replay",
+    );
+    await page.goto(base + "?toast=1");
+    await page.getByTestId("toast").waitFor();
+    assert.equal(await page.locator('[data-recovery-request-id="same-request"]').count(), 1);
+    assert.equal(await page.getByTestId("feedback-notice").count(), 0);
+    await page.getByRole("button", { name: "核对通知", exact: true }).click();
+    assert.equal(
+      await page.evaluate(() => window.fixtureCalls.filter((call) => call.name === "check").length),
+      1,
+    );
+    await page.getByRole("button", { name: "更新快照", exact: true }).click();
+    await page.mouse.move(0, 0);
+    await page.getByTestId("toast").waitFor({ state: "hidden", timeout: 8000 });
+    await page.getByRole("button", { name: "更新快照", exact: true }).click();
+    assert.equal(
+      await page.getByTestId("toast").count(),
+      0,
+      "same receipt is not announced again on snapshot updates",
+    );
+    await page.getByRole("button", { name: "更新快照", exact: true }).click();
+    await page.locator('[data-testid="toast"][data-tone="error"]').waitFor();
+    checks.push(
+      "same-request notices deduplicate into one actionable toast, expire and do not reappear on unrelated snapshots",
+    );
+    await page.goto(base + "?recovery=1");
+    await page.getByRole("button", { name: "检查操作状态", exact: true }).click();
+    await page.getByRole("button", { name: "操作待确认", exact: true }).click();
+    const recover = page.getByRole("menuitem", { name: "保留原结果，返回草稿", exact: true });
+    await recover.waitFor();
+    page.once("dialog", (dialog) => dialog.dismiss());
+    await recover.click();
+    assert.notEqual(
+      await page.evaluate(() => localStorage.getItem("fixture-draft:pending-create")),
+      null,
+    );
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByRole("button", { name: "操作待确认", exact: true }).click();
+    await recover.click();
+    assert.equal(
+      await page.evaluate(() => localStorage.getItem("fixture-draft:pending-create")),
+      null,
+    );
+    assert.equal(
+      await page.evaluate(() => localStorage.getItem("fixture-draft")),
+      "retain this input",
+    );
+    assert.ok(
+      await page.evaluate(() =>
+        localStorage.getItem("fixture-draft:retained-create:00000000-0000-4000-a000-000000000001"),
+      ),
+    );
+    const recoveryCalls = await page.evaluate(() => window.fixtureCalls);
+    assert.equal(recoveryCalls.filter((call) => call.name === "create").length, 0);
+    assert.deepEqual(
+      recoveryCalls.find((call) => call.params.operation === "worktreeRead").params,
+      {
+        projectId: "logical",
+        operation: "worktreeRead",
+        requestId: "00000000-0000-4000-a000-000000000001",
+      },
+    );
+    assert.equal(
+      recoveryCalls.some((call) => call.name === "send"),
+      false,
+    );
+    await capture("unknown-explicit-recovery-draft-preserved");
+    checks.push(
+      "production DraftComposer inspects original UUID before explicit recovery, retains draft and archived request, and never replays create or sends uncertain input",
+    );
+    assert.deepEqual(errors, []);
+    passed = true;
   }
 } catch (cause) {
   errors.push(cause.stack || String(cause));
   if (page && !page.isClosed()) {
     await page.screenshot({ path: join(evidence, "failure.png"), fullPage: true }).catch(() => {});
-    await writeFile(join(evidence, "failure.aria.txt"), await page.locator("body").ariaSnapshot().catch(() => "snapshot unavailable"));
+    await writeFile(
+      join(evidence, "failure.aria.txt"),
+      await page
+        .locator("body")
+        .ariaSnapshot()
+        .catch(() => "snapshot unavailable"),
+    );
   }
   throw cause;
 } finally {
@@ -453,14 +839,32 @@ try {
     frames,
     platform: process.platform,
     browser: browser?.version(),
-    fixtureBoundary: "workspace action responses, event/current projection props, initial localStorage recovery record",
-    sourceHashes: Object.fromEntries(await Promise.all([
-      "renderer/src/WorktreeStarter.tsx", "renderer/src/WorktreeStatus.tsx", "renderer/src/Worktree.css",
-      "renderer/src/TaskListItem.tsx", "renderer/src/DraftComposer.tsx", "renderer/src/Messages.tsx",
-      "renderer/src/settings/WorktreesSettings.tsx", "renderer/src/settings/WorktreesSettings.css",
-      "scripts/worktree-ui-smoke.mjs",
-    ].map(async path => [path, createHash("sha256").update(await readFile(join(gui, path))).digest("hex")]))),
-    sourceDiff: execFileSync("git", ["diff", "--stat"], { cwd: resolve(gui, "../.."), encoding: "utf8" }).trim(),
+    fixtureBoundary:
+      "workspace action responses, event/current projection props, initial localStorage recovery record",
+    sourceHashes: Object.fromEntries(
+      await Promise.all(
+        [
+          "renderer/src/WorktreeStarter.tsx",
+          "renderer/src/WorktreeStatus.tsx",
+          "renderer/src/Worktree.css",
+          "renderer/src/TaskListItem.tsx",
+          "renderer/src/DraftComposer.tsx",
+          "renderer/src/Messages.tsx",
+          "renderer/src/settings/WorktreesSettings.tsx",
+          "renderer/src/settings/WorktreesSettings.css",
+          "scripts/worktree-ui-smoke.mjs",
+        ].map(async (path) => [
+          path,
+          createHash("sha256")
+            .update(await readFile(join(gui, path)))
+            .digest("hex"),
+        ]),
+      ),
+    ),
+    sourceDiff: execFileSync("git", ["diff", "--stat"], {
+      cwd: resolve(gui, "../.."),
+      encoding: "utf8",
+    }).trim(),
     scope:
       "headless Chromium production React components with deterministic desktop action fixture",
     sourceCommit: execFileSync("git", ["rev-parse", "HEAD"], {

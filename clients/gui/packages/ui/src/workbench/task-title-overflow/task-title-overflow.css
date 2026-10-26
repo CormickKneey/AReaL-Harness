@@ -1,0 +1,5 @@
+@media (hover: hover) {
+  :root[data-reduced-motion="false"] .task-title-marquee:hover .task-title-marquee-track {
+    will-change: transform;
+  }
+}

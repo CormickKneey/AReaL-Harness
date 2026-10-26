@@ -1,0 +1,962 @@
+[
+  {
+    "id": "R-UI-COMMON-001",
+    "owner": "clients/gui/packages/ui/src/components/action-button/action-button.md",
+    "originalSha256": "866e37cf43eeea7a30051dbf32883f9fc4f2dc42eaa206b7789002926a16b948",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-ACTIONBUTTON-ACTIONBUTTON-003"
+  },
+  {
+    "id": "R-UI-COMMON-001",
+    "owner": "clients/gui/packages/ui/src/components/card/card.md",
+    "originalSha256": "866e37cf43eeea7a30051dbf32883f9fc4f2dc42eaa206b7789002926a16b948",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-CARD-CARD-002"
+  },
+  {
+    "id": "R-UI-COMMON-001",
+    "owner": "clients/gui/packages/ui/src/components/command/command.md",
+    "originalSha256": "866e37cf43eeea7a30051dbf32883f9fc4f2dc42eaa206b7789002926a16b948",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-COMMAND-COMMAND-002"
+  },
+  {
+    "id": "R-UI-COMMON-001",
+    "owner": "clients/gui/packages/ui/src/components/context-menu/context-menu.md",
+    "originalSha256": "866e37cf43eeea7a30051dbf32883f9fc4f2dc42eaa206b7789002926a16b948",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-CONTEXTMENU-CONTEXTMENU-002"
+  },
+  {
+    "id": "R-UI-COMMON-001",
+    "owner": "clients/gui/packages/ui/src/components/dialog/dialog.md",
+    "originalSha256": "866e37cf43eeea7a30051dbf32883f9fc4f2dc42eaa206b7789002926a16b948",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-DIALOG-DIALOG-003"
+  },
+  {
+    "id": "R-UI-COMMON-001",
+    "owner": "clients/gui/packages/ui/src/components/dropdown-menu/dropdown-menu.md",
+    "originalSha256": "866e37cf43eeea7a30051dbf32883f9fc4f2dc42eaa206b7789002926a16b948",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-DROPDOWNMENU-DROPDOWNMENU-002"
+  },
+  {
+    "id": "R-UI-COMMON-001",
+    "owner": "clients/gui/packages/ui/src/components/input-group/input-group.md",
+    "originalSha256": "866e37cf43eeea7a30051dbf32883f9fc4f2dc42eaa206b7789002926a16b948",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-INPUTGROUP-INPUTGROUP-002"
+  },
+  {
+    "id": "R-UI-COMMON-001",
+    "owner": "clients/gui/packages/ui/src/components/input/input.md",
+    "originalSha256": "866e37cf43eeea7a30051dbf32883f9fc4f2dc42eaa206b7789002926a16b948",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-INPUT-INPUT-003"
+  },
+  {
+    "id": "R-UI-COMMON-001",
+    "owner": "clients/gui/packages/ui/src/components/popover/popover.md",
+    "originalSha256": "866e37cf43eeea7a30051dbf32883f9fc4f2dc42eaa206b7789002926a16b948",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-POPOVER-POPOVER-002"
+  },
+  {
+    "id": "R-UI-COMMON-001",
+    "owner": "clients/gui/packages/ui/src/components/select/select.md",
+    "originalSha256": "866e37cf43eeea7a30051dbf32883f9fc4f2dc42eaa206b7789002926a16b948",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-SELECT-SELECT-002"
+  },
+  {
+    "id": "R-UI-COMMON-001",
+    "owner": "clients/gui/packages/ui/src/components/spinner/spinner.md",
+    "originalSha256": "866e37cf43eeea7a30051dbf32883f9fc4f2dc42eaa206b7789002926a16b948",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-SPINNER-SPINNER-003"
+  },
+  {
+    "id": "R-UI-COMMON-001",
+    "owner": "clients/gui/packages/ui/src/components/switch/switch.md",
+    "originalSha256": "866e37cf43eeea7a30051dbf32883f9fc4f2dc42eaa206b7789002926a16b948",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-SWITCH-SWITCH-003"
+  },
+  {
+    "id": "R-UI-COMMON-001",
+    "owner": "clients/gui/packages/ui/src/components/tabs/tabs.md",
+    "originalSha256": "866e37cf43eeea7a30051dbf32883f9fc4f2dc42eaa206b7789002926a16b948",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-TABS-TABS-002"
+  },
+  {
+    "id": "R-UI-COMMON-001",
+    "owner": "clients/gui/packages/ui/src/components/textarea/textarea.md",
+    "originalSha256": "866e37cf43eeea7a30051dbf32883f9fc4f2dc42eaa206b7789002926a16b948",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-TEXTAREA-TEXTAREA-002"
+  },
+  {
+    "id": "R-UI-COMMON-001",
+    "owner": "clients/gui/packages/ui/src/components/tooltip/tooltip.md",
+    "originalSha256": "866e37cf43eeea7a30051dbf32883f9fc4f2dc42eaa206b7789002926a16b948",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-TOOLTIP-TOOLTIP-002"
+  },
+  {
+    "id": "R-UI-COMMON-002",
+    "owner": "clients/gui/packages/ui/src/components/action-button/action-button.md",
+    "originalSha256": "332831b6597d711240dddfd9216211e4135625077b881c1535d54bbcab033222",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-ACTIONBUTTON-ACTIONBUTTON-004"
+  },
+  {
+    "id": "R-UI-COMMON-002",
+    "owner": "clients/gui/packages/ui/src/components/card/card.md",
+    "originalSha256": "332831b6597d711240dddfd9216211e4135625077b881c1535d54bbcab033222",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-CARD-CARD-003"
+  },
+  {
+    "id": "R-UI-COMMON-002",
+    "owner": "clients/gui/packages/ui/src/components/command/command.md",
+    "originalSha256": "332831b6597d711240dddfd9216211e4135625077b881c1535d54bbcab033222",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-COMMAND-COMMAND-003"
+  },
+  {
+    "id": "R-UI-COMMON-002",
+    "owner": "clients/gui/packages/ui/src/components/context-menu/context-menu.md",
+    "originalSha256": "332831b6597d711240dddfd9216211e4135625077b881c1535d54bbcab033222",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-CONTEXTMENU-CONTEXTMENU-003"
+  },
+  {
+    "id": "R-UI-COMMON-002",
+    "owner": "clients/gui/packages/ui/src/components/dialog/dialog.md",
+    "originalSha256": "332831b6597d711240dddfd9216211e4135625077b881c1535d54bbcab033222",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-DIALOG-DIALOG-004"
+  },
+  {
+    "id": "R-UI-COMMON-002",
+    "owner": "clients/gui/packages/ui/src/components/dropdown-menu/dropdown-menu.md",
+    "originalSha256": "332831b6597d711240dddfd9216211e4135625077b881c1535d54bbcab033222",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-DROPDOWNMENU-DROPDOWNMENU-003"
+  },
+  {
+    "id": "R-UI-COMMON-002",
+    "owner": "clients/gui/packages/ui/src/components/input-group/input-group.md",
+    "originalSha256": "332831b6597d711240dddfd9216211e4135625077b881c1535d54bbcab033222",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-INPUTGROUP-INPUTGROUP-003"
+  },
+  {
+    "id": "R-UI-COMMON-002",
+    "owner": "clients/gui/packages/ui/src/components/input/input.md",
+    "originalSha256": "332831b6597d711240dddfd9216211e4135625077b881c1535d54bbcab033222",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-INPUT-INPUT-004"
+  },
+  {
+    "id": "R-UI-COMMON-002",
+    "owner": "clients/gui/packages/ui/src/components/popover/popover.md",
+    "originalSha256": "332831b6597d711240dddfd9216211e4135625077b881c1535d54bbcab033222",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-POPOVER-POPOVER-003"
+  },
+  {
+    "id": "R-UI-COMMON-002",
+    "owner": "clients/gui/packages/ui/src/components/select/select.md",
+    "originalSha256": "332831b6597d711240dddfd9216211e4135625077b881c1535d54bbcab033222",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-SELECT-SELECT-003"
+  },
+  {
+    "id": "R-UI-COMMON-002",
+    "owner": "clients/gui/packages/ui/src/components/spinner/spinner.md",
+    "originalSha256": "332831b6597d711240dddfd9216211e4135625077b881c1535d54bbcab033222",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-SPINNER-SPINNER-004"
+  },
+  {
+    "id": "R-UI-COMMON-002",
+    "owner": "clients/gui/packages/ui/src/components/switch/switch.md",
+    "originalSha256": "332831b6597d711240dddfd9216211e4135625077b881c1535d54bbcab033222",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-SWITCH-SWITCH-004"
+  },
+  {
+    "id": "R-UI-COMMON-002",
+    "owner": "clients/gui/packages/ui/src/components/tabs/tabs.md",
+    "originalSha256": "332831b6597d711240dddfd9216211e4135625077b881c1535d54bbcab033222",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-TABS-TABS-003"
+  },
+  {
+    "id": "R-UI-COMMON-002",
+    "owner": "clients/gui/packages/ui/src/components/textarea/textarea.md",
+    "originalSha256": "332831b6597d711240dddfd9216211e4135625077b881c1535d54bbcab033222",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-TEXTAREA-TEXTAREA-003"
+  },
+  {
+    "id": "R-UI-COMMON-002",
+    "owner": "clients/gui/packages/ui/src/components/tooltip/tooltip.md",
+    "originalSha256": "332831b6597d711240dddfd9216211e4135625077b881c1535d54bbcab033222",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-TOOLTIP-TOOLTIP-003"
+  },
+  {
+    "id": "R-UI-COMMON-003",
+    "owner": "clients/gui/packages/ui/src/components/action-button/action-button.md",
+    "originalSha256": "4a4619bef37a7381bd60d7da48dcc8a419195c80ab4229234af723cb55440229",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-ACTIONBUTTON-ACTIONBUTTON-005"
+  },
+  {
+    "id": "R-UI-COMMON-003",
+    "owner": "clients/gui/packages/ui/src/components/context-menu/context-menu.md",
+    "originalSha256": "4a4619bef37a7381bd60d7da48dcc8a419195c80ab4229234af723cb55440229",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-CONTEXTMENU-CONTEXTMENU-004"
+  },
+  {
+    "id": "R-UI-COMMON-003",
+    "owner": "clients/gui/packages/ui/src/components/dropdown-menu/dropdown-menu.md",
+    "originalSha256": "4a4619bef37a7381bd60d7da48dcc8a419195c80ab4229234af723cb55440229",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-DROPDOWNMENU-DROPDOWNMENU-004"
+  },
+  {
+    "id": "R-UI-COMMON-003",
+    "owner": "clients/gui/packages/ui/src/components/input/input.md",
+    "originalSha256": "4a4619bef37a7381bd60d7da48dcc8a419195c80ab4229234af723cb55440229",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-INPUT-INPUT-005"
+  },
+  {
+    "id": "R-UI-COMMON-003",
+    "owner": "clients/gui/packages/ui/src/components/popover/popover.md",
+    "originalSha256": "4a4619bef37a7381bd60d7da48dcc8a419195c80ab4229234af723cb55440229",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-POPOVER-POPOVER-004"
+  },
+  {
+    "id": "R-UI-COMMON-003",
+    "owner": "clients/gui/packages/ui/src/components/select/select.md",
+    "originalSha256": "4a4619bef37a7381bd60d7da48dcc8a419195c80ab4229234af723cb55440229",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-SELECT-SELECT-004"
+  },
+  {
+    "id": "R-UI-COMMON-003",
+    "owner": "clients/gui/packages/ui/src/components/switch/switch.md",
+    "originalSha256": "4a4619bef37a7381bd60d7da48dcc8a419195c80ab4229234af723cb55440229",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-SWITCH-SWITCH-005"
+  },
+  {
+    "id": "R-UI-COMMON-003",
+    "owner": "clients/gui/packages/ui/src/components/tabs/tabs.md",
+    "originalSha256": "4a4619bef37a7381bd60d7da48dcc8a419195c80ab4229234af723cb55440229",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-TABS-TABS-004"
+  },
+  {
+    "id": "R-UI-COMMON-003",
+    "owner": "clients/gui/packages/ui/src/components/textarea/textarea.md",
+    "originalSha256": "4a4619bef37a7381bd60d7da48dcc8a419195c80ab4229234af723cb55440229",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-TEXTAREA-TEXTAREA-004"
+  },
+  {
+    "id": "R-UI-COMMON-003",
+    "owner": "clients/gui/packages/ui/src/components/tooltip/tooltip.md",
+    "originalSha256": "4a4619bef37a7381bd60d7da48dcc8a419195c80ab4229234af723cb55440229",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-TOOLTIP-TOOLTIP-004"
+  },
+  {
+    "id": "R-UI-COMMON-004",
+    "owner": "clients/gui/packages/ui/src/components/card/card.md",
+    "originalSha256": "61b390c785104df37e7a7b7926b61ea4a09ba80cf57db0abc133fc388b9a1224",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-CARD-CARD-004"
+  },
+  {
+    "id": "R-UI-COMMON-004",
+    "owner": "clients/gui/packages/ui/src/components/command/command.md",
+    "originalSha256": "61b390c785104df37e7a7b7926b61ea4a09ba80cf57db0abc133fc388b9a1224",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-COMMAND-COMMAND-004"
+  },
+  {
+    "id": "R-UI-COMMON-004",
+    "owner": "clients/gui/packages/ui/src/components/dialog/dialog.md",
+    "originalSha256": "61b390c785104df37e7a7b7926b61ea4a09ba80cf57db0abc133fc388b9a1224",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-DIALOG-DIALOG-005"
+  },
+  {
+    "id": "R-UI-COMMON-004",
+    "owner": "clients/gui/packages/ui/src/components/input-group/input-group.md",
+    "originalSha256": "61b390c785104df37e7a7b7926b61ea4a09ba80cf57db0abc133fc388b9a1224",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-INPUTGROUP-INPUTGROUP-004"
+  },
+  {
+    "id": "R-UI-COMMON-004",
+    "owner": "clients/gui/packages/ui/src/components/spinner/spinner.md",
+    "originalSha256": "61b390c785104df37e7a7b7926b61ea4a09ba80cf57db0abc133fc388b9a1224",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-SPINNER-SPINNER-005"
+  },
+  {
+    "id": "R-UI-COMMON-005",
+    "owner": "clients/gui/packages/ui/src/components/code-viewer/code-viewer.md",
+    "originalSha256": "6bf18c8631bd2b26f028f810c942a899b9178517e4869a5223a7f26abedd99a4",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-CODEVIEWER-CODEVIEWER-001"
+  },
+  {
+    "id": "R-UI-COMMON-005",
+    "owner": "clients/gui/packages/ui/src/components/diff-viewer/diff-viewer.md",
+    "originalSha256": "6bf18c8631bd2b26f028f810c942a899b9178517e4869a5223a7f26abedd99a4",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-DIFFVIEWER-DIFFVIEWER-001"
+  },
+  {
+    "id": "R-UI-COMMON-005",
+    "owner": "clients/gui/packages/ui/src/components/feedback-notice/feedback-notice.md",
+    "originalSha256": "6bf18c8631bd2b26f028f810c942a899b9178517e4869a5223a7f26abedd99a4",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-FEEDBACKNOTICE-FEEDBACKNOTICE-001"
+  },
+  {
+    "id": "R-UI-COMMON-005",
+    "owner": "clients/gui/packages/ui/src/components/settings-disclosure/settings-disclosure.md",
+    "originalSha256": "6bf18c8631bd2b26f028f810c942a899b9178517e4869a5223a7f26abedd99a4",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-SETTINGSDISCLOSURE-SETTINGSDISCLOSURE-001"
+  },
+  {
+    "id": "R-UI-COMMON-005",
+    "owner": "clients/gui/packages/ui/src/conversation/collapsible-text/collapsible-text.md",
+    "originalSha256": "6bf18c8631bd2b26f028f810c942a899b9178517e4869a5223a7f26abedd99a4",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-COLLAPSIBLETEXT-COLLAPSIBLETEXT-001"
+  },
+  {
+    "id": "R-UI-COMMON-005",
+    "owner": "clients/gui/packages/ui/src/conversation/decision-card/decision-card.md",
+    "originalSha256": "6bf18c8631bd2b26f028f810c942a899b9178517e4869a5223a7f26abedd99a4",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-DECISIONCARD-DECISIONCARD-001"
+  },
+  {
+    "id": "R-UI-COMMON-005",
+    "owner": "clients/gui/packages/ui/src/settings/settings-dialog/settings-dialog.md",
+    "originalSha256": "6bf18c8631bd2b26f028f810c942a899b9178517e4869a5223a7f26abedd99a4",
+    "draftRuleIdBeforeMerge": "R-UI-SETTINGS-SETTINGSDIALOG-SETTINGSDIALOG-001"
+  },
+  {
+    "id": "R-UI-COMMON-005",
+    "owner": "clients/gui/packages/ui/src/settings/settings-search-input/settings-search-input.md",
+    "originalSha256": "6bf18c8631bd2b26f028f810c942a899b9178517e4869a5223a7f26abedd99a4",
+    "draftRuleIdBeforeMerge": "R-UI-SETTINGS-SETTINGSSEARCHINPUT-SETTINGSSEARCHINPUT-001"
+  },
+  {
+    "id": "R-UI-COMMON-005",
+    "owner": "clients/gui/packages/ui/src/settings/settings-segmented-tabs/settings-segmented-tabs.md",
+    "originalSha256": "6bf18c8631bd2b26f028f810c942a899b9178517e4869a5223a7f26abedd99a4",
+    "draftRuleIdBeforeMerge": "R-UI-SETTINGS-SETTINGSSEGMENTEDTABS-SETTINGSSEGMENTEDTABS-001"
+  },
+  {
+    "id": "R-UI-COMMON-005",
+    "owner": "clients/gui/packages/ui/src/settings/settings-select/settings-select.md",
+    "originalSha256": "6bf18c8631bd2b26f028f810c942a899b9178517e4869a5223a7f26abedd99a4",
+    "draftRuleIdBeforeMerge": "R-UI-SETTINGS-SETTINGSSELECT-SETTINGSSELECT-001"
+  },
+  {
+    "id": "R-UI-COMMON-006",
+    "owner": "clients/gui/packages/ui/src/components/code-viewer/code-viewer.md",
+    "originalSha256": "a5a1c371fd2780ad13a314db124092889323a773983d64e25e72436cf624a1f6",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-CODEVIEWER-CODEVIEWER-003"
+  },
+  {
+    "id": "R-UI-COMMON-006",
+    "owner": "clients/gui/packages/ui/src/components/diff-viewer/diff-viewer.md",
+    "originalSha256": "a5a1c371fd2780ad13a314db124092889323a773983d64e25e72436cf624a1f6",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-DIFFVIEWER-DIFFVIEWER-003"
+  },
+  {
+    "id": "R-UI-COMMON-006",
+    "owner": "clients/gui/packages/ui/src/components/feedback-notice/feedback-notice.md",
+    "originalSha256": "a5a1c371fd2780ad13a314db124092889323a773983d64e25e72436cf624a1f6",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-FEEDBACKNOTICE-FEEDBACKNOTICE-003"
+  },
+  {
+    "id": "R-UI-COMMON-006",
+    "owner": "clients/gui/packages/ui/src/components/settings-disclosure/settings-disclosure.md",
+    "originalSha256": "a5a1c371fd2780ad13a314db124092889323a773983d64e25e72436cf624a1f6",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-SETTINGSDISCLOSURE-SETTINGSDISCLOSURE-003"
+  },
+  {
+    "id": "R-UI-COMMON-006",
+    "owner": "clients/gui/packages/ui/src/conversation/collapsible-text/collapsible-text.md",
+    "originalSha256": "a5a1c371fd2780ad13a314db124092889323a773983d64e25e72436cf624a1f6",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-COLLAPSIBLETEXT-COLLAPSIBLETEXT-003"
+  },
+  {
+    "id": "R-UI-COMMON-006",
+    "owner": "clients/gui/packages/ui/src/settings/settings-dialog/settings-dialog.md",
+    "originalSha256": "a5a1c371fd2780ad13a314db124092889323a773983d64e25e72436cf624a1f6",
+    "draftRuleIdBeforeMerge": "R-UI-SETTINGS-SETTINGSDIALOG-SETTINGSDIALOG-003"
+  },
+  {
+    "id": "R-UI-COMMON-006",
+    "owner": "clients/gui/packages/ui/src/settings/settings-search-input/settings-search-input.md",
+    "originalSha256": "a5a1c371fd2780ad13a314db124092889323a773983d64e25e72436cf624a1f6",
+    "draftRuleIdBeforeMerge": "R-UI-SETTINGS-SETTINGSSEARCHINPUT-SETTINGSSEARCHINPUT-003"
+  },
+  {
+    "id": "R-UI-COMMON-006",
+    "owner": "clients/gui/packages/ui/src/settings/settings-segmented-tabs/settings-segmented-tabs.md",
+    "originalSha256": "a5a1c371fd2780ad13a314db124092889323a773983d64e25e72436cf624a1f6",
+    "draftRuleIdBeforeMerge": "R-UI-SETTINGS-SETTINGSSEGMENTEDTABS-SETTINGSSEGMENTEDTABS-003"
+  },
+  {
+    "id": "R-UI-COMMON-006",
+    "owner": "clients/gui/packages/ui/src/settings/settings-select/settings-select.md",
+    "originalSha256": "a5a1c371fd2780ad13a314db124092889323a773983d64e25e72436cf624a1f6",
+    "draftRuleIdBeforeMerge": "R-UI-SETTINGS-SETTINGSSELECT-SETTINGSSELECT-003"
+  },
+  {
+    "id": "R-UI-COMMON-007",
+    "owner": "clients/gui/packages/ui/src/components/code-viewer/code-viewer.md",
+    "originalSha256": "21682b2f2bf58292c9a11b896cbf9ad729313e88d525de8cb3c5f6f16784dbe0",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-CODEVIEWER-CODEVIEWER-004"
+  },
+  {
+    "id": "R-UI-COMMON-007",
+    "owner": "clients/gui/packages/ui/src/components/diff-viewer/diff-viewer.md",
+    "originalSha256": "21682b2f2bf58292c9a11b896cbf9ad729313e88d525de8cb3c5f6f16784dbe0",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-DIFFVIEWER-DIFFVIEWER-004"
+  },
+  {
+    "id": "R-UI-COMMON-007",
+    "owner": "clients/gui/packages/ui/src/components/feedback-notice/feedback-notice.md",
+    "originalSha256": "21682b2f2bf58292c9a11b896cbf9ad729313e88d525de8cb3c5f6f16784dbe0",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-FEEDBACKNOTICE-FEEDBACKNOTICE-004"
+  },
+  {
+    "id": "R-UI-COMMON-007",
+    "owner": "clients/gui/packages/ui/src/components/settings-disclosure/settings-disclosure.md",
+    "originalSha256": "21682b2f2bf58292c9a11b896cbf9ad729313e88d525de8cb3c5f6f16784dbe0",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-SETTINGSDISCLOSURE-SETTINGSDISCLOSURE-004"
+  },
+  {
+    "id": "R-UI-COMMON-007",
+    "owner": "clients/gui/packages/ui/src/conversation/collapsible-text/collapsible-text.md",
+    "originalSha256": "21682b2f2bf58292c9a11b896cbf9ad729313e88d525de8cb3c5f6f16784dbe0",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-COLLAPSIBLETEXT-COLLAPSIBLETEXT-004"
+  },
+  {
+    "id": "R-UI-COMMON-007",
+    "owner": "clients/gui/packages/ui/src/conversation/decision-card/decision-card.md",
+    "originalSha256": "21682b2f2bf58292c9a11b896cbf9ad729313e88d525de8cb3c5f6f16784dbe0",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-DECISIONCARD-DECISIONCARD-004"
+  },
+  {
+    "id": "R-UI-COMMON-007",
+    "owner": "clients/gui/packages/ui/src/settings/settings-dialog/settings-dialog.md",
+    "originalSha256": "21682b2f2bf58292c9a11b896cbf9ad729313e88d525de8cb3c5f6f16784dbe0",
+    "draftRuleIdBeforeMerge": "R-UI-SETTINGS-SETTINGSDIALOG-SETTINGSDIALOG-004"
+  },
+  {
+    "id": "R-UI-COMMON-007",
+    "owner": "clients/gui/packages/ui/src/settings/settings-search-input/settings-search-input.md",
+    "originalSha256": "21682b2f2bf58292c9a11b896cbf9ad729313e88d525de8cb3c5f6f16784dbe0",
+    "draftRuleIdBeforeMerge": "R-UI-SETTINGS-SETTINGSSEARCHINPUT-SETTINGSSEARCHINPUT-004"
+  },
+  {
+    "id": "R-UI-COMMON-007",
+    "owner": "clients/gui/packages/ui/src/settings/settings-segmented-tabs/settings-segmented-tabs.md",
+    "originalSha256": "21682b2f2bf58292c9a11b896cbf9ad729313e88d525de8cb3c5f6f16784dbe0",
+    "draftRuleIdBeforeMerge": "R-UI-SETTINGS-SETTINGSSEGMENTEDTABS-SETTINGSSEGMENTEDTABS-004"
+  },
+  {
+    "id": "R-UI-COMMON-007",
+    "owner": "clients/gui/packages/ui/src/settings/settings-select/settings-select.md",
+    "originalSha256": "21682b2f2bf58292c9a11b896cbf9ad729313e88d525de8cb3c5f6f16784dbe0",
+    "draftRuleIdBeforeMerge": "R-UI-SETTINGS-SETTINGSSELECT-SETTINGSSELECT-004"
+  },
+  {
+    "id": "R-UI-COMMON-008",
+    "owner": "clients/gui/packages/ui/src/components/code-viewer/code-viewer.md",
+    "originalSha256": "d00bd412040985496592cb7aed12e751bbc893deb268cfd4c700ca9874529799",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-CODEVIEWER-CODEVIEWER-005"
+  },
+  {
+    "id": "R-UI-COMMON-008",
+    "owner": "clients/gui/packages/ui/src/components/diff-viewer/diff-viewer.md",
+    "originalSha256": "d00bd412040985496592cb7aed12e751bbc893deb268cfd4c700ca9874529799",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-DIFFVIEWER-DIFFVIEWER-005"
+  },
+  {
+    "id": "R-UI-COMMON-008",
+    "owner": "clients/gui/packages/ui/src/settings/settings-dialog/settings-dialog.md",
+    "originalSha256": "d00bd412040985496592cb7aed12e751bbc893deb268cfd4c700ca9874529799",
+    "draftRuleIdBeforeMerge": "R-UI-SETTINGS-SETTINGSDIALOG-SETTINGSDIALOG-005"
+  },
+  {
+    "id": "R-UI-COMMON-009",
+    "owner": "clients/gui/packages/ui/src/components/control-hint-tooltip/control-hint-tooltip.md",
+    "originalSha256": "2ae9b2e266d01f8d7e0df669d18edeb421b8baf5eb347b8d4432ae1afbe7ab3a",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-CONTROLHINTTOOLTIP-CONTROLHINTTOOLTIP-001"
+  },
+  {
+    "id": "R-UI-COMMON-009",
+    "owner": "clients/gui/packages/ui/src/conversation/attachment-card/attachment-card.md",
+    "originalSha256": "2ae9b2e266d01f8d7e0df669d18edeb421b8baf5eb347b8d4432ae1afbe7ab3a",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-ATTACHMENTCARD-ATTACHMENTCARD-001"
+  },
+  {
+    "id": "R-UI-COMMON-009",
+    "owner": "clients/gui/packages/ui/src/conversation/command-details/command-details.md",
+    "originalSha256": "2ae9b2e266d01f8d7e0df669d18edeb421b8baf5eb347b8d4432ae1afbe7ab3a",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-COMMANDDETAILS-COMMANDDETAILS-001"
+  },
+  {
+    "id": "R-UI-COMMON-009",
+    "owner": "clients/gui/packages/ui/src/conversation/markdown-blockquote/markdown-blockquote.md",
+    "originalSha256": "2ae9b2e266d01f8d7e0df669d18edeb421b8baf5eb347b8d4432ae1afbe7ab3a",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-MARKDOWNBLOCKQUOTE-MARKDOWNBLOCKQUOTE-001"
+  },
+  {
+    "id": "R-UI-COMMON-009",
+    "owner": "clients/gui/packages/ui/src/conversation/markdown-list/markdown-list.md",
+    "originalSha256": "2ae9b2e266d01f8d7e0df669d18edeb421b8baf5eb347b8d4432ae1afbe7ab3a",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-MARKDOWNLIST-MARKDOWNLIST-001"
+  },
+  {
+    "id": "R-UI-COMMON-009",
+    "owner": "clients/gui/packages/ui/src/conversation/markdown-surface/markdown-surface.md",
+    "originalSha256": "2ae9b2e266d01f8d7e0df669d18edeb421b8baf5eb347b8d4432ae1afbe7ab3a",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-MARKDOWNSURFACE-MARKDOWNSURFACE-001"
+  },
+  {
+    "id": "R-UI-COMMON-009",
+    "owner": "clients/gui/packages/ui/src/conversation/markdown-table/markdown-table.md",
+    "originalSha256": "2ae9b2e266d01f8d7e0df669d18edeb421b8baf5eb347b8d4432ae1afbe7ab3a",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-MARKDOWNTABLE-MARKDOWNTABLE-001"
+  },
+  {
+    "id": "R-UI-COMMON-009",
+    "owner": "clients/gui/packages/ui/src/conversation/message-attachments/message-attachments.md",
+    "originalSha256": "2ae9b2e266d01f8d7e0df669d18edeb421b8baf5eb347b8d4432ae1afbe7ab3a",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-MESSAGEATTACHMENTS-MESSAGEATTACHMENTS-001"
+  },
+  {
+    "id": "R-UI-COMMON-009",
+    "owner": "clients/gui/packages/ui/src/conversation/message-code-block/message-code-block.md",
+    "originalSha256": "2ae9b2e266d01f8d7e0df669d18edeb421b8baf5eb347b8d4432ae1afbe7ab3a",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-MESSAGECODEBLOCK-MESSAGECODEBLOCK-001"
+  },
+  {
+    "id": "R-UI-COMMON-009",
+    "owner": "clients/gui/packages/ui/src/workbench/resource-controls/resource-controls.md",
+    "originalSha256": "2ae9b2e266d01f8d7e0df669d18edeb421b8baf5eb347b8d4432ae1afbe7ab3a",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-RESOURCECONTROLS-RESOURCECONTROLS-001"
+  },
+  {
+    "id": "R-UI-COMMON-009",
+    "owner": "clients/gui/packages/ui/src/workbench/settings-navigation/settings-navigation.md",
+    "originalSha256": "2ae9b2e266d01f8d7e0df669d18edeb421b8baf5eb347b8d4432ae1afbe7ab3a",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-SETTINGSNAVIGATION-SETTINGSNAVIGATION-001"
+  },
+  {
+    "id": "R-UI-COMMON-009",
+    "owner": "clients/gui/packages/ui/src/workbench/side-pane-frame/side-pane-frame.md",
+    "originalSha256": "2ae9b2e266d01f8d7e0df669d18edeb421b8baf5eb347b8d4432ae1afbe7ab3a",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-SIDEPANEFRAME-SIDEPANEFRAME-001"
+  },
+  {
+    "id": "R-UI-COMMON-009",
+    "owner": "clients/gui/packages/ui/src/workbench/side-pane-launcher/side-pane-launcher.md",
+    "originalSha256": "2ae9b2e266d01f8d7e0df669d18edeb421b8baf5eb347b8d4432ae1afbe7ab3a",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-SIDEPANELAUNCHER-SIDEPANELAUNCHER-001"
+  },
+  {
+    "id": "R-UI-COMMON-009",
+    "owner": "clients/gui/packages/ui/src/workbench/task-list-item/task-list-item.md",
+    "originalSha256": "2ae9b2e266d01f8d7e0df669d18edeb421b8baf5eb347b8d4432ae1afbe7ab3a",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-TASKLISTITEM-TASKLISTITEM-001"
+  },
+  {
+    "id": "R-UI-COMMON-009",
+    "owner": "clients/gui/packages/ui/src/workbench/task-title-overflow/task-title-overflow.md",
+    "originalSha256": "2ae9b2e266d01f8d7e0df669d18edeb421b8baf5eb347b8d4432ae1afbe7ab3a",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-TASKTITLEOVERFLOW-TASKTITLEOVERFLOW-001"
+  },
+  {
+    "id": "R-UI-COMMON-009",
+    "owner": "clients/gui/packages/ui/src/workbench/workbench-shell/workbench-shell.md",
+    "originalSha256": "2ae9b2e266d01f8d7e0df669d18edeb421b8baf5eb347b8d4432ae1afbe7ab3a",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-WORKBENCHSHELL-WORKBENCHSHELL-001"
+  },
+  {
+    "id": "R-UI-COMMON-010",
+    "owner": "clients/gui/packages/ui/src/components/control-hint-tooltip/control-hint-tooltip.md",
+    "originalSha256": "30bb50b24953a34098c28ce77dbf714442b31bc6c31557cce8ccb10e3afdec33",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-CONTROLHINTTOOLTIP-CONTROLHINTTOOLTIP-002"
+  },
+  {
+    "id": "R-UI-COMMON-010",
+    "owner": "clients/gui/packages/ui/src/conversation/attachment-card/attachment-card.md",
+    "originalSha256": "30bb50b24953a34098c28ce77dbf714442b31bc6c31557cce8ccb10e3afdec33",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-ATTACHMENTCARD-ATTACHMENTCARD-002"
+  },
+  {
+    "id": "R-UI-COMMON-010",
+    "owner": "clients/gui/packages/ui/src/conversation/command-details/command-details.md",
+    "originalSha256": "30bb50b24953a34098c28ce77dbf714442b31bc6c31557cce8ccb10e3afdec33",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-COMMANDDETAILS-COMMANDDETAILS-002"
+  },
+  {
+    "id": "R-UI-COMMON-010",
+    "owner": "clients/gui/packages/ui/src/conversation/markdown-blockquote/markdown-blockquote.md",
+    "originalSha256": "30bb50b24953a34098c28ce77dbf714442b31bc6c31557cce8ccb10e3afdec33",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-MARKDOWNBLOCKQUOTE-MARKDOWNBLOCKQUOTE-002"
+  },
+  {
+    "id": "R-UI-COMMON-010",
+    "owner": "clients/gui/packages/ui/src/conversation/markdown-list/markdown-list.md",
+    "originalSha256": "30bb50b24953a34098c28ce77dbf714442b31bc6c31557cce8ccb10e3afdec33",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-MARKDOWNLIST-MARKDOWNLIST-002"
+  },
+  {
+    "id": "R-UI-COMMON-010",
+    "owner": "clients/gui/packages/ui/src/conversation/markdown-surface/markdown-surface.md",
+    "originalSha256": "30bb50b24953a34098c28ce77dbf714442b31bc6c31557cce8ccb10e3afdec33",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-MARKDOWNSURFACE-MARKDOWNSURFACE-002"
+  },
+  {
+    "id": "R-UI-COMMON-010",
+    "owner": "clients/gui/packages/ui/src/conversation/message-attachments/message-attachments.md",
+    "originalSha256": "30bb50b24953a34098c28ce77dbf714442b31bc6c31557cce8ccb10e3afdec33",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-MESSAGEATTACHMENTS-MESSAGEATTACHMENTS-002"
+  },
+  {
+    "id": "R-UI-COMMON-010",
+    "owner": "clients/gui/packages/ui/src/workbench/resource-controls/resource-controls.md",
+    "originalSha256": "30bb50b24953a34098c28ce77dbf714442b31bc6c31557cce8ccb10e3afdec33",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-RESOURCECONTROLS-RESOURCECONTROLS-002"
+  },
+  {
+    "id": "R-UI-COMMON-010",
+    "owner": "clients/gui/packages/ui/src/workbench/settings-navigation/settings-navigation.md",
+    "originalSha256": "30bb50b24953a34098c28ce77dbf714442b31bc6c31557cce8ccb10e3afdec33",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-SETTINGSNAVIGATION-SETTINGSNAVIGATION-002"
+  },
+  {
+    "id": "R-UI-COMMON-010",
+    "owner": "clients/gui/packages/ui/src/workbench/side-pane-frame/side-pane-frame.md",
+    "originalSha256": "30bb50b24953a34098c28ce77dbf714442b31bc6c31557cce8ccb10e3afdec33",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-SIDEPANEFRAME-SIDEPANEFRAME-002"
+  },
+  {
+    "id": "R-UI-COMMON-010",
+    "owner": "clients/gui/packages/ui/src/workbench/side-pane-launcher/side-pane-launcher.md",
+    "originalSha256": "30bb50b24953a34098c28ce77dbf714442b31bc6c31557cce8ccb10e3afdec33",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-SIDEPANELAUNCHER-SIDEPANELAUNCHER-002"
+  },
+  {
+    "id": "R-UI-COMMON-010",
+    "owner": "clients/gui/packages/ui/src/workbench/task-list-item/task-list-item.md",
+    "originalSha256": "30bb50b24953a34098c28ce77dbf714442b31bc6c31557cce8ccb10e3afdec33",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-TASKLISTITEM-TASKLISTITEM-002"
+  },
+  {
+    "id": "R-UI-COMMON-010",
+    "owner": "clients/gui/packages/ui/src/workbench/task-title-overflow/task-title-overflow.md",
+    "originalSha256": "30bb50b24953a34098c28ce77dbf714442b31bc6c31557cce8ccb10e3afdec33",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-TASKTITLEOVERFLOW-TASKTITLEOVERFLOW-002"
+  },
+  {
+    "id": "R-UI-COMMON-011",
+    "owner": "clients/gui/packages/ui/src/components/control-hint-tooltip/control-hint-tooltip.md",
+    "originalSha256": "2baa645ef079afc6ad86dc0e14556cef71c3009876b58004c235ac46e40230df",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-CONTROLHINTTOOLTIP-CONTROLHINTTOOLTIP-003"
+  },
+  {
+    "id": "R-UI-COMMON-011",
+    "owner": "clients/gui/packages/ui/src/conversation/attachment-card/attachment-card.md",
+    "originalSha256": "2baa645ef079afc6ad86dc0e14556cef71c3009876b58004c235ac46e40230df",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-ATTACHMENTCARD-ATTACHMENTCARD-003"
+  },
+  {
+    "id": "R-UI-COMMON-011",
+    "owner": "clients/gui/packages/ui/src/conversation/command-details/command-details.md",
+    "originalSha256": "2baa645ef079afc6ad86dc0e14556cef71c3009876b58004c235ac46e40230df",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-COMMANDDETAILS-COMMANDDETAILS-003"
+  },
+  {
+    "id": "R-UI-COMMON-011",
+    "owner": "clients/gui/packages/ui/src/conversation/markdown-blockquote/markdown-blockquote.md",
+    "originalSha256": "2baa645ef079afc6ad86dc0e14556cef71c3009876b58004c235ac46e40230df",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-MARKDOWNBLOCKQUOTE-MARKDOWNBLOCKQUOTE-003"
+  },
+  {
+    "id": "R-UI-COMMON-011",
+    "owner": "clients/gui/packages/ui/src/conversation/markdown-list/markdown-list.md",
+    "originalSha256": "2baa645ef079afc6ad86dc0e14556cef71c3009876b58004c235ac46e40230df",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-MARKDOWNLIST-MARKDOWNLIST-003"
+  },
+  {
+    "id": "R-UI-COMMON-011",
+    "owner": "clients/gui/packages/ui/src/conversation/markdown-surface/markdown-surface.md",
+    "originalSha256": "2baa645ef079afc6ad86dc0e14556cef71c3009876b58004c235ac46e40230df",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-MARKDOWNSURFACE-MARKDOWNSURFACE-003"
+  },
+  {
+    "id": "R-UI-COMMON-011",
+    "owner": "clients/gui/packages/ui/src/conversation/markdown-table/markdown-table.md",
+    "originalSha256": "2baa645ef079afc6ad86dc0e14556cef71c3009876b58004c235ac46e40230df",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-MARKDOWNTABLE-MARKDOWNTABLE-004"
+  },
+  {
+    "id": "R-UI-COMMON-011",
+    "owner": "clients/gui/packages/ui/src/conversation/message-attachments/message-attachments.md",
+    "originalSha256": "2baa645ef079afc6ad86dc0e14556cef71c3009876b58004c235ac46e40230df",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-MESSAGEATTACHMENTS-MESSAGEATTACHMENTS-003"
+  },
+  {
+    "id": "R-UI-COMMON-011",
+    "owner": "clients/gui/packages/ui/src/workbench/resource-controls/resource-controls.md",
+    "originalSha256": "2baa645ef079afc6ad86dc0e14556cef71c3009876b58004c235ac46e40230df",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-RESOURCECONTROLS-RESOURCECONTROLS-003"
+  },
+  {
+    "id": "R-UI-COMMON-011",
+    "owner": "clients/gui/packages/ui/src/workbench/settings-navigation/settings-navigation.md",
+    "originalSha256": "2baa645ef079afc6ad86dc0e14556cef71c3009876b58004c235ac46e40230df",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-SETTINGSNAVIGATION-SETTINGSNAVIGATION-003"
+  },
+  {
+    "id": "R-UI-COMMON-011",
+    "owner": "clients/gui/packages/ui/src/workbench/side-pane-frame/side-pane-frame.md",
+    "originalSha256": "2baa645ef079afc6ad86dc0e14556cef71c3009876b58004c235ac46e40230df",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-SIDEPANEFRAME-SIDEPANEFRAME-003"
+  },
+  {
+    "id": "R-UI-COMMON-011",
+    "owner": "clients/gui/packages/ui/src/workbench/side-pane-launcher/side-pane-launcher.md",
+    "originalSha256": "2baa645ef079afc6ad86dc0e14556cef71c3009876b58004c235ac46e40230df",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-SIDEPANELAUNCHER-SIDEPANELAUNCHER-003"
+  },
+  {
+    "id": "R-UI-COMMON-011",
+    "owner": "clients/gui/packages/ui/src/workbench/task-list-item/task-list-item.md",
+    "originalSha256": "2baa645ef079afc6ad86dc0e14556cef71c3009876b58004c235ac46e40230df",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-TASKLISTITEM-TASKLISTITEM-003"
+  },
+  {
+    "id": "R-UI-COMMON-011",
+    "owner": "clients/gui/packages/ui/src/workbench/task-title-overflow/task-title-overflow.md",
+    "originalSha256": "2baa645ef079afc6ad86dc0e14556cef71c3009876b58004c235ac46e40230df",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-TASKTITLEOVERFLOW-TASKTITLEOVERFLOW-003"
+  },
+  {
+    "id": "R-UI-COMMON-011",
+    "owner": "clients/gui/packages/ui/src/workbench/workbench-shell/workbench-shell.md",
+    "originalSha256": "2baa645ef079afc6ad86dc0e14556cef71c3009876b58004c235ac46e40230df",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-WORKBENCHSHELL-WORKBENCHSHELL-003"
+  },
+  {
+    "id": "R-UI-COMMON-012",
+    "owner": "clients/gui/packages/ui/src/components/control-hint-tooltip/control-hint-tooltip.md",
+    "originalSha256": "e79f8104e60d87e3dc75d47eb0d9ec59ada307aec6933a34daf280a3c50bc5f0",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-CONTROLHINTTOOLTIP-CONTROLHINTTOOLTIP-004"
+  },
+  {
+    "id": "R-UI-COMMON-012",
+    "owner": "clients/gui/packages/ui/src/conversation/attachment-card/attachment-card.md",
+    "originalSha256": "e79f8104e60d87e3dc75d47eb0d9ec59ada307aec6933a34daf280a3c50bc5f0",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-ATTACHMENTCARD-ATTACHMENTCARD-004"
+  },
+  {
+    "id": "R-UI-COMMON-012",
+    "owner": "clients/gui/packages/ui/src/conversation/command-details/command-details.md",
+    "originalSha256": "e79f8104e60d87e3dc75d47eb0d9ec59ada307aec6933a34daf280a3c50bc5f0",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-COMMANDDETAILS-COMMANDDETAILS-004"
+  },
+  {
+    "id": "R-UI-COMMON-012",
+    "owner": "clients/gui/packages/ui/src/conversation/markdown-blockquote/markdown-blockquote.md",
+    "originalSha256": "e79f8104e60d87e3dc75d47eb0d9ec59ada307aec6933a34daf280a3c50bc5f0",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-MARKDOWNBLOCKQUOTE-MARKDOWNBLOCKQUOTE-004"
+  },
+  {
+    "id": "R-UI-COMMON-012",
+    "owner": "clients/gui/packages/ui/src/conversation/markdown-list/markdown-list.md",
+    "originalSha256": "e79f8104e60d87e3dc75d47eb0d9ec59ada307aec6933a34daf280a3c50bc5f0",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-MARKDOWNLIST-MARKDOWNLIST-004"
+  },
+  {
+    "id": "R-UI-COMMON-012",
+    "owner": "clients/gui/packages/ui/src/conversation/markdown-surface/markdown-surface.md",
+    "originalSha256": "e79f8104e60d87e3dc75d47eb0d9ec59ada307aec6933a34daf280a3c50bc5f0",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-MARKDOWNSURFACE-MARKDOWNSURFACE-004"
+  },
+  {
+    "id": "R-UI-COMMON-012",
+    "owner": "clients/gui/packages/ui/src/conversation/markdown-table/markdown-table.md",
+    "originalSha256": "e79f8104e60d87e3dc75d47eb0d9ec59ada307aec6933a34daf280a3c50bc5f0",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-MARKDOWNTABLE-MARKDOWNTABLE-005"
+  },
+  {
+    "id": "R-UI-COMMON-012",
+    "owner": "clients/gui/packages/ui/src/conversation/message-attachments/message-attachments.md",
+    "originalSha256": "e79f8104e60d87e3dc75d47eb0d9ec59ada307aec6933a34daf280a3c50bc5f0",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-MESSAGEATTACHMENTS-MESSAGEATTACHMENTS-004"
+  },
+  {
+    "id": "R-UI-COMMON-012",
+    "owner": "clients/gui/packages/ui/src/conversation/message-code-block/message-code-block.md",
+    "originalSha256": "e79f8104e60d87e3dc75d47eb0d9ec59ada307aec6933a34daf280a3c50bc5f0",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-MESSAGECODEBLOCK-MESSAGECODEBLOCK-004"
+  },
+  {
+    "id": "R-UI-COMMON-012",
+    "owner": "clients/gui/packages/ui/src/workbench/resource-controls/resource-controls.md",
+    "originalSha256": "e79f8104e60d87e3dc75d47eb0d9ec59ada307aec6933a34daf280a3c50bc5f0",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-RESOURCECONTROLS-RESOURCECONTROLS-004"
+  },
+  {
+    "id": "R-UI-COMMON-012",
+    "owner": "clients/gui/packages/ui/src/workbench/settings-navigation/settings-navigation.md",
+    "originalSha256": "e79f8104e60d87e3dc75d47eb0d9ec59ada307aec6933a34daf280a3c50bc5f0",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-SETTINGSNAVIGATION-SETTINGSNAVIGATION-004"
+  },
+  {
+    "id": "R-UI-COMMON-012",
+    "owner": "clients/gui/packages/ui/src/workbench/side-pane-frame/side-pane-frame.md",
+    "originalSha256": "e79f8104e60d87e3dc75d47eb0d9ec59ada307aec6933a34daf280a3c50bc5f0",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-SIDEPANEFRAME-SIDEPANEFRAME-004"
+  },
+  {
+    "id": "R-UI-COMMON-012",
+    "owner": "clients/gui/packages/ui/src/workbench/side-pane-launcher/side-pane-launcher.md",
+    "originalSha256": "e79f8104e60d87e3dc75d47eb0d9ec59ada307aec6933a34daf280a3c50bc5f0",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-SIDEPANELAUNCHER-SIDEPANELAUNCHER-004"
+  },
+  {
+    "id": "R-UI-COMMON-012",
+    "owner": "clients/gui/packages/ui/src/workbench/task-list-item/task-list-item.md",
+    "originalSha256": "e79f8104e60d87e3dc75d47eb0d9ec59ada307aec6933a34daf280a3c50bc5f0",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-TASKLISTITEM-TASKLISTITEM-004"
+  },
+  {
+    "id": "R-UI-COMMON-012",
+    "owner": "clients/gui/packages/ui/src/workbench/task-title-overflow/task-title-overflow.md",
+    "originalSha256": "e79f8104e60d87e3dc75d47eb0d9ec59ada307aec6933a34daf280a3c50bc5f0",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-TASKTITLEOVERFLOW-TASKTITLEOVERFLOW-004"
+  },
+  {
+    "id": "R-UI-COMMON-012",
+    "owner": "clients/gui/packages/ui/src/workbench/workbench-shell/workbench-shell.md",
+    "originalSha256": "e79f8104e60d87e3dc75d47eb0d9ec59ada307aec6933a34daf280a3c50bc5f0",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-WORKBENCHSHELL-WORKBENCHSHELL-004"
+  },
+  {
+    "id": "R-UI-COMMON-013",
+    "owner": "clients/gui/packages/ui/src/components/control-hint-tooltip/control-hint-tooltip.md",
+    "originalSha256": "9dcee6527398727825be56173bd65d55e64006239d4469529dac97c53b2061a0",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-CONTROLHINTTOOLTIP-CONTROLHINTTOOLTIP-005"
+  },
+  {
+    "id": "R-UI-COMMON-013",
+    "owner": "clients/gui/packages/ui/src/conversation/command-details/command-details.md",
+    "originalSha256": "9dcee6527398727825be56173bd65d55e64006239d4469529dac97c53b2061a0",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-COMMANDDETAILS-COMMANDDETAILS-005"
+  },
+  {
+    "id": "R-UI-COMMON-013",
+    "owner": "clients/gui/packages/ui/src/conversation/markdown-blockquote/markdown-blockquote.md",
+    "originalSha256": "9dcee6527398727825be56173bd65d55e64006239d4469529dac97c53b2061a0",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-MARKDOWNBLOCKQUOTE-MARKDOWNBLOCKQUOTE-005"
+  },
+  {
+    "id": "R-UI-COMMON-013",
+    "owner": "clients/gui/packages/ui/src/conversation/markdown-list/markdown-list.md",
+    "originalSha256": "9dcee6527398727825be56173bd65d55e64006239d4469529dac97c53b2061a0",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-MARKDOWNLIST-MARKDOWNLIST-005"
+  },
+  {
+    "id": "R-UI-COMMON-013",
+    "owner": "clients/gui/packages/ui/src/conversation/markdown-table/markdown-table.md",
+    "originalSha256": "9dcee6527398727825be56173bd65d55e64006239d4469529dac97c53b2061a0",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-MARKDOWNTABLE-MARKDOWNTABLE-006"
+  },
+  {
+    "id": "R-UI-COMMON-013",
+    "owner": "clients/gui/packages/ui/src/conversation/message-code-block/message-code-block.md",
+    "originalSha256": "9dcee6527398727825be56173bd65d55e64006239d4469529dac97c53b2061a0",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-MESSAGECODEBLOCK-MESSAGECODEBLOCK-005"
+  },
+  {
+    "id": "R-UI-COMMON-013",
+    "owner": "clients/gui/packages/ui/src/workbench/resource-controls/resource-controls.md",
+    "originalSha256": "9dcee6527398727825be56173bd65d55e64006239d4469529dac97c53b2061a0",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-RESOURCECONTROLS-RESOURCECONTROLS-005"
+  },
+  {
+    "id": "R-UI-COMMON-013",
+    "owner": "clients/gui/packages/ui/src/workbench/settings-navigation/settings-navigation.md",
+    "originalSha256": "9dcee6527398727825be56173bd65d55e64006239d4469529dac97c53b2061a0",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-SETTINGSNAVIGATION-SETTINGSNAVIGATION-005"
+  },
+  {
+    "id": "R-UI-COMMON-013",
+    "owner": "clients/gui/packages/ui/src/workbench/side-pane-frame/side-pane-frame.md",
+    "originalSha256": "9dcee6527398727825be56173bd65d55e64006239d4469529dac97c53b2061a0",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-SIDEPANEFRAME-SIDEPANEFRAME-005"
+  },
+  {
+    "id": "R-UI-COMMON-013",
+    "owner": "clients/gui/packages/ui/src/workbench/side-pane-launcher/side-pane-launcher.md",
+    "originalSha256": "9dcee6527398727825be56173bd65d55e64006239d4469529dac97c53b2061a0",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-SIDEPANELAUNCHER-SIDEPANELAUNCHER-005"
+  },
+  {
+    "id": "R-UI-COMMON-013",
+    "owner": "clients/gui/packages/ui/src/workbench/task-title-overflow/task-title-overflow.md",
+    "originalSha256": "9dcee6527398727825be56173bd65d55e64006239d4469529dac97c53b2061a0",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-TASKTITLEOVERFLOW-TASKTITLEOVERFLOW-005"
+  },
+  {
+    "id": "R-UI-COMMON-013",
+    "owner": "clients/gui/packages/ui/src/workbench/workbench-shell/workbench-shell.md",
+    "originalSha256": "9dcee6527398727825be56173bd65d55e64006239d4469529dac97c53b2061a0",
+    "draftRuleIdBeforeMerge": "R-UI-WORKBENCH-WORKBENCHSHELL-WORKBENCHSHELL-005"
+  },
+  {
+    "id": "R-UI-COMMON-014",
+    "owner": "clients/gui/packages/ui/src/components/feedback-notice/feedback-notice.md",
+    "originalSha256": "eff4e33febfe3aa3157dd5ffdd6f8fa5763f9a37d59b4aefdec1e891bb4b16de",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-FEEDBACKNOTICE-FEEDBACKNOTICE-002"
+  },
+  {
+    "id": "R-UI-COMMON-014",
+    "owner": "clients/gui/packages/ui/src/components/settings-disclosure/settings-disclosure.md",
+    "originalSha256": "eff4e33febfe3aa3157dd5ffdd6f8fa5763f9a37d59b4aefdec1e891bb4b16de",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-SETTINGSDISCLOSURE-SETTINGSDISCLOSURE-002"
+  },
+  {
+    "id": "R-UI-COMMON-014",
+    "owner": "clients/gui/packages/ui/src/conversation/collapsible-text/collapsible-text.md",
+    "originalSha256": "eff4e33febfe3aa3157dd5ffdd6f8fa5763f9a37d59b4aefdec1e891bb4b16de",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-COLLAPSIBLETEXT-COLLAPSIBLETEXT-002"
+  },
+  {
+    "id": "R-UI-COMMON-014",
+    "owner": "clients/gui/packages/ui/src/settings/settings-search-input/settings-search-input.md",
+    "originalSha256": "eff4e33febfe3aa3157dd5ffdd6f8fa5763f9a37d59b4aefdec1e891bb4b16de",
+    "draftRuleIdBeforeMerge": "R-UI-SETTINGS-SETTINGSSEARCHINPUT-SETTINGSSEARCHINPUT-002"
+  },
+  {
+    "id": "R-UI-COMMON-014",
+    "owner": "clients/gui/packages/ui/src/settings/settings-segmented-tabs/settings-segmented-tabs.md",
+    "originalSha256": "eff4e33febfe3aa3157dd5ffdd6f8fa5763f9a37d59b4aefdec1e891bb4b16de",
+    "draftRuleIdBeforeMerge": "R-UI-SETTINGS-SETTINGSSEGMENTEDTABS-SETTINGSSEGMENTEDTABS-002"
+  },
+  {
+    "id": "R-UI-COMMON-014",
+    "owner": "clients/gui/packages/ui/src/settings/settings-select/settings-select.md",
+    "originalSha256": "eff4e33febfe3aa3157dd5ffdd6f8fa5763f9a37d59b4aefdec1e891bb4b16de",
+    "draftRuleIdBeforeMerge": "R-UI-SETTINGS-SETTINGSSELECT-SETTINGSSELECT-002"
+  },
+  {
+    "id": "R-UI-COMMON-015",
+    "owner": "clients/gui/packages/ui/src/components/settings-disclosure/settings-disclosure.md",
+    "originalSha256": "e9793d238d8c3794742f4655c4409965bced613437fca844e94016e1cb557d9f",
+    "draftRuleIdBeforeMerge": "R-UI-COMPONENTS-SETTINGSDISCLOSURE-SETTINGSDISCLOSURE-005"
+  },
+  {
+    "id": "R-UI-COMMON-015",
+    "owner": "clients/gui/packages/ui/src/conversation/collapsible-text/collapsible-text.md",
+    "originalSha256": "e9793d238d8c3794742f4655c4409965bced613437fca844e94016e1cb557d9f",
+    "draftRuleIdBeforeMerge": "R-UI-CONVERSATION-COLLAPSIBLETEXT-COLLAPSIBLETEXT-005"
+  },
+  {
+    "id": "R-UI-COMMON-015",
+    "owner": "clients/gui/packages/ui/src/settings/settings-search-input/settings-search-input.md",
+    "originalSha256": "e9793d238d8c3794742f4655c4409965bced613437fca844e94016e1cb557d9f",
+    "draftRuleIdBeforeMerge": "R-UI-SETTINGS-SETTINGSSEARCHINPUT-SETTINGSSEARCHINPUT-005"
+  },
+  {
+    "id": "R-UI-COMMON-015",
+    "owner": "clients/gui/packages/ui/src/settings/settings-segmented-tabs/settings-segmented-tabs.md",
+    "originalSha256": "e9793d238d8c3794742f4655c4409965bced613437fca844e94016e1cb557d9f",
+    "draftRuleIdBeforeMerge": "R-UI-SETTINGS-SETTINGSSEGMENTEDTABS-SETTINGSSEGMENTEDTABS-005"
+  },
+  {
+    "id": "R-UI-COMMON-015",
+    "owner": "clients/gui/packages/ui/src/settings/settings-select/settings-select.md",
+    "originalSha256": "e9793d238d8c3794742f4655c4409965bced613437fca844e94016e1cb557d9f",
+    "draftRuleIdBeforeMerge": "R-UI-SETTINGS-SETTINGSSELECT-SETTINGSSELECT-005"
+  }
+]

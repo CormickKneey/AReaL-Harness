@@ -1,6 +1,7 @@
+import { makeTempDir } from "./support/temp.mjs";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { mkdtemp, mkdir, writeFile, readFile, readdir } from "node:fs/promises";
+import { mkdir, writeFile, readFile, readdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
@@ -12,7 +13,7 @@ import { platform, arch, release } from "node:os";
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const root = resolve(gui, "../..");
 const require = createRequire(join(gui, "app/package.json"));
-const scratch = await mkdtemp("/private/tmp/areal-browser-r0-");
+const scratch = await makeTempDir("areal-browser-r0-");
 const receipts = [];
 const site = createServer(async (request, response) => {
   if (request.url === "/receipt") {

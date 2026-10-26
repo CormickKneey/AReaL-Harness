@@ -1,0 +1,27 @@
+diff --git a/lib/crawlfs.js b/lib/crawlfs.js
+--- a/lib/crawlfs.js
++++ b/lib/crawlfs.js
+@@ -28,11 +28,9 @@
+ Object.defineProperty(exports, "__esModule", { value: true });
+ exports.determineFileType = determineFileType;
+ exports.crawl = crawl;
+-const util_1 = require("util");
+ const glob_1 = require("glob");
+ const wrapped_fs_1 = __importDefault(require("./wrapped-fs"));
+ const path = __importStar(require("path"));
+-const glob = (0, util_1.promisify)(glob_1.glob);
+ async function determineFileType(filename) {
+     const stat = await wrapped_fs_1.default.lstat(filename);
+     if (stat.isFile()) {
+@@ -48,7 +46,10 @@
+ }
+ async function crawl(dir, options) {
+     const metadata = {};
+-    const crawled = await glob(dir, options);
++    const crawled = await (0, glob_1.glob)(dir, { nocase: false, windowsPathsNoEscape: true, ...options, cwd: options.cwd || (path.isAbsolute(dir) ? path.parse(dir).root : undefined) });
++    if (!options.nosort) {
++        crawled.sort((a, b) => a.localeCompare(b, 'en'));
++    }
+     const results = await Promise.all(crawled.map(async (filename) => [filename, await determineFileType(filename)]));
+     const links = [];
+     const filenames = results

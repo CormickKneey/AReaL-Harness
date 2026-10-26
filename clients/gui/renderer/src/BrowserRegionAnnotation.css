@@ -1,14 +1,68 @@
-.browser-region-annotation { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; gap: 8px; padding: 12px; background: var(--color-background); overflow: auto; }
-.browser-region-annotation [role="status"] { font-size: var(--text-ui-sm); overflow-wrap: anywhere; }
-.browser-region-image-wrap { position: relative; align-self: center; width: fit-content; max-width: 100%; border: 1px solid var(--color-border); line-height: 0; }
-.browser-region-image-wrap img { display: block; max-width: 100%; max-height: 55vh; width: auto; height: auto; cursor: crosshair; touch-action: none; user-select: none; }
-.browser-region-selection { position: absolute; box-sizing: border-box; border: 2px solid var(--color-foreground); background: color-mix(in srgb, var(--color-foreground) 16%, transparent); pointer-events: none; }
-.browser-region-annotation label { display: flex; flex-direction: column; gap: 4px; }
-.browser-region-coordinates { display: flex; gap: 8px; flex-wrap: wrap; }
-.browser-region-coordinates label { width: 85px; }
-.browser-region-coordinates input { width: 100%; }
-.browser-region-annotation textarea { min-height: 70px; resize: vertical; }
-.browser-region-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.browser-region-annotation {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--color-background);
+  overflow: auto;
+}
+.browser-region-annotation [role="status"] {
+  font-size: var(--text-ui-sm);
+  overflow-wrap: anywhere;
+}
+.browser-region-image-wrap {
+  position: relative;
+  align-self: center;
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid var(--color-border);
+  line-height: 0;
+}
+.browser-region-image-wrap img {
+  display: block;
+  max-width: 100%;
+  max-height: 55vh;
+  width: auto;
+  height: auto;
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+}
+.browser-region-selection {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid var(--color-foreground);
+  background: color-mix(in srgb, var(--color-foreground) 16%, transparent);
+  pointer-events: none;
+}
+.browser-region-annotation label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.browser-region-coordinates {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.browser-region-coordinates label {
+  width: 85px;
+}
+.browser-region-coordinates input {
+  width: 100%;
+}
+.browser-region-annotation textarea {
+  min-height: 70px;
+  resize: vertical;
+}
+.browser-region-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 
 /* 冻结原生截图铺满原视口，交互浮层不改变 Main 持有的页面尺寸。 */
 .shared-browser-annotation {
@@ -43,7 +97,7 @@
   gap: 5px;
   padding: 5px;
   border: 1px solid var(--color-border);
-  border-radius: 12px;
+  border-radius: var(--radius-panel);
   background: var(--color-popover);
   box-shadow: var(--shadow-overlay);
   white-space: nowrap;
@@ -66,7 +120,7 @@
   max-width: calc(100% - 16px);
   margin: auto;
   padding: 5px 9px;
-  border-radius: 7px;
+  border-radius: var(--radius-compact-row);
   background: var(--color-popover);
   font-size: var(--text-ui-xs);
   color: var(--color-foreground-subtle);
@@ -79,7 +133,7 @@
   right: 8px;
   z-index: 6;
   padding: 7px;
-  border-radius: 9px;
+  border-radius: var(--radius-attachment);
   border: 1px solid var(--color-border);
   background: var(--color-popover);
   font-size: var(--text-ui-xs);
@@ -92,7 +146,7 @@
   color: var(--color-foreground-subtle);
 }
 .browser-annotation-attachments > span {
-  font-size: 10px;
+  font-size: var(--text-fixed-metadata);
 }
 .browser-annotation-attachment-card {
   display: flex;
@@ -117,7 +171,7 @@
   width: 100%;
   min-height: 50px;
   padding: 6px;
-  border-radius: 6px;
+  border-radius: var(--radius-compact);
   border: 1px solid var(--color-border);
   background: var(--color-background);
   font-size: var(--text-ui-sm);
@@ -125,7 +179,7 @@
 .browser-annotation-attachment-card small {
   display: block;
   margin-top: 5px;
-  font-size: 10px;
+  font-size: var(--text-fixed-metadata);
   color: var(--color-foreground-subtle);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -138,9 +192,17 @@
 .browser-annotation-attachment-card pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font-size: 10px;
+  font-size: var(--text-fixed-metadata);
 }
 
-.browser-annotation-attachment-card [data-message-attachment="image"] { flex: none; width: 64px; height: 54px; }
-.browser-annotation-attachment-card [data-message-attachment="image"] img { object-fit: contain; }
-.browser-annotation-attachment-card button[aria-label^="移除附件"] { display: none; }
+.browser-annotation-attachment-card [data-message-attachment="image"] {
+  flex: none;
+  width: 64px;
+  height: 54px;
+}
+.browser-annotation-attachment-card [data-message-attachment="image"] img {
+  object-fit: contain;
+}
+.browser-annotation-attachment-card button[aria-label^="移除附件"] {
+  display: none;
+}

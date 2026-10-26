@@ -240,7 +240,13 @@ export function scenarioProjection(
         "flow-wait",
         "agent_wait",
         { threadId: childId },
-        { status: "completed", result: "Apples: 16; Pears: 16; total: 32" },
+        {
+          threadId: childId,
+          status: "completed",
+          settled: true,
+          timedOut: false,
+          text: "Apples: 16; Pears: 16; total: 32",
+        },
       ),
     );
   if (at >= 7)
@@ -254,7 +260,7 @@ export function scenarioProjection(
       ),
     });
   if (exception === "未知") {
-    const command = items.find(item => item.id === "flow-command")!;
+    const command = items.find((item) => item.id === "flow-command")!;
     command.execution = { outcome: "unknown", operationId: "fixture-command-unknown" };
   }
   const childItems: Data[] = [

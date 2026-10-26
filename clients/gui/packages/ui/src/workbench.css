@@ -1,3 +1,4 @@
 @import "./workbench/workbench-shell/workbench-shell.css";
 @import "./workbench/settings-navigation/settings-navigation.css";
 @import "./workbench/scheduled-workspace/scheduled-workspace.css";
+@import "./workbench/task-title-overflow/task-title-overflow.css";

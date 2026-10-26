@@ -60,11 +60,13 @@ areal service task-catalog --workspace /absolute/workspace \
   --data-dir /absolute/state --limit 30 --json
 ```
 
-该命令不启动 Engine、Runtime、模型或插件，不恢复运行状态、不迁移旧格式，也不重放操作。它验证规范工作区、数据目录和 `service-workspace` 绑定，由 Core 读取同一份原子发布根及内容哈希校验的不可变 Task 文件。入口仅供可信本机用户使用，不向 HTTP/WS 或受限 Thread principal 开放；`--source-thread-id` 是来源筛选，不是授权参数。
+该命令不启动 Engine、Runtime、模型或插件，不恢复运行状态、不迁移旧格式，也不重放操作。它验证规范工作区、数据目录和 `service-workspace` 绑定，版本 6 由 Core 读取同一份原子发布根及其哈希校验的不可变定时摘要包，不读取热 Task 或运行历史。版本 5 的升级发现保留原可信热文件读取路径，再投影为相同的有界摘要；这一首次读取仍受热状态大小影响。入口仅供可信本机用户使用，不向 HTTP/WS 或受限 Thread principal 开放；`--source-thread-id` 是来源筛选，不是授权参数。
 
-响应包含 `version: 1`、`target: {workspace, dataDir, instanceId}`、`source: "published"`、`executionState: "unobserved"` 和 `catalog`。`catalog.kind` 为 `snapshot` 时包含 `rootDigest`、`data` 和 `hasMore`；绑定有效但根不存在时为 `empty`，只表示尚未观察到已发布目录。未绑定、已知旧格式或超出 32 MiB 热状态读取预算时返回 `requiresCore`，其 `reason` 分别为 `unbound`、`legacyFormat` 或 `readBudgetExceeded`。损坏、未知格式、身份不符和读取错误不返回空目录。`--limit` 默认为 30，范围 1–1024；只列定时任务，先按来源筛选并排除已结算的删除任务，再按任务 ID 排序截断；仍有非终态 Run 或未结算 worker 的删除任务保留。同一次读取只使用一份根，不拼接不同发布版本。
+响应包含 `version: 2`、`target: {workspace, dataDir, instanceId}`、`source: "published"`、`executionState: "unobserved"` 和 `catalog`。`catalog.kind` 为 `snapshot` 时包含 `rootDigest`、`data: TaskDirectoryRow[]` 和 `hasMore`；绑定有效但根不存在时为 `empty`，只表示尚未观察到已发布目录。未绑定、版本 1–4 的旧格式或版本 5 超出 32 MiB 热状态读取预算时返回 `requiresCore`，其 `reason` 分别为 `unbound`、`legacyFormat` 或 `readBudgetExceeded`。损坏、未知格式、身份不符和读取错误不返回空目录。`--limit` 默认为 30，范围 1–1024；只列定时任务，先按来源筛选并排除已结算的删除任务，再按任务 ID 排序截断；仍有非终态 Run 或未结算 worker 的删除任务保留。同一次读取只使用一份根，不拼接不同发布版本。
 
-已发布目录不证明执行活性、完整存储可恢复或某个未知提交已成功。它不运行恢复逻辑，保存的运行状态和修订可能与随后启动的 Core 不同。GUI 先显示任务名称并提示正在更新状态，同时保留原 Core 启动和实时目录读取；预览不写入实时任务模型、不提供管理操作的修订。实时结果覆盖预览，迟到预览不能覆盖实时结果；实时读取失败保留未确认提示和重试入口。
+已发布目录不证明执行活性、完整存储可恢复或某个未知提交已成功。它不运行恢复逻辑，保存的运行状态和修订可能与随后启动的 Core 不同。GUI 的共享 owner 缓存保留已发布来源与执行状态未观察标记。任务中心和侧栏的读取不启动冷 Core；独立激活协调器在 App 运行期间为启用安排连接其执行 owner。预览不写入完整 Task 模型、不提供管理操作的修订。实时结果覆盖预览，迟到预览不能覆盖实时结果；实时读取失败保留未确认提示和重试入口。
+
+实时有界目录和 owner watch 的参数、分页、断流恢复及通知基线见 [Task API](tasks.md#轻量目录与-owner-更新)。摘要包与 Task、收据和归属引用由同一个根提交，发布失败不能转成空目录或推翻已经确认的原操作。
 
 ## 可核查的停止操作
 

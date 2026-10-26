@@ -4,4 +4,4 @@
 
 当前条目是[桌面工作台](workbench/README.md)。它连接项目、聊天、定时任务、资源和设置。GUI 模式及后续 Web 复用依据归[交互模式](../patterns/README.md)，组件选择归[组件目录](../components/README.md)。
 
-先完成桌面 GUI 的设计与生产迁移。后续 Web 复用时独立核对导航、输入、阅读与平台能力，桌面路径或开发预览通过不能证明本地 Web 和 Remote Web 已完成相同路径。
+`R-ENTRY-044` 先完成桌面 GUI 的设计与生产迁移。后续 Web 复用时独立核对导航、输入、阅读与平台能力，桌面路径或开发预览通过不能证明本地 Web 和 Remote Web 已完成相同路径。

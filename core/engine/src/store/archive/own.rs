@@ -38,15 +38,20 @@ fn storage(error: anyhow::Error) -> crate::Error {
 fn walk(
     root: &Path,
     thread: &Thread,
-    mut visit: impl FnMut(&Turn, &Item) -> crate::Result<bool>,
+    mut visit: impl FnMut(&Turn, &Item, bool) -> crate::Result<bool>,
 ) -> crate::Result<()> {
     fn scan(
         turns: &[Turn],
-        visit: &mut impl FnMut(&Turn, &Item) -> crate::Result<bool>,
+        visit: &mut impl FnMut(&Turn, &Item, bool) -> crate::Result<bool>,
     ) -> crate::Result<bool> {
-        for turn in turns.iter().rev() {
-            for item in turn.items.iter().rev() {
-                if visit(turn, item)? {
+        let oldest_turn = turns.iter().position(|turn| !turn.items.is_empty());
+        for (turn_index, turn) in turns.iter().enumerate().rev() {
+            for (item_index, item) in turn.items.iter().enumerate().rev() {
+                if visit(
+                    turn,
+                    item,
+                    Some(turn_index) == oldest_turn && item_index == 0,
+                )? {
                     return Ok(true);
                 }
             }
@@ -194,7 +199,7 @@ impl Store {
                 if decoded.scope != scope { return Err(failure(&thread, "HISTORY_CURSOR_STALE", None)); }
                 let mut fence_found = decoded.fence.is_none();
                 let mut upper_found = decoded.upper.is_none();
-                walk(&root, &thread, |_, item| {
+                walk(&root, &thread, |_, item, _| {
                     fence_found |= decoded.fence.as_deref() == Some(item.id());
                     upper_found |= decoded.upper.as_deref() == Some(item.id());
                     Ok(fence_found && upper_found)
@@ -204,7 +209,7 @@ impl Store {
             } else {
                 let mut fence = None;
                 let mut upper = None;
-                walk(&root, &thread, |turn, item| {
+                walk(&root, &thread, |turn, item, _| {
                     if fence.is_none() && matches!(item, Item::UserMessage { .. }) { fence = Some(item.id().to_owned()); }
                     if upper.is_none() && sealed_item(turn, item) { upper = Some(item.id().to_owned()); }
                     Ok(fence.is_some() && upper.is_some())
@@ -214,7 +219,7 @@ impl Store {
             let snapshot = cursor.snapshot();
             if cursor.item.is_some() {
                 let mut selected = None;
-                walk(&root, &thread, |turn, item| {
+                walk(&root, &thread, |turn, item, _| {
                     if cursor.item.as_deref() == Some(item.id()) { selected = Some(entry(&thread, turn, item)); return Ok(true); }
                     Ok(false)
                 })?;
@@ -241,10 +246,14 @@ impl Store {
             }
             let observing = template.is_some();
             let mut data = Vec::new();
+            let mut checkpoints = Vec::new();
+            let mut fitted = 0;
+            let mut check_at = 1;
+            let mut singleton_overhead = None;
             let mut found = cursor.before.is_none();
             let mut sealed = false;
             let mut next = None;
-            walk(&root, &thread, |turn, item| {
+            walk(&root, &thread, |turn, item, at_segment_end| {
                 if !sealed { sealed = cursor.upper.as_deref() == Some(item.id()); }
                 if !observing && !sealed { return Ok(false); }
                 if !found { found = cursor.before.as_deref() == Some(item.id()); return Ok(false); }
@@ -252,8 +261,25 @@ impl Store {
                 let mut after = cursor.clone();
                 after.before = sealed.then(|| item.id().into());
                 let candidate_next = Some(after.encoded());
-                let single = projected(template.clone(), empty_active_turn.as_ref(), &snapshot, &[value.clone()], candidate_next.clone());
-                if bytes(&single) > max_bytes {
+                let single_bytes = if observing {
+                    let cursor_bytes = serde_json::to_vec(&candidate_next).unwrap().len();
+                    let overhead = match singleton_overhead.as_ref() {
+                        Some((id, overhead)) if id == &turn.id => *overhead,
+                        _ => {
+                            let item = value["item"].take();
+                            let single = projected(template.clone(), empty_active_turn.as_ref(), &snapshot, std::slice::from_ref(&value), candidate_next.clone());
+                            let overhead = bytes(&single) - bytes(&Value::Null) - cursor_bytes;
+                            value["item"] = item;
+                            singleton_overhead = Some((turn.id.clone(), overhead));
+                            overhead
+                        }
+                    };
+                    overhead + bytes(&value["item"]) + cursor_bytes
+                } else {
+                    bytes(&projected(template.clone(), empty_active_turn.as_ref(), &snapshot, std::slice::from_ref(&value), candidate_next.clone()))
+                };
+                if at_segment_end { singleton_overhead = None; }
+                if single_bytes > max_bytes {
                     let serialized = serde_json::to_vec(&value).unwrap();
                     let version = format!("{:x}", Sha256::digest(&serialized));
                     let mut fragment = cursor.clone();
@@ -263,21 +289,31 @@ impl Store {
                     fragment.offset = 0;
                     value["item"] = json!({"type":"historyDeferred","id":item.id(),"originalType":value["item"]["type"],"cursor":fragment.encoded(),"version":version,"totalBytes":serialized.len()});
                 }
-                let mut candidate = data.clone();
-                candidate.push(value.clone());
-                if bytes(&projected(template.clone(), empty_active_turn.as_ref(), &snapshot, &candidate, candidate_next.clone())) > max_bytes {
-                    if data.is_empty() || !sealed { return Err(failure(&thread,"HISTORY_BUDGET_TOO_SMALL",None)); }
+                data.push(value);
+                checkpoints.push((candidate_next, sealed));
+                if data.len() < check_at && !at_segment_end { return Ok(false); }
+                let fits = |count: usize| bytes(&projected(template.clone(), empty_active_turn.as_ref(), &snapshot, &data[..count], checkpoints[count - 1].0.clone())) <= max_bytes;
+                if !fits(data.len()) {
+                    let mut overflow = data.len();
+                    while overflow - fitted > 1 {
+                        let middle = fitted + (overflow - fitted) / 2;
+                        if fits(middle) { fitted = middle; } else { overflow = middle; }
+                    }
+                    if fitted == 0 || !checkpoints[overflow - 1].1 { return Err(failure(&thread,"HISTORY_BUDGET_TOO_SMALL",None)); }
+                    data.truncate(fitted);
+                    next = checkpoints[fitted - 1].0.clone();
                     return Ok(true);
                 }
-                data = candidate;
-                next = candidate_next;
+                fitted = data.len();
+                check_at = fitted.saturating_mul(2);
+                next = checkpoints[fitted - 1].0.clone();
                 Ok(false)
             })?;
             if !found { return Err(failure(&thread,"HISTORY_CURSOR_STALE",None)); }
             if let Some(last) = data.last() {
                 let mut past = false;
                 let mut more = false;
-                walk(&root, &thread, |_,item| {
+                walk(&root, &thread, |_,item, _| {
                     if !past { past = last["sourceItemId"] == item.id(); return Ok(false); }
                     more = true;
                     Ok(true)

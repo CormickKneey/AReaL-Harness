@@ -1,121 +1,46 @@
 {
   "$description": "生产 UI 字面量存量上限，由 scripts/design-system-baseline.mjs --write 生成；只允许减少。",
   "total": {
-    "typography": 86,
-    "color": 145,
-    "radius": 164
+    "color": 63,
+    "radius": 4,
+    "typography": 5
   },
   "files": {
-    "renderer/src/AgentResources.css": {
-      "typography": 1,
-      "color": 1,
-      "radius": 2
-    },
     "renderer/src/AnnotationNoteEditor.css": {
       "color": 3,
-      "typography": 1,
-      "radius": 3
-    },
-    "renderer/src/App.tsx": {
-      "color": 1
+      "radius": 1
     },
     "renderer/src/BrowserKeyboardElementPicker.tsx": {
       "color": 2
     },
     "renderer/src/BrowserRegionAnnotation.css": {
-      "color": 4,
-      "typography": 3,
-      "radius": 4
-    },
-    "renderer/src/BrowserStyleTrial.css": {
-      "radius": 2
-    },
-    "renderer/src/Goal.css": {
-      "radius": 1
-    },
-    "renderer/src/ImageAnnotationViews.css": {
-      "radius": 3
-    },
-    "renderer/src/ProcessesPane.tsx": {
-      "typography": 2
-    },
-    "renderer/src/SideChat.css": {
-      "radius": 1
-    },
-    "renderer/src/TaskCenter.css": {
-      "typography": 2,
-      "radius": 4
-    },
-    "renderer/src/UnknownToolInspection.tsx": {
-      "typography": 4
-    },
-    "renderer/src/UserPromptEdit.css": {
-      "radius": 1
+      "color": 4
     },
     "renderer/src/lib/fileDisplay.tsx": {
       "color": 1
     },
-    "renderer/src/prompt-editor/ComposerSurface.css": {
-      "radius": 3
-    },
     "renderer/src/remote/remote.css": {
-      "color": 3,
-      "typography": 5
+      "typography": 2
     },
     "renderer/src/settings/MobileSettings.css": {
-      "color": 22,
-      "typography": 15,
-      "radius": 7
-    },
-    "renderer/src/settings/PluginCenter.css": {
-      "typography": 7,
-      "radius": 8
-    },
-    "renderer/src/settings/ProjectlessDirectorySetting.tsx": {
-      "typography": 1
+      "color": 1
     },
     "renderer/src/settings/SettingsWorkspace.css": {
-      "color": 37,
-      "typography": 1,
-      "radius": 7
+      "color": 26
     },
     "renderer/src/settings/trajectory-settings.css": {
       "color": 8
     },
     "renderer/src/settings/usage.css": {
       "color": 10,
-      "typography": 5,
-      "radius": 6
-    },
-    "renderer/src/slash-command-menu.css": {
-      "radius": 2
-    },
-    "renderer/src/styles.css": {
-      "color": 7
-    },
-    "renderer/src/terminal/TerminalPane.tsx": {
-      "typography": 2
-    },
-    "renderer/src/user-feedback.css": {
-      "typography": 4,
+      "typography": 1,
       "radius": 3
     },
-    "renderer/src/workbench.css": {
-      "typography": 24,
-      "color": 37,
-      "radius": 88
+    "renderer/src/styles.css": {
+      "color": 2
     },
     "packages/ui/src/components/dialog/dialog.tsx": {
       "color": 1
-    },
-    "packages/ui/src/settings/settings-page/settings-page.css": {
-      "typography": 1
-    },
-    "packages/ui/src/settings/settings-row/settings-row.css": {
-      "radius": 1
-    },
-    "packages/ui/src/settings/settings-segmented-tabs/settings-segmented-tabs.css": {
-      "radius": 2
     },
     "packages/ui/src/components/switch/switch.tsx": {
       "color": 1
@@ -123,41 +48,890 @@
     "packages/ui/src/components/tabs/tabs.tsx": {
       "color": 1
     },
-    "packages/ui/src/conversation/attachment-card/attachment-card.css": {
-      "typography": 3,
-      "radius": 3
-    },
     "packages/ui/src/conversation/command-details/command-details.css": {
-      "color": 1,
-      "typography": 1,
-      "radius": 1
-    },
-    "packages/ui/src/conversation/composer-surface/composer-surface.css": {
-      "radius": 1
-    },
-    "packages/ui/src/conversation/decision-card/decision-card.css": {
-      "radius": 1
+      "typography": 1
     },
     "packages/ui/src/conversation/message-attachments/message-attachments.tsx": {
       "color": 2
-    },
-    "packages/ui/src/conversation/message-code-block/message-code-block.css": {
-      "radius": 1
-    },
-    "packages/ui/src/conversation/question-card/question-card.css": {
-      "radius": 3
     },
     "packages/ui/src/conversation/thinking-status/thinking-status.css": {
       "color": 1
     },
     "packages/ui/src/workbench/settings-navigation/settings-navigation.css": {
-      "typography": 1,
-      "radius": 1
-    },
-    "packages/ui/src/workbench/workbench-shell/workbench-shell.css": {
-      "typography": 3,
-      "color": 2,
-      "radius": 5
+      "typography": 1
     }
+  },
+  "exceptions": [
+    {
+      "file": "renderer/src/AnnotationNoteEditor.css",
+      "finding": "literal color: border: 1px solid #bddbff",
+      "occurrence": 1,
+      "reason": "浏览器批注叠层使用固定标记或选区样式，以保持对任意网页和截图的辨识。活动主题 accent 与这些原色不等价。",
+      "exitCondition": "批注覆盖层集中参考值后逐项保持相同颜色与 alpha 迁移。"
+    },
+    {
+      "file": "renderer/src/AnnotationNoteEditor.css",
+      "finding": "literal color: color: #fff",
+      "occurrence": 1,
+      "reason": "浏览器批注叠层使用固定标记或选区样式，以保持对任意网页和截图的辨识。活动主题 accent 与这些原色不等价。",
+      "exitCondition": "批注覆盖层集中参考值后逐项保持相同颜色与 alpha 迁移。"
+    },
+    {
+      "file": "renderer/src/AnnotationNoteEditor.css",
+      "finding": "literal color: background: #368bee",
+      "occurrence": 1,
+      "reason": "浏览器批注叠层使用固定标记或选区样式，以保持对任意网页和截图的辨识。活动主题 accent 与这些原色不等价。",
+      "exitCondition": "批注覆盖层集中参考值后逐项保持相同颜色与 alpha 迁移。"
+    },
+    {
+      "file": "renderer/src/AnnotationNoteEditor.css",
+      "finding": "literal radius: border-radius: 22px",
+      "occurrence": 1,
+      "reason": "浏览器批注叠层使用固定标记或选区样式，以保持对任意网页和截图的辨识。活动主题 accent 与这些原色不等价。",
+      "exitCondition": "批注覆盖层集中参考值后逐项保持相同颜色与 alpha 迁移。"
+    },
+    {
+      "file": "renderer/src/BrowserKeyboardElementPicker.tsx",
+      "finding": "literal color: border: 2px solid #fff",
+      "occurrence": 1,
+      "reason": "黑白双描边用于覆盖任意网页内容，不能跟随宿主明暗主题而失去其中一条边。",
+      "exitCondition": "浏览器批注工具建立固定覆盖描边角色后等价迁移。"
+    },
+    {
+      "file": "renderer/src/BrowserKeyboardElementPicker.tsx",
+      "finding": "literal color: outline: 2px solid #111",
+      "occurrence": 1,
+      "reason": "黑白双描边用于覆盖任意网页内容，不能跟随宿主明暗主题而失去其中一条边。",
+      "exitCondition": "浏览器批注工具建立固定覆盖描边角色后等价迁移。"
+    },
+    {
+      "file": "renderer/src/BrowserRegionAnnotation.css",
+      "finding": "literal color: border-color: #4795ff",
+      "occurrence": 1,
+      "reason": "浏览器批注叠层使用固定标记或选区样式，以保持对任意网页和截图的辨识。活动主题 accent 与这些原色不等价。",
+      "exitCondition": "批注覆盖层集中参考值后逐项保持相同颜色与 alpha 迁移。"
+    },
+    {
+      "file": "renderer/src/BrowserRegionAnnotation.css",
+      "finding": "literal color: background: #4795ff12",
+      "occurrence": 1,
+      "reason": "浏览器批注叠层使用固定标记或选区样式，以保持对任意网页和截图的辨识。活动主题 accent 与这些原色不等价。",
+      "exitCondition": "批注覆盖层集中参考值后逐项保持相同颜色与 alpha 迁移。"
+    },
+    {
+      "file": "renderer/src/BrowserRegionAnnotation.css",
+      "finding": "literal color: color: #91c5ff",
+      "occurrence": 1,
+      "reason": "浏览器批注叠层使用固定标记或选区样式，以保持对任意网页和截图的辨识。活动主题 accent 与这些原色不等价。",
+      "exitCondition": "批注覆盖层集中参考值后逐项保持相同颜色与 alpha 迁移。"
+    },
+    {
+      "file": "renderer/src/BrowserRegionAnnotation.css",
+      "finding": "literal color: background: #4795ff26",
+      "occurrence": 1,
+      "reason": "浏览器批注叠层使用固定标记或选区样式，以保持对任意网页和截图的辨识。活动主题 accent 与这些原色不等价。",
+      "exitCondition": "批注覆盖层集中参考值后逐项保持相同颜色与 alpha 迁移。"
+    },
+    {
+      "file": "renderer/src/lib/fileDisplay.tsx",
+      "finding": "literal color: color: light-dark(#199f43, #5ecc71)",
+      "occurrence": 1,
+      "reason": "文件差异摘要的浅暗新增色由 light-dark 明确选择，与全局 success 的旧值不同。",
+      "exitCondition": "Diff 内容配色统一到现有 Diff 所有者时迁移。"
+    },
+    {
+      "file": "renderer/src/remote/remote.css",
+      "finding": "literal typography: font-size: 21px",
+      "occurrence": 1,
+      "reason": "保留该具体内容或标题的局部字号关系。当前通用 text-ui/content 角色没有完全相同的固定值或相对关系。",
+      "exitCondition": "该组件在 D2 采用统一排版合同后复核，不能只为减少计数改变字号。"
+    },
+    {
+      "file": "renderer/src/remote/remote.css",
+      "finding": "literal typography: font-size: 17px",
+      "occurrence": 1,
+      "reason": "保留该具体内容或标题的局部字号关系。当前通用 text-ui/content 角色没有完全相同的固定值或相对关系。",
+      "exitCondition": "该组件在 D2 采用统一排版合同后复核，不能只为减少计数改变字号。"
+    },
+    {
+      "file": "renderer/src/settings/MobileSettings.css",
+      "finding": "literal color: background: #fff",
+      "occurrence": 1,
+      "reason": "这是配对二维码底板。保留固定白色保证二维码像素的原有对比，不跟随应用背景。",
+      "exitCondition": "二维码组件公开固定底板 Token 时迁移。"
+    },
+    {
+      "file": "renderer/src/settings/SettingsWorkspace.css",
+      "finding": "literal color: color: #5c5c5c",
+      "occurrence": 1,
+      "reason": "这是主题选择器的固定主题样本或 Diff 语法示例。示例必须展示被选主题，不能继承当前活动调色板。",
+      "exitCondition": "主题预览改用统一主题样本数据时随该所有者收敛。"
+    },
+    {
+      "file": "renderer/src/settings/SettingsWorkspace.css",
+      "finding": "literal color: background: #f8e6e3",
+      "occurrence": 1,
+      "reason": "这是主题选择器的固定主题样本或 Diff 语法示例。示例必须展示被选主题，不能继承当前活动调色板。",
+      "exitCondition": "主题预览改用统一主题样本数据时随该所有者收敛。"
+    },
+    {
+      "file": "renderer/src/settings/SettingsWorkspace.css",
+      "finding": "literal color: background: #e5f6e4",
+      "occurrence": 1,
+      "reason": "这是主题选择器的固定主题样本或 Diff 语法示例。示例必须展示被选主题，不能继承当前活动调色板。",
+      "exitCondition": "主题预览改用统一主题样本数据时随该所有者收敛。"
+    },
+    {
+      "file": "renderer/src/settings/SettingsWorkspace.css",
+      "finding": "literal color: color: #ba2623",
+      "occurrence": 1,
+      "reason": "这是主题选择器的固定主题样本或 Diff 语法示例。示例必须展示被选主题，不能继承当前活动调色板。",
+      "exitCondition": "主题预览改用统一主题样本数据时随该所有者收敛。"
+    },
+    {
+      "file": "renderer/src/settings/SettingsWorkspace.css",
+      "finding": "literal color: background: #fbeceb",
+      "occurrence": 1,
+      "reason": "这是主题选择器的固定主题样本或 Diff 语法示例。示例必须展示被选主题，不能继承当前活动调色板。",
+      "exitCondition": "主题预览改用统一主题样本数据时随该所有者收敛。"
+    },
+    {
+      "file": "renderer/src/settings/SettingsWorkspace.css",
+      "finding": "literal color: color: #00a240",
+      "occurrence": 1,
+      "reason": "这是主题选择器的固定主题样本或 Diff 语法示例。示例必须展示被选主题，不能继承当前活动调色板。",
+      "exitCondition": "主题预览改用统一主题样本数据时随该所有者收敛。"
+    },
+    {
+      "file": "renderer/src/settings/SettingsWorkspace.css",
+      "finding": "literal color: background: #eaf7ea",
+      "occurrence": 1,
+      "reason": "这是主题选择器的固定主题样本或 Diff 语法示例。示例必须展示被选主题，不能继承当前活动调色板。",
+      "exitCondition": "主题预览改用统一主题样本数据时随该所有者收敛。"
+    },
+    {
+      "file": "renderer/src/settings/SettingsWorkspace.css",
+      "finding": "literal color: color: #0550ae",
+      "occurrence": 1,
+      "reason": "这是主题选择器的固定主题样本或 Diff 语法示例。示例必须展示被选主题，不能继承当前活动调色板。",
+      "exitCondition": "主题预览改用统一主题样本数据时随该所有者收敛。"
+    },
+    {
+      "file": "renderer/src/settings/SettingsWorkspace.css",
+      "finding": "literal color: color: #9a4700",
+      "occurrence": 1,
+      "reason": "这是主题选择器的固定主题样本或 Diff 语法示例。示例必须展示被选主题，不能继承当前活动调色板。",
+      "exitCondition": "主题预览改用统一主题样本数据时随该所有者收敛。"
+    },
+    {
+      "file": "renderer/src/settings/SettingsWorkspace.css",
+      "finding": "literal color: color: #006f07",
+      "occurrence": 1,
+      "reason": "这是主题选择器的固定主题样本或 Diff 语法示例。示例必须展示被选主题，不能继承当前活动调色板。",
+      "exitCondition": "主题预览改用统一主题样本数据时随该所有者收敛。"
+    },
+    {
+      "file": "renderer/src/settings/SettingsWorkspace.css",
+      "finding": "literal color: color: #0550ae",
+      "occurrence": 2,
+      "reason": "这是主题选择器的固定主题样本或 Diff 语法示例。示例必须展示被选主题，不能继承当前活动调色板。",
+      "exitCondition": "主题预览改用统一主题样本数据时随该所有者收敛。"
+    },
+    {
+      "file": "renderer/src/settings/SettingsWorkspace.css",
+      "finding": "literal color: color: #666",
+      "occurrence": 1,
+      "reason": "这是主题选择器的固定主题样本或 Diff 语法示例。示例必须展示被选主题，不能继承当前活动调色板。",
+      "exitCondition": "主题预览改用统一主题样本数据时随该所有者收敛。"
+    },
+    {
+      "file": "renderer/src/settings/SettingsWorkspace.css",
+      "finding": "literal color: background: #181818",
+      "occurrence": 1,
+      "reason": "这是主题选择器的固定主题样本或 Diff 语法示例。示例必须展示被选主题，不能继承当前活动调色板。",
+      "exitCondition": "主题预览改用统一主题样本数据时随该所有者收敛。"
+    },
+    {
+      "file": "renderer/src/settings/SettingsWorkspace.css",
+      "finding": "literal color: color: #fcfcfc",
+      "occurrence": 1,
+      "reason": "这是主题选择器的固定主题样本或 Diff 语法示例。示例必须展示被选主题，不能继承当前活动调色板。",
+      "exitCondition": "主题预览改用统一主题样本数据时随该所有者收敛。"
+    },
+    {
+      "file": "renderer/src/settings/SettingsWorkspace.css",
+      "finding": "literal color: color: #a1a1a1",
+      "occurrence": 1,
+      "reason": "这是主题选择器的固定主题样本或 Diff 语法示例。示例必须展示被选主题，不能继承当前活动调色板。",
+      "exitCondition": "主题预览改用统一主题样本数据时随该所有者收敛。"
+    },
+    {
+      "file": "renderer/src/settings/SettingsWorkspace.css",
+      "finding": "literal color: background: #38201c",
+      "occurrence": 1,
+      "reason": "这是主题选择器的固定主题样本或 Diff 语法示例。示例必须展示被选主题，不能继承当前活动调色板。",
+      "exitCondition": "主题预览改用统一主题样本数据时随该所有者收敛。"
+    },
+    {
+      "file": "renderer/src/settings/SettingsWorkspace.css",
+      "finding": "literal color: background: #25140f",
+      "occurrence": 1,
+      "reason": "这是主题选择器的固定主题样本或 Diff 语法示例。示例必须展示被选主题，不能继承当前活动调色板。",
+      "exitCondition": "主题预览改用统一主题样本数据时随该所有者收敛。"
+    },
+    {
+      "file": "renderer/src/settings/SettingsWorkspace.css",
+      "finding": "literal color: color: #fa423e",
+      "occurrence": 1,
+      "reason": "这是主题选择器的固定主题样本或 Diff 语法示例。示例必须展示被选主题，不能继承当前活动调色板。",
+      "exitCondition": "主题预览改用统一主题样本数据时随该所有者收敛。"
+    },
+    {
+      "file": "renderer/src/settings/SettingsWorkspace.css",
+      "finding": "literal color: background: #233125",
+      "occurrence": 1,
+      "reason": "这是主题选择器的固定主题样本或 Diff 语法示例。示例必须展示被选主题，不能继承当前活动调色板。",
+      "exitCondition": "主题预览改用统一主题样本数据时随该所有者收敛。"
+    },
+    {
+      "file": "renderer/src/settings/SettingsWorkspace.css",
+      "finding": "literal color: background: #162017",
+      "occurrence": 1,
+      "reason": "这是主题选择器的固定主题样本或 Diff 语法示例。示例必须展示被选主题，不能继承当前活动调色板。",
+      "exitCondition": "主题预览改用统一主题样本数据时随该所有者收敛。"
+    },
+    {
+      "file": "renderer/src/settings/SettingsWorkspace.css",
+      "finding": "literal color: color: #40c977",
+      "occurrence": 1,
+      "reason": "这是主题选择器的固定主题样本或 Diff 语法示例。示例必须展示被选主题，不能继承当前活动调色板。",
+      "exitCondition": "主题预览改用统一主题样本数据时随该所有者收敛。"
+    },
+    {
+      "file": "renderer/src/settings/SettingsWorkspace.css",
+      "finding": "literal color: color: #b06dff",
+      "occurrence": 1,
+      "reason": "这是主题选择器的固定主题样本或 Diff 语法示例。示例必须展示被选主题，不能继承当前活动调色板。",
+      "exitCondition": "主题预览改用统一主题样本数据时随该所有者收敛。"
+    },
+    {
+      "file": "renderer/src/settings/SettingsWorkspace.css",
+      "finding": "literal color: color: #fa994c",
+      "occurrence": 1,
+      "reason": "这是主题选择器的固定主题样本或 Diff 语法示例。示例必须展示被选主题，不能继承当前活动调色板。",
+      "exitCondition": "主题预览改用统一主题样本数据时随该所有者收敛。"
+    },
+    {
+      "file": "renderer/src/settings/SettingsWorkspace.css",
+      "finding": "literal color: color: #85df7b",
+      "occurrence": 1,
+      "reason": "这是主题选择器的固定主题样本或 Diff 语法示例。示例必须展示被选主题，不能继承当前活动调色板。",
+      "exitCondition": "主题预览改用统一主题样本数据时随该所有者收敛。"
+    },
+    {
+      "file": "renderer/src/settings/SettingsWorkspace.css",
+      "finding": "literal color: color: #6dcbf4",
+      "occurrence": 1,
+      "reason": "这是主题选择器的固定主题样本或 Diff 语法示例。示例必须展示被选主题，不能继承当前活动调色板。",
+      "exitCondition": "主题预览改用统一主题样本数据时随该所有者收敛。"
+    },
+    {
+      "file": "renderer/src/settings/SettingsWorkspace.css",
+      "finding": "literal color: color: #999999",
+      "occurrence": 1,
+      "reason": "这是主题选择器的固定主题样本或 Diff 语法示例。示例必须展示被选主题，不能继承当前活动调色板。",
+      "exitCondition": "主题预览改用统一主题样本数据时随该所有者收敛。"
+    },
+    {
+      "file": "renderer/src/settings/trajectory-settings.css",
+      "finding": "literal color: background: #ffedd5",
+      "occurrence": 1,
+      "reason": "记录开关的启用和停用分别使用完整底色、文字、描边配对。已有 success/warning 单色角色不等价。",
+      "exitCondition": "开关反馈组件定义成组的状态表面与文字角色后等价迁移。"
+    },
+    {
+      "file": "renderer/src/settings/trajectory-settings.css",
+      "finding": "literal color: color: #9a3412",
+      "occurrence": 1,
+      "reason": "记录开关的启用和停用分别使用完整底色、文字、描边配对。已有 success/warning 单色角色不等价。",
+      "exitCondition": "开关反馈组件定义成组的状态表面与文字角色后等价迁移。"
+    },
+    {
+      "file": "renderer/src/settings/trajectory-settings.css",
+      "finding": "literal color: background: #fed7aa",
+      "occurrence": 1,
+      "reason": "记录开关的启用和停用分别使用完整底色、文字、描边配对。已有 success/warning 单色角色不等价。",
+      "exitCondition": "开关反馈组件定义成组的状态表面与文字角色后等价迁移。"
+    },
+    {
+      "file": "renderer/src/settings/trajectory-settings.css",
+      "finding": "literal color: border: 1px solid #fdba74",
+      "occurrence": 1,
+      "reason": "记录开关的启用和停用分别使用完整底色、文字、描边配对。已有 success/warning 单色角色不等价。",
+      "exitCondition": "开关反馈组件定义成组的状态表面与文字角色后等价迁移。"
+    },
+    {
+      "file": "renderer/src/settings/trajectory-settings.css",
+      "finding": "literal color: background: #dcfce7",
+      "occurrence": 1,
+      "reason": "记录开关的启用和停用分别使用完整底色、文字、描边配对。已有 success/warning 单色角色不等价。",
+      "exitCondition": "开关反馈组件定义成组的状态表面与文字角色后等价迁移。"
+    },
+    {
+      "file": "renderer/src/settings/trajectory-settings.css",
+      "finding": "literal color: color: #166534",
+      "occurrence": 1,
+      "reason": "记录开关的启用和停用分别使用完整底色、文字、描边配对。已有 success/warning 单色角色不等价。",
+      "exitCondition": "开关反馈组件定义成组的状态表面与文字角色后等价迁移。"
+    },
+    {
+      "file": "renderer/src/settings/trajectory-settings.css",
+      "finding": "literal color: background: #bbf7d0",
+      "occurrence": 1,
+      "reason": "记录开关的启用和停用分别使用完整底色、文字、描边配对。已有 success/warning 单色角色不等价。",
+      "exitCondition": "开关反馈组件定义成组的状态表面与文字角色后等价迁移。"
+    },
+    {
+      "file": "renderer/src/settings/trajectory-settings.css",
+      "finding": "literal color: border-color: #86efac",
+      "occurrence": 1,
+      "reason": "记录开关的启用和停用分别使用完整底色、文字、描边配对。已有 success/warning 单色角色不等价。",
+      "exitCondition": "开关反馈组件定义成组的状态表面与文字角色后等价迁移。"
+    },
+    {
+      "file": "renderer/src/settings/usage.css",
+      "finding": "literal color: background: #47a582",
+      "occurrence": 1,
+      "reason": "这是用量图表的连续强度色阶或系列色，属于数据编码，不是通用成功状态。",
+      "exitCondition": "图表配色所有者建立连续数据色阶 Token 后逐项迁移。"
+    },
+    {
+      "file": "renderer/src/settings/usage.css",
+      "finding": "literal typography: font-size: 23px",
+      "occurrence": 1,
+      "reason": "保留该具体内容或标题的局部字号关系。当前通用 text-ui/content 角色没有完全相同的固定值或相对关系。",
+      "exitCondition": "该组件在 D2 采用统一排版合同后复核，不能只为减少计数改变字号。"
+    },
+    {
+      "file": "renderer/src/settings/usage.css",
+      "finding": "literal color: background: #c8e5d6",
+      "occurrence": 1,
+      "reason": "这是用量图表的连续强度色阶或系列色，属于数据编码，不是通用成功状态。",
+      "exitCondition": "图表配色所有者建立连续数据色阶 Token 后逐项迁移。"
+    },
+    {
+      "file": "renderer/src/settings/usage.css",
+      "finding": "literal color: background: #83c7a6",
+      "occurrence": 1,
+      "reason": "这是用量图表的连续强度色阶或系列色，属于数据编码，不是通用成功状态。",
+      "exitCondition": "图表配色所有者建立连续数据色阶 Token 后逐项迁移。"
+    },
+    {
+      "file": "renderer/src/settings/usage.css",
+      "finding": "literal color: background: #42a57c",
+      "occurrence": 1,
+      "reason": "这是用量图表的连续强度色阶或系列色，属于数据编码，不是通用成功状态。",
+      "exitCondition": "图表配色所有者建立连续数据色阶 Token 后逐项迁移。"
+    },
+    {
+      "file": "renderer/src/settings/usage.css",
+      "finding": "literal color: background: #227454",
+      "occurrence": 1,
+      "reason": "这是用量图表的连续强度色阶或系列色，属于数据编码，不是通用成功状态。",
+      "exitCondition": "图表配色所有者建立连续数据色阶 Token 后逐项迁移。"
+    },
+    {
+      "file": "renderer/src/settings/usage.css",
+      "finding": "literal color: background: #24483c",
+      "occurrence": 1,
+      "reason": "这是用量图表的连续强度色阶或系列色，属于数据编码，不是通用成功状态。",
+      "exitCondition": "图表配色所有者建立连续数据色阶 Token 后逐项迁移。"
+    },
+    {
+      "file": "renderer/src/settings/usage.css",
+      "finding": "literal color: background: #306e54",
+      "occurrence": 1,
+      "reason": "这是用量图表的连续强度色阶或系列色，属于数据编码，不是通用成功状态。",
+      "exitCondition": "图表配色所有者建立连续数据色阶 Token 后逐项迁移。"
+    },
+    {
+      "file": "renderer/src/settings/usage.css",
+      "finding": "literal color: background: #4a9d73",
+      "occurrence": 1,
+      "reason": "这是用量图表的连续强度色阶或系列色，属于数据编码，不是通用成功状态。",
+      "exitCondition": "图表配色所有者建立连续数据色阶 Token 后逐项迁移。"
+    },
+    {
+      "file": "renderer/src/settings/usage.css",
+      "finding": "literal color: background: #8bcfa3",
+      "occurrence": 1,
+      "reason": "这是用量图表的连续强度色阶或系列色，属于数据编码，不是通用成功状态。",
+      "exitCondition": "图表配色所有者建立连续数据色阶 Token 后逐项迁移。"
+    },
+    {
+      "file": "renderer/src/settings/usage.css",
+      "finding": "literal color: background: #47a582",
+      "occurrence": 2,
+      "reason": "这是用量图表的连续强度色阶或系列色，属于数据编码，不是通用成功状态。",
+      "exitCondition": "图表配色所有者建立连续数据色阶 Token 后逐项迁移。"
+    },
+    {
+      "file": "renderer/src/settings/usage.css",
+      "finding": "literal radius: border-radius: 2px",
+      "occurrence": 1,
+      "reason": "这是微型图表柱或热力图单元的局部几何，2px 或 3px 不用于普通控件。",
+      "exitCondition": "图表布局所有者调整单元形状时复核。"
+    },
+    {
+      "file": "renderer/src/settings/usage.css",
+      "finding": "literal radius: border-radius: 3px",
+      "occurrence": 1,
+      "reason": "这是微型图表柱或热力图单元的局部几何，2px 或 3px 不用于普通控件。",
+      "exitCondition": "图表布局所有者调整单元形状时复核。"
+    },
+    {
+      "file": "renderer/src/settings/usage.css",
+      "finding": "literal radius: border-radius: 3px",
+      "occurrence": 2,
+      "reason": "这是微型图表柱或热力图单元的局部几何，2px 或 3px 不用于普通控件。",
+      "exitCondition": "图表布局所有者调整单元形状时复核。"
+    },
+    {
+      "file": "renderer/src/styles.css",
+      "finding": "literal color: color: white",
+      "occurrence": 1,
+      "reason": "保留现有装饰渐变或更新动作的固定参考色。它与用户可调的 accent 或 primary 不等色。",
+      "exitCondition": "装饰或更新控件进入组件颜色合同后等价迁移。"
+    },
+    {
+      "file": "renderer/src/styles.css",
+      "finding": "literal color: background: #1d4ed8",
+      "occurrence": 1,
+      "reason": "保留现有装饰渐变或更新动作的固定参考色。它与用户可调的 accent 或 primary 不等色。",
+      "exitCondition": "装饰或更新控件进入组件颜色合同后等价迁移。"
+    },
+    {
+      "file": "packages/ui/src/components/dialog/dialog.tsx",
+      "finding": "literal color class: bg-black/60",
+      "occurrence": 1,
+      "reason": "对话框遮罩固定为 60% 黑色，语义表面 Token 的混色或透明度不相同。",
+      "exitCondition": "公共 Dialog 明确遮罩 Token 后保留原 alpha 等价迁移。"
+    },
+    {
+      "file": "packages/ui/src/components/switch/switch.tsx",
+      "finding": "literal color class: bg-white",
+      "occurrence": 1,
+      "reason": "控件滑块固定白色。现有 foreground-inverse 在暗色主题会变黑，不能直接替代。",
+      "exitCondition": "共享 Switch 或 Slider 定义固定滑块语义角色后迁移。"
+    },
+    {
+      "file": "packages/ui/src/components/tabs/tabs.tsx",
+      "finding": "literal color class: focus-visible:ring-[3px]",
+      "occurrence": 1,
+      "reason": "扫描器把焦点环宽度任意值归入颜色。3px 是现有焦点几何，不是颜色字面量。",
+      "exitCondition": "校正审计的宽度识别时移除此记录。"
+    },
+    {
+      "file": "packages/ui/src/conversation/command-details/command-details.css",
+      "finding": "literal typography: font-size: calc(var(--code-font-size, var(--text-fixed-caption)) + 1px)",
+      "occurrence": 1,
+      "reason": "保留该具体内容或标题的局部字号关系。当前通用 text-ui/content 角色没有完全相同的固定值或相对关系。",
+      "exitCondition": "该组件在 D2 采用统一排版合同后复核，不能只为减少计数改变字号。"
+    },
+    {
+      "file": "packages/ui/src/conversation/message-attachments/message-attachments.tsx",
+      "finding": "literal color class: bg-black/55",
+      "occurrence": 1,
+      "reason": "这是图片上的半透明黑底或白色控件文字，属于媒体覆盖层，需要独立于图片和应用主题。",
+      "exitCondition": "媒体覆盖组件统一固定 overlay Token 后迁移。"
+    },
+    {
+      "file": "packages/ui/src/conversation/message-attachments/message-attachments.tsx",
+      "finding": "literal color class: text-white",
+      "occurrence": 1,
+      "reason": "这是图片上的半透明黑底或白色控件文字，属于媒体覆盖层，需要独立于图片和应用主题。",
+      "exitCondition": "媒体覆盖组件统一固定 overlay Token 后迁移。"
+    },
+    {
+      "file": "packages/ui/src/conversation/thinking-status/thinking-status.css",
+      "finding": "literal color: mask-image: linear-gradient(90deg, transparent 35%, #000 50%, transparent 65%)",
+      "occurrence": 1,
+      "reason": "黑色只定义 alpha 遮罩的覆盖度，颜色不进入最终前景。保持现有扫光和遮罩范围。",
+      "exitCondition": "遮罩形状变更时以动画像素证据复核，不映射到主题前景色。"
+    },
+    {
+      "file": "packages/ui/src/workbench/settings-navigation/settings-navigation.css",
+      "finding": "literal typography: font-size: 18px",
+      "occurrence": 1,
+      "reason": "保留该具体内容或标题的局部字号关系。当前通用 text-ui/content 角色没有完全相同的固定值或相对关系。",
+      "exitCondition": "该组件在 D2 采用统一排版合同后复核，不能只为减少计数改变字号。"
+    }
+  ],
+  "classification": {
+    "sourceTotal": 390,
+    "sampling": "对修改前按目录、文件和现有审计顺序排列的390条记录等距抽样50条，索引 round(i*389/49)+1，i为0至49；不按结果挑选。",
+    "sampleCounts": {
+      "缺少等价 Token": 16,
+      "合理例外或定量保留债务": 17,
+      "已有 Token 未使用": 17
+    },
+    "afterTotal": 111,
+    "afterCounts": {
+      "color": 96,
+      "radius": 9,
+      "typography": 6
+    },
+    "samples": [
+      {
+        "sourceIndex": 1,
+        "file": "renderer/src/AgentResources.css",
+        "finding": "literal typography: font-size: 10px",
+        "classification": "缺少等价 Token",
+        "reason": "现有角色的尺寸、颜色、单位、透明度或缩放关系不等价；本次补充具体语义角色后替换。"
+      },
+      {
+        "sourceIndex": 9,
+        "file": "renderer/src/AnnotationNoteEditor.css",
+        "finding": "literal radius: border-radius: 22px",
+        "classification": "合理例外或定量保留债务",
+        "reason": "浏览器批注叠层使用固定标记或选区样式，以保持对任意网页和截图的辨识。活动主题 accent 与这些原色不等价。"
+      },
+      {
+        "sourceIndex": 17,
+        "file": "renderer/src/BrowserRegionAnnotation.css",
+        "finding": "literal color: color: #91c5ff",
+        "classification": "合理例外或定量保留债务",
+        "reason": "浏览器批注叠层使用固定标记或选区样式，以保持对任意网页和截图的辨识。活动主题 accent 与这些原色不等价。"
+      },
+      {
+        "sourceIndex": 25,
+        "file": "renderer/src/BrowserRegionAnnotation.css",
+        "finding": "literal radius: border-radius: 6px",
+        "classification": "缺少等价 Token",
+        "reason": "现有角色的尺寸、颜色、单位、透明度或缩放关系不等价；本次补充具体语义角色后替换。"
+      },
+      {
+        "sourceIndex": 33,
+        "file": "renderer/src/ProcessesPane.tsx",
+        "finding": "literal typography class: text-sm",
+        "classification": "缺少等价 Token",
+        "reason": "现有角色的尺寸、颜色、单位、透明度或缩放关系不等价；本次补充具体语义角色后替换。"
+      },
+      {
+        "sourceIndex": 41,
+        "file": "renderer/src/UnknownToolInspection.tsx",
+        "finding": "literal typography class: text-sm",
+        "classification": "缺少等价 Token",
+        "reason": "现有角色的尺寸、颜色、单位、透明度或缩放关系不等价；本次补充具体语义角色后替换。"
+      },
+      {
+        "sourceIndex": 49,
+        "file": "renderer/src/prompt-editor/ComposerSurface.css",
+        "finding": "literal radius: border-radius: 11px",
+        "classification": "缺少等价 Token",
+        "reason": "现有角色的尺寸、颜色、单位、透明度或缩放关系不等价；本次补充具体语义角色后替换。"
+      },
+      {
+        "sourceIndex": 57,
+        "file": "renderer/src/remote/remote.css",
+        "finding": "literal typography: font-size: 13px",
+        "classification": "缺少等价 Token",
+        "reason": "现有角色的尺寸、颜色、单位、透明度或缩放关系不等价；本次补充具体语义角色后替换。"
+      },
+      {
+        "sourceIndex": 65,
+        "file": "renderer/src/settings/MobileSettings.css",
+        "finding": "literal typography: font-size: 14px",
+        "classification": "缺少等价 Token",
+        "reason": "现有角色的尺寸、颜色、单位、透明度或缩放关系不等价；本次补充具体语义角色后替换。"
+      },
+      {
+        "sourceIndex": 72,
+        "file": "renderer/src/settings/MobileSettings.css",
+        "finding": "literal color: border: 1px solid var(--color-border, #dedee2)",
+        "classification": "已有 Token 未使用",
+        "reason": "主值已经引用已定义语义 Token；删除不会启用的颜色字面量 fallback。"
+      },
+      {
+        "sourceIndex": 80,
+        "file": "renderer/src/settings/MobileSettings.css",
+        "finding": "literal color: background: var(--color-sidebar-item, #f3f4f4)",
+        "classification": "已有 Token 未使用",
+        "reason": "主值已经引用已定义语义 Token；删除不会启用的颜色字面量 fallback。"
+      },
+      {
+        "sourceIndex": 88,
+        "file": "renderer/src/settings/MobileSettings.css",
+        "finding": "literal color: border: 1px solid var(--color-border, #dedee2)",
+        "classification": "已有 Token 未使用",
+        "reason": "主值已经引用已定义语义 Token；删除不会启用的颜色字面量 fallback。"
+      },
+      {
+        "sourceIndex": 96,
+        "file": "renderer/src/settings/MobileSettings.css",
+        "finding": "literal radius: border-radius: 16px",
+        "classification": "已有 Token 未使用",
+        "reason": "原有半径值与公共圆角精确相同。"
+      },
+      {
+        "sourceIndex": 104,
+        "file": "renderer/src/settings/PluginCenter.css",
+        "finding": "literal typography: font-size: calc(var(--ui-font-size) + 6px)",
+        "classification": "缺少等价 Token",
+        "reason": "现有角色的尺寸、颜色、单位、透明度或缩放关系不等价；本次补充具体语义角色后替换。"
+      },
+      {
+        "sourceIndex": 112,
+        "file": "renderer/src/settings/PluginCenter.css",
+        "finding": "literal radius: border-radius: 7px",
+        "classification": "缺少等价 Token",
+        "reason": "现有角色的尺寸、颜色、单位、透明度或缩放关系不等价；本次补充具体语义角色后替换。"
+      },
+      {
+        "sourceIndex": 120,
+        "file": "renderer/src/settings/SettingsWorkspace.css",
+        "finding": "literal color: box-shadow: 0 1px 1px rgba(0, 0, 0, 0.04)",
+        "classification": "缺少等价 Token",
+        "reason": "现有角色的尺寸、颜色、单位、透明度或缩放关系不等价；本次补充具体语义角色后替换。"
+      },
+      {
+        "sourceIndex": 128,
+        "file": "renderer/src/settings/SettingsWorkspace.css",
+        "finding": "literal color: background: #e5f6e4",
+        "classification": "合理例外或定量保留债务",
+        "reason": "这是主题选择器的固定主题样本或 Diff 语法示例。示例必须展示被选主题，不能继承当前活动调色板。"
+      },
+      {
+        "sourceIndex": 136,
+        "file": "renderer/src/settings/SettingsWorkspace.css",
+        "finding": "literal color: color: #0550ae",
+        "classification": "合理例外或定量保留债务",
+        "reason": "这是主题选择器的固定主题样本或 Diff 语法示例。示例必须展示被选主题，不能继承当前活动调色板。"
+      },
+      {
+        "sourceIndex": 144,
+        "file": "renderer/src/settings/SettingsWorkspace.css",
+        "finding": "literal color: background: #233125",
+        "classification": "合理例外或定量保留债务",
+        "reason": "这是主题选择器的固定主题样本或 Diff 语法示例。示例必须展示被选主题，不能继承当前活动调色板。"
+      },
+      {
+        "sourceIndex": 152,
+        "file": "renderer/src/settings/SettingsWorkspace.css",
+        "finding": "literal color: background: var(--color-surface, rgba(0, 0, 0, 0.05))",
+        "classification": "已有 Token 未使用",
+        "reason": "主值已经引用已定义语义 Token；删除不会启用的颜色字面量 fallback。"
+      },
+      {
+        "sourceIndex": 160,
+        "file": "renderer/src/settings/SettingsWorkspace.css",
+        "finding": "literal radius: border-radius: 16px",
+        "classification": "已有 Token 未使用",
+        "reason": "原有半径值与公共圆角精确相同。"
+      },
+      {
+        "sourceIndex": 168,
+        "file": "renderer/src/settings/trajectory-settings.css",
+        "finding": "literal color: color: #166534",
+        "classification": "合理例外或定量保留债务",
+        "reason": "记录开关的启用和停用分别使用完整底色、文字、描边配对。已有 success/warning 单色角色不等价。"
+      },
+      {
+        "sourceIndex": 176,
+        "file": "renderer/src/settings/usage.css",
+        "finding": "literal color: background: #83c7a6",
+        "classification": "合理例外或定量保留债务",
+        "reason": "这是用量图表的连续强度色阶或系列色，属于数据编码，不是通用成功状态。"
+      },
+      {
+        "sourceIndex": 184,
+        "file": "renderer/src/settings/usage.css",
+        "finding": "literal color: background: #47a582",
+        "classification": "合理例外或定量保留债务",
+        "reason": "这是用量图表的连续强度色阶或系列色，属于数据编码，不是通用成功状态。"
+      },
+      {
+        "sourceIndex": 192,
+        "file": "renderer/src/slash-command-menu.css",
+        "finding": "literal radius: border-radius: 20px",
+        "classification": "已有 Token 未使用",
+        "reason": "原有半径值与公共圆角精确相同。"
+      },
+      {
+        "sourceIndex": 199,
+        "file": "renderer/src/styles.css",
+        "finding": "literal color: color: white",
+        "classification": "合理例外或定量保留债务",
+        "reason": "保留现有装饰渐变或更新动作的固定参考色。它与用户可调的 accent 或 primary 不等色。"
+      },
+      {
+        "sourceIndex": 207,
+        "file": "renderer/src/user-feedback.css",
+        "finding": "literal radius: border-radius: 18px",
+        "classification": "已有 Token 未使用",
+        "reason": "原有半径值与公共圆角精确相同。"
+      },
+      {
+        "sourceIndex": 215,
+        "file": "renderer/src/workbench.css",
+        "finding": "literal typography: font-size: 1.5em",
+        "classification": "合理例外或定量保留债务",
+        "reason": "保留该具体内容或标题的局部字号关系。当前通用 text-ui/content 角色没有完全相同的固定值或相对关系。"
+      },
+      {
+        "sourceIndex": 223,
+        "file": "renderer/src/workbench.css",
+        "finding": "literal color: background: #d68712",
+        "classification": "合理例外或定量保留债务",
+        "reason": "供应商启用点沿用独立琥珀色，既有 warning 与该颜色不同。"
+      },
+      {
+        "sourceIndex": 231,
+        "file": "renderer/src/workbench.css",
+        "finding": "literal typography: font-size: 10px",
+        "classification": "缺少等价 Token",
+        "reason": "现有角色的尺寸、颜色、单位、透明度或缩放关系不等价；本次补充具体语义角色后替换。"
+      },
+      {
+        "sourceIndex": 239,
+        "file": "renderer/src/workbench.css",
+        "finding": "literal color: background: linear-gradient(90deg,#eee 50%,#242424 50%)",
+        "classification": "合理例外或定量保留债务",
+        "reason": "固定主题缩略图必须展示候选主题自身颜色，不能继承当前活动主题。"
+      },
+      {
+        "sourceIndex": 247,
+        "file": "renderer/src/workbench.css",
+        "finding": "literal color: color: #fff",
+        "classification": "合理例外或定量保留债务",
+        "reason": "该固定深色快捷入口保留成组的前景、背景和描边，不与活动用户主题绑定。"
+      },
+      {
+        "sourceIndex": 255,
+        "file": "renderer/src/workbench.css",
+        "finding": "literal color: border-left: 1px solid color-mix(in lab, #84848a 25%, transparent)",
+        "classification": "合理例外或定量保留债务",
+        "reason": "内容列表标记或树结构引导线保留既有透明度与色彩空间，不与普通正文或边框混同。"
+      },
+      {
+        "sourceIndex": 263,
+        "file": "renderer/src/workbench.css",
+        "finding": "literal color: background: white",
+        "classification": "合理例外或定量保留债务",
+        "reason": "控件滑块固定白色。现有 foreground-inverse 在暗色主题会变黑，不能直接替代。"
+      },
+      {
+        "sourceIndex": 271,
+        "file": "renderer/src/workbench.css",
+        "finding": "literal radius: border-radius: 8px",
+        "classification": "已有 Token 未使用",
+        "reason": "原有半径值与公共圆角精确相同。"
+      },
+      {
+        "sourceIndex": 279,
+        "file": "renderer/src/workbench.css",
+        "finding": "literal radius: border-radius: 8px",
+        "classification": "已有 Token 未使用",
+        "reason": "原有半径值与公共圆角精确相同。"
+      },
+      {
+        "sourceIndex": 287,
+        "file": "renderer/src/workbench.css",
+        "finding": "literal radius: border-radius: 8px",
+        "classification": "已有 Token 未使用",
+        "reason": "原有半径值与公共圆角精确相同。"
+      },
+      {
+        "sourceIndex": 295,
+        "file": "renderer/src/workbench.css",
+        "finding": "literal radius: border-radius: 18px 18px 0 0",
+        "classification": "已有 Token 未使用",
+        "reason": "原有半径值与公共圆角精确相同。"
+      },
+      {
+        "sourceIndex": 303,
+        "file": "renderer/src/workbench.css",
+        "finding": "literal radius: border-radius: 1px",
+        "classification": "合理例外或定量保留债务",
+        "reason": "保留该具体菜单、提示框或微型标记的局部几何。现有公共圆角没有精确相同值。"
+      },
+      {
+        "sourceIndex": 311,
+        "file": "renderer/src/workbench.css",
+        "finding": "literal radius: border-radius: 8px",
+        "classification": "已有 Token 未使用",
+        "reason": "原有半径值与公共圆角精确相同。"
+      },
+      {
+        "sourceIndex": 319,
+        "file": "renderer/src/workbench.css",
+        "finding": "literal radius: border-radius: 14px",
+        "classification": "缺少等价 Token",
+        "reason": "现有角色的尺寸、颜色、单位、透明度或缩放关系不等价；本次补充具体语义角色后替换。"
+      },
+      {
+        "sourceIndex": 326,
+        "file": "renderer/src/workbench.css",
+        "finding": "literal radius: border-radius: 10px",
+        "classification": "已有 Token 未使用",
+        "reason": "原有半径值与公共圆角精确相同。"
+      },
+      {
+        "sourceIndex": 334,
+        "file": "renderer/src/workbench.css",
+        "finding": "literal radius: border-radius: 10px",
+        "classification": "已有 Token 未使用",
+        "reason": "原有半径值与公共圆角精确相同。"
+      },
+      {
+        "sourceIndex": 342,
+        "file": "renderer/src/workbench.css",
+        "finding": "literal radius: border-radius: 20px",
+        "classification": "已有 Token 未使用",
+        "reason": "原有半径值与公共圆角精确相同。"
+      },
+      {
+        "sourceIndex": 350,
+        "file": "renderer/src/workbench.css",
+        "finding": "literal radius: border-radius: 8px",
+        "classification": "已有 Token 未使用",
+        "reason": "原有半径值与公共圆角精确相同。"
+      },
+      {
+        "sourceIndex": 358,
+        "file": "packages/ui/src/conversation/attachment-card/attachment-card.css",
+        "finding": "literal typography: font-size: 13px",
+        "classification": "缺少等价 Token",
+        "reason": "现有角色的尺寸、颜色、单位、透明度或缩放关系不等价；本次补充具体语义角色后替换。"
+      },
+      {
+        "sourceIndex": 366,
+        "file": "packages/ui/src/conversation/composer-surface/composer-surface.css",
+        "finding": "literal radius: border-radius: 28px",
+        "classification": "缺少等价 Token",
+        "reason": "现有角色的尺寸、颜色、单位、透明度或缩放关系不等价；本次补充具体语义角色后替换。"
+      },
+      {
+        "sourceIndex": 374,
+        "file": "packages/ui/src/conversation/thinking-status/thinking-status.css",
+        "finding": "literal color: mask-image: linear-gradient(90deg, transparent 35%, #000 50%, transparent 65%)",
+        "classification": "合理例外或定量保留债务",
+        "reason": "黑色只定义 alpha 遮罩的覆盖度，颜色不进入最终前景。保持现有扫光和遮罩范围。"
+      },
+      {
+        "sourceIndex": 382,
+        "file": "packages/ui/src/workbench/workbench-shell/workbench-shell.css",
+        "finding": "literal color: box-shadow: -8px 0 16px -8px #0000002e",
+        "classification": "缺少等价 Token",
+        "reason": "现有角色的尺寸、颜色、单位、透明度或缩放关系不等价；本次补充具体语义角色后替换。"
+      },
+      {
+        "sourceIndex": 390,
+        "file": "packages/ui/src/workbench/workbench-shell/workbench-shell.css",
+        "finding": "literal radius: border-radius: 14px",
+        "classification": "缺少等价 Token",
+        "reason": "现有角色的尺寸、颜色、单位、透明度或缩放关系不等价；本次补充具体语义角色后替换。"
+      }
+    ]
   }
 }

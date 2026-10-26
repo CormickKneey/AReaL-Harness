@@ -2,14 +2,15 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
+import { makeTempDir } from "./support/temp.mjs";
 import { join } from "node:path";
 const require = createRequire(import.meta.url);
 const { InteractionReviews } = require("../app/src/core/remote-interactions.cjs");
 const { SessionObservers } = require("../app/src/core/remote-session-observer.cjs");
 const { CoreBackend } = require("../app/src/core/backend.cjs");
 const { sessionCommand } = require("../app/src/core/remote-session-commands.cjs");
-const home = await mkdtemp("/private/tmp/rc07-contract-");
+const home = await makeTempDir("rc07-contract-");
 const checks = [];
 const defer = () => {
   let resolve;

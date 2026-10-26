@@ -450,6 +450,7 @@ async fn calendar_legacy_interval_stays_86400_and_receipt_survives_v4_migration(
     let root = dir.path().join("desktop/task-mode.json");
     let mut old: Value = serde_json::from_slice(&std::fs::read(&root).unwrap()).unwrap();
     old["version"] = json!(4);
+    old.as_object_mut().unwrap().remove("schedules");
     let old_bytes = serde_json::to_vec(&old).unwrap();
     std::fs::write(&root, &old_bytes).unwrap();
     let mut e = open_calendar(dir.path(), seen.clone(), 1772868600);
@@ -473,7 +474,7 @@ async fn calendar_legacy_interval_stays_86400_and_receipt_survives_v4_migration(
     }
     assert_eq!(rpc(&e, "areal/task/create", request).await, task);
     let upgraded: Value = serde_json::from_slice(&std::fs::read(root).unwrap()).unwrap();
-    assert_eq!(upgraded["version"], 5);
+    assert_eq!(upgraded["version"], 6);
     assert_eq!(upgraded["index_version"], 3);
     assert!(
         std::fs::read_dir(dir.path().join("desktop/task-legacy"))

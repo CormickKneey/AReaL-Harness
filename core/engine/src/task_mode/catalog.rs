@@ -18,7 +18,7 @@ pub enum PublishedTaskCatalogFallback {
 pub enum PublishedTaskCatalog {
     Snapshot {
         root_digest: String,
-        data: Vec<Value>,
+        data: Vec<TaskDirectoryRow>,
         has_more: bool,
     },
     Empty,
@@ -80,6 +80,18 @@ pub fn read_published_task_catalog(
             reason: PublishedTaskCatalogFallback::LegacyFormat,
         });
     }
+    if header.version == 6 {
+        let rows = Snapshot::read_schedule_catalog(root, &bytes)?;
+        let mut rows = rows.into_iter().filter(|row| {
+            source_thread_id.is_none_or(|id| row.source_thread_id.as_deref() == Some(id))
+        });
+        let data = rows.by_ref().take(limit).collect();
+        return Ok(PublishedTaskCatalog::Snapshot {
+            root_digest: format!("{:x}", Sha256::digest(&bytes)),
+            data,
+            has_more: rows.next().is_some(),
+        });
+    }
     if header.version != 5 {
         return Err(Error::Storage("unsupported task store".into()));
     }
@@ -98,7 +110,11 @@ pub fn read_published_task_catalog(
                     !run.status.terminal() || run.workers.iter().any(|worker| !worker.settled)
                 }))
     });
-    let data = tasks.by_ref().take(limit).map(summary).collect();
+    let data = tasks
+        .by_ref()
+        .take(limit)
+        .map(directory::row)
+        .collect::<Result<Vec<_>>>()?;
     Ok(PublishedTaskCatalog::Snapshot {
         root_digest: format!("{:x}", Sha256::digest(&bytes)),
         data,

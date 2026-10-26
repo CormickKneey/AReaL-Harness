@@ -1,6 +1,7 @@
+import { makeTempDir } from "./support/temp.mjs";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
+import { mkdir, writeFile, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
@@ -15,9 +16,11 @@ const gui = resolve(dirname(fileURLToPath(import.meta.url)), ".."),
   root = resolve(gui, "../..");
 const require = createRequire(join(gui, "app/package.json"));
 const { _electron: electron } = require("playwright-core");
-const {ServiceConnection,waitForServiceExit}=require(join(gui,"app/src/core/service-client.cjs"));
-const {desktopExecutables}=require(join(gui,"app/src/core/desktop-executables.cjs"));
-const scratch = await mkdtemp("/private/tmp/areal-browser-annotations-");
+const { ServiceConnection, waitForServiceExit } = require(
+  join(gui, "app/src/core/service-client.cjs"),
+);
+const { desktopExecutables } = require(join(gui, "app/src/core/desktop-executables.cjs"));
+const scratch = await makeTempDir("areal-browser-annotations-");
 const workspace = join(scratch, "workspace"),
   user = join(scratch, "user");
 await mkdir(workspace);
@@ -34,8 +37,17 @@ const site = createServer((request, response) => {
 await new Promise((resolve) => site.listen(0, "127.0.0.1", resolve));
 const url = `http://127.0.0.1:${site.address().port}/`;
 const requests = [];
-const messageText = content => typeof content === "string" ? content : content.filter(part => part.type === "text").map(part => part.text).join("\n");
-const annotatedUser = body => body.messages.findLast(message => message.role === "user" && messageText(message.content).startsWith("保留我的正文"));
+const messageText = (content) =>
+  typeof content === "string"
+    ? content
+    : content
+        .filter((part) => part.type === "text")
+        .map((part) => part.text)
+        .join("\n");
+const annotatedUser = (body) =>
+  body.messages.findLast(
+    (message) => message.role === "user" && messageText(message.content).startsWith("保留我的正文"),
+  );
 const model = createServer(async (request, response) => {
   let raw = "";
   for await (const chunk of request) raw += chunk;
@@ -66,7 +78,7 @@ await writeFile(
     ],
   }),
 );
-const packagedExecutable=process.env.AREAL_GUI_EXECUTABLE;
+const packagedExecutable = process.env.AREAL_GUI_EXECUTABLE;
 const env = {
   ...process.env,
   AREAL_GUI_USER_DATA: join(scratch, "electron"),
@@ -79,8 +91,10 @@ const env = {
 };
 for (const key of ["AREAL_CORE_WORKSPACE", "AREAL_HARNESS_HOME", "AREAL_HARNESS_CONFIG"])
   delete env[key];
-if(packagedExecutable)delete env.AREAL_CORE_BIN;
-const testedCore=packagedExecutable?join(dirname(dirname(packagedExecutable)),"Resources/areal-core/bin/areal"):env.AREAL_CORE_BIN;
+if (packagedExecutable) delete env.AREAL_CORE_BIN;
+const testedCore = packagedExecutable
+  ? join(dirname(dirname(packagedExecutable)), "Resources/areal-core/bin/areal")
+  : env.AREAL_CORE_BIN;
 let app,
   page,
   passed = false;
@@ -97,11 +111,11 @@ const until = async (read, label) => {
   throw Error(`Timeout: ${label}`);
 };
 const state = () => page.evaluate(() => window.arealDesktop.snapshot());
-const settlePopup = async () => {
+const settlePopup = async (name = "待发送的标注") => {
   await until(
     () =>
       page
-        .locator('[data-slot="popover-content"]')
+        .getByRole("dialog", { name, exact: true })
         .evaluate(
           (popup) =>
             !popup.hasAttribute("data-starting-style") && getComputedStyle(popup).opacity === "1",
@@ -133,7 +147,7 @@ try {
   await page.getByTestId("areal-workbench").waitFor({ timeout: 120000 });
   await until(async () => (await state()).connection?.state === "ready", "service ready");
   await app.evaluate(
-    ({ app, dialog, BrowserWindow }, { workspace, origin }) => {
+    ({ app, dialog, BrowserWindow }, { workspace }) => {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [workspace] });
       const w = BrowserWindow.getAllWindows()[0];
       w.setSize(1440, 1000);
@@ -162,12 +176,18 @@ try {
   await page.locator(".preview-panel").waitFor();
   await app.evaluate(({ app, BrowserWindow }) => {
     app.setActivationPolicy("regular");
-    const window=BrowserWindow.getAllWindows()[0];window.show();window.moveTop();
+    const window = BrowserWindow.getAllWindows()[0];
+    window.show();
+    window.moveTop();
     app.focus({ steal: true });
     window.focus();
   });
   await until(
-    () => app.evaluate(({ BrowserWindow }) => {const window=BrowserWindow.getAllWindows()[0];return window.isVisible()&&!window.isMinimized();}),
+    () =>
+      app.evaluate(({ BrowserWindow }) => {
+        const window = BrowserWindow.getAllWindows()[0];
+        return window.isVisible() && !window.isMinimized();
+      }),
     "visible owned annotation window",
   );
   await page.evaluate((q) => window.arealDesktop.preview(q), {
@@ -206,22 +226,74 @@ try {
     };
   });
   // 截图后的 DOM 替换不能把旧像素标成新元素；只修改隔离本地 fixture。
-  const staleCapture = await page.evaluate(q => window.arealDesktop.preview({...q,operation:"captureRegion"}), {...identity,pageId:(await page.evaluate(q=>window.arealDesktop.preview({...q,operation:"state"}),identity)).browser.pageId});
-  await app.evaluate(({webContents}, id) => webContents.fromId(id).executeJavaScript(`document.getElementById('heading').outerHTML='<h1 id="heading">REPLACED_AFTER_FREEZE</h1>'`), nativeId);
-  const staleResult = await page.evaluate(async q => {
-    try{return {selected:await window.arealDesktop.preview(q)};}
-    catch(e){return {error:e.message};}
-  }, {...identity,pageId:staleCapture.pageId,operation:"selectElement",captureId:staleCapture.captureId,x:Math.floor(targets[0].x*staleCapture.viewport.bitmapWidth/targets[0].width),y:Math.floor(targets[0].y*staleCapture.viewport.bitmapHeight/targets[0].height)});
-  assert.ok(staleResult.error||staleResult.selected?.available===false,"DOM replacement after freeze must not attach a replacement element identity to old pixels");
-  await page.evaluate(q=>window.arealDesktop.preview(q), {...identity,pageId:staleCapture.pageId,operation:"endRegion",captureId:staleCapture.captureId});
-  await app.evaluate(({webContents}, id) => webContents.fromId(id).executeJavaScript(`document.getElementById('heading').outerHTML='<h1 id="heading">ANNOTATION_HEADING</h1>'`), nativeId);
-  checks.push("Post-freeze DOM replacement is rejected before element identity projection; region-only screenshot evidence remains available");
+  const staleCapture = await page.evaluate(
+    (q) => window.arealDesktop.preview({ ...q, operation: "captureRegion" }),
+    {
+      ...identity,
+      pageId: (
+        await page.evaluate(
+          (q) => window.arealDesktop.preview({ ...q, operation: "state" }),
+          identity,
+        )
+      ).browser.pageId,
+    },
+  );
+  await app.evaluate(
+    ({ webContents }, id) =>
+      webContents
+        .fromId(id)
+        .executeJavaScript(
+          `document.getElementById('heading').outerHTML='<h1 id="heading">REPLACED_AFTER_FREEZE</h1>'`,
+        ),
+    nativeId,
+  );
+  const staleResult = await page.evaluate(
+    async (q) => {
+      try {
+        return { selected: await window.arealDesktop.preview(q) };
+      } catch (e) {
+        return { error: e.message };
+      }
+    },
+    {
+      ...identity,
+      pageId: staleCapture.pageId,
+      operation: "selectElement",
+      captureId: staleCapture.captureId,
+      x: Math.floor((targets[0].x * staleCapture.viewport.bitmapWidth) / targets[0].width),
+      y: Math.floor((targets[0].y * staleCapture.viewport.bitmapHeight) / targets[0].height),
+    },
+  );
+  assert.ok(
+    staleResult.error || staleResult.selected?.available === false,
+    "DOM replacement after freeze must not attach a replacement element identity to old pixels",
+  );
+  await page.evaluate((q) => window.arealDesktop.preview(q), {
+    ...identity,
+    pageId: staleCapture.pageId,
+    operation: "endRegion",
+    captureId: staleCapture.captureId,
+  });
+  await app.evaluate(
+    ({ webContents }, id) =>
+      webContents
+        .fromId(id)
+        .executeJavaScript(
+          `document.getElementById('heading').outerHTML='<h1 id="heading">ANNOTATION_HEADING</h1>'`,
+        ),
+    nativeId,
+  );
+  checks.push(
+    "Post-freeze DOM replacement is rejected before element identity projection; region-only screenshot evidence remains available",
+  );
   await page.getByTestId("chat-input").fill("保留我的正文");
   const foldedAnnotationText = "折叠标注第一行\n第二行\n第三行\n第四行\n第五行";
   await page.getByTestId("chat-input").evaluate((element, text) => {
     const clipboardData = new DataTransfer();
     clipboardData.setData("text/plain", text);
-    element.dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }));
+    element.dispatchEvent(
+      new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }),
+    );
   }, foldedAnnotationText);
   await page.getByRole("button", { name: "移除附件 折叠标注第一行", exact: true }).waitFor();
   await page.getByRole("button", { name: "批注", exact: true }).click();
@@ -310,31 +382,54 @@ try {
     "Thread navigation isolates and restores annotations; each comment is editable beside its crop",
   );
   // 在现有 RPC 的上传边界暂停并明确拒绝，验证锁定期间不能移除正在发送的标注。
-  await app.evaluate(({app}) => {
-    const req=process.getBuiltinModule('module').createRequire(app.getAppPath()+'/package.json');
-    const {ServiceConnection}=req('./src/core/service-client.cjs');
-    const original=ServiceConnection.prototype.request;
-    globalThis.__annotationUploadGate={entered:false};
-    ServiceConnection.prototype.request=function(method,params,...rest){
-      if(method==='command'&&params?.name==='media'&&!globalThis.__annotationUploadGate.entered){
-        globalThis.__annotationUploadGate.entered=true;
-        return new Promise((_,reject)=>{globalThis.__annotationUploadGate.release=()=>{ServiceConnection.prototype.request=original;reject(new Error('测试：延迟上传拒绝'));};});
+  await app.evaluate(({ app }) => {
+    const req = process
+      .getBuiltinModule("module")
+      .createRequire(app.getAppPath() + "/package.json");
+    const { ServiceConnection } = req("./src/core/service-client.cjs");
+    const original = ServiceConnection.prototype.request;
+    globalThis.__annotationUploadGate = { entered: false };
+    ServiceConnection.prototype.request = function (method, params, ...rest) {
+      if (
+        method === "command" &&
+        params?.name === "media" &&
+        !globalThis.__annotationUploadGate.entered
+      ) {
+        globalThis.__annotationUploadGate.entered = true;
+        return new Promise((_, reject) => {
+          globalThis.__annotationUploadGate.release = () => {
+            ServiceConnection.prototype.request = original;
+            reject(new Error("测试：延迟上传拒绝"));
+          };
+        });
       }
-      return original.call(this,method,params,...rest);
+      return original.call(this, method, params, ...rest);
     };
   });
   await page.getByTestId("chat-send-button").click();
-  await until(()=>app.evaluate(()=>globalThis.__annotationUploadGate.entered),'gated media upload');
-  await page.getByRole("button",{name:"2 条标注",exact:true}).click();
+  await until(
+    () => app.evaluate(() => globalThis.__annotationUploadGate.entered),
+    "gated media upload",
+  );
+  await page.getByRole("button", { name: "2 条标注", exact: true }).click();
   await settlePopup();
-  assert.equal(await page.getByRole('textbox',{name:'标注 1 内容'}).isDisabled(),true);
-  assert.equal(await page.locator('.browser-annotation-attachment-card').getByRole('button',{name:/移除附件/}).count(),0,'locked thumbnail cannot expose an active remove control');
-  await page.keyboard.press('Escape');
-  await app.evaluate(()=>globalThis.__annotationUploadGate.release());
-  await page.getByRole('alert').filter({hasText:'延迟上传拒绝'}).waitFor();
-  await page.getByRole('button',{name:'2 条标注',exact:true}).waitFor();
-  assert.equal(requests.length,0,'rejected upload cannot submit');
-  checks.push('Pending upload locks thumbnail removal; known upload refusal retains both annotation files and comments for explicit retry');
+  assert.equal(await page.getByRole("textbox", { name: "标注 1 内容" }).isDisabled(), true);
+  assert.equal(
+    await page
+      .locator(".browser-annotation-attachment-card")
+      .getByRole("button", { name: /移除附件/ })
+      .count(),
+    0,
+    "locked thumbnail cannot expose an active remove control",
+  );
+  await page.keyboard.press("Escape");
+  await app.evaluate(() => globalThis.__annotationUploadGate.release());
+  await page.getByRole("alert").filter({ hasText: "延迟上传拒绝" }).waitFor();
+  await page.getByRole("button", { name: "2 条标注", exact: true }).waitFor();
+  assert.equal(requests.length, 0, "rejected upload cannot submit");
+  checks.push(
+    "Pending upload locks thumbnail removal; known upload refusal retains both annotation files and comments for explicit retry",
+  );
   await page.locator("input[type=file]").setInputFiles({
     name: "oversize.bin",
     mimeType: "application/octet-stream",
@@ -361,18 +456,31 @@ try {
     return thread?.turns?.at(-1)?.status === "completed" ? thread : null;
   }, "accepted Core history");
   facts.history = history;
-  const annotationUser = history.turns.at(-1).items.find(item => item.type === "userMessage");
-  const annotationUserText = annotationUser.content.find(part => part.type === "text").text;
-  assert.ok(annotationUserText.startsWith(`保留我的正文\n\n${foldedAnnotationText}\n\n`), "folded text before image annotations keeps its exact body prefix");
-  assert.equal(annotationUser.content.filter(part => part.type !== "text").length, 2, "folded pasted text remains body text without an additional uploaded file");
-  const modelBody = await until(() => requests.findLast(body => annotatedUser(body)), "annotated human model request");
+  const annotationUser = history.turns.at(-1).items.find((item) => item.type === "userMessage");
+  const annotationUserText = annotationUser.content.find((part) => part.type === "text").text;
+  assert.ok(
+    annotationUserText.startsWith(`保留我的正文\n\n${foldedAnnotationText}\n\n`),
+    "folded text before image annotations keeps its exact body prefix",
+  );
+  assert.equal(
+    annotationUser.content.filter((part) => part.type !== "text").length,
+    2,
+    "folded pasted text remains body text without an additional uploaded file",
+  );
+  const modelBody = await until(
+    () => requests.findLast((body) => annotatedUser(body)),
+    "annotated human model request",
+  );
   const modelUser = annotatedUser(modelBody);
-  assert.ok(Array.isArray(modelUser.content), "Annotated human model message retains structured text and image parts");
+  assert.ok(
+    Array.isArray(modelUser.content),
+    "Annotated human model message retains structured text and image parts",
+  );
   const serialized = JSON.stringify(modelUser);
   assert.match(serialized, /ANNOTATION_COMMENT_1/);
   assert.match(serialized, /ANNOTATION_COMMENT_2_EDITED/);
   assert.match(serialized, /折叠标注第一行/);
-  const images = modelUser.content.filter(part => part.type === "image_url");
+  const images = modelUser.content.filter((part) => part.type === "image_url");
   assert.equal(images.length, 2, "model receives both actual PNG crops");
   facts.images = images.map((p) => ({
     sha256: createHash("sha256")
@@ -384,11 +492,13 @@ try {
     facts.draftImageHashes,
     "Core model receives the exact PNG bytes reviewed in Composer",
   );
-  checks.push("folded Text before annotated PNGs preserves exact body, original File identity and image URL pairing");
+  checks.push(
+    "folded Text before annotated PNGs preserves exact body, original File identity and image URL pairing",
+  );
   assert.equal(posts, 0, "annotation never clicks the page button");
   await page.getByRole("button", { name: "已发送 2 条标注", exact: true }).click();
   await page.getByText("ANNOTATION_COMMENT_2_EDITED", { exact: true }).waitFor();
-  await settlePopup();
+  await settlePopup("已发送的标注");
   await page.screenshot({ path: join(scratch, "sent-annotations.png") });
   checks.push(
     "Upload refusal preserves notes; explicit retry sends two images plus comments through Core and clears only accepted draft",
@@ -407,37 +517,102 @@ try {
   throw e;
 } finally {
   // Origin 确认桩不用于退出确认；只关闭本次隔离 GUI，并结算其确切服务。
-  const launch=app?await app.evaluate(()=>({executable:process.execPath,resourcesPath:process.resourcesPath})).catch(()=>null):null;
-  const executable=launch?desktopExecutables({packaged:!!packagedExecutable,...launch}).service:null;
-  const home=join(scratch,"core");
-  const metadata=await readFile(join(home,"service.json"),"utf8").then(JSON.parse).catch(error=>{if(error.code==='ENOENT')return null;throw error;});
-  if(app){await app.evaluate(({dialog})=>{globalThis.__annotationUploadGate?.release?.();dialog.showMessageBox=async()=>({response:1});}).catch(()=>{});await app.close();}
-  try{
-    const alive=metadata&&(()=>{try{process.kill(metadata.pid,0);return true;}catch(error){if(error.code==='ESRCH')return false;throw error;}})();
-    if(alive){
-      assert.equal(execFileSync('/bin/ps',['-p',String(metadata.pid),'-o','command='],{encoding:'utf8'}).trim(),`${executable}${packagedExecutable?'':' '+join(gui,'app')} --areal-core-service`);
-      const connection=new ServiceConnection();await connection.connect(metadata);
-      try{await connection.request('hello',{protocol:metadata.protocol,identity:metadata.identity});
-        const resources=await connection.request('resources',{operation:'inspect'});
-        assert.ok(resources.every(p=>!p.activeTurns&&!p.unresolvedTools&&!p.resources.length));
-        facts.cleanup={pid:metadata.pid,resources:resources.map(p=>({activeTurns:p.activeTurns,unresolvedTools:p.unresolvedTools,resources:p.resources.length})),stopACK:await until(async()=>{
-          try{return await connection.request('stopService',{protocol:metadata.protocol,forUpdate:false},true);}
-          catch(error){if(error.message==='后台仍有任务、可执行的排队消息或操作，完成或暂停队列后重试')return null;throw error;}
-        },'isolated adapter close operations settle before safe stop')};
-      }finally{connection.close();}
-      await waitForServiceExit(home,metadata);
+  const launch = app
+    ? await app
+        .evaluate(() => ({ executable: process.execPath, resourcesPath: process.resourcesPath }))
+        .catch(() => null)
+    : null;
+  const executable = launch
+    ? desktopExecutables({ packaged: !!packagedExecutable, ...launch }).service
+    : null;
+  const home = join(scratch, "core");
+  const metadata = await readFile(join(home, "service.json"), "utf8")
+    .then(JSON.parse)
+    .catch((error) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+  if (app) {
+    await app
+      .evaluate(({ dialog }) => {
+        globalThis.__annotationUploadGate?.release?.();
+        dialog.showMessageBox = async () => ({ response: 1 });
+      })
+      .catch(() => {});
+    await app.close();
+  }
+  try {
+    const alive =
+      metadata &&
+      (() => {
+        try {
+          process.kill(metadata.pid, 0);
+          return true;
+        } catch (error) {
+          if (error.code === "ESRCH") return false;
+          throw error;
+        }
+      })();
+    if (alive) {
+      assert.equal(
+        execFileSync("/bin/ps", ["-p", String(metadata.pid), "-o", "command="], {
+          encoding: "utf8",
+        }).trim(),
+        `${executable}${packagedExecutable ? "" : " " + join(gui, "app")} --areal-core-service`,
+      );
+      const connection = new ServiceConnection();
+      await connection.connect(metadata);
+      try {
+        await connection.request("hello", {
+          protocol: metadata.protocol,
+          identity: metadata.identity,
+        });
+        const resources = await connection.request("resources", { operation: "inspect" });
+        assert.ok(
+          resources.every((p) => !p.activeTurns && !p.unresolvedTools && !p.resources.length),
+        );
+        facts.cleanup = {
+          pid: metadata.pid,
+          resources: resources.map((p) => ({
+            activeTurns: p.activeTurns,
+            unresolvedTools: p.unresolvedTools,
+            resources: p.resources.length,
+          })),
+          stopACK: await until(async () => {
+            try {
+              return await connection.request(
+                "stopService",
+                { protocol: metadata.protocol, forUpdate: false },
+                true,
+              );
+            } catch (error) {
+              if (error.message === "后台仍有任务、可执行的排队消息或操作，完成或暂停队列后重试")
+                return null;
+              throw error;
+            }
+          }, "isolated adapter close operations settle before safe stop"),
+        };
+      } finally {
+        connection.close();
+      }
+      await waitForServiceExit(home, metadata);
     }
-    await assertApplicationStopped(testedCore,env,metadata);
-    facts.cleanup={...facts.cleanup,pid:metadata?.pid??null,serviceExited:true};
-  }catch(e){
-    try{await assertApplicationStopped(testedCore,env,metadata);facts.cleanup={...facts.cleanup,pid:metadata?.pid??null,serviceExited:true};}
-    catch(stoppedError){errors.push('Cleanup: '+e.message+'; '+stoppedError.message);passed=false;}
+    await assertApplicationStopped(testedCore, env, metadata);
+    facts.cleanup = { ...facts.cleanup, pid: metadata?.pid ?? null, serviceExited: true };
+  } catch (e) {
+    try {
+      await assertApplicationStopped(testedCore, env, metadata);
+      facts.cleanup = { ...facts.cleanup, pid: metadata?.pid ?? null, serviceExited: true };
+    } catch (stoppedError) {
+      errors.push("Cleanup: " + e.message + "; " + stoppedError.message);
+      passed = false;
+    }
   }
   for (const server of [site, model]) {
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
   }
-  await writeFile(join(scratch,"model-requests.json"),JSON.stringify(requests,null,2));
+  await writeFile(join(scratch, "model-requests.json"), JSON.stringify(requests, null, 2));
   const files = [
     "renderer/src/App.tsx",
     "renderer/src/Preview.tsx",
@@ -474,8 +649,7 @@ try {
         coreBinarySHA256: createHash("sha256")
           .update(await readFile(testedCore))
           .digest("hex"),
-        scope:
-          `${packagedExecutable?"packaged":"source"} Electron/Main + adapter + recorded Core binary + local deterministic model; trusted GUI/navigation fixture and synthetic IME event; no OS dialog/focus, human, cross-origin grant or real-provider acceptance`,
+        scope: `${packagedExecutable ? "packaged" : "source"} Electron/Main + adapter + recorded Core binary + local deterministic model; trusted GUI/navigation fixture and synthetic IME event; no OS dialog/focus, human, cross-origin grant or real-provider acceptance`,
       },
       null,
       2,

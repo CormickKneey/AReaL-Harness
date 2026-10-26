@@ -1,0 +1,62 @@
+[
+  {
+    "name": "duplicate definition",
+    "mutation": "duplicate-definition",
+    "error": "definition count"
+  },
+  {
+    "name": "unregistered reference",
+    "mutation": "unknown-reference",
+    "error": "unknown rule"
+  },
+  {
+    "name": "missing owner",
+    "mutation": "missing-owner",
+    "error": "missing owner"
+  },
+  {
+    "name": "incorrect owner anchor",
+    "mutation": "wrong-anchor",
+    "error": "owner anchor"
+  },
+  {
+    "name": "missing strength",
+    "mutation": "missing-strength",
+    "error": "invalid strength"
+  },
+  {
+    "name": "duplicate registry ID",
+    "mutation": "duplicate-id",
+    "error": "duplicate rule"
+  },
+  {
+    "name": "unregistered normative paragraph",
+    "mutation": "unregistered-norm",
+    "error": "unregistered normative"
+  },
+  {
+    "name": "consumer entry growth",
+    "mutation": "entry-growth",
+    "error": "entry bytes"
+  },
+  {
+    "name": "unclassified document",
+    "mutation": "unclassified-document",
+    "error": "unclassified document"
+  },
+  {
+    "name": "invalid migration target",
+    "mutation": "missing-migration",
+    "error": "migration target"
+  },
+  {
+    "name": "rule wording changed",
+    "mutation": "wording-change",
+    "error": "wording hash"
+  },
+  {
+    "name": "empty rule category",
+    "mutation": "empty-rule-category",
+    "error": "invalid rule ID"
+  }
+]

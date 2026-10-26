@@ -35,9 +35,10 @@ async function host(t) {
 
 test("Relay enrollment requires explicit local confirmation and exact HTTPS origin", async (t) => {
   const remote = await host(t);
-  await assert.rejects(
-    remote.control({ operation: "enable", relay: "https://relay.example", code: "x".repeat(43) }),
-    { code: "confirmation-required" },
+  assert.throws(
+    () =>
+      remote.control({ operation: "enable", relay: "https://relay.example", code: "x".repeat(43) }),
+    /无效手机设置参数/,
   );
   for (const relay of [
     "http://127.0.0.1:3000",
@@ -58,9 +59,16 @@ test("fresh desktop does not access secure storage until remote is requested", a
   const remote = await host(t);
   let accesses = 0;
   remote.encryption = {
-    isEncryptionAvailable() { accesses += 1; return false; },
-    decryptString() { throw new Error("unexpected decryption"); },
-    encryptString() { throw new Error("unexpected encryption"); },
+    isEncryptionAvailable() {
+      accesses += 1;
+      return false;
+    },
+    decryptString() {
+      throw new Error("unexpected decryption");
+    },
+    encryptString() {
+      throw new Error("unexpected encryption");
+    },
   };
   await remote.init();
   assert.equal(accesses, 0);
@@ -73,7 +81,9 @@ test("fresh desktop does not access secure storage until remote is requested", a
 test("existing encrypted remote state still requires successful secure storage", async (t) => {
   const remote = await host(t);
   await writeFile(join(remote.backend.home, "remote.json"), JSON.stringify({ encrypted: "eA==" }));
-  remote.encryption.decryptString = () => { throw new Error("fixture access denied"); };
+  remote.encryption.decryptString = () => {
+    throw new Error("fixture access denied");
+  };
   await assert.rejects(remote.init(), /无法读取手机配对/);
   assert.equal(remote.state().enabled, false);
 });

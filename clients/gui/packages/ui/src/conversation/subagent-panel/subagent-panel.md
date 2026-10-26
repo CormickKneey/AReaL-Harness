@@ -3,7 +3,7 @@ id: subagent-panel
 title: SubagentPanel
 summary: 从分状态列表进入子任务历史，返回保留展开、滚动和焦点。
 status: experimental
-entry: wip
+entry: experimental
 layer: conversation
 category: agents
 aliases: ["子代理面板"]
@@ -22,11 +22,11 @@ related: ["task-context", "activity-group", "thinking-status"]
 
 ## 状态
 
-运行、已确认完成、需要核对分别呈现。Active 为零有明确空态；完成组初始十项，过多时展开/收起。十项是局部展示选择。hasMore表示宿主仍有未加载分页，空态仅描述已加载列表，不断言全部任务均空闲。长任务标题保留完整title并限制两行，正文历史仍完整可读。
+`R-SUBAGENTPANEL-001` 运行、已确认完成、需要核对分别呈现。Active 为零有明确空态；完成组初始十项，过多时展开/收起。十项是局部展示选择。hasMore表示宿主仍有未加载分页，空态仅描述已加载列表，不断言全部任务均空闲。长任务标题保留完整title并限制两行，正文历史仍完整可读。
 
 ## 行为
 
-选择进入同一对象历史，返回保留列表展开、滚动和原行焦点；关闭由宿主恢复上下文卡片和原入口。open=false 不抢焦点。
+`R-SUBAGENTPANEL-002` 选择进入同一对象历史，返回保留列表展开、滚动和原行焦点；关闭由宿主恢复上下文卡片和原入口。open=false 不抢焦点。
 
 ## 内容
 
@@ -34,11 +34,11 @@ related: ["task-context", "activity-group", "thinking-status"]
 
 ## 可访问性
 
-打开详情聚焦标题，返回聚焦原行。状态同时有图标与文字。列表/历史各有独立纵向滚动，窄窗保持返回和关闭可达。
+`R-SUBAGENTPANEL-003` 打开详情聚焦标题，返回聚焦原行。状态同时有图标与文字。列表/历史各有独立纵向滚动，窄窗保持返回和关闭可达。
 
 ## 规则
 
-父任务完成不改写子任务状态。阅读不提交或重试。生产适配复用AgentsPane的Core列表/状态读取及AgentConversationPane的历史；设计预览仍使用固定历史，不代表完整Codex能力。statusLabel由宿主表达失败/中断/未知，不把关注组都写成同一种结果。selectedId尚未在分页列表中出现时仍保留详情入口，由宿主读取和核对归属。
+`R-SUBAGENTPANEL-004` 父任务完成不改写子任务状态。阅读不提交或重试。生产适配复用AgentsPane的Core列表/状态读取及AgentConversationPane的历史；设计预览仍使用固定历史，不代表完整Codex能力。statusLabel由宿主表达失败/中断/未知，不把关注组都写成同一种结果。selectedId尚未在分页列表中出现时仍保留详情入口，由宿主读取和核对归属。
 
 ## 示例
 

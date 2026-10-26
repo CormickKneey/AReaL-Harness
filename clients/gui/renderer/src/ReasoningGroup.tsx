@@ -1,3 +1,4 @@
+import { Button } from "@areal/ui";
 import { useId, useState } from "react";
 import { ActivityIcon } from "./ActivityIcon.js";
 import type { Data } from "./services.js";
@@ -6,16 +7,47 @@ import type { Data } from "./services.js";
 export function ReasoningGroup({ items }: { items: Data[] }) {
   const [open, setOpen] = useState(false);
   const id = useId();
-  return <div className="reasoning-group" data-testid="reasoning-group">
-    <button type="button" className="tool-summary-row reasoning-summary" aria-label="思考过程" title={`思考过程 · ${items.length} 段`} aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}>
-      <span>思考过程 · {items.length} 段</span>
-      <ActivityIcon kind="chevron" size={14} className={open ? "tool-chevron open" : "tool-chevron"} />
-    </button>
-    <div id={id} className="reasoning-group-details reasoning-details" hidden={!open}>
-      {items.map(item => <div key={item.id} className="reasoning-group-entry" data-side-item-id={item.id} data-testid="reasoning">
-        {(item.summary ?? []).filter((part: unknown) => typeof part === "string" && part.trim()).map((part: string, index: number) => <p key={`summary-${index}`}>{part}</p>)}
-        {(item.content ?? []).filter((part: unknown) => typeof part === "string" && part.trim()).map((part: string, index: number) => <p key={`content-${index}`}>{part}</p>)}
-      </div>)}
+  return (
+    <div className="reasoning-group" data-testid="reasoning-group">
+      <Button
+        unstyled
+        data-slot={undefined}
+        type="button"
+        className="tool-summary-row reasoning-summary"
+        aria-label="思考过程"
+        title={`思考过程 · ${items.length} 段`}
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen(!open)}
+      >
+        <span>思考过程 · {items.length} 段</span>
+        <ActivityIcon
+          kind="chevron"
+          size={14}
+          className={open ? "tool-chevron open" : "tool-chevron"}
+        />
+      </Button>
+      <div id={id} className="reasoning-group-details reasoning-details" hidden={!open}>
+        {items.map((item) => (
+          <div
+            key={item.id}
+            className="reasoning-group-entry"
+            data-side-item-id={item.id}
+            data-testid="reasoning"
+          >
+            {(item.summary ?? [])
+              .filter((part: unknown) => typeof part === "string" && part.trim())
+              .map((part: string, index: number) => (
+                <p key={`summary-${index}`}>{part}</p>
+              ))}
+            {(item.content ?? [])
+              .filter((part: unknown) => typeof part === "string" && part.trim())
+              .map((part: string, index: number) => (
+                <p key={`content-${index}`}>{part}</p>
+              ))}
+          </div>
+        ))}
+      </div>
     </div>
-  </div>;
+  );
 }

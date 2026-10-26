@@ -1,6 +1,7 @@
+import { makeTempDir } from "./support/temp.mjs";
 // 执行原生 harness 的原始回调，不启动 HTTP/Core/Runtime/Electron 或子进程。
 import assert from "node:assert/strict";
-import { readFile, mkdtemp } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { createHash, randomUUID, webcrypto } from "node:crypto";
 import { join } from "node:path";
 import { createRequire } from "node:module";
@@ -119,7 +120,7 @@ assert.equal(
 console.log(
   "Native model callback scopes replacement approval/question/effect to the current user Turn",
 );
-const home = await mkdtemp("/private/tmp/rc-native-harness-contract-");
+const home = await makeTempDir("rc-native-harness-contract-");
 const backend = new CoreBackend({ home, binary: "/unused", onChange() {} });
 backend.saved = [{ id: "p", root: home }];
 backend.defaultProfile = { id: "fixture", revision: "v1" };
@@ -130,7 +131,10 @@ project.model.connection(true);
 const calls = [];
 project.client = {
   ready: true,
-  capabilities: { features: { threadStartAdmissionGuard: true, permissionPresets: true }, methods: ["areal/thread/start"] },
+  capabilities: {
+    features: { threadStartAdmissionGuard: true, permissionPresets: true },
+    methods: ["areal/thread/start"],
+  },
   async request(method, params) {
     calls.push({ method, params });
     if (params.agentProfile.id === "flow")
@@ -419,8 +423,8 @@ async function ownershipCase({
         };
       if (method === "areal/task/create") {
         assert.equal(params.threadId, "fresh");
-        assert.equal(params.mode,"background");
-        assert.equal(params.schedule,undefined);
+        assert.equal(params.mode, "background");
+        assert.equal(params.schedule, undefined);
         return { id: "task" };
       }
       if (method === "areal/task/read") {
@@ -1045,8 +1049,8 @@ async function checkScheduledThreadBinding(fragment, kind) {
       );
       assert.equal(params.interactionMode, "headless");
       assert.match(params.objective, new RegExp(`^RC09_${kind}:`));
-      if (kind === "RACE")assert.equal(params.schedule.intervalSeconds,3);
-      else assert.equal(params.schedule,undefined);
+      if (kind === "RACE") assert.equal(params.schedule.intervalSeconds, 3);
+      else assert.equal(params.schedule, undefined);
       assert.equal(params.maxTurns, kind === "RACE" ? 4 : 8);
       nativeCalls++;
       return { id: randomUUID(), threadId: params.threadId, runs: [] };
@@ -1450,7 +1454,7 @@ for (const fault of ["enrollment-reject", "ready-timeout", "early-worker-exit"])
   });
   await reachedFault;
   assert.equal(ownedAtFault, true, `${fault}: started service has no parent cleanup owner`);
-  if (fault === "ready-timeout") for (const callback of [...timers]) callback();
+  if (fault === "ready-timeout") for (const callback of Array.from(timers)) callback();
   else await bootstrap;
   const startupError = await startup;
   assert.ok(startupError);
@@ -2283,7 +2287,10 @@ console.log(
   const domFixture = slice(lifecycle, "function events() {", "function inbox() {");
   const handler = 'connect.addEventListener("click", () => connectHost());';
   assert.ok(main.includes(handler));
-  assert.match(html, /<button\b(?=[^>]*\bid="connect")(?=[^>]*\btype="button")(?=[^>]*\bdisabled)[^>]*>/);
+  assert.match(
+    html,
+    /<button\b(?=[^>]*\bid="connect")(?=[^>]*\btype="button")(?=[^>]*\bdisabled)[^>]*>/,
+  );
   const consumer = fixed
     .replace(' && !document.getElementById("connect").disabled', "")
     .replace("production Remote connect ready", "production Remote page loaded")
@@ -2812,7 +2819,11 @@ console.log(
   const expected = ["observe", "review", "submit", "interrupt", "answer", "pauseTask"];
   assert.deepEqual(Array.from(ready.capabilities), expected);
   assert.equal(ready.limits.applicationMessageBytes, 262144);
-  const render = slice(main, '    document.getElementById("connection-protocol").textContent =', '    connectionPhase("connected");');
+  const render = slice(
+    main,
+    '    document.getElementById("connection-protocol").textContent =',
+    '    connectionPhase("connected");',
+  );
   assert.ok(render);
   function renderStatus(
     capabilities,
@@ -2820,7 +2831,12 @@ console.log(
   ) {
     const status = {};
     runInNewContext(render, {
-      document: { getElementById(id) { assert.equal(id, "connection-protocol"); return status; } },
+      document: {
+        getElementById(id) {
+          assert.equal(id, "connection-protocol");
+          return status;
+        },
+      },
       connected: { ...ready, capabilities, limits: { applicationMessageBytes } },
     });
     return status.textContent;
@@ -2867,8 +2883,18 @@ console.log(
   const consumers = harness.split("\n").filter((line) => line.includes("locator('#status')"));
   assert.equal(consumers.length, 15);
   assert.ok(!harness.includes("getByRole('status')"));
-  const capabilityCheck = harness.split("\n").find((line) => line.includes("locator('#connection-protocol')") && line.includes("消息上限：262144 字节"));
-  const protocolPage = (value) => ({ locator(selector) { assert.equal(selector, "#connection-protocol"); return new Locator([{ text: value }]); } });
+  const capabilityCheck = harness
+    .split("\n")
+    .find(
+      (line) =>
+        line.includes("locator('#connection-protocol')") && line.includes("消息上限：262144 字节"),
+    );
+  const protocolPage = (value) => ({
+    locator(selector) {
+      assert.equal(selector, "#connection-protocol");
+      return new Locator([{ text: value }]);
+    },
+  });
   assert.ok(capabilityCheck);
   const states = [
     "等待桌面确认",

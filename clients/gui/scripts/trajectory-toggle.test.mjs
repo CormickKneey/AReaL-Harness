@@ -35,12 +35,19 @@ function fixture(t) {
     projects: new Map([["p", project]]),
     hasWork: () => busy,
     onChange() {},
+    restartProject: async (target, options) => {
+      calls.push("restart");
+      assert.equal(target, project);
+      assert.equal(options.expectedRevision, current.revision);
+      assert.equal(backend.providerUpdating, true);
+      target.providerRevision = current.revision;
+      target.providerSnapshot = current;
+    },
     providers: {
       config: { current: async () => current },
       redact: (value) => value,
-      command: async (request) => {
-        calls.push(request);
-        return { pendingApply: false };
+      command: async () => {
+        throw new Error("non-model deployment configuration cannot use model hot-apply");
       },
     },
   };
@@ -94,7 +101,8 @@ test("capture application waits for task completion and Core restart safety", as
   assert.deepEqual(f.calls, ["areal/server/status"]);
   f.safe(true);
   await f.apply.tryApply();
-  assert.deepEqual(f.calls.at(-1), { operation: "apply", expectedRevision: revision });
+  assert.equal(f.calls.at(-1), "restart");
+  assert.equal(f.backend.providerUpdating, false);
   f.project.providerSnapshot = f.current;
   assert.deepEqual(f.apply.project({ enabled: true, capture_apply_pending: true }), {
     enabled: true,
@@ -141,10 +149,9 @@ test("already applied configuration needs no restart and failed apply stays expl
   await f.apply.tryApply();
   assert.equal(f.calls.length, 0);
   f.project.providerRevision = "previous";
-  f.backend.providers.command = async () => ({
-    pendingApply: true,
-    warning: "fixture restart failed",
-  });
+  f.backend.restartProject = async () => {
+    throw new Error("fixture restart failed");
+  };
   f.apply.schedule(revision);
   await f.apply.tryApply();
   assert.equal(f.apply.project({}).capture_apply_error, "fixture restart failed");
@@ -199,7 +206,7 @@ test("a capture configuration read failure stays visible after successful upload
 test("completion of an older safe apply cannot clear a newer scheduled toggle", async (t) => {
   const f = fixture(t);
   let release;
-  f.backend.providers.command = () =>
+  f.backend.restartProject = () =>
     new Promise((resolve) => {
       release = resolve;
     });

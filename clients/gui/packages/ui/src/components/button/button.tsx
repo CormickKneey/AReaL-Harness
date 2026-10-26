@@ -33,11 +33,9 @@ const buttonVariants = cva(
         sm: "h-control-sm gap-1 px-2 text-ui-caption/relaxed has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3",
         lg: "h-control-lg gap-1 rounded-button px-2.5 text-ui-caption has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 [&_svg:not([class*='size-'])]:size-4",
         icon: "size-control [&_svg:not([class*='size-'])]:size-4",
-        "icon-xs":
-          "size-control-xs rounded-sm [&_svg:not([class*='size-'])]:size-2.5",
+        "icon-xs": "size-control-xs rounded-sm [&_svg:not([class*='size-'])]:size-2.5",
         "icon-sm": "size-control-sm [&_svg:not([class*='size-'])]:size-3",
-        "icon-lg":
-          "size-control-lg rounded-button [&_svg:not([class*='size-'])]:size-4",
+        "icon-lg": "size-control-lg rounded-button [&_svg:not([class*='size-'])]:size-4",
       },
     },
     defaultVariants: {
@@ -51,15 +49,20 @@ function Button({
   className,
   variant = "default",
   size = "default",
+  unstyled = false,
   ...props
 }: Omit<React.ComponentProps<typeof ButtonPrimitive>, "className"> &
-  VariantProps<typeof buttonVariants> & { className?: string }) {
+  VariantProps<typeof buttonVariants> & {
+    className?: string;
+    /** Retain Base UI behavior when an existing composition owns all appearance. */
+    unstyled?: boolean;
+  }) {
   return (
     <ButtonPrimitive
       data-slot="button"
-      data-variant={variant}
-      data-size={size}
-      className={cn(buttonVariants({ variant, size, className }))}
+      data-variant={unstyled ? undefined : variant}
+      data-size={unstyled ? undefined : size}
+      className={unstyled ? className : cn(buttonVariants({ variant, size, className }))}
       {...props}
     />
   );

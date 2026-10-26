@@ -20,7 +20,7 @@ async fn legacy_task_store_is_loaded_with_the_new_snapshot_version() {
     .unwrap();
     let store = crate::store::Store::open(root.path()).unwrap();
     let tasks = Tasks::open(root.path(), &store).unwrap();
-    assert_eq!(tasks.state.lock().await.version, 5);
+    assert_eq!(tasks.state.lock().await.version, 6);
 }
 
 struct Coordinator {

@@ -3,7 +3,7 @@ id: settings-dialog
 title: SettingsDialog
 summary: 设置弹窗、工具栏与空态。
 status: experimental
-entry: wip
+entry: experimental
 layer: settings
 category: composition
 aliases: ["设置弹窗、工具栏与空态"]
@@ -15,7 +15,7 @@ exports: ["SettingsDialog", "SettingsToolbar", "EmptySettings"]
 
 ## 何时使用
 
-设置弹窗、工具栏与空态。沿现有生产用途，不新增业务入口。
+`R-SETTINGSDIALOG-001` 设置弹窗、工具栏与空态。沿现有生产用途，不新增业务入口。
 
 ## 组成
 
@@ -23,23 +23,23 @@ exports: ["SettingsDialog", "SettingsToolbar", "EmptySettings"]
 
 ## 状态
 
-默认、内容增长、禁用/忙碌（由宿主提供）、明暗与不同字号；展示更新保留原身份与阅读状态。
+引用 [R-UI-COMMON-005](../../../README.md#共同合同)。
 
 ## 行为
 
-保留原Base UI模态焦点及busy关闭守卫；宿主useDraftBlocker/useGuardedNavigation仍决定保存和离开。SettingsToolbar只表达刷新/添加意图，EmptySettings保留原空态内容。
+`R-SETTINGSDIALOG-002` 保留原Base UI模态焦点及busy关闭守卫；宿主useDraftBlocker/useGuardedNavigation仍决定保存和离开。SettingsToolbar只表达刷新/添加意图，EmptySettings保留原空态内容。
 
 ## 内容
 
-名称、原因与结果来自宿主事实；未确认不能显示为成功，短时通知不替代原始结果与恢复动作。
+引用 [R-UI-COMMON-006](../../../README.md#共同合同)。
 
 ## 可访问性
 
-真实控件保留label、aria、ref和键盘入口。18px字号和窄窗保持内容可读，焦点不因重新包装而丢失。
+引用 [R-UI-COMMON-007](../../../README.md#共同合同)。
 
 ## 规则
 
-包不依赖renderer、Intl、Store、Core或Electron。原路径仅转接或注入宿主数据；保持experimental/wip，不自动提升稳定API。
+引用 [R-UI-COMMON-008](../../../README.md#共同合同)。
 
 ## 示例
 

@@ -1,6 +1,13 @@
+import { Input } from "@areal/ui";
 // ZCode WorkspaceFileTree header and row composition, adapted to Core's workspace service.
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { SearchIcon as Search, CloseIcon as X, RefreshIcon as RefreshCw, MoreOptionsIcon as Ellipsis, MessageCopy as Copy } from "../interfaceIcons.js";
+import {
+  SearchIcon as Search,
+  CloseIcon as X,
+  RefreshIcon as RefreshCw,
+  MoreOptionsIcon as Ellipsis,
+  MessageCopy as Copy,
+} from "../interfaceIcons.js";
 import { Button } from "../components/ui/button.js";
 import {
   DropdownMenu,
@@ -13,7 +20,10 @@ import { WorkspaceFileTreeRowView, type FileRow } from "./WorkspaceFileTreeRowVi
 import type { Action } from "../services.js";
 type Entry = { name: string; dir: boolean };
 type Listing = { entries: Entry[]; truncated: boolean };
-const views = new Map<string, { expanded: string[]; query: string; selected: string; changedOnly: boolean }>();
+const views = new Map<
+  string,
+  { expanded: string[]; query: string; selected: string; changedOnly: boolean }
+>();
 export function WorkspaceFileTree({
   projectId,
   root,
@@ -64,7 +74,10 @@ export function WorkspaceFileTree({
     void Promise.all(
       (JSON.parse(paths) as string[]).map(
         async (path) =>
-          [path, await action("workspace", { projectId, operation: "list", showAll: true, path })] as const,
+          [
+            path,
+            await action("workspace", { projectId, operation: "list", showAll: true, path }),
+          ] as const,
       ),
     )
       .then((entries) => {
@@ -184,7 +197,8 @@ export function WorkspaceFileTree({
   const keyDown = (event: KeyboardEvent<HTMLDivElement>, row: FileRow) => {
     if (event.key === "Enter") {
       event.preventDefault();
-      row.dir ? toggle(row.path) : open(row.path);
+      if (row.dir) toggle(row.path);
+      if (!row.dir) open(row.path);
     }
     if (event.key === "ArrowRight" && row.dir && !row.expanded) {
       event.preventDefault();
@@ -222,21 +236,55 @@ export function WorkspaceFileTree({
       <div className="workspace-tree-search-row">
         <div className="review-file-filter-field">
           <Search className="review-file-filter-icon" />
-          <input
+          <Input
+            unstyled
+            data-slot={undefined}
             className="review-file-filter-input"
             placeholder={changedOnly ? "搜索更改…" : "搜索文件…"}
             aria-label="搜索文件"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
-          {query && <Button variant="ghost" size="icon-xs" aria-label="清除搜索" onClick={() => setQuery("")}><X className="size-3" /></Button>}
+          {query && (
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label="清除搜索"
+              onClick={() => setQuery("")}
+            >
+              <X className="size-3" />
+            </Button>
+          )}
           <DropdownMenu>
-            <DropdownMenuTrigger render={<Button variant="ghost" size="icon-xs" aria-label="文件树更多" title={root}><Ellipsis className="size-3.5" /></Button>} />
+            <DropdownMenuTrigger
+              render={
+                <Button variant="ghost" size="icon-xs" aria-label="文件树更多" title={root}>
+                  <Ellipsis className="size-3.5" />
+                </Button>
+              }
+            />
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => void navigator.clipboard.writeText(root).catch((e) => setError(e.message))}><Copy className="size-4" />复制路径</DropdownMenuItem>
-              {gitAvailable && <DropdownMenuItem onClick={() => setChangedOnly(!changedOnly)}>{changedOnly ? "显示全部文件" : "仅显示更改"}</DropdownMenuItem>}
-              <DropdownMenuItem onClick={() => refresh((n) => n + 1)}><RefreshCw className={`size-4 ${busy ? "animate-spin" : ""}`} />刷新文件</DropdownMenuItem>
-              <DropdownMenuItem onClick={onClose}><X className="size-4" />关闭文件列表</DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() =>
+                  void navigator.clipboard.writeText(root).catch((e) => setError(e.message))
+                }
+              >
+                <Copy className="size-4" />
+                复制路径
+              </DropdownMenuItem>
+              {gitAvailable && (
+                <DropdownMenuItem onClick={() => setChangedOnly(!changedOnly)}>
+                  {changedOnly ? "显示全部文件" : "仅显示更改"}
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem onClick={() => refresh((n) => n + 1)}>
+                <RefreshCw className={`size-4 ${busy ? "animate-spin" : ""}`} />
+                刷新文件
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={onClose}>
+                <X className="size-4" />
+                关闭文件列表
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

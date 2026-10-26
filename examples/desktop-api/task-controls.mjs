@@ -30,7 +30,7 @@ async function waitFor(read, predicate) {
 async function start() {
   await rm(ready, { force: true });
   child = spawnNative(
-    resolve("target/debug/areal"),
+    resolve(process.env.AREAL_CORE_BIN || "target/debug/areal"),
     [
       "app-server",
       "--listen",
@@ -210,7 +210,7 @@ try {
   await writeFile(path, JSON.stringify(record));
   const taskPath = join(data, "desktop/task-mode.json");
   const taskRecord = JSON.parse(await readFile(taskPath, "utf8"));
-  assert.equal(taskRecord.version, 5);
+  assert.equal(taskRecord.version, 6);
   const head = taskRecord.tasks[createHash("sha256").update(recurring.id).digest("hex")];
   const ledger = join(data, "desktop/task-ledger");
   const savedTask = JSON.parse(await readFile(join(ledger, head.body), "utf8"));

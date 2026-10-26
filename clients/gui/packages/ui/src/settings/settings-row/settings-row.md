@@ -3,7 +3,7 @@ id: settings-row
 title: SettingsRow
 summary: 对齐设置名称、说明、控件与详情，保留宿主状态所有权。
 status: experimental
-entry: wip
+entry: compositions
 layer: settings
 category: settings
 aliases: ["设置行"]
@@ -18,27 +18,27 @@ related: ["settings-group-card", "disclosure"]
 
 ## 组成
 
-label、description、control、detail插槽；controlLayout为default或wide。default详情在行下，wide详情在控件区域前方。
+`R-SETTINGSROW-001` label、description、control、detail插槽；controlLayout为default或wide。default详情在行下，wide详情在控件区域前方。
 
 ## 状态
 
-默认、宽控件布局、视觉禁用。保存中、错误、待核对由宿主通过detail/反馈呈现，不从disabled推断结果。
+`R-SETTINGSROW-002` 默认、宽控件布局、视觉禁用。保存中、错误、待核对由宿主通过detail/反馈呈现，不从disabled推断结果。
 
 ## 行为
 
-默认列适应控件宽度，wide控件列280px；组宽不超过520px时堆叠。禁用行标记aria-disabled并拦截控件区指针操作，宿主仍须禁用实际控件以阻止键盘操作。
+`R-SETTINGSROW-003` 默认列适应控件宽度，wide控件列280px；组宽不超过520px时堆叠。禁用行标记aria-disabled并拦截控件区指针操作，宿主仍须禁用实际控件以阻止键盘操作。
 
 ## 内容
 
-字段名说明用户可调整的内容，描述说明影响。失败提供明确重试条件，结果未知时先核对回执，不能自动重放写入。
+`R-SETTINGSROW-004` 字段名说明用户可调整的内容，描述说明影响。失败提供明确重试条件，结果未知时先核对回执，不能自动重放写入。
 
 ## 可访问性
 
-label插槽是布局内容，不能自动标记任意控件。宿主通过htmlFor/id或aria-label命名实际输入，用aria-describedby连接帮助及错误；真实disabled由控件负责。
+`R-SETTINGSROW-005` label插槽是布局内容，不能自动标记任意控件。宿主通过htmlFor/id或aria-label命名实际输入，用aria-describedby连接帮助及错误；真实disabled由控件负责。
 
 ## 规则
 
-纯布局组件不保存值、不推导提交状态、不访问服务。SettingsSelect/Switch等业务适配继续由renderer拥有；input/range基础外观沿现有设置规范。
+`R-SETTINGSROW-006` 纯布局组件不保存值、不推导提交状态、不访问服务。SettingsSelect/Switch等业务适配继续由renderer拥有；input/range基础外观沿现有设置规范。
 
 ## 示例
 

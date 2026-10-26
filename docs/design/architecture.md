@@ -91,9 +91,9 @@ Task Mode 由 `core/engine/src/task_mode` 管理 Task/TaskRun、定时触发、�
 
 手动 Run Now 复用 Task 的原子提交、总预算与 queued Run 执行链。Core 持久保存 Run、目标快照和收据后才调用 Host 准备；客户端通过原请求的只读收据核对恢复，不改写计划或重放未知提交。
 
-Task 持久化的唯一提交点为版本 5 的 `desktop/task-mode.json`。紧凑根引用不可变热 Task、按 Task 链接的历史与固定桶头的压缩 radix 收据/归属索引，索引深度受 256 位键宽限制，终止叶最多 64 行、普通打包 128 KiB，合法大单条仍受 256 MiB 硬上限约束。控制不触发历史扫描，只发布变更 Task、原始收据与根；普通保留检查有界，无法确认的历史继续留热。冷 Run 用量与计数同根提交，旧 Goal 身份不因归档变成普通 Goal。实时读取在短锁内捕获 Snapshot，再在锁外以同一快照完成授权和投影。文件先同步，根最后原子替换并同步目录；结果不明时冻结写入，重启校验、同步全部可达引用后再恢复。版本 1 至 4 的原字节先备份，原根引用的不可变文件保留；版本 5 阻止旧二进制忽略新规则，迁移不依赖孤儿扫描。
+Task 持久化的唯一提交点为版本 6 的 `desktop/task-mode.json`。紧凑根引用不可变热 Task、按 Task 链接的历史与固定桶头的压缩 radix 收据/归属索引，索引深度受 256 位键宽限制，终止叶最多 64 行、普通打包 128 KiB，合法大单条仍受 256 MiB 硬上限约束。控制不触发历史扫描，只发布变更 Task、原始收据与根；普通保留检查有界，无法确认的历史继续留热。冷 Run 用量与计数同根提交，旧 Goal 身份不因归档变成普通 Goal。完整 Task 与历史读取继续在捕获快照上完成授权和投影；可信 Desktop 的轻量目录单独读取最近成功发布的有界视图，不等待 Task 写锁或克隆完整 Snapshot。文件先同步，根最后原子替换并同步目录；结果不明时冻结写入，重启校验、同步全部可达引用后再恢复。版本 1 至 5 的原字节先备份，原根引用的不可变文件保留；版本 6 阻止旧二进制忽略新摘要约束，迁移不依赖孤儿扫描。
 
-可信本机的任务目录预览由 Core 直接读取一次原子发布根及其不可变 Task 叶，不打开 Store 或执行恢复，不新增持久索引。该投影明确标记为已发布、执行状态未观察；它不证明提交回执或实时运行状态，不进入 live model，也不能提供控制操作的修订。Desktop 仅通过窄 CLI 获取投影，Renderer 并行等待原 Core 的实时目录；实时结果优先，迟到预览按请求身份丢弃。边界见[本地服务 API](../api/local-service.md#已发布任务目录预览)。
+可信本机的任务目录预览由 Core 读取一次原子发布根及其不可变定时摘要包，不打开 Store 或执行恢复。摘要与 Task、收据和归属索引同根提交，不另设可变索引。版本 5 保留原可信读取路径，用于升级前展示和发现启用安排，Core 合法启动后原子迁移。预览不证明实时运行状态或未知提交结果，也不能提供控制修订。Desktop 每个执行 owner 只维护一个目录缓存和 watch，任务中心、来源侧栏与通知共同消费；缺号、换代和背压后保留旧展示并重建基线。执行激活由现有共享 Desktop 后端独立协调，Core 仍独占触发、漏执行与重叠准入。App 退出后不再调度；显式停止抑制自动激活，普通窗口关闭沿用后台生命周期。边界见[本地服务 API](../api/local-service.md#已发布任务目录预览)与[Task API](../api/tasks.md#轻量目录与-owner-更新)。
 
 普通可写桌面会话通过 Core 的 `scheduled_task_*` 工具创建和管理定时任务。工具上下文绑定当前已注册 Host 的身份与连接、来源 Thread 及 cwd，冻结的权限和工具 allowlist 继续生效。`sourceThreadId` 仅负责来源关联，`threadId` 保留独立执行锚点，每次 Run 另建 Thread。写入键来自持久 tool-call 身份，回执核对保留 UNKNOWN，修订冲突不能静默覆盖。`deletedAt` 墓碑复用取消与停止结算路径，保留历史、回执和容量占用。来源对话中的持久任务卡、右上角列表和全局中心读取同一 Task。新建独立任务也使用普通会话工具链路，不依赖 Renderer 轮询确认。
 
@@ -105,13 +105,17 @@ Task 持久化的唯一提交点为版本 5 的 `desktop/task-mode.json`。紧�
 
 `clients/cli` 提供 Rust 命令入口 `areal`，分派到 TUI、非交互客户端、Core server 和服务宿主的库入口；Core 不依赖客户端。`core/service-host` 的 Rust launcher 持有独立 Core/Runtime 进程与私有生命周期管道，Linux 不依赖 Python；macOS 的可信 service-host、launcher、Core 和 Runtime 由 `/usr/bin/python3` 作为实际父进程启动，以满足本地可执行文件的启动约束；`core/local-service/native_process` 只适配服务链的进程身份、显式描述符与生命周期，不参与 Runtime sandbox 或权限决策。`scripts/launch.py` 保留用于开发脚本与独立评测入口。发行目录 `bin` 只含 `areal`，Runtime daemon/file helper 放在 `libexec/areal`，不并入客户端进程。命令契约见[客户端指南](../guides/clients.md)。
 
+历史记录只证实直接 Rust 启动曾收到 SIGKILL、Python 路径成功，以及后续直接启动也曾成功。发送信号的一方仍未归因，不能据此认定 AMFI、TCC、隔离属性或某个安全产品是根因。GUI 的依赖预检只在启动新后台前检查所选开发工具及系统 Python，不改变父进程身份、描述符、信号、退出回执或 Runtime 权限。
+
 macOS Runtime 还随包提供独立 Bash，作为受限命令的私有 shell 资源，并在进入沙箱前解析系统 Git 的真实工具链路径；这些适配只解决工具启动与临时目录兼容，不改变 Core 的任务执行循环或 Scope 隔离。资源布局、第三方许可证与边界见 [Runtime 契约](../api/runtime.md#macos-受限命令的系统工具)。
 
 ## 状态与执行
 
 GUI 首次展示与后台就绪分别判定。Renderer 在主题和图标加载页可绘制后，通过现有窄 IPC 通知 Main；Main 结合原生绘制事件，只消费一次自动展示机会。关闭窗口取消尚未发生的自动展示，后续恢复不能重新打开或抢焦点。后台、项目及原会话沿现有观察链恢复。初始恢复成功前只显示图标与加载状态，不挂载首页、侧栏、新会话或 Projectless 准备入口；成功后一次性挂载完整工作台。失败留在加载页，通过现有所有者恢复。执行入口继续受连接、会话恢复及 Core 准入约束。恢复失败保留原选择和草稿，并使用现有重试、后台详情及退出路径。
 
-GUI 的 Desktop 服务和 Main 使用 `workbench/client/state-projection` 编码可重建状态。每条连接先发送当前显示窗口的基线，之后按 Project、Thread、Turn、Item 身份发送变化和顺序；未变化的正文不重复传输。Main 只编码筛选后的桌面状态，Renderer 在 contextBridge 之后重组显示快照。缺失基线或序号不连续时重新读取状态，不重发执行请求。支持有界历史的 Core 通过 `areal/thread/observe` 提供近期窗口，较早历史和超大条目由显式分页与分片读取；显示窗口不包含另一份完整权威历史。正在变化的单个 Item 通知仍整体替换，单条记录解析与活动条目增长的限制见 [Core 历史契约](../api/core.md)。
+Renderer 的 `state/` 所有者分别管理启动、导航、工作区、任务、外观与通知的界面状态，领域 store 通过 `useSyncExternalStore` 订阅；持久化沿用原偏好键和所有者。`App.tsx` 保留读取与写入跨领域状态的编排 effect，不能把 Core 收据、历史或 UNKNOWN 恢复变成 store 内的重发逻辑。视图组合归 `app-shell/`，原生预览的 Electron 适配归 `app/src/core/preview-native/`，不依赖 Electron 的 URL、坐标、观察与计划逻辑归 `preview/`。窗口、WebContentsView 与后台焦点仍由 Main 的既有所有者管理。
+
+GUI 的 Desktop 服务和 Main 使用 `workbench/client/state-projection` 编码可重建状态。每条连接先发送当前显示窗口的基线，之后按 Project、Thread、Turn、Item 身份发送变化和顺序；未变化的正文不重复传输。Main 只编码筛选后的桌面状态，Renderer 在 contextBridge 之后重组显示快照。缺失基线或序号不连续时重新读取状态，不重发执行请求。支持有界历史的 Core 通过 `areal/thread/observe` 提供近期窗口，较早历史和超大条目由分页与分片读取；Renderer 只在主动向上阅读时自动读取一页，保留按钮供重试及键盘访问，并在合并后恢复阅读锚点。Desktop 每个窗口最多缓存 4 页较早正文；卸载页只保留当前快照内的轻量游标记录，在原位置提供可回读占位，回读仍受相同正文缓存上限约束。重新观察或游标失效会重建窗口与占位；显示窗口不包含另一份完整权威历史。正在变化的单个 Item 通知仍整体替换，单条记录解析与活动条目增长的限制见 [Core 历史契约](../api/core.md)。
 
 Renderer 文档重载或崩溃不拥有后台执行生命周期。显式刷新后，新文档从新的投影基线挂接原应用会话，不能重放已受理输入。`test:service-reopen` 用原模型连接上的新增片段和生产 App 的显示验证挂接，并区分文档恢复与应用重启后的新 owner、代际。
 
@@ -151,7 +155,7 @@ Fork 与 Side 复用 Core/Runtime 的会话、历史和执行所有者。`conver
 
 | 情况 | 系统行为 | 用户感知 |
 |---|---|---|
-| 短暂断连或可重试读取失败 | 有界退避、重新订阅并安装权威基线 | 短暂过程保持安静；持续时显示恢复状态 |
+| 短暂断连或可重试读取失败 | 有界退避、重新订阅并安装权威基线 | 自动重连和读取重试保持安静；停止自动恢复后才显示失败与重试入口 |
 | 修改请求结果未知 | 保留原 requestId，只查询原收据 | 保留草稿，说明正在核对；不自动重复提交 |
 | 原操作成功、列表或视图刷新失败 | 返回已知身份或结果，单独重试读取 | 原操作保持成功，提示仅归属未恢复的视图 |
 | 权限、凭据或配置需要修改 | 保留结构化原因与操作范围 | 显示可执行的中文提示和对应入口 |
@@ -161,7 +165,7 @@ Fork 与 Side 复用 Core/Runtime 的会话、历史和执行所有者。`conver
 
 服务崩溃后的自动换代必须经过现有本地服务所有者：原 Host 对意外 Core 退出和 Runtime 清理发布正向证明，在启动锁内复核原代际、同一 GUI owner、存活期、部署配置和二进制，并排除已受理或结算未知的显式停止。恢复预留与原代际到后继代际的回执只允许一个后继，丢失回复也不能启动第二个。缺少证明、Host 丢失、配置变化或明确停止均不自动换代。换代后只恢复观察和原请求核查，Core 的启动恢复负责将未完成执行标为 UNKNOWN，不重放未完成任务的模型请求、工具或外部效果；已授权且尚未开始的定时安排沿用其原有规则。详细保证见 [本地服务契约](../api/local-service.md)。
 
-桌面 Worktree 由 `clients/gui/app/src/core/worktrees.cjs` 持有创建与线程绑定日志，`worktree-admission.cjs` 核对线程身份与定时任务目录的持久作者预约，`task-workspace-owners.cjs` 持久记录任务的实际宿主及可信线程锚点，`schedule-admission.cjs` 持有自动分配项目外目录的任务家庭预约、执行准备和精确交互作者映射核查，`packages/workspace-git` 持有受控 Git 创建与事实核查。逻辑项目和物理执行目录分别登记。普通新会话使用当前目录与 Core；只有当前创建明确选择 Worktree 才分配新 checkout，不根据会话数量或旧偏好自动隔离。每个隔离 checkout 通过原服务入口启动独立 Core/Runtime，客户端仅聚合线程投影，不迁移 Core 历史。线程、子线程及请求收据定位原执行宿主，文件、进程和浏览器回调沿同一归属路由。接口和保证范围见[桌面宿主契约](../api/desktop.md#桌面宿主-worktree-契约)及[Worktree 指南](../guides/worktrees.md)。 环境配置归现有 library 的逻辑项目元数据，创建时冻结脚本；`worktree-environment.cjs` 仅适配 Core 受管进程回执。空线程绑定不代表环境就绪，首条 Prompt 需等待 setup 成功。取消和删除保留原创建身份，删除 tombstone 阻止旧 owner 重连或回退来源。
+桌面 Worktree 由 `clients/gui/app/src/core/worktrees.cjs` 持有创建与线程绑定日志，`worktree-admission.cjs` 核对线程身份与定时任务目录的持久作者预约，`task-workspace-owners.cjs` 持久记录任务的实际宿主及可信线程锚点，`schedule-admission.cjs` 从 Core Task、桌面 owner、来源与执行锚点的同一 cwd 派生普通来源安排的共享资格，并保留自动分配项目外目录的旧任务家庭预约、执行准备和精确交互作者映射核查，`packages/workspace-git` 持有受控 Git 创建与事实核查。逻辑项目和物理执行目录分别登记。普通新会话使用当前目录与 Core；只有当前创建明确选择 Worktree 才分配新 checkout，不根据会话数量或旧偏好自动隔离。每个隔离 checkout 通过原服务入口启动独立 Core/Runtime，客户端仅聚合线程投影，不迁移 Core 历史。线程、子线程及请求收据定位原执行宿主，文件、进程和浏览器回调沿同一归属路由。接口和保证范围见[桌面宿主契约](../api/desktop.md#桌面宿主-worktree-契约)及[Worktree 指南](../guides/worktrees.md)。 环境配置归现有 library 的逻辑项目元数据，创建时冻结脚本；`worktree-environment.cjs` 仅适配 Core 受管进程回执。空线程绑定不代表环境就绪，首条 Prompt 需等待 setup 成功。取消和删除保留原创建身份，删除 tombstone 阻止旧 owner 重连或回退来源。
 
 ## 仓库目录
 

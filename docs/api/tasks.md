@@ -77,7 +77,27 @@ Run status 为 `queued/running/waitingForInput/waitingForAgents/paused/blocked/c
 
 `task/delete` 使用相同的停止结算路径，同时持久保存 `deletedAt` UTC Unix 秒墓碑。墓碑设置 `cancelled=true` 和 `nextRunAt=null`，拒绝后续修改、开启和立即运行。返回成功只表示删除意图已受理。非终态 Run 或未结算 worker 存在时，客户端显示删除中并保留记录入口。Task、Channel、运行历史和原始收据不物理删除，墓碑仍计入 1024 个 Task 的容量。`task/list` 和 `task/read` 保留墓碑，活动目录可在执行全部结算后隐藏。首版没有恢复或永久清除命令。
 
-`sourceThreadId` 与 `deletedAt` 为可选字段，旧快照缺省为无来源、未删除。版本 5 的 Task 账本继续保存这些字段，无需迁移或猜测旧来源。旧版本即使忽略墓碑字段，仍受既有 `cancelled` 停止语义约束。来源 Thread 的删除或归档不取消 Task。
+`sourceThreadId` 与 `deletedAt` 为可选字段，旧快照缺省为无来源、未删除。版本 5 及之后的 Task 账本继续保存这些字段，无需迁移或猜测旧来源。旧版本即使忽略墓碑字段，仍受既有 `cancelled` 停止语义约束。来源 Thread 的删除或归档不取消 Task。
+
+## 轻量目录与 owner 更新
+
+可信、不受 Thread 范围限制的 Desktop 使用以下 observe 接口。它们不启动执行、不恢复 Run，也不替代修改操作前的完整 Task 读取。原有受限身份继续使用前述 Task API。
+
+| 方法 | 参数 | 响应 |
+|---|---|---|
+| `task/directory/list` | `mode?, sourceThreadId?, cursor?, limit?` | `{generation, revision, data: TaskDirectoryRow[], nextCursor}` |
+| `task/directory/read` | `taskIds`，最多 100 个 | `{generation, revision, data, removed}` |
+| `task/attention/read` | `taskIds?, threadIds?, cursor?, limit?` | `{generation, revision, data: OwnerAttention[], nextCursor}` |
+| `owner/watch` | `{}` | `{generation, sequence, directoryRevision, attentionRevision}`，原子登记接收器并取得基线边界 |
+| `owner/unwatch` | `{}` | `{removed:true}`，仅停止本连接的 owner 观察 |
+
+目录行只携带展示所需的规则、控制状态、下次时间、最后触发决定、计数，以及 `latestRun` 和 `activeRun` 小摘要。`objectivePreview/objectiveTruncated` 与 `reasonPreview/reasonTruncated` 显式表示展示截断。行不包含消息、完整 Run 历史或 worker 明细，不是完整 Task。详情、编辑和控制仍读取原 Task 与历史接口。`enabled` 是安排配置事实，`hasUnsettledWork` 表示仍有未结算工作，两者不能证明运行已经停止。`sourceThreadId` 仅筛选来源。
+
+目录与 attention 的 limit 默认 30，接受 1–100，页面还受 128 KiB 字节上限约束。定向读取超出响应预算时应缩小 ID 集合，不返回部分结果冒充完整结果。目录游标绑定 generation、目录 revision 与筛选条件。attention 游标绑定独立的 attention revision 与查询条件，普通 Thread 消息不使其失效。分页期间版本改变返回 `DIRECTORY_CHANGED`，客户端保留上次完整结果并重新取第一页，不能拼接不同版本。定向目录读取通过 `removed` 明确报告应从缓存移除的 ID。定向 attention 的空结果清除该查询范围内旧的关注项。
+
+每个连接只有一个 owner watch，替换旧 watch，不占用 Task/Thread 的 128 个订阅额度。`areal/owner/invalidated` 携带 `{generation,sequence,changedTasks,changedThreads,facts}`。sequence 在同一 generation 内连续。失效 ID 可以合并，completion、question 和 interaction 事实不能被合并丢弃。流序号不表示跨 Task 与 Thread 账本的原子事务。
+
+客户端先登记 watch，再建立目录与 attention 基线，保留边界之后到达的事实和失效 ID。读取期间再次失效的 ID 必须重读。首次基线不通知历史记录，边界之后的事实按既有通知身份去重。`areal/owner/resetRequired {generation}`、断连、缺号或换代要求保留旧展示并重新建立基线，不承诺补发断线期间的历史通知。问题和交互期限使用最近到期点的一次性刷新，不进行周期性全量轮询。
 
 ## 普通会话中的定时工具
 
@@ -161,9 +181,9 @@ scheduled 的 pause/resume 只影响后续触发，不改变本次执行或 work
 
 周期Task有Token总上限时，更新或恢复关联Goal还会扣除其他Run的已确认及预留消费，校验本轮额度不超过余额；不能将本轮额度改为无限。超限返回`TASK_TOKEN_BUDGET`（参数错误），不保存修改或恢复执行。当前没有修改周期Task总上限的公开接口；需要更多总额度时应明确创建新任务。
 
-`desktop/task-mode.json` 是版本 5 的唯一提交根，引用 `desktop/task-ledger/` 中不可变的热 Task、历史分段与收据/归属索引。每部署仍最多 1024 Task，普通热状态总预算为 32 MiB；单个不可变文件的硬读取上限为 256 MiB。128 Run 和 1024 消息是热保留目标，完整历史和原始幂等响应保留在冷存储中，不因历史数量暂停周期任务。终态、用量已确认、无未知请求、worker 已结算且无待处理问题的 Run 才可归档；未知工具效果、审批或无法在有界检查中确认的 Thread 历史保留热态。常规保留每次最多检查 16 个 Thread 快照；引用超过 16 个 Thread 的 Run 会保持热态，直到启动时完整检查，因此仍可能占用普通热状态预算，默认 worker 上限为 64。普通增长满额时返回 `taskHotStateCapacity`，已受理工作的控制和有界终态结算可使用预留容量。物理写入或提交结果不明返回存储错误，并冻结 Task 写入与新派发；重启校验且同步已提交根与全部引用文件后才恢复。活动或挂起等待的 Run 在 Core 重启后暂停，显式 resumeRun（scheduled）或 resume 后才继续；尚未触发的 schedule 保留。恢复不自动重放未知工具副作用。`server/drain` 停止当前执行并关闭准入，但保留 scheduled 的启用状态；`server/status.activeTasks` 计入待执行时间点，ifIdle 不把它们视为空闲。
+`desktop/task-mode.json` 是版本 6 的唯一提交根，引用 `desktop/task-ledger/` 中不可变的热 Task、历史分段与收据/归属索引。每部署仍最多 1024 Task，普通热状态总预算为 32 MiB；单个不可变文件的硬读取上限为 256 MiB。128 Run 和 1024 消息是热保留目标，完整历史和原始幂等响应保留在冷存储中，不因历史数量暂停周期任务。终态、用量已确认、无未知请求、worker 已结算且无待处理问题的 Run 才可归档；未知工具效果、审批或无法在有界检查中确认的 Thread 历史保留热态。常规保留每次最多检查 16 个 Thread 快照；引用超过 16 个 Thread 的 Run 会保持热态，直到启动时完整检查，因此仍可能占用普通热状态预算，默认 worker 上限为 64。普通增长满额时返回 `taskHotStateCapacity`，已受理工作的控制和有界终态结算可使用预留容量。物理写入或提交结果不明返回存储错误，并冻结 Task 写入与新派发；重启校验且同步已提交根与全部引用文件后才恢复。活动或挂起等待的 Run 在 Core 重启后暂停，显式 resumeRun（scheduled）或 resume 后才继续；尚未触发的 schedule 保留。恢复不自动重放未知工具副作用。`server/drain` 停止当前执行并关闭准入，但保留 scheduled 的启用状态；`server/status.activeTasks` 计入待执行时间点，ifIdle 不把它们视为空闲。
 
-私有收据与归属索引使用 256 个桶头和完整 SHA-256 键的压缩 radix。单次查找最多访问 64 个节点，并在最多 64 行的有序终端叶中查找。分支文件读取前限制为 2 KiB，普通打包叶的序列化上限为 128 KiB；单个更大的历史响应可使用 256 MiB 文件上限。更新只重写终端叶与祖先路径。catalog 的 index_version 3 使用节点版本 2。未发布的实验性 index_version 2 会被拒绝，原根不会被替换；已部署的 Task store v1–4 保留完整原根字节与不可变引用文件后迁移。旧收据摘要、响应、nextRunAt 和旧 Run 事实不重算。旧二进制拒绝 v5 根；降级需要恢复完整升级前状态，不提供在线转换。
+私有收据与归属索引使用 256 个桶头和完整 SHA-256 键的压缩 radix。单次查找最多访问 64 个节点，并在最多 64 行的有序终端叶中查找。分支文件读取前限制为 2 KiB，普通打包叶的序列化上限为 128 KiB；单个更大的历史响应可使用 256 MiB 文件上限。更新只重写终端叶与祖先路径。catalog 的 index_version 3 使用节点版本 2。未发布的实验性 index_version 2 会被拒绝，原根不会被替换；已部署的 Task store v1–5 保留完整原根字节与不可变引用文件后迁移。旧收据摘要、响应、nextRunAt 和旧 Run 事实不重算。旧二进制拒绝 v6 根；降级需要恢复完整升级前状态，不提供在线转换。
 
 Thread 快照版本为 13，API 保持 areal.core.v1；旧 Thread/Goal 可读取，旧 Goal 在首次 resume 时补登记 Task。旧二进制不能读取新版本快照。嵌入式宿主在完成模型、工具装配后调用 `Engine::start_task_scheduler()`；app-server 自动调用。
 
@@ -203,7 +223,7 @@ Inbox 获取的是原频道问题，回复引用其 runId 和 id：
 
 Task worker 在调用方和父配置均未给出轮数时默认无限；显式限制仍继承并执行。部署 Goal 上限为 0 表示无限，不表示零调用额度。Task/Channel 记录容量仍属于独立服务资源限制。
 
-Task 存储写入版本 5，迁移读取版本 1／2／3／4；原始旧文件字节备份保存在 `desktop/task-legacy/`。迁移先同步不可变文件，再原子替换原路径的版本 5 根，旧二进制拒绝读取。备份、复制与恢复必须包含根及其可达文件；孤儿文件不代表已受理操作，本阶段不自动回收。准备配置在 Goal 身份已持久绑定或 Run 终结后退出热状态。TaskWorker 保留旧 threadId/turnId，新增可选 execution/executionId，统一投影共享与隔离 worker。新模型入口为 agent_spawn；旧 task_spawn 兼容但不再展示。候选待交付不能完成 Run；没有活跃 Turn 时唤醒原协调者，不重复执行。
+Task 存储写入版本 6，迁移读取版本 1／2／3／4／5；原始旧文件字节备份保存在 `desktop/task-legacy/`。迁移先同步不可变文件，再原子替换原路径的版本 6 根，旧二进制拒绝读取。备份、复制与恢复必须包含根及其可达文件；孤儿文件不代表已受理操作，本阶段不自动回收。准备配置在 Goal 身份已持久绑定或 Run 终结后退出热状态。TaskWorker 保留旧 threadId/turnId，新增可选 execution/executionId，统一投影共享与隔离 worker。新模型入口为 agent_spawn；旧 task_spawn 兼容但不再展示。候选待交付不能完成 Run；没有活跃 Turn 时唤醒原协调者，不重复执行。
 
 ## 完整 Run 历史与容量诊断
 

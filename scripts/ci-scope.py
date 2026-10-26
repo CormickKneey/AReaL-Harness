@@ -9,7 +9,7 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 SCOPES = {
     "gui": [
-        "design/tokens/**",
+        "design/**",
         "clients/**",
         "core/**",
         "runtime/**",
@@ -19,6 +19,7 @@ SCOPES = {
         "Makefile",
         "scripts/**",
         ".github/workflows/**",
+        ".githooks/**",
     ],
     "release": [
         "design/tokens/**",

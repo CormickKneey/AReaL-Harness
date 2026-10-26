@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "id": "task-context",
+  "intent": "从对话顶部核对项目改动、独立子代理状态与输入来源，再返回原草稿和任务",
+  "pattern": "P-DETAIL",
+  "target": "renderer/src/views/TaskResourcesPopover.tsx",
+  "runtime": "desktop",
+  "interactionFamilies": ["I-READ", "I-RETURN"],
+  "reference": {
+    "kind": "screenshot",
+    "visualTarget": "用户提供的 Codex 任务资源截图（项目、单行 Changes、子代理摘要、Sources）；第二张为原 AReaL 空态。原件与哈希留在本地 Q-TASK-CONTEXT-DS-01 证据中，不提交原图"
+  },
+  "slots": {
+    "body": ["TaskContext", "AgentConversationPane", "SentAttachment"],
+    "actions": ["Button"]
+  },
+  "states": [
+    {
+      "id": "ready",
+      "condition": "从生产对话顶部点击任务资源，有工作区改动和四项明确输入来源",
+      "expected": "紧凑单行 Changes、独立子代理摘要、三项来源预览；第四项通过查看全部可达"
+    },
+    {
+      "id": "busy",
+      "condition": "工作区请求尚未返回",
+      "expected": "明确读取中，来源和关闭入口仍可用，不推断零改动"
+    },
+    {
+      "id": "failed",
+      "condition": "工作区或子代理读取失败",
+      "expected": "就近保留失败信息，不把失败或待确认写成完成；其他区域和返回入口可用"
+    },
+    {
+      "id": "empty",
+      "condition": "没有改动、子代理或输入来源",
+      "expected": "准确显示空态，添加与关闭入口保留，不伪造关联项目"
+    },
+    {
+      "id": "sources-collapsed",
+      "condition": "从初始展开状态点击收起，再点击展开",
+      "expected": "触发器有明确文字和 expanded/controls；隐藏来源不能获得焦点，当前父任务和草稿不变"
+    },
+    {
+      "id": "all-sources-return",
+      "condition": "查看全部四项来源并返回概览，随后按 Escape",
+      "expected": "第四项可核对；返回后仍为原任务，Escape 回到顶部触发器，不创建 Turn 或重放工具"
+    },
+    {
+      "id": "independent-agents",
+      "condition": "父轮次已完成，子代理仍有运行中或待确认项",
+      "expected": "状态只来自子代理投影；运行、完成与待确认不由父任务完成推导"
+    }
+  ],
+  "conditions": {
+    "themes": ["light", "dark"],
+    "fontSizes": [14, 18],
+    "widthModes": ["wide", "narrow"],
+    "reducedMotion": [false, true]
+  },
+  "invariants": [
+    "设计值来自既有 Token；共享分区与行布局由 TaskContext 拥有，业务适配只提供内容和合法动作",
+    "执行、历史、回执和来源身份仍归原 Core/Desktop，预览不建立第二套业务状态机",
+    "关联项目只显示真实关系；URL 引用不冒充已经抓取的页面标题",
+    "浮层不压缩主对话宽度，展开、关闭和返回保留草稿，未知写入不重发",
+    "参考未观测交互不从静态截图推断；明确的展开/收起沿现行设计规则，保留定时任务入口",
+    "本合同不扩大 P-CONVERSATION 或 Base 准入"
+  ],
+  "evidence": {
+    "status": "pending",
+    "artifacts": [],
+    "gaps": [
+      "参考图未包含连续交互；静态密度与现有受控交互分别核对",
+      "预览入口 design-system.html?task-context；最终组件与真实桌面证据在本地 Q-TASK-CONTEXT-DS-01，公共视觉基线仍待用户评价",
+      "真实供应商、安装包、跨平台不在本次范围"
+    ]
+  }
+}

@@ -205,7 +205,7 @@ pub async fn execute(command: ServiceCommand) -> Result<()> {
             } else {
                 serde_json::json!({"kind":"requiresCore","reason":"unbound"})
             };
-            serde_json::json!({"version":1,"target":target,"source":"published",
+            serde_json::json!({"version":2,"target":target,"source":"published",
                 "executionState":"unobserved","catalog":catalog})
         }
         ServiceCommand::Status {

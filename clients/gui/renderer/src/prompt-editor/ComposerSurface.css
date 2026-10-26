@@ -2,29 +2,109 @@
 
 /* Host model menus and decision-mode integration; shared geometry lives in @areal/ui. */
 /* 决策面只改变布局，保留已挂载编辑器与草稿。 */
-.interaction-composer-compact .composer-surface { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 6px 8px 6px 12px; }
-.interaction-composer-compact .composer-editor { flex: 1 1 120px; padding: 0; max-height: 80px; }
-.interaction-composer-compact .composer-editor :is([contenteditable], textarea) { min-height: 20px; padding-bottom: 0; }
-.interaction-composer-compact .composer-editor :is([contenteditable], textarea, .composer-prediction) { font-size: var(--text-ui-base); line-height: var(--line-height-ui); }
-.interaction-composer-compact .composer-toolbar { flex: 1 0 auto; }
-.interaction-composer-compact .composer-toolbar [data-composer-leading-actions] { flex: 0 0 auto; }
+.interaction-composer-compact .composer-surface {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px 6px 12px;
+}
+.interaction-composer-compact .composer-editor {
+  flex: 1 1 120px;
+  padding: 0;
+  max-height: 80px;
+}
+.interaction-composer-compact .composer-editor :is([contenteditable], textarea) {
+  min-height: 20px;
+  padding-bottom: 0;
+}
+.interaction-composer-compact
+  .composer-editor
+  :is([contenteditable], textarea, .composer-prediction) {
+  font-size: var(--text-ui-base);
+  line-height: var(--line-height-ui);
+}
+.interaction-composer-compact .composer-toolbar {
+  flex: 1 0 auto;
+}
+.interaction-composer-compact .composer-toolbar [data-composer-leading-actions] {
+  flex: 0 0 auto;
+}
 
 /* 紧凑状态保持编辑器归属，只调整工具栏位置。 */
-.interaction-composer-compact .composer-editor { padding-left: 34px; }
-.interaction-composer-compact .composer-toolbar { position: static; flex: 0 0 auto; }
-.interaction-composer-compact [data-composer-leading-actions] { position: absolute; left: 10px; bottom: 6px; width: 32px; }
-.interaction-composer-compact :is([aria-label="更改权限"], [aria-label="退出计划模式"], [aria-label="退出目标模式"]) { display: none; }
-.interaction-composer-compact .composer-model-trigger { max-width: 200px; }
+.interaction-composer-compact .composer-editor {
+  padding-left: 34px;
+}
+.interaction-composer-compact .composer-toolbar {
+  position: static;
+  flex: 0 0 auto;
+}
+.interaction-composer-compact [data-composer-leading-actions] {
+  position: absolute;
+  left: 10px;
+  bottom: 6px;
+  width: 32px;
+}
+.interaction-composer-compact
+  :is([aria-label="更改权限"], [aria-label="退出计划模式"], [aria-label="退出目标模式"]) {
+  display: none;
+}
+.interaction-composer-compact .composer-model-trigger {
+  max-width: 200px;
+}
 
 /* 模型入口属于共享输入表面，主/Side/草稿不各自定义文字角色。 */
-.composer-model-trigger { max-width: 220px; min-width: 0; height: 28px; padding: 4px 8px; gap: 4px; border-radius: 12.5px; font-size: var(--text-ui-caption); font-weight: 430; }
-.composer-model-trigger > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.composer-model-menu { width: 254px; }
-.composer-model-menu [role="menuitemradio"] { font-size: var(--text-ui-caption); font-weight: 430; padding-block: 5px; border-radius: 15px; }
-.composer-model-menu { padding: 7px 4px 6px; }
-.composer-model-menu [role="radio"] { display: flex; justify-content: space-between; align-items: center; width: 100%; text-align: left; padding: 5px 8px; border-radius: 11px; font-size: var(--text-ui-base); min-height: 29px; }
-.composer-model-menu [role="radio"]:enabled:is(:hover, :focus-visible) { background: var(--color-hover); }
-.composer-model-menu [role="radio"]:disabled { color: var(--color-foreground-subtle); }
-.composer-model-menu [role="radio"] small { display: block; font-size: var(--text-ui-sm); }
+.composer-model-trigger {
+  max-width: 220px;
+  min-width: 0;
+  height: 28px;
+  padding: 4px 8px;
+  gap: 4px;
+  border-radius: var(--radius-navigation);
+  font-size: var(--text-ui-caption);
+  font-weight: 430;
+}
+.composer-model-trigger > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer-model-menu {
+  width: 254px;
+}
+.composer-model-menu [role="menuitemradio"] {
+  font-size: var(--text-ui-caption);
+  font-weight: 430;
+  padding-block: 5px;
+  border-radius: var(--radius-choice);
+}
+.composer-model-menu {
+  padding: 7px 4px 6px;
+}
+.composer-model-menu [role="radio"] {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  padding: 5px 8px;
+  border-radius: var(--radius-feedback);
+  font-size: var(--text-ui-base);
+  min-height: 29px;
+}
+.composer-model-menu [role="radio"]:enabled:is(:hover, :focus-visible) {
+  background: var(--color-hover);
+}
+.composer-model-menu [role="radio"]:disabled {
+  color: var(--color-foreground-subtle);
+}
+.composer-model-menu [role="radio"] small {
+  display: block;
+  font-size: var(--text-ui-sm);
+}
 
-@media (max-width: 1100px) { .composer-model-trigger { max-width: 120px; } }
+@media (max-width: 1100px) {
+  .composer-model-trigger {
+    max-width: 120px;
+  }
+}

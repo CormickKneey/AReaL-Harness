@@ -1,0 +1,228 @@
+{
+  "schemaVersion": 1,
+  "policy": "本轮用户确认必要域样式按真实所有者保留，原3500行/5份数量目标留作后续。",
+  "source": "specs/D2-design-system-adoption.md",
+  "budgetOwner": "health-baseline.json:rendererCssLines,nonLayoutCssFiles",
+  "styles": [
+    {
+      "file": "renderer/src/AgentResources.css",
+      "reason": "子代理运行投影、事件身份与任务资源细节的业务 DOM；已准入 TaskContext/SubagentPanel 仅拥有公共容器，renderer 继续拥有领域子内容。",
+      "consumers": [
+        "renderer/src/ConversationStatusCard.tsx",
+        "renderer/src/AgentIdentity.tsx",
+        "renderer/src/ScheduledTasks.tsx"
+      ],
+      "exitCondition": "当该界面的真实公共DOM所有者已建立时迁回对应组合；场景删除时移除此项。不得以改名layout或迁入无消费者的包目录替代。"
+    },
+    {
+      "file": "renderer/src/AnnotationNoteEditor.css",
+      "reason": "标注气泡、锚点、笔记编辑和快捷发送的私有组合。native控件已迁移，保留捕获场景的固定颜色债务。",
+      "consumers": [
+        "renderer/src/AnnotationNoteEditor.tsx",
+        "renderer/src/BrowserRegionAnnotation.tsx",
+        "renderer/src/ImageAnnotationViews.tsx"
+      ],
+      "exitCondition": "当该界面的真实公共DOM所有者已建立时迁回对应组合；场景删除时移除此项。不得以改名layout或迁入无消费者的包目录替代。"
+    },
+    {
+      "file": "renderer/src/BrowserRegionAnnotation.css",
+      "reason": "截图区域坐标、标记、捕获遮罩、附件与发送状态。几何和颜色联合表达选区，不可仅改名为 layout。",
+      "consumers": [
+        "renderer/src/BrowserRegionAnnotation.tsx",
+        "renderer/src/BrowserKeyboardElementPicker.tsx",
+        "renderer/src/BrowserAnnotationAttachments.tsx"
+      ],
+      "exitCondition": "当该界面的真实公共DOM所有者已建立时迁回对应组合；场景删除时移除此项。不得以改名layout或迁入无消费者的包目录替代。"
+    },
+    {
+      "file": "renderer/src/BrowserStyleTrial.css",
+      "reason": "浏览器 CSS 试验表单及说明文字，属于浏览器工具业务视图，不是可复用样式组件。",
+      "consumers": ["renderer/src/BrowserStyleTrial.tsx"],
+      "exitCondition": "当该界面的真实公共DOM所有者已建立时迁回对应组合；场景删除时移除此项。不得以改名layout或迁入无消费者的包目录替代。"
+    },
+    {
+      "file": "renderer/src/Goal.css",
+      "reason": "运行目标面板的状态、预算、耗时和操作排列。公共控件已采用；原有命名选择器集中描述只用一次的结构，转为长 utility 列表无复用收益。",
+      "consumers": ["renderer/src/Goal.tsx"],
+      "exitCondition": "当该界面的真实公共DOM所有者已建立时迁回对应组合；场景删除时移除此项。不得以改名layout或迁入无消费者的包目录替代。"
+    },
+    {
+      "file": "renderer/src/ImageAnnotationViews.css",
+      "reason": "原图坐标、缩放、标记列表和发送/取消视图。共享图像查看器不拥有可编辑标注生命周期。",
+      "consumers": ["renderer/src/ImageAnnotationViews.tsx", "renderer/src/MessageAttachment.tsx"],
+      "exitCondition": "当该界面的真实公共DOM所有者已建立时迁回对应组合；场景删除时移除此项。不得以改名layout或迁入无消费者的包目录替代。"
+    },
+    {
+      "file": "renderer/src/SideChat.css",
+      "reason": "Side 会话、反馈和选区引用组合，保留原 retained thread 生命周期与输入器归属。视觉规则不全是布局。",
+      "consumers": [
+        "renderer/src/SideChatPane.tsx",
+        "renderer/src/ExecutableSideChatPane.tsx",
+        "renderer/src/ConversationSelectionReferences.tsx"
+      ],
+      "exitCondition": "当该界面的真实公共DOM所有者已建立时迁回对应组合；场景删除时移除此项。不得以改名layout或迁入无消费者的包目录替代。"
+    },
+    {
+      "file": "renderer/src/TaskCenter.css",
+      "reason": "计划任务目录、配置、会话和历史的组合几何及状态色；ScheduledWorkspace 只拥有现有公共框架，不能代替整个调度视图。",
+      "consumers": [
+        "renderer/src/TaskCenter.tsx",
+        "renderer/src/TaskDraft.tsx",
+        "renderer/src/Messages.tsx"
+      ],
+      "exitCondition": "当该界面的真实公共DOM所有者已建立时迁回对应组合；场景删除时移除此项。不得以改名layout或迁入无消费者的包目录替代。"
+    },
+    {
+      "file": "renderer/src/UserPromptEdit.css",
+      "reason": "历史用户消息切换到编辑器时的可见性、发送动作和反馈。当前 ComposerSurface 无该编辑场景表面变体。",
+      "consumers": [
+        "renderer/src/UserPromptEdit.tsx",
+        "renderer/src/Messages.tsx",
+        "renderer/src/DraftComposer.tsx"
+      ],
+      "exitCondition": "当该界面的真实公共DOM所有者已建立时迁回对应组合；场景删除时移除此项。不得以改名layout或迁入无消费者的包目录替代。"
+    },
+    {
+      "file": "renderer/src/Worktree.css",
+      "reason": "工作树创建预览与草稿区的联动，含 renderer 的 Popover 触发器和公共内容排列。既有包不拥有这些外部触发器。",
+      "consumers": [
+        "renderer/src/WorktreeStarter.tsx",
+        "renderer/src/WorktreeStatus.tsx",
+        "renderer/src/DraftComposer.tsx"
+      ],
+      "exitCondition": "当该界面的真实公共DOM所有者已建立时迁回对应组合；场景删除时移除此项。不得以改名layout或迁入无消费者的包目录替代。"
+    },
+    {
+      "file": "renderer/src/components/ui/feedback.css",
+      "reason": "本地化与 toast 适配器的持久成功消息样式。FeedbackNotice 有不同 DOM、图标和外观，直接替换会改变用户可见结果。",
+      "consumers": [
+        "renderer/src/components/ui/feedback.tsx",
+        "renderer/src/settings/DesktopEnvironmentSettings.tsx"
+      ],
+      "exitCondition": "当该界面的真实公共DOM所有者已建立时迁回对应组合；场景删除时移除此项。不得以改名layout或迁入无消费者的包目录替代。"
+    },
+    {
+      "file": "renderer/src/prompt-editor/ComposerSurface.css",
+      "reason": "已共享 ComposerSurface 的业务接线，包括决策模式和模型菜单。按本地化 aria-label 隐藏动作属于 renderer 规则，不能搬入无本地化的 UI 包。",
+      "consumers": [
+        "renderer/src/prompt-editor/ComposerSurface.tsx",
+        "renderer/src/ComposerModelMenu.tsx",
+        "renderer/src/Composer.tsx"
+      ],
+      "exitCondition": "当该界面的真实公共DOM所有者已建立时迁回对应组合；场景删除时移除此项。不得以改名layout或迁入无消费者的包目录替代。"
+    },
+    {
+      "file": "renderer/src/remote/remote.css",
+      "reason": "远程窗口登入/配对和连接状态，含独立受控输入与响应式状态反馈。",
+      "consumers": [
+        "renderer/src/remote/RemoteWorkbench.tsx",
+        "renderer/src/ComposerQueue.tsx",
+        "renderer/src/Messages.tsx"
+      ],
+      "exitCondition": "当该界面的真实公共DOM所有者已建立时迁回对应组合；场景删除时移除此项。不得以改名layout或迁入无消费者的包目录替代。"
+    },
+    {
+      "file": "renderer/src/settings/MobileSettings.css",
+      "reason": "远程配对步骤、邀请 QR、待授权状态、路由可达性和密钥字段的实际业务状态视觉。已有 SettingsRow 等只拥有行，不拥有此配对流程。",
+      "consumers": [
+        "renderer/src/settings/MobileSettings.tsx",
+        "renderer/src/settings/BrowserSettings.tsx",
+        "renderer/src/settings/ComputerSettings.tsx"
+      ],
+      "exitCondition": "当该界面的真实公共DOM所有者已建立时迁回对应组合；场景删除时移除此项。不得以改名layout或迁入无消费者的包目录替代。"
+    },
+    {
+      "file": "renderer/src/settings/ModelEditor.css",
+      "reason": "模型能力、参数继承与推理档位表单；通用 SettingsRow 无对应子字段视觉合同。",
+      "consumers": [
+        "renderer/src/settings/ModelEditor.tsx",
+        "renderer/src/settings/ModelSettings.tsx"
+      ],
+      "exitCondition": "当该界面的真实公共DOM所有者已建立时迁回对应组合；场景删除时移除此项。不得以改名layout或迁入无消费者的包目录替代。"
+    },
+    {
+      "file": "renderer/src/settings/ModelSettings.css",
+      "reason": "模型供应商与运行能力目录的业务卡片、状态和对齐，使用当前域投影。",
+      "consumers": [
+        "renderer/src/settings/ModelSettings.tsx",
+        "renderer/src/settings/ConnectionMethodPicker.tsx",
+        "renderer/src/settings/ProviderTemplatePicker.tsx"
+      ],
+      "exitCondition": "当该界面的真实公共DOM所有者已建立时迁回对应组合；场景删除时移除此项。不得以改名layout或迁入无消费者的包目录替代。"
+    },
+    {
+      "file": "renderer/src/settings/PluginCenter.css",
+      "reason": "插件市场、已安装项目、权限与连接状态的页面组合。公共控件已采用，插件目录的视觉层仍与领域投影对应。",
+      "consumers": [
+        "renderer/src/settings/PluginCenter.tsx",
+        "renderer/src/settings/PluginSkillsPage.tsx",
+        "renderer/src/settings/PluginConnectionPanel.tsx"
+      ],
+      "exitCondition": "当该界面的真实公共DOM所有者已建立时迁回对应组合；场景删除时移除此项。不得以改名layout或迁入无消费者的包目录替代。"
+    },
+    {
+      "file": "renderer/src/settings/SettingsWorkspace.css",
+      "reason": "保留真实 DisplaySettings 调色板输入、固定候选主题差异预览和业务设置表单。主题样本必须显示样本自身颜色，不能改用活动主题颜色。导航与基础页规则已归还包。",
+      "consumers": [
+        "renderer/src/settings/SettingsWorkspace.tsx",
+        "renderer/src/settings/DisplaySettings.tsx",
+        "renderer/src/settings/PluginCenter.tsx"
+      ],
+      "exitCondition": "当该界面的真实公共DOM所有者已建立时迁回对应组合；场景删除时移除此项。不得以改名layout或迁入无消费者的包目录替代。"
+    },
+    {
+      "file": "renderer/src/settings/WorktreesSettings.css",
+      "reason": "WorktreeSettings 与 SettingsPage 的共同布局已归还包；仅保留业务刷新动作及环境变量说明弹出层的样式。",
+      "consumers": ["renderer/src/settings/WorktreesSettings.tsx"],
+      "exitCondition": "当该界面的真实公共DOM所有者已建立时迁回对应组合；场景删除时移除此项。不得以改名layout或迁入无消费者的包目录替代。"
+    },
+    {
+      "file": "renderer/src/settings/trajectory-settings.css",
+      "reason": "轨迹上传开关的禁用/启用状态颜色是现有明确债务，普通 Switch 变体不等价。",
+      "consumers": ["renderer/src/settings/TrajectoryToggle.tsx"],
+      "exitCondition": "当该界面的真实公共DOM所有者已建立时迁回对应组合；场景删除时移除此项。不得以改名layout或迁入无消费者的包目录替代。"
+    },
+    {
+      "file": "renderer/src/settings/usage.css",
+      "reason": "会话用量、provider/model 统计、图表及热力图。颜色编码表达数据系列，不能当作纯网格或面板尺寸。",
+      "consumers": ["renderer/src/settings/UsageDashboard.tsx"],
+      "exitCondition": "当该界面的真实公共DOM所有者已建立时迁回对应组合；场景删除时移除此项。不得以改名layout或迁入无消费者的包目录替代。"
+    },
+    {
+      "file": "renderer/src/slash-command-menu.css",
+      "reason": "Lexical slash 候选项的选中、高亮、滚动及介绍层。替换为 Command 会改变现有编辑器键盘所有权。",
+      "consumers": ["renderer/src/SlashCommandMenu.tsx"],
+      "exitCondition": "当该界面的真实公共DOM所有者已建立时迁回对应组合；场景删除时移除此项。不得以改名layout或迁入无消费者的包目录替代。"
+    },
+    {
+      "file": "renderer/src/styles.css",
+      "reason": "包含 Tailwind 编译入口、应用内容与终端/用量/差异配色、滚动条和仍由 renderer 挂载的动效。已删除无消费者的旧 workflow、头像和动画规则。全局入口不是业务布局文件。",
+      "consumers": [
+        "renderer/src/main.tsx",
+        "renderer/src/remote/RemoteWorkbench.tsx",
+        "renderer/src/UpdateIndicator.tsx"
+      ],
+      "exitCondition": "当该界面的真实公共DOM所有者已建立时迁回对应组合；场景删除时移除此项。不得以改名layout或迁入无消费者的包目录替代。"
+    },
+    {
+      "file": "renderer/src/user-feedback.css",
+      "reason": "点赞/点踩反馈和细节表单状态，依赖反馈请求与输入器的实际排列；未引入新的包内产品反馈 API。",
+      "consumers": [
+        "renderer/src/UserFeedback.tsx",
+        "renderer/src/MessageActions.tsx",
+        "renderer/src/Messages.tsx"
+      ],
+      "exitCondition": "当该界面的真实公共DOM所有者已建立时迁回对应组合；场景删除时移除此项。不得以改名layout或迁入无消费者的包目录替代。"
+    },
+    {
+      "file": "renderer/src/workbench.css",
+      "reason": "仍由 renderer 组合会话滚动、工具调用、Git/文件评审、轨迹和上下文用量。共享 SettingsPage/Navigation/Disclosure 和 CommandDetails 基础规则已迁回包内；其余选择器依赖实际业务 DOM 和状态，现有包没有相应组合合同。所有残余设计字面量已为 0。",
+      "consumers": [
+        "renderer/src/remote/RemoteWorkbench.tsx",
+        "renderer/src/main.tsx",
+        "renderer/src/Messages.tsx"
+      ],
+      "exitCondition": "当该界面的真实公共DOM所有者已建立时迁回对应组合；场景删除时移除此项。不得以改名layout或迁入无消费者的包目录替代。"
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "comparison": "same implementation commit; only design documentation varies",
+  "tasks": [
+    {
+      "id": "settings",
+      "request": "Add a notifications preference group to the isolated design-system preview. Reuse SettingsSection, SettingsGroupCard, SettingsRow and Switch. The preference is a controlled local fixture, initially enabled. Provide English and Simplified Chinese labels, pending and failure views, and a narrow layout. Do not add persistence or service calls.",
+      "acceptance": [
+        "Uses existing settings composition and real Switch semantics",
+        "Visible label and accessible name match language",
+        "Pending disables duplicate action; failure preserves confirmed value",
+        "Narrow layout preserves full label and reachable control",
+        "No local hardcoded colors/font sizes or experimental import bypass"
+      ]
+    },
+    {
+      "id": "approval",
+      "request": "Add an isolated preview for approving a command with a long command, working directory and reason. Reuse DecisionCard and the existing approval action components. Include pending, failed and unknown outcomes. The only actions update a local fixture; do not execute commands.",
+      "acceptance": [
+        "Summary is bounded and full original command remains reachable",
+        "Actions are reachable with keyboard and have accessible names",
+        "Unknown outcome offers inspection, never automatic replay",
+        "Uses semantic tokens and existing shared components",
+        "Fixture explicitly does not establish real permission execution"
+      ]
+    },
+    {
+      "id": "empty",
+      "request": "Change the isolated plugin-resource list preview to show distinct loading, confirmed empty, search-no-match and failed-refresh states. Reuse existing feedback and empty-state components. Preserve previously confirmed rows when refresh fails and add a working clear-search fixture action.",
+      "acceptance": [
+        "Loading and unknown completeness never claim an empty list",
+        "Failed refresh retains confirmed rows",
+        "Search-no-match clear action retains list identity",
+        "English and Simplified Chinese text and accessible action name",
+        "No new list framework, execution owner or style literals"
+      ]
+    }
+  ],
+  "repeats": 3,
+  "groups": ["before", "after"],
+  "fixedModel": "gpt-6.1-sol",
+  "fixedReasoningEffort": "high",
+  "checks": ["pnpm verify:design", "pnpm test:design"],
+  "metrics": [
+    "design documents read count",
+    "design documentation tokens read",
+    "verify:design exit status",
+    "test:design exit status",
+    "independent reviewer rule violations"
+  ],
+  "resultPolicy": "Retain every trial, including failure and timeout. Report unavailable measurements as unavailable. No trial counts as complete without a diff, read manifest, check logs, and review."
+}

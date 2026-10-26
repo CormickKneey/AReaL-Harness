@@ -1,3 +1,4 @@
+import { Button, Input } from "@areal/ui";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Search,
@@ -75,15 +76,14 @@ export function ModelTrajectoryPane({
   const matches = useMemo(
     () =>
       query.trim()
-        ? turns.flatMap(
-            ({ entries }: { entries: ReturnType<typeof trajectoryEntries> }) =>
-              entries
-                .filter((e) =>
-                  `${e.label} ${e.text}`
-                    .toLocaleLowerCase()
-                    .includes(query.trim().toLocaleLowerCase()),
-                )
-                .map((e) => e.id),
+        ? turns.flatMap(({ entries }: { entries: ReturnType<typeof trajectoryEntries> }) =>
+            entries
+              .filter((e) =>
+                `${e.label} ${e.text}`
+                  .toLocaleLowerCase()
+                  .includes(query.trim().toLocaleLowerCase()),
+              )
+              .map((e) => e.id),
           )
         : [],
     [turns, query],
@@ -93,17 +93,12 @@ export function ModelTrajectoryPane({
   useEffect(() => {
     if (activeId)
       pane.current
-        ?.querySelector<HTMLElement>(
-          `[data-entry-id="${CSS.escape(activeId)}"]`,
-        )
+        ?.querySelector<HTMLElement>(`[data-entry-id="${CSS.escape(activeId)}"]`)
         ?.scrollIntoView({ block: "nearest" });
   }, [activeId]);
   const move = (by: number) =>
     setActive((i) =>
-      matches.length
-        ? (Math.min(i, matches.length - 1) + by + matches.length) %
-          matches.length
-        : 0,
+      matches.length ? (Math.min(i, matches.length - 1) + by + matches.length) % matches.length : 0,
     );
   const closeSearch = () => {
     setSearchOpen(false);
@@ -143,15 +138,21 @@ export function ModelTrajectoryPane({
         <div className="trajectory-toolbar">
           <strong title={title}>{title}</strong>
           <CopyTextAction text={copyText} noun="轨迹" iconSize={15} />
-          <button
+          <Button
+            unstyled
+            data-slot={undefined}
+            type="submit"
             className="icon-button"
             title="搜索调用轨迹"
             aria-label="搜索调用轨迹"
             onClick={() => setSearchOpen(true)}
           >
             <Search size={15} />
-          </button>
-          <button
+          </Button>
+          <Button
+            unstyled
+            data-slot={undefined}
+            type="submit"
             className="icon-button"
             title={expanded ? "全部收起" : "全部展开"}
             aria-label={expanded ? "全部收起" : "全部展开"}
@@ -161,8 +162,11 @@ export function ModelTrajectoryPane({
             }}
           >
             {expanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
-          </button>
-          <button
+          </Button>
+          <Button
+            unstyled
+            data-slot={undefined}
+            type="submit"
             className="icon-button"
             title="刷新轨迹"
             aria-label="刷新轨迹"
@@ -170,23 +174,26 @@ export function ModelTrajectoryPane({
             onClick={() => void reload()}
           >
             <RefreshCw size={15} className={busy ? "animate-spin" : ""} />
-          </button>
-          <button
+          </Button>
+          <Button
+            unstyled
+            data-slot={undefined}
+            type="submit"
             className="icon-button"
             title="关闭轨迹"
             aria-label="关闭轨迹"
             onClick={onClose}
           >
             <X size={15} />
-          </button>
+          </Button>
         </div>
         <small>{turns.length} 轮执行 · 实时更新</small>
-        <p className="trajectory-notice">
-          展示已保存的执行记录；不包含逐次模型请求的完整 I/O。
-        </p>
+        <p className="trajectory-notice">展示已保存的执行记录；不包含逐次模型请求的完整 I/O。</p>
         {searchOpen && (
           <div className="trajectory-search">
-            <input
+            <Input
+              unstyled
+              data-slot={undefined}
               autoFocus
               type="search"
               aria-label="搜索轨迹内容"
@@ -206,38 +213,45 @@ export function ModelTrajectoryPane({
             <span role="status">
               {selected + 1}/{matches.length}
             </span>
-            <button
+            <Button
+              unstyled
+              data-slot={undefined}
+              type="submit"
               className="icon-button"
               aria-label="上一个匹配项"
               disabled={!matches.length}
               onClick={() => move(-1)}
             >
               <ArrowUp size={14} />
-            </button>
-            <button
+            </Button>
+            <Button
+              unstyled
+              data-slot={undefined}
+              type="submit"
               className="icon-button"
               aria-label="下一个匹配项"
               disabled={!matches.length}
               onClick={() => move(1)}
             >
               <ArrowDown size={14} />
-            </button>
-            <button
+            </Button>
+            <Button
+              unstyled
+              data-slot={undefined}
+              type="submit"
               className="icon-button"
               aria-label="关闭轨迹搜索"
               onClick={closeSearch}
             >
               <X size={14} />
-            </button>
+            </Button>
           </div>
         )}
         {error && <p role="alert">刷新失败：{error}</p>}
       </header>
       <div className="trajectory-scroll">
         {!turns.length && (
-          <p className="trajectory-empty">
-            暂无执行记录。发送消息后可在这里查看轨迹。
-          </p>
+          <p className="trajectory-empty">暂无执行记录。发送消息后可在这里查看轨迹。</p>
         )}
         {turns.map(
           ({
@@ -260,8 +274,7 @@ export function ModelTrajectoryPane({
               <div className="trajectory-meta">
                 {turn.configuration?.model && (
                   <span>
-                    {turn.configuration.model.providerId} /{" "}
-                    {turn.configuration.model.modelId}
+                    {turn.configuration.model.providerId} / {turn.configuration.model.modelId}
                   </span>
                 )}
                 {turn.usage ? (
@@ -277,11 +290,8 @@ export function ModelTrajectoryPane({
                 const input = entry.role === "system" || entry.role === "user";
                 const previous = entries[i - 1];
                 const boundary =
-                  !previous ||
-                  input !==
-                    (previous.role === "system" || previous.role === "user");
-                const open =
-                  entry.id === activeId || (overrides[entry.id] ?? expanded);
+                  !previous || input !== (previous.role === "system" || previous.role === "user");
+                const open = entry.id === activeId || (overrides[entry.id] ?? expanded);
                 return (
                   <div
                     key={entry.id}
@@ -294,23 +304,18 @@ export function ModelTrajectoryPane({
                         label={input ? "本轮输入" : "执行输出"}
                       />
                     )}
-                    <button
+                    <Button
+                      unstyled
+                      data-slot={undefined}
+                      type="submit"
                       className="trajectory-entry"
                       aria-expanded={open}
-                      onClick={() =>
-                        setOverrides((s) => ({ ...s, [entry.id]: !open }))
-                      }
+                      onClick={() => setOverrides((s) => ({ ...s, [entry.id]: !open }))}
                     >
-                      {open ? (
-                        <ChevronDown size={13} />
-                      ) : (
-                        <ChevronRight size={13} />
-                      )}
-                      <span className={trajectoryRoleTextClass(entry.role)}>
-                        {entry.label}
-                      </span>
+                      {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                      <span className={trajectoryRoleTextClass(entry.role)}>{entry.label}</span>
                       {!open && <small>{entry.text}</small>}
-                    </button>
+                    </Button>
                     {open && (
                       <pre className="trajectory-content">
                         {highlight(entry.text || "暂无内容", query)}

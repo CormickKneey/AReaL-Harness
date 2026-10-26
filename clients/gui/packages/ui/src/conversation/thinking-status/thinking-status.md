@@ -3,7 +3,7 @@ id: thinking-status
 title: ThinkingStatus
 summary: 呈现动态公开模型过程摘要，无摘要时回退Thinking，保留可读动效。
 status: experimental
-entry: wip
+entry: experimental
 layer: conversation
 category: progress
 aliases: ["模型过程摘要", "思考提示"]
@@ -18,7 +18,7 @@ related: ["activity-group", "subagent-panel", "task-context"]
 
 ## 组成
 
-稳定的 status 容器、随 label 更新的文字层、aria-hidden 扫光层。沿现有 label API，不在组件内推断模型意图、启动计时器或生成假进度。
+`R-THINKINGSTATUS-001` 稳定的 status 容器、随 label 更新的文字层、aria-hidden 扫光层。沿现有 label API，不在组件内推断模型意图、启动计时器或生成假进度。
 
 ## 状态
 
@@ -26,19 +26,19 @@ related: ["activity-group", "subagent-panel", "task-context"]
 
 ## 行为
 
-文字变化时使用局部淡入与轻微位移，当前文字从左到右扫描亮度；长摘要换行，不滚成跑马灯。循环仅在可见且前台时进行。1.8秒周期是本地选择，不从静态图推断。
+`R-THINKINGSTATUS-002` 文字变化时使用局部淡入与轻微位移，当前文字从左到右扫描亮度；长摘要默认换行，不滚成跑马灯；宿主传 `lines="single"` 时固定一行、超出宽度省略，用于高度必须稳定的位置（如回合末尾实时状态），完整内容仍在所属时间线。循环仅在可见且前台时进行。1.8秒周期是本地选择，不从静态图推断。
 
 ## 内容
 
-只接受已公开的模型摘要，不展示原始隐藏推理。不逐 token 变更辅助技术播报；宿主聚合为可读片段后传入。摘要不证明工具执行成功，完整过程仍在所属时间线。
+`R-THINKINGSTATUS-003` 只接受已公开的模型摘要，不展示原始隐藏推理。不逐 token 变更辅助技术播报；宿主聚合为可读片段后传入。摘要不证明工具执行成功，完整过程仍在所属时间线。
 
 ## 可访问性
 
-底层文字始终可读，aria-live=polite/atomic 仅播报一份。产品及系统减少动效时文字立即替换、无位移/扫描；离屏和后台停止循环。
+`R-THINKINGSTATUS-004` 底层文字始终可读，aria-live=polite/atomic 仅播报一份。产品及系统减少动效时文字立即替换、无位移/扫描；离屏和后台停止循环。
 
 ## 规则
 
-保持同一对象的组件身份；不要把此摘要提升为全局悬浮活动条，也不抢正文焦点或强制滚到最新。
+`R-THINKINGSTATUS-005` 保持同一对象的组件身份；不要把此摘要提升为全局悬浮活动条，也不抢正文焦点或强制滚到最新。
 
 ## 示例
 

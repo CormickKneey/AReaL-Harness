@@ -1,6 +1,12 @@
-import { useI18n, type UiMessage, type Translate, type MessageId, formatUiMessage } from "../i18n/IntlProvider.js";
+import {
+  useI18n,
+  type UiMessage,
+  type Translate,
+  type MessageId,
+  formatUiMessage,
+} from "../i18n/IntlProvider.js";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { supportBlocked, type PackageComponentSupport } from "./PluginComponentSupport.js";
+import { supportBlocked } from "./PluginComponentSupport.js";
 import type { Action } from "../services.js";
 
 export type PackageOwner = {
@@ -23,17 +29,8 @@ export type PluginMcpResource = {
   state: string;
   owner: PackageOwner;
 };
-type InstalledPackage = {
-  id: string;
-  displayName: string;
-  name: string;
-  installed: boolean;
-  installedDigest: string | null;
-  enabled: boolean;
-  installedComponentSupport?: PackageComponentSupport | null;
-  componentChoices?: { disabledSkills: string[]; disabledMcpServers: string[] };
-  installedSkills: { id: string; name: string; description: string }[];
-};
+type InstalledPackage =
+  import("@areal/workbench/desktop-contract/management").ManagementResponseMap["plugin"];
 type PluginConnection = {
   pluginId: string;
   installedDigest: string;
@@ -49,9 +46,16 @@ type ResourceSnapshot = {
   errors: ResourceIssue[];
   notice: UiMessage | null;
 };
-type ResourceIssue = string | UiMessage | { kind: "diagnostic"; pluginId: string; diagnostic: unknown } | { kind: "catalog" | "mcp"; cause: unknown };
+type ResourceIssue =
+  | string
+  | UiMessage
+  | { kind: "diagnostic"; pluginId: string; diagnostic: unknown }
+  | { kind: "catalog" | "mcp"; cause: unknown };
 export function pluginSourceLabel(owner: PackageOwner, t: Translate) {
-  return t("settings.pluginResources.pluginSourceLabel", { value0: owner.pluginName, value1: owner.pluginId });
+  return t("settings.pluginResources.pluginSourceLabel", {
+    value0: owner.pluginName,
+    value1: owner.pluginId,
+  });
 }
 const mcpStateMessages: Record<string, MessageId> = {
   connected: "settings.pluginResources.connectedState",
@@ -87,9 +91,19 @@ function diagnosticText(value: unknown, t: Translate): string {
 }
 function issueText(issue: ResourceIssue, t: Translate): string {
   if (typeof issue === "string" || "id" in issue) return formatUiMessage(t, issue);
-  if (issue.kind === "diagnostic") return t("settings.pluginResources.pluginDiagnostic", { value0: issue.pluginId, value1: diagnosticText(issue.diagnostic, t) });
-  const text = issue.cause instanceof Error ? issue.cause.message : t("settings.pluginResources.readFailed");
-  return t(issue.kind === "catalog" ? "settings.pluginResources.pluginCatalogValue" : "settings.pluginResources.pluginMCPValue", { value0: text });
+  if (issue.kind === "diagnostic")
+    return t("settings.pluginResources.pluginDiagnostic", {
+      value0: issue.pluginId,
+      value1: diagnosticText(issue.diagnostic, t),
+    });
+  const text =
+    issue.cause instanceof Error ? issue.cause.message : t("settings.pluginResources.readFailed");
+  return t(
+    issue.kind === "catalog"
+      ? "settings.pluginResources.pluginCatalogValue"
+      : "settings.pluginResources.pluginMCPValue",
+    { value0: text },
+  );
 }
 
 export function useInstalledPluginResources(
@@ -99,29 +113,46 @@ export function useInstalledPluginResources(
 ) {
   const { t } = useI18n();
   const [snapshot, setSnapshot] = useState<ResourceSnapshot>({
-    projectId: null, skills: [], mcp: [], loading: false, errors: [], notice: null,
+    projectId: null,
+    skills: [],
+    mcp: [],
+    loading: false,
+    errors: [],
+    notice: null,
   });
   const generation = useRef(0);
   const actionRef = useRef(action);
   actionRef.current = action;
   const refresh = useCallback(async () => {
     const request = ++generation.current;
-    const next: ResourceSnapshot = { projectId, skills: [], mcp: [], loading: false, errors: [], notice: null };
+    const next: ResourceSnapshot = {
+      projectId,
+      skills: [],
+      mcp: [],
+      loading: false,
+      errors: [],
+      notice: null,
+    };
     if (!projectId || !connected) {
       setSnapshot(next);
       return;
     }
     setSnapshot({ ...next, loading: true });
-    const api = (operation: string) => actionRef.current("manage", { operation, projectId });
     try {
-      const capability = await api("pluginCapabilities");
+      const capability = await actionRef.current("manage", {
+        operation: "pluginCapabilities",
+        projectId,
+      });
       if (request !== generation.current) return;
       if (!capability.enabled) {
         next.notice = { id: "settings.pluginResources.thePluginCatalogIsDisabledInThis" };
         setSnapshot(next);
         return;
       }
-      const [catalog, connections] = await Promise.allSettled([api("plugins"), api("pluginMcp")]);
+      const [catalog, connections] = await Promise.allSettled([
+        actionRef.current("manage", { operation: "plugins", projectId }),
+        actionRef.current("manage", { operation: "pluginMcp", projectId }),
+      ]);
       if (request !== generation.current) return;
       const errors: ResourceIssue[] = [];
       const owners = new Map<string, PackageOwner>();
@@ -134,13 +165,23 @@ export function useInstalledPluginResources(
             pluginName: item.displayName || item.name,
             installedDigest: item.installedDigest,
             enabled: item.enabled,
-            compatibilityBlocked: supportBlocked(item.installedComponentSupport, item.installedDigest),
+            compatibilityBlocked: supportBlocked(
+              item.installedComponentSupport,
+              item.installedDigest,
+            ),
           };
           owners.set(item.id, owner);
-          for (const skill of item.installedSkills) {
+          for (const skill of item.installedSkills ?? []) {
             next.skills.push({
               key: JSON.stringify([item.id, item.installedDigest, "skill", skill.id]),
-              id: skill.id, name: skill.name, description: skill.description, owner: { ...owner, enabled: owner.enabled && !item.componentChoices?.disabledSkills.includes(skill.id) },
+              id: skill.id,
+              name: skill.name,
+              description: skill.description,
+              owner: {
+                ...owner,
+                enabled:
+                  owner.enabled && !item.componentChoices?.disabledSkills?.includes(skill.id),
+              },
             });
           }
         }
@@ -149,17 +190,28 @@ export function useInstalledPluginResources(
       if (connections.status === "fulfilled" && catalog.status === "fulfilled") {
         const packages: PluginConnection[] = connections.value.data;
         for (const item of packages) {
-          errors.push(...item.diagnostics.map((diagnostic): ResourceIssue => ({ kind: "diagnostic", pluginId: item.pluginId, diagnostic })));
+          errors.push(
+            ...item.diagnostics.map((diagnostic): ResourceIssue => ({
+              kind: "diagnostic",
+              pluginId: item.pluginId,
+              diagnostic,
+            })),
+          );
           if (!item.servers.length) continue;
           const owner = owners.get(item.pluginId);
           if (!owner || owner.installedDigest !== item.installedDigest) {
-            errors.push({ id: "settings.pluginResources.theInstallationSnapshotForPluginValueChanged", values: { value0: item.pluginId } });
+            errors.push({
+              id: "settings.pluginResources.theInstallationSnapshotForPluginValueChanged",
+              values: { value0: item.pluginId },
+            });
             continue;
           }
           for (const server of item.servers) {
             next.mcp.push({
               key: JSON.stringify([item.pluginId, item.installedDigest, "mcp", server.serverId]),
-              serverId: server.serverId, state: server.state ?? item.state, owner,
+              serverId: server.serverId,
+              state: server.state ?? item.state,
+              owner,
             });
           }
         }
@@ -169,7 +221,13 @@ export function useInstalledPluginResources(
       next.errors = errors;
       setSnapshot(next);
     } catch (cause) {
-      if (request === generation.current) setSnapshot({ ...next, errors: [cause instanceof Error ? cause.message : { id: "settings.pluginResources.readFailed" }] });
+      if (request === generation.current)
+        setSnapshot({
+          ...next,
+          errors: [
+            cause instanceof Error ? cause.message : { id: "settings.pluginResources.readFailed" },
+          ],
+        });
     }
   }, [projectId, connected]);
   useEffect(() => {
@@ -181,9 +239,25 @@ export function useInstalledPluginResources(
       window.removeEventListener("areal-plugins-changed", changed);
     };
   }, [refresh]);
-  const current: ResourceSnapshot = snapshot.projectId === projectId && connected ? snapshot : {
-    projectId, skills: [], mcp: [], loading: false, errors: [],
-    notice: !projectId ? { id: "settings.pluginResources.selectAProjectToViewInstalledPlugin" } : !connected ? { id: "settings.pluginResources.theProjectIsDisconnectedConnectCoreTo" } : null,
+  const current: ResourceSnapshot =
+    snapshot.projectId === projectId && connected
+      ? snapshot
+      : {
+          projectId,
+          skills: [],
+          mcp: [],
+          loading: false,
+          errors: [],
+          notice: !projectId
+            ? { id: "settings.pluginResources.selectAProjectToViewInstalledPlugin" }
+            : !connected
+              ? { id: "settings.pluginResources.theProjectIsDisconnectedConnectCoreTo" }
+              : null,
+        };
+  return {
+    ...current,
+    error: current.errors.map((issue) => issueText(issue, t)).join(" "),
+    notice: current.notice ? formatUiMessage(t, current.notice) : "",
+    refresh,
   };
-  return { ...current, error: current.errors.map(issue => issueText(issue, t)).join(" "), notice: current.notice ? formatUiMessage(t, current.notice) : "", refresh };
 }

@@ -28,7 +28,24 @@ pub(super) struct Catalog {
     bindings: BTreeMap<u8, IndexRef>,
     index_version: u32,
     preparations: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    schedules: Option<SummaryRef>,
 }
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SummaryRef {
+    digest: String,
+    bytes: usize,
+    rows: usize,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PublishedSchedules {
+    version: u32,
+    rows: Vec<TaskDirectoryRow>,
+}
+const SUMMARY_BYTES: usize = MAX_TASKS * directory::ROW_BYTES + 65536;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -258,10 +275,10 @@ impl Snapshot {
         let path = root.join("desktop/task-mode.json");
         if !path.exists() {
             return Ok(Self {
-                version: 5,
+                version: 6,
                 root: root.into(),
                 catalog: Catalog {
-                    version: 5,
+                    version: 6,
                     index_version: 3,
                     ..Default::default()
                 },
@@ -275,8 +292,8 @@ impl Snapshot {
         );
         let bytes = std::fs::read(&path)?;
         let header: Value = serde_json::from_slice(&bytes)?;
-        if header["version"] == 4 || header["version"] == 5 {
-            let upgrading = header["version"] == 4;
+        if matches!(header["version"].as_u64(), Some(4..=6)) {
+            let upgrading = header["version"] != 6;
             if upgrading {
                 crate::store::write_immutable(&root.join("desktop/task-legacy"), &bytes)?;
             }
@@ -302,11 +319,11 @@ impl Snapshot {
                 "unsupported task store"
             );
             state.root = root.into();
-            state.catalog.version = 5;
+            state.catalog.version = 6;
             state.catalog.index_version = 3;
             crate::store::write_immutable(&root.join("desktop/task-legacy"), &bytes)?;
             state.restore_runs();
-            state.version = 5;
+            state.version = 6;
             state.compact(&state.archiveable_ids(store, None), None)?;
             state.persist(None, None)?;
             Ok(state)
@@ -320,7 +337,7 @@ impl Snapshot {
     ) -> anyhow::Result<Option<Self>> {
         anyhow::ensure!(bytes.len() <= ROOT_BYTES, "task catalog exceeds capacity");
         let catalog: Catalog = serde_json::from_slice(bytes)?;
-        anyhow::ensure!(matches!(catalog.version, 4 | 5), "unsupported task store");
+        anyhow::ensure!(matches!(catalog.version, 4..=6), "unsupported task store");
         anyhow::ensure!(catalog.index_version == 3, "unsupported Task index version");
         anyhow::ensure!(
             catalog.tasks.len() <= MAX_TASKS
@@ -328,8 +345,12 @@ impl Snapshot {
                 && catalog.bindings.len() <= 256,
             "task catalog exceeds capacity"
         );
+        anyhow::ensure!(
+            (catalog.version == 6) == catalog.schedules.is_some(),
+            "invalid Task summary reference"
+        );
         let mut state = Self {
-            version: 5,
+            version: 6,
             root: root.into(),
             catalog,
             ..Default::default()
@@ -362,7 +383,78 @@ impl Snapshot {
             anyhow::ensure!(key(&task.id) == *task_key, "task ledger identity mismatch");
             state.tasks.insert(task.id.clone(), task);
         }
+        if state.catalog.version == 6 {
+            state.schedule_rows = state
+                .read_schedules()?
+                .into_iter()
+                .map(|row| (row.id.clone(), Arc::new(row)))
+                .collect();
+        }
         Ok(Some(state))
+    }
+
+    pub(super) fn read_schedule_catalog(
+        root: &Path,
+        bytes: &[u8],
+    ) -> Result<Vec<TaskDirectoryRow>> {
+        if bytes.len() > ROOT_BYTES {
+            return Err(storage("task catalog exceeds capacity"));
+        }
+        let catalog: Catalog = serde_json::from_slice(bytes).map_err(storage)?;
+        if catalog.version != 6
+            || catalog.index_version != 3
+            || catalog.tasks.len() > MAX_TASKS
+            || catalog.receipts.len() > 256
+            || catalog.bindings.len() > 256
+        {
+            return Err(storage("unsupported or oversized Task catalog"));
+        }
+        let directory =
+            std::fs::symlink_metadata(root.join("desktop/task-ledger")).map_err(storage)?;
+        if !directory.is_dir() || directory.file_type().is_symlink() {
+            return Err(storage("invalid Task ledger directory"));
+        }
+        Self {
+            root: root.into(),
+            catalog,
+            ..Default::default()
+        }
+        .read_schedules()
+    }
+    fn read_schedules(&self) -> Result<Vec<TaskDirectoryRow>> {
+        let reference = self
+            .catalog
+            .schedules
+            .as_ref()
+            .ok_or_else(|| storage("missing Task summary reference"))?;
+        if reference.rows > MAX_TASKS
+            || reference.rows > self.catalog.tasks.len()
+            || reference.bytes > SUMMARY_BYTES
+        {
+            return Err(storage("Task summary exceeds capacity"));
+        }
+        let metadata =
+            std::fs::symlink_metadata(self.leaf_path(&reference.digest)?).map_err(storage)?;
+        if !metadata.is_file() || metadata.len() != reference.bytes as u64 {
+            return Err(storage("Task summary size mismatch"));
+        }
+        let pack: PublishedSchedules = self.read_leaf_limited(&reference.digest, SUMMARY_BYTES)?;
+        if pack.version != 1
+            || pack.rows.len() != reference.rows
+            || pack.rows.windows(2).any(|rows| rows[0].id >= rows[1].id)
+        {
+            return Err(storage("invalid Task summary pack"));
+        }
+        for row in &pack.rows {
+            if row.mode != TaskMode::Scheduled
+                || !directory::visible(row)
+                || !self.catalog.tasks.contains_key(&key(&row.id))
+                || serde_json::to_vec(row).map_err(storage)?.len() > directory::ROW_BYTES
+            {
+                return Err(storage("invalid Task summary row"));
+            }
+        }
+        Ok(pack.rows)
     }
 
     pub(super) fn visit_history(
@@ -1193,7 +1285,50 @@ impl Snapshot {
                 Some(self.write_leaf(&self.preparations)?)
             }
         };
-        self.catalog.version = 5;
+        let mut summary_changed = self.catalog.schedules.is_none();
+        for task in self
+            .tasks
+            .values()
+            .filter(|task| changed.is_none_or(|id| task.id == id))
+        {
+            let row = directory::row(task)?;
+            if row.mode != TaskMode::Scheduled {
+                continue;
+            }
+            if !directory::visible(&row) {
+                summary_changed |= self.schedule_rows.remove(&row.id).is_some();
+                continue;
+            }
+            if self.schedule_rows.get(&row.id).is_none_or(|previous| {
+                serde_json::to_vec(previous.as_ref()).ok() != serde_json::to_vec(&row).ok()
+            }) {
+                summary_changed = true;
+                self.schedule_rows.insert(row.id.clone(), Arc::new(row));
+            }
+        }
+        if summary_changed {
+            let pack = PublishedSchedules {
+                version: 1,
+                rows: self
+                    .schedule_rows
+                    .values()
+                    .map(|row| row.as_ref().clone())
+                    .collect(),
+            };
+            let packed = serde_json::to_vec(&pack).map_err(storage)?;
+            if packed.len() > SUMMARY_BYTES {
+                return Err(Error::Exhausted(
+                    "Task summary pack exceeds capacity".into(),
+                ));
+            }
+            let digest = self.write_leaf(&pack)?;
+            self.catalog.schedules = Some(SummaryRef {
+                digest,
+                bytes: packed.len(),
+                rows: pack.rows.len(),
+            });
+        }
+        self.catalog.version = 6;
         let bytes = serde_json::to_vec(&self.catalog).map_err(storage)?;
         if bytes.len() > ROOT_BYTES {
             return Err(storage("task catalog exceeds proven bound"));

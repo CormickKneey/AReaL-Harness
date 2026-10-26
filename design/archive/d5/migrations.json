@@ -1,0 +1,102 @@
+[
+  {
+    "from": "clients/gui/design-system/exercises/conversation-flow.md",
+    "to": "design/archive/gui/exercises/conversation-flow.md",
+    "reason": "固定题目与单次运行记录属于过程证据。"
+  },
+  {
+    "from": "clients/gui/design-system/exercises/conversation-stage2.en.md",
+    "to": "design/archive/gui/exercises/conversation-stage2.en.md",
+    "reason": "固定题目与单次运行记录属于过程证据。"
+  },
+  {
+    "from": "clients/gui/design-system/exercises/conversation-stage2.md",
+    "to": "design/archive/gui/exercises/conversation-stage2.md",
+    "reason": "固定题目与单次运行记录属于过程证据。"
+  },
+  {
+    "from": "clients/gui/design-system/exercises/decision-transfer.md",
+    "to": "design/archive/gui/exercises/decision-transfer.md",
+    "reason": "固定题目与单次运行记录属于过程证据。"
+  },
+  {
+    "from": "clients/gui/design-system/exercises/settings-contrast.md",
+    "to": "design/archive/gui/exercises/settings-contrast.md",
+    "reason": "固定题目与单次运行记录属于过程证据。"
+  },
+  {
+    "from": "clients/gui/design-system/exercises/settings-reflow.md",
+    "to": "design/archive/gui/exercises/settings-reflow.md",
+    "reason": "固定题目与单次运行记录属于过程证据。"
+  },
+  {
+    "from": "clients/gui/design-system/exercises/settings-stage1.en.md",
+    "to": "design/archive/gui/exercises/settings-stage1.en.md",
+    "reason": "固定题目与单次运行记录属于过程证据。"
+  },
+  {
+    "from": "clients/gui/design-system/exercises/settings-stage1.md",
+    "to": "design/archive/gui/exercises/settings-stage1.md",
+    "reason": "固定题目与单次运行记录属于过程证据。"
+  },
+  {
+    "from": "clients/gui/design-system/exercises/shared-workspace.en.md",
+    "to": "design/archive/gui/exercises/shared-workspace.en.md",
+    "reason": "固定题目与单次运行记录属于过程证据。"
+  },
+  {
+    "from": "clients/gui/design-system/exercises/shared-workspace.md",
+    "to": "design/archive/gui/exercises/shared-workspace.md",
+    "reason": "固定题目与单次运行记录属于过程证据。"
+  },
+  {
+    "from": "clients/gui/design-system/exercises/worktrees.md",
+    "to": "design/archive/gui/exercises/worktrees.md",
+    "reason": "固定题目与单次运行记录属于过程证据。"
+  },
+  {
+    "from": "design/Raft 设计系统拆解.md",
+    "to": "design/archive/research/raft-design-analysis.md",
+    "reason": "外部项目拆解属于参考研究。"
+  },
+  {
+    "from": "design/components/reuse-exercise.md",
+    "to": "design/archive/gui/reuse-exercise.md",
+    "reason": "冻结的独立复用题属于过程证据。"
+  },
+  {
+    "from": "design/components/reuse-result.md",
+    "to": "design/archive/gui/reuse-result.md",
+    "reason": "冻结输入上的复用结果属于运行证据。"
+  },
+  {
+    "from": "clients/gui/design-system/references.md",
+    "to": "design/archive/gui/reference-observations.md",
+    "reason": "来源观察和采纳时间线属于研究证据。"
+  },
+  {
+    "from": "clients/gui/design-system/base-evidence.md",
+    "to": "design/archive/gui/base-evidence.md",
+    "reason": "Base 的冻结运行索引属于历史证据，当前准入仍由 base.md 和 registry.json 维护。"
+  },
+  {
+    "from": "design/roadmap.md",
+    "to": "clients/gui/design-system/roadmap.md",
+    "reason": "GUI专属现行合同迁入GUI所有者；未归档。"
+  },
+  {
+    "from": "design/products/workbench/README.md",
+    "to": "clients/gui/design-system/workbench.md",
+    "reason": "GUI专属现行合同迁入GUI所有者；未归档。"
+  },
+  {
+    "from": "design/products/workbench/candidate.md",
+    "to": "clients/gui/design-system/workbench-candidate.md",
+    "reason": "GUI专属现行合同迁入GUI所有者；未归档。"
+  },
+  {
+    "from": "design/content/conversation-content-system.md",
+    "to": "clients/gui/design-system/content-system.md",
+    "reason": "GUI专属现行合同迁入GUI所有者；未归档。"
+  }
+]

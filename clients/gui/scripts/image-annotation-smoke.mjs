@@ -1,9 +1,10 @@
+import { makeTempDir } from "./support/temp.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { applicationFixture } from "./application-fixture.mjs";
@@ -17,8 +18,12 @@ const root = resolve(gui, "../..");
 const require = createRequire(join(gui, "app/package.json"));
 const { _electron: electron } = require("playwright-core");
 const binary = process.env.AREAL_CORE_BIN || join(root, "target/debug/areal");
-assert.equal(process.env.AREAL_GUI_EXECUTABLE, undefined, "This runner validates source Electron with an explicitly selected Core");
-const scratch = await mkdtemp("/private/tmp/areal-image-annotations-");
+assert.equal(
+  process.env.AREAL_GUI_EXECUTABLE,
+  undefined,
+  "This runner validates source Electron with an explicitly selected Core",
+);
+const scratch = await makeTempDir("areal-image-annotations-");
 const evidence = join(root, ".scratch/image-annotations", `run-${Date.now()}`);
 const workspace = join(scratch, "workspace");
 await mkdir(evidence, { recursive: true });
@@ -35,26 +40,57 @@ const env = {
   AREAL_HARNESS_SERVICE_HOME: join(scratch, "registry"),
   AREAL_GUI_USER_DATA: join(scratch, "electron"),
 };
-for (const key of ["AREAL_CORE_WORKSPACE", "AREAL_HARNESS_HOME", "AREAL_HARNESS_CONFIG"]) delete env[key];
+for (const key of ["AREAL_CORE_WORKSPACE", "AREAL_HARNESS_HOME", "AREAL_HARNESS_CONFIG"])
+  delete env[key];
 const sha = (bytes) => createHash("sha256").update(bytes).digest("hex");
-const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (error) { if (error.code === "ESRCH") return false; throw error; } };
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error.code === "ESRCH") return false;
+    throw error;
+  }
+};
 const json = (name, value) => writeFile(join(evidence, name), JSON.stringify(value, null, 2));
-const requests = [], errors = [], checks = [], frames = [], actions = [];
+const requests = [],
+  errors = [],
+  checks = [],
+  frames = [],
+  actions = [];
 const facts = { cleanup: { serviceExited: false } };
 const fixtures = [join(scratch, "first/sample.png"), join(scratch, "second/sample.png")];
 const coreHash = sha(await readFile(binary));
-const scenarioMarkers = ["IMAGE_OTHER_THREAD", "IMAGE_ORIGINAL_DRAFT", "IMAGE_QUEUE_HOLD", "IMAGE_QUEUE_MESSAGE", "IMAGE_QUEUE_EDITED", "IMAGE_PROJECTLESS_DRAFT"];
+const scenarioMarkers = [
+  "IMAGE_OTHER_THREAD",
+  "IMAGE_ORIGINAL_DRAFT",
+  "IMAGE_QUEUE_HOLD",
+  "IMAGE_QUEUE_MESSAGE",
+  "IMAGE_QUEUE_EDITED",
+  "IMAGE_PROJECTLESS_DRAFT",
+];
 function inputText(content) {
   if (typeof content === "string") return content;
-  assert.ok(Array.isArray(content), "Message content must be a string or an array of protocol parts");
-  return content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
+  assert.ok(
+    Array.isArray(content),
+    "Message content must be a string or an array of protocol parts",
+  );
+  return content
+    .filter((part) => part.type === "text")
+    .map((part) => part.text)
+    .join("\n");
 }
 function scenarioUser(body, marker) {
   const markers = marker ? [marker] : scenarioMarkers;
-  return body.messages.findLast((message) => message.role === "user" && markers.some((value) => inputText(message.content).includes(value)));
+  return body.messages.findLast(
+    (message) =>
+      message.role === "user" &&
+      markers.some((value) => inputText(message.content).includes(value)),
+  );
 }
 const live = new Set();
-const event = (content, finish = false) => `data: ${JSON.stringify({ choices: [{ index: 0, delta: content ? { content } : {}, finish_reason: finish ? "stop" : null }] })}\n\n${finish ? "data: [DONE]\n\n" : ""}`;
+const event = (content, finish = false) =>
+  `data: ${JSON.stringify({ choices: [{ index: 0, delta: content ? { content } : {}, finish_reason: finish ? "stop" : null }] })}\n\n${finish ? "data: [DONE]\n\n" : ""}`;
 const model = createServer(async (request, response) => {
   try {
     let raw = "";
@@ -65,7 +101,10 @@ const model = createServer(async (request, response) => {
     await json("model-requests.json", requests);
     response.writeHead(200, { "Content-Type": "text/event-stream" });
     const businessMessage = scenarioUser(body);
-    assert.ok(businessMessage, "The fixture must identify the current scenario's human message independently of runtime guidance");
+    assert.ok(
+      businessMessage,
+      "The fixture must identify the current scenario's human message independently of runtime guidance",
+    );
     if (inputText(businessMessage.content).startsWith("IMAGE_QUEUE_HOLD")) {
       response.write(event("IMAGE_QUEUE_WAITING"));
       live.add(response);
@@ -77,12 +116,31 @@ const model = createServer(async (request, response) => {
   }
 });
 await new Promise((done) => model.listen(0, "127.0.0.1", done));
-await writeFile(env.AREAL_CORE_CONFIG, `schema_version=1\n[model]\ncatalog_version=1\nprovider="fixture"\nname="fixture"\n[model.providers.fixture]\nname="Fixture"\nprotocol="chat-completions"\nendpoint="http://127.0.0.1:${model.address().port}/v1/chat/completions"\nmodels=[{id="fixture",enabled=true}]\n`);
-await writeFile(env.AREAL_CORE_DESKTOP_CONFIG, JSON.stringify({ profiles: [{ id: "fixture", revision: "v1", displayName: "Fixture", instructions: "Read the image and its feedback." }] }));
-let app, page, application, passed = false;
+await writeFile(
+  env.AREAL_CORE_CONFIG,
+  `schema_version=1\n[model]\ncatalog_version=1\nprovider="fixture"\nname="fixture"\n[model.providers.fixture]\nname="Fixture"\nprotocol="chat-completions"\nendpoint="http://127.0.0.1:${model.address().port}/v1/chat/completions"\nmodels=[{id="fixture",enabled=true}]\n`,
+);
+await writeFile(
+  env.AREAL_CORE_DESKTOP_CONFIG,
+  JSON.stringify({
+    profiles: [
+      {
+        id: "fixture",
+        revision: "v1",
+        displayName: "Fixture",
+        instructions: "Read the image and its feedback.",
+      },
+    ],
+  }),
+);
+let app,
+  page,
+  application,
+  passed = false;
 const button = (name) => page.getByRole("button", { name, exact: true });
 const state = () => page.evaluate(() => window.arealDesktop.snapshot());
-const project = (snapshot) => snapshot.projects.find((entry) => entry.root === workspace && !entry.projectless);
+const project = (snapshot) =>
+  snapshot.projects.find((entry) => entry.root === workspace && !entry.projectless);
 const currentId = () => page.getByTestId("areal-workbench").getAttribute("data-thread-id");
 const region = () => page.getByRole("region", { name: "图片标注", exact: true });
 const editor = () => region().getByRole("dialog", { name: "编辑当前标注", exact: true });
@@ -99,7 +157,11 @@ async function until(read, label, timeoutMs = 60000) {
 }
 async function capture(name) {
   act(name);
-  await page.screenshot({ path: join(evidence, `${name}.png`), animations: "disabled", scale: "css" });
+  await page.screenshot({
+    path: join(evidence, `${name}.png`),
+    animations: "disabled",
+    scale: "css",
+  });
   await writeFile(join(evidence, `${name}.aria.txt`), await page.locator("body").ariaSnapshot());
   frames.push(`${name}.png`);
 }
@@ -112,29 +174,82 @@ async function openImage(index = 0) {
   await region().waitFor();
 }
 async function sentImage(index, points) {
-  await page.getByTestId("user-attachments").getByRole("button", { name: "预览图片 sample.png", exact: true }).nth(index).click();
+  await page
+    .getByTestId("user-attachments")
+    .getByRole("button", { name: "预览图片 sample.png", exact: true })
+    .nth(index)
+    .click();
   const preview = page.getByRole("dialog", { name: "sample.png", exact: true });
   await preview.waitFor();
-  assert.equal(await preview.getByRole("textbox").count(), 0, "Sent annotations never expose an editable note");
-  assert.equal(await preview.getByRole("button", { name: "标注", exact: true }).count(), 0, "Sent image preview is read-only");
+  assert.equal(
+    await preview.getByRole("textbox").count(),
+    0,
+    "Sent annotations never expose an editable note",
+  );
+  assert.equal(
+    await preview.getByRole("button", { name: "标注", exact: true }).count(),
+    0,
+    "Sent image preview is read-only",
+  );
   assert.equal(await preview.locator('[aria-label^="已确认标注 "]').count(), points.length);
-  const positions = await preview.locator('[aria-label^="已确认标注 "]').evaluateAll((markers) => markers.map((marker) => ({ left: marker.style.left, top: marker.style.top })));
-  assert.deepEqual(positions, points.map(({ xPercent, yPercent }) => ({ left: `${xPercent}%`, top: `${yPercent}%` })), "Read-only markers render the independently expected original-image coordinates");
+  const positions = await preview
+    .locator('[aria-label^="已确认标注 "]')
+    .evaluateAll((markers) =>
+      markers.map((marker) => ({ left: marker.style.left, top: marker.style.top })),
+    );
+  assert.deepEqual(
+    positions,
+    points.map(({ xPercent, yPercent }) => ({ left: `${xPercent}%`, top: `${yPercent}%` })),
+    "Read-only markers render the independently expected original-image coordinates",
+  );
   for (const { comment } of points) await preview.getByText(comment, { exact: false }).waitFor();
   return preview;
 }
 function envelopes(text) {
-  return text.split("\n").filter((line) => line.startsWith("图片标注 v1：")).map((line) => JSON.parse(line.slice("图片标注 v1：".length)));
+  return text
+    .split("\n")
+    .filter((line) => line.startsWith("图片标注 v1："))
+    .map((line) => JSON.parse(line.slice("图片标注 v1：".length)));
 }
 function assertEnvelopes(text, attachments, expected) {
   const notes = envelopes(text);
-  assert.equal(notes.length, expected.length, "One persisted coordinate envelope per annotated attachment");
-  assert.equal(new Set(notes.map((note) => note.id)).size, notes.length, "Identical bytes keep independent annotation identities");
-  assert.deepEqual(notes.map((note) => ({
-    version: note.version, attachmentIndex: note.attachmentIndex, name: note.name, width: note.width, height: note.height,
-    points: note.points.map(({ xPercent, yPercent, comment }) => ({ xPercent, yPercent, comment })),
-  })), expected.map((entry) => ({ version: 1, name: "sample.png", width: 800, height: 400, ...entry })));
-  for (const note of notes) assert.equal(note.imageUri, attachments[note.attachmentIndex].url ?? attachments[note.attachmentIndex].uri, "Envelope binds both the media occurrence and its actual Core URI");
+  assert.equal(
+    notes.length,
+    expected.length,
+    "One persisted coordinate envelope per annotated attachment",
+  );
+  assert.equal(
+    new Set(notes.map((note) => note.id)).size,
+    notes.length,
+    "Identical bytes keep independent annotation identities",
+  );
+  assert.deepEqual(
+    notes.map((note) => ({
+      version: note.version,
+      attachmentIndex: note.attachmentIndex,
+      name: note.name,
+      width: note.width,
+      height: note.height,
+      points: note.points.map(({ xPercent, yPercent, comment }) => ({
+        xPercent,
+        yPercent,
+        comment,
+      })),
+    })),
+    expected.map((entry) => ({
+      version: 1,
+      name: "sample.png",
+      width: 800,
+      height: 400,
+      ...entry,
+    })),
+  );
+  for (const note of notes)
+    assert.equal(
+      note.imageUri,
+      attachments[note.attachmentIndex].url ?? attachments[note.attachmentIndex].uri,
+      "Envelope binds both the media occurrence and its actual Core URI",
+    );
   return notes;
 }
 async function point(x, y) {
@@ -142,29 +257,57 @@ async function point(x, y) {
   await image.evaluate((element) => element.decode());
   const box = await image.boundingBox();
   assert.ok(box?.width && box.height, "Image content must have a measured rectangle");
-  assert.ok(Math.abs(box.width / box.height - 2) < 0.01, "800×400 original content keeps its aspect ratio");
-  const requestedPointer = { x: box.x + box.width * x / 100, y: box.y + box.height * y / 100 };
+  assert.ok(
+    Math.abs(box.width / box.height - 2) < 0.01,
+    "800×400 original content keeps its aspect ratio",
+  );
+  const requestedPointer = { x: box.x + (box.width * x) / 100, y: box.y + (box.height * y) / 100 };
   await image.evaluate((element) => {
     globalThis.__imageAnnotationPointer = null;
-    element.addEventListener("click", (event) => {
-      const rect = element.getBoundingClientRect();
-      globalThis.__imageAnnotationPointer = {
-        clientX: event.clientX, clientY: event.clientY,
-        imageRectangle: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
-      };
-    }, { capture: true, once: true });
+    element.addEventListener(
+      "click",
+      (event) => {
+        const rect = element.getBoundingClientRect();
+        globalThis.__imageAnnotationPointer = {
+          clientX: event.clientX,
+          clientY: event.clientY,
+          imageRectangle: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+        };
+      },
+      { capture: true, once: true },
+    );
   });
   await page.mouse.click(requestedPointer.x, requestedPointer.y);
   await editor().waitFor();
   const observedPointer = await page.evaluate(() => globalThis.__imageAnnotationPointer);
   assert.ok(observedPointer, "The expected coordinates must come from the real image click event");
-  assert.ok(Math.abs(observedPointer.clientX - requestedPointer.x) < 1 && Math.abs(observedPointer.clientY - requestedPointer.y) < 1, "Chromium dispatches the requested image pointer within one CSS pixel");
+  assert.ok(
+    Math.abs(observedPointer.clientX - requestedPointer.x) < 1 &&
+      Math.abs(observedPointer.clientY - requestedPointer.y) < 1,
+    "Chromium dispatches the requested image pointer within one CSS pixel",
+  );
   const expectedPercent = {
-    xPercent: Math.round((observedPointer.clientX - observedPointer.imageRectangle.x) / observedPointer.imageRectangle.width * 1000) / 10,
-    yPercent: Math.round((observedPointer.clientY - observedPointer.imageRectangle.y) / observedPointer.imageRectangle.height * 1000) / 10,
+    xPercent:
+      Math.round(
+        ((observedPointer.clientX - observedPointer.imageRectangle.x) /
+          observedPointer.imageRectangle.width) *
+          1000,
+      ) / 10,
+    yPercent:
+      Math.round(
+        ((observedPointer.clientY - observedPointer.imageRectangle.y) /
+          observedPointer.imageRectangle.height) *
+          1000,
+      ) / 10,
   };
   facts.clicks ??= [];
-  facts.clicks.push({ requestedPercent: { x, y }, requestedPointer, measuredImageRectangle: box, observedPointer, expectedPercent });
+  facts.clicks.push({
+    requestedPercent: { x, y },
+    requestedPointer,
+    measuredImageRectangle: box,
+    observedPointer,
+    expectedPercent,
+  });
   return expectedPercent;
 }
 async function confirm(text) {
@@ -177,8 +320,17 @@ async function finish() {
   await region().waitFor({ state: "detached" });
 }
 async function launch() {
-  app = await electron.launch({ executablePath: require("electron"), args: [application.path], env, timeout: 120000 });
-  app.process().stderr.on("data", (part) => writeFile(join(evidence, "electron.stderr.log"), part, { flag: "a" }).catch(() => {}));
+  app = await electron.launch({
+    executablePath: require("electron"),
+    args: [application.path],
+    env,
+    timeout: 120000,
+  });
+  app
+    .process()
+    .stderr.on("data", (part) =>
+      writeFile(join(evidence, "electron.stderr.log"), part, { flag: "a" }).catch(() => {}),
+    );
   page = await app.firstWindow();
   page.setDefaultTimeout(15000);
   page.on("pageerror", (error) => errors.push(error.stack));
@@ -193,10 +345,24 @@ async function launch() {
   });
   const identity = await app.evaluate(({ app, BrowserWindow }) => {
     const preferences = BrowserWindow.getAllWindows()[0].webContents.getLastWebPreferences();
-    return { pid: process.pid, userData: app.getPath("userData"), sandbox: preferences.sandbox, contextIsolation: preferences.contextIsolation, nodeIntegration: preferences.nodeIntegration, electron: process.versions.electron };
+    return {
+      pid: process.pid,
+      userData: app.getPath("userData"),
+      sandbox: preferences.sandbox,
+      contextIsolation: preferences.contextIsolation,
+      nodeIntegration: preferences.nodeIntegration,
+      electron: process.versions.electron,
+    };
   });
   assert.equal(identity.userData, env.AREAL_GUI_USER_DATA);
-  assert.deepEqual({ sandbox: identity.sandbox, contextIsolation: identity.contextIsolation, nodeIntegration: identity.nodeIntegration }, { sandbox: true, contextIsolation: true, nodeIntegration: false });
+  assert.deepEqual(
+    {
+      sandbox: identity.sandbox,
+      contextIsolation: identity.contextIsolation,
+      nodeIntegration: identity.nodeIntegration,
+    },
+    { sandbox: true, contextIsolation: true, nodeIntegration: false },
+  );
   facts.launches ??= [];
   facts.launches.push(identity);
   await json("doctor.json", { ...identity, binary, coreHash });
@@ -206,50 +372,92 @@ async function close() {
   const owned = app;
   const mainPid = owned.process().pid;
   app = undefined;
-  const metadata = await readFile(join(env.AREAL_CORE_HOME, "service.json"), "utf8").then(JSON.parse).catch((error) => { if (error.code === "ENOENT") return null; throw error; });
-  for (const response of live) if (!response.writableEnded && !response.destroyed) response.end(event("", true));
-  await withSmokeDeadline("release owned upload gate and prepare quit", () => owned.evaluate(({ dialog }) => {
-    globalThis.__imageAnnotationUploadGate?.release?.();
-    globalThis.__imageAnnotationUploadGate?.restore?.();
-    dialog.showMessageBox = async () => ({ response: 1 });
-  }), 5000).catch(() => {});
+  const metadata = await readFile(join(env.AREAL_CORE_HOME, "service.json"), "utf8")
+    .then(JSON.parse)
+    .catch((error) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+  for (const response of live)
+    if (!response.writableEnded && !response.destroyed) response.end(event("", true));
+  await withSmokeDeadline(
+    "release owned upload gate and prepare quit",
+    () =>
+      owned.evaluate(({ dialog }) => {
+        globalThis.__imageAnnotationUploadGate?.release?.();
+        globalThis.__imageAnnotationUploadGate?.restore?.();
+        dialog.showMessageBox = async () => ({ response: 1 });
+      }),
+    5000,
+  ).catch(() => {});
   await withSmokeDeadline("owned Electron close", () => owned.close(), 30000);
   await assertApplicationStopped(binary, env, metadata);
   assert.equal(alive(mainPid), false, "The prior owned GUI Main must exit before relaunch");
   facts.shutdowns ??= [];
-  facts.shutdowns.push({ mainPid, adapterPid: metadata?.pid ?? null, guiExited: true, serviceExited: true });
+  facts.shutdowns.push({
+    mainPid,
+    adapterPid: metadata?.pid ?? null,
+    guiExited: true,
+    serviceExited: true,
+  });
 }
 console.log("Evidence:", evidence);
 try {
   application = await applicationFixture(gui, join(scratch, "application"));
-  await json("run.json", { scratch, evidence, env: Object.fromEntries(Object.entries(env).filter(([key]) => key.startsWith("AREAL_"))) });
+  await json("run.json", {
+    scratch,
+    evidence,
+    env: Object.fromEntries(Object.entries(env).filter(([key]) => key.startsWith("AREAL_"))),
+  });
   await launch();
   await page.evaluate(() => window.arealDesktop.theme("soft-glass"));
   await app.evaluate(({ nativeTheme }) => nativeTheme.emit("updated"));
-  await until(() => page.evaluate(() => !document.documentElement.classList.contains("dark")), "light theme applied");
-  await app.evaluate(({ dialog }, path) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] }); }, workspace);
+  await until(
+    () => page.evaluate(() => !document.documentElement.classList.contains("dark")),
+    "light theme applied",
+  );
+  await app.evaluate(({ dialog }, path) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [path] });
+  }, workspace);
   await button("不在项目中工作").click();
   await page.getByRole("menuitem", { name: "新建项目", exact: true }).click();
   await until(async () => project(await state())?.state?.connected, "workspace connected");
   await input().fill("IMAGE_OTHER_THREAD");
   await button("发送").click();
-  const otherId = await until(async () => { const id = await currentId(); return id && project(await state()).state.threads[id]?.turns?.at(-1)?.status === "completed" && id; }, "other conversation completed");
+  const otherId = await until(async () => {
+    const id = await currentId();
+    return (
+      id && project(await state()).state.threads[id]?.turns?.at(-1)?.status === "completed" && id
+    );
+  }, "other conversation completed");
   await button("新聊天").click();
   await input().fill("IMAGE_ORIGINAL_DRAFT");
-  const imageBytes = Buffer.from(await page.evaluate(() => {
-    const canvas = document.createElement("canvas");
-    canvas.width = 800; canvas.height = 400;
-    const context = canvas.getContext("2d");
-    context.fillStyle = "#dcecff"; context.fillRect(0, 0, 800, 400);
-    context.fillStyle = "#4085fa"; context.fillRect(0, 0, 400, 200);
-    context.fillStyle = "#c66a25"; context.fillRect(400, 200, 400, 200);
-    return canvas.toDataURL("image/png").split(",")[1];
-  }), "base64");
+  const imageBytes = Buffer.from(
+    await page.evaluate(() => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 800;
+      canvas.height = 400;
+      const context = canvas.getContext("2d");
+      context.fillStyle = "#dcecff";
+      context.fillRect(0, 0, 800, 400);
+      context.fillStyle = "#4085fa";
+      context.fillRect(0, 0, 400, 200);
+      context.fillStyle = "#c66a25";
+      context.fillRect(400, 200, 400, 200);
+      return canvas.toDataURL("image/png").split(",")[1];
+    }),
+    "base64",
+  );
   for (const path of fixtures) {
     await mkdir(dirname(path));
     await writeFile(path, imageBytes);
   }
-  facts.originalImage = { width: 800, height: 400, bytes: imageBytes.length, sha256: sha(imageBytes) };
+  facts.originalImage = {
+    width: 800,
+    height: 400,
+    bytes: imageBytes.length,
+    sha256: sha(imageBytes),
+  };
   await page.locator("input[type=file]").setInputFiles(fixtures);
   assert.equal(await page.getByTestId("composer-attachment").count(), 2);
   const baseline = requests.length;
@@ -257,72 +465,169 @@ try {
   act("New draft image preview opens annotation pane");
   const firstPosition = await point(25, 50);
   await editor().getByRole("textbox", { name: "标注意见", exact: true }).fill("IMAGE_NOTE_FIRST");
-  await editor().getByRole("textbox", { name: "标注意见", exact: true }).evaluate((element) => element.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 229, isComposing: true, bubbles: true, cancelable: true })));
-  assert.equal(await editor().isVisible(), true, "IME candidate Enter leaves the point unconfirmed");
-  assert.equal(await page.getByTestId("chat-send-button").isDisabled(), true, "Pending note blocks Composer send");
-  assert.equal(await region().getByRole("button", { name: "完成标注", exact: true }).isDisabled(), true, "Done cannot discard or implicitly confirm a pending note");
+  await editor()
+    .getByRole("textbox", { name: "标注意见", exact: true })
+    .evaluate((element) =>
+      element.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          code: "Enter",
+          keyCode: 229,
+          isComposing: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      ),
+    );
+  assert.equal(
+    await editor().isVisible(),
+    true,
+    "IME candidate Enter leaves the point unconfirmed",
+  );
+  assert.equal(
+    await page.getByTestId("chat-send-button").isDisabled(),
+    true,
+    "Pending note blocks Composer send",
+  );
+  assert.equal(
+    await region().getByRole("button", { name: "完成标注", exact: true }).isDisabled(),
+    true,
+    "Done cannot discard or implicitly confirm a pending note",
+  );
   await capture("01-compact-editor-light");
   await confirm("IMAGE_NOTE_FIRST");
   await point(75, 25);
-  await editor().getByRole("textbox", { name: "标注意见", exact: true }).fill("IMAGE_PENDING_NAVIGATION");
+  await editor()
+    .getByRole("textbox", { name: "标注意见", exact: true })
+    .fill("IMAGE_PENDING_NAVIGATION");
   await selectConversation(page, otherId);
   await button("新聊天").click();
   assert.equal(await input().textContent(), "IMAGE_ORIGINAL_DRAFT");
-  if (!await region().isVisible()) await openImage();
-  assert.equal(await editor().getByRole("textbox", { name: "标注意见", exact: true }).inputValue(), "IMAGE_PENDING_NAVIGATION", "Unconfirmed note stays with the same attachment after navigation");
+  if (!(await region().isVisible())) await openImage();
+  assert.equal(
+    await editor().getByRole("textbox", { name: "标注意见", exact: true }).inputValue(),
+    "IMAGE_PENDING_NAVIGATION",
+    "Unconfirmed note stays with the same attachment after navigation",
+  );
   await editor().getByRole("button", { name: "展开批注编辑", exact: true }).click();
-  assert.equal(await editor().getByRole("button", { name: "展开批注编辑", exact: true }).getAttribute("aria-expanded"), "true");
-  await editor().getByRole("textbox", { name: "标注意见", exact: true }).fill("IMAGE_NOTE_SECOND\nDETAIL");
+  assert.equal(
+    await editor()
+      .getByRole("button", { name: "展开批注编辑", exact: true })
+      .getAttribute("aria-expanded"),
+    "true",
+  );
+  await editor()
+    .getByRole("textbox", { name: "标注意见", exact: true })
+    .fill("IMAGE_NOTE_SECOND\nDETAIL");
   await editor().getByRole("textbox", { name: "标注意见", exact: true }).press("Enter");
-  assert.equal(await editor().isVisible(), true, "Expanded Enter inserts a newline instead of confirming");
-  assert.equal(await editor().getByRole("textbox", { name: "标注意见", exact: true }).inputValue(), "IMAGE_NOTE_SECOND\nDETAIL\n");
+  assert.equal(
+    await editor().isVisible(),
+    true,
+    "Expanded Enter inserts a newline instead of confirming",
+  );
+  assert.equal(
+    await editor().getByRole("textbox", { name: "标注意见", exact: true }).inputValue(),
+    "IMAGE_NOTE_SECOND\nDETAIL\n",
+  );
   await page.evaluate(() => window.arealDesktop.theme("data-dense"));
   await app.evaluate(({ nativeTheme }) => nativeTheme.emit("updated"));
-  await until(() => page.evaluate(() => document.documentElement.classList.contains("dark")), "dark theme applied");
+  await until(
+    () => page.evaluate(() => document.documentElement.classList.contains("dark")),
+    "dark theme applied",
+  );
   await capture("02-expanded-editor-dark");
   await confirm("IMAGE_NOTE_SECOND\nDETAIL");
   await region().getByRole("button", { name: "已确认标注 1", exact: true }).click();
   await confirm("IMAGE_NOTE_FIRST_EDITED");
   await region().getByRole("button", { name: "删除标注 2", exact: true }).click();
-  assert.equal(await region().getByRole("button", { name: "已确认标注 2", exact: true }).count(), 0, "Deleted point leaves no marker");
+  assert.equal(
+    await region().getByRole("button", { name: "已确认标注 2", exact: true }).count(),
+    0,
+    "Deleted point leaves no marker",
+  );
   const secondPosition = await point(75, 25);
   await confirm("IMAGE_NOTE_SECOND_FINAL");
-  const imageBeforeZoom = await region().getByRole("img", { name: "标注图片 sample.png", exact: true }).boundingBox();
+  const imageBeforeZoom = await region()
+    .getByRole("img", { name: "标注图片 sample.png", exact: true })
+    .boundingBox();
   await region().getByRole("button", { name: "放大图片", exact: true }).click();
-  const imageAfterZoom = await until(async () => { const box = await region().getByRole("img", { name: "标注图片 sample.png", exact: true }).boundingBox(); return box.width > imageBeforeZoom.width && box; }, "image zoom is visibly applied");
-  const firstMarker = await region().getByRole("button", { name: "已确认标注 1", exact: true }).boundingBox();
-  assert.ok(Math.abs((firstMarker.x + firstMarker.width / 2 - imageAfterZoom.x) / imageAfterZoom.width - firstPosition.xPercent / 100) < 0.005, "Zoom keeps the first point at the observed original-image x coordinate");
-  assert.ok(Math.abs((firstMarker.y + firstMarker.height / 2 - imageAfterZoom.y) / imageAfterZoom.height - firstPosition.yPercent / 100) < 0.005, "Zoom keeps the first point at the observed original-image y coordinate");
+  const imageAfterZoom = await until(async () => {
+    const box = await region()
+      .getByRole("img", { name: "标注图片 sample.png", exact: true })
+      .boundingBox();
+    return box.width > imageBeforeZoom.width && box;
+  }, "image zoom is visibly applied");
+  const firstMarker = await region()
+    .getByRole("button", { name: "已确认标注 1", exact: true })
+    .boundingBox();
+  assert.ok(
+    Math.abs(
+      (firstMarker.x + firstMarker.width / 2 - imageAfterZoom.x) / imageAfterZoom.width -
+        firstPosition.xPercent / 100,
+    ) < 0.005,
+    "Zoom keeps the first point at the observed original-image x coordinate",
+  );
+  assert.ok(
+    Math.abs(
+      (firstMarker.y + firstMarker.height / 2 - imageAfterZoom.y) / imageAfterZoom.height -
+        firstPosition.yPercent / 100,
+    ) < 0.005,
+    "Zoom keeps the first point at the observed original-image y coordinate",
+  );
   await region().getByRole("button", { name: "适应图片", exact: true }).click();
   await finish();
   assert.equal(requests.length, baseline, "Done never sends a message");
   assert.equal(await input().textContent(), "IMAGE_ORIGINAL_DRAFT");
   assert.equal(await page.getByTestId("composer-attachment").count(), 2);
-  checks.push("New draft image preview, independent 25%/50% and 75%/25% clicks, compact/expanded editor, composing Enter, pending navigation, edit/delete and Done without send");
+  checks.push(
+    "New draft image preview, independent 25%/50% and 75%/25% clicks, compact/expanded editor, composing Enter, pending navigation, edit/delete and Done without send",
+  );
   await openImage(1);
-  assert.equal(await region().getByRole("button", { name: "已确认标注 1", exact: true }).count(), 0, "Same filename and identical bytes cannot share another attachment's notes");
+  assert.equal(
+    await region().getByRole("button", { name: "已确认标注 1", exact: true }).count(),
+    0,
+    "Same filename and identical bytes cannot share another attachment's notes",
+  );
   const duplicatePosition = await point(50, 75);
   await confirm("IMAGE_NOTE_DUPLICATE");
   await finish();
   await capture("03-composer-confirmed");
-  await app.evaluate((_, modulePath) => {
-    const req = process.getBuiltinModule("module").createRequire(modulePath);
-    const { ServiceConnection } = req(modulePath);
-    const original = ServiceConnection.prototype.request;
-    const gate = globalThis.__imageAnnotationUploadGate = { attempts: 0, entered: false, restore: () => { ServiceConnection.prototype.request = original; } };
-    ServiceConnection.prototype.request = function (method, params, ...rest) {
-      if (method === "command" && params?.name === "media" && params?.request?.operation === "upload") {
-        gate.attempts++;
-        if (!gate.entered) {
-          gate.entered = true;
-          return new Promise((_, reject) => { gate.release = () => reject(new Error("IMAGE_UPLOAD_REJECTED")); });
+  await app.evaluate(
+    (_, modulePath) => {
+      const req = process.getBuiltinModule("module").createRequire(modulePath);
+      const { ServiceConnection } = req(modulePath);
+      const original = ServiceConnection.prototype.request;
+      const gate = (globalThis.__imageAnnotationUploadGate = {
+        attempts: 0,
+        entered: false,
+        restore: () => {
+          ServiceConnection.prototype.request = original;
+        },
+      });
+      ServiceConnection.prototype.request = function (method, params, ...rest) {
+        if (
+          method === "command" &&
+          params?.name === "media" &&
+          params?.request?.operation === "upload"
+        ) {
+          gate.attempts++;
+          if (!gate.entered) {
+            gate.entered = true;
+            return new Promise((_, reject) => {
+              gate.release = () => reject(new Error("IMAGE_UPLOAD_REJECTED"));
+            });
+          }
         }
-      }
-      return original.call(this, method, params, ...rest);
-    };
-  }, join(gui, "app/src/core/service-client.cjs"));
+        return original.call(this, method, params, ...rest);
+      };
+    },
+    join(gui, "app/src/core/service-client.cjs"),
+  );
   await page.getByTestId("chat-send-button").click();
-  await until(() => app.evaluate(() => globalThis.__imageAnnotationUploadGate.entered), "media upload gate entered");
+  await until(
+    () => app.evaluate(() => globalThis.__imageAnnotationUploadGate.entered),
+    "media upload gate entered",
+  );
   await app.evaluate(() => globalThis.__imageAnnotationUploadGate.release());
   await page.getByRole("alert").filter({ hasText: "IMAGE_UPLOAD_REJECTED" }).waitFor();
   const threadId = await currentId();
@@ -333,40 +638,85 @@ try {
   await selectConversation(page, otherId);
   await selectConversation(page, threadId);
   await openImage();
-  assert.equal(await region().getByRole("button", { name: /^已确认标注 / }).count(), 2);
+  assert.equal(
+    await region()
+      .getByRole("button", { name: /^已确认标注 / })
+      .count(),
+    2,
+  );
   await finish();
-  assert.equal(await app.evaluate(() => globalThis.__imageAnnotationUploadGate.attempts), 1, "Navigation and reopening never retry a rejected upload automatically");
+  assert.equal(
+    await app.evaluate(() => globalThis.__imageAnnotationUploadGate.attempts),
+    1,
+    "Navigation and reopening never retry a rejected upload automatically",
+  );
   assert.equal(requests.length, baseline);
-  checks.push("New-draft handoff and upload refusal retain the exact body, attachments and annotation identities for explicit retry");
+  checks.push(
+    "New-draft handoff and upload refusal retain the exact body, attachments and annotation identities for explicit retry",
+  );
   await page.getByTestId("chat-send-button").click();
-  const history = await until(async () => { const value = project(await state()).state.threads[threadId]; return requests.length === baseline + 1 && value?.turns?.at(-1)?.status === "completed" && value; }, "annotated send completed");
+  const history = await until(async () => {
+    const value = project(await state()).state.threads[threadId];
+    return (
+      requests.length === baseline + 1 && value?.turns?.at(-1)?.status === "completed" && value
+    );
+  }, "annotated send completed");
   await json("history-before.json", history);
   const user = history.turns.at(-1).items.find((item) => item.type === "userMessage");
   const text = inputText(user.content);
-  assert.ok(text.startsWith("IMAGE_ORIGINAL_DRAFT"), "Core history retains the original Composer body");
-  for (const note of ["IMAGE_NOTE_FIRST_EDITED", "IMAGE_NOTE_SECOND_FINAL", "IMAGE_NOTE_DUPLICATE"]) assert.ok(text.includes(note), `Core history retains ${note}`);
+  assert.ok(
+    text.startsWith("IMAGE_ORIGINAL_DRAFT"),
+    "Core history retains the original Composer body",
+  );
+  for (const note of ["IMAGE_NOTE_FIRST_EDITED", "IMAGE_NOTE_SECOND_FINAL", "IMAGE_NOTE_DUPLICATE"])
+    assert.ok(text.includes(note), `Core history retains ${note}`);
   assert.equal(text.includes("IMAGE_PENDING_NAVIGATION"), false);
   assert.equal(text.includes("IMAGE_NOTE_SECOND\nDETAIL"), false);
   const expected = [
-    { attachmentIndex: 0, points: [{ ...firstPosition, comment: "IMAGE_NOTE_FIRST_EDITED" }, { ...secondPosition, comment: "IMAGE_NOTE_SECOND_FINAL" }] },
+    {
+      attachmentIndex: 0,
+      points: [
+        { ...firstPosition, comment: "IMAGE_NOTE_FIRST_EDITED" },
+        { ...secondPosition, comment: "IMAGE_NOTE_SECOND_FINAL" },
+      ],
+    },
     { attachmentIndex: 1, points: [{ ...duplicatePosition, comment: "IMAGE_NOTE_DUPLICATE" }] },
   ];
-  facts.coordinateEnvelopes = assertEnvelopes(text, user.content.filter((part) => part.type !== "text"), expected);
+  facts.coordinateEnvelopes = assertEnvelopes(
+    text,
+    user.content.filter((part) => part.type !== "text"),
+    expected,
+  );
   const lastUser = scenarioUser(requests.at(-1), "IMAGE_ORIGINAL_DRAFT");
   assert.ok(lastUser, "The model request contains the original annotated human message");
-  assert.ok(Array.isArray(lastUser.content), "Annotated model message must carry structured text and original image parts");
+  assert.ok(
+    Array.isArray(lastUser.content),
+    "Annotated model message must carry structured text and original image parts",
+  );
   const modelText = inputText(lastUser.content);
-  assert.deepEqual(envelopes(modelText), facts.coordinateEnvelopes, "Model receives the same independently checked percentage coordinates as Core history");
+  assert.deepEqual(
+    envelopes(modelText),
+    facts.coordinateEnvelopes,
+    "Model receives the same independently checked percentage coordinates as Core history",
+  );
   const images = lastUser.content.filter((part) => part.type === "image_url");
   assert.equal(images.length, 2, "Each attached original is sent once without annotation crops");
-  assert.deepEqual(images.map((part) => sha(Buffer.from(part.image_url.url.split(",")[1], "base64"))), [sha(imageBytes), sha(imageBytes)], "Model receives the exact original PNG bytes for both attachment slots");
+  assert.deepEqual(
+    images.map((part) => sha(Buffer.from(part.image_url.url.split(",")[1], "base64"))),
+    [sha(imageBytes), sha(imageBytes)],
+    "Model receives the exact original PNG bytes for both attachment slots",
+  );
   facts.sentText = text;
-  facts.sentImages = images.map((part) => ({ sha256: sha(Buffer.from(part.image_url.url.split(",")[1], "base64")) }));
+  facts.sentImages = images.map((part) => ({
+    sha256: sha(Buffer.from(part.image_url.url.split(",")[1], "base64")),
+  }));
   assert.equal(await page.getByTestId("composer-attachment").count(), 0);
   await sentImage(0, expected[0].points);
   await capture("04-sent-readonly");
   await button("关闭图片预览").click();
-  checks.push("Explicit send reaches Core history and the model with each original image exactly once and distinct annotation lists for duplicate attachment bytes");
+  checks.push(
+    "Explicit send reaches Core history and the model with each original image exactly once and distinct annotation lists for duplicate attachment bytes",
+  );
   const requestCount = requests.length;
   await page.reload();
   await page.getByTestId("areal-workbench").waitFor();
@@ -381,9 +731,19 @@ try {
   await button("关闭图片预览").click();
   const reopened = project(await state()).state.threads[threadId];
   await json("history-after.json", reopened);
-  assert.deepEqual(reopened.turns, history.turns, "Renderer reload and full Electron restart preserve the persisted Core turns");
-  assert.equal(requests.length, requestCount, "History reload and restart never generate a new model request");
-  checks.push("Renderer reload and full Electron restart restore duplicate-image point counts from Core history without an extra generation");
+  assert.deepEqual(
+    reopened.turns,
+    history.turns,
+    "Renderer reload and full Electron restart preserve the persisted Core turns",
+  );
+  assert.equal(
+    requests.length,
+    requestCount,
+    "History reload and restart never generate a new model request",
+  );
+  checks.push(
+    "Renderer reload and full Electron restart restore duplicate-image point counts from Core history without an extra generation",
+  );
   await selectConversation(page, otherId);
   await input().fill("IMAGE_QUEUE_HOLD");
   await page.getByTestId("chat-send-button").click();
@@ -398,19 +758,46 @@ try {
   await confirm("IMAGE_QUEUE_RETAINED");
   await finish();
   await page.getByTestId("chat-send-button").click();
-  const queued = await until(async () => (await queue()).items.find((item) => item.status === "pending" && inputText(item.input).startsWith("IMAGE_QUEUE_MESSAGE")), "annotated message queued through Composer");
+  const queued = await until(
+    async () =>
+      (await queue()).items.find(
+        (item) =>
+          item.status === "pending" && inputText(item.input).startsWith("IMAGE_QUEUE_MESSAGE"),
+      ),
+    "annotated message queued through Composer",
+  );
   facts.queuedBefore = queued;
-  const retainedNotes = assertEnvelopes(inputText(queued.input), queued.input.filter((part) => part.type !== "text"), [{ attachmentIndex: 1, points: [{ ...retainedPosition, comment: "IMAGE_QUEUE_RETAINED" }] }]);
-  await page.locator(".composer-queue-row").filter({ has: page.locator(".composer-queue-copy", { hasText: "IMAGE_QUEUE_MESSAGE" }) }).getByRole("button", { name: /更多操作/ }).click();
+  const retainedNotes = assertEnvelopes(
+    inputText(queued.input),
+    queued.input.filter((part) => part.type !== "text"),
+    [{ attachmentIndex: 1, points: [{ ...retainedPosition, comment: "IMAGE_QUEUE_RETAINED" }] }],
+  );
+  await page
+    .locator(".composer-queue-row")
+    .filter({ has: page.locator(".composer-queue-copy", { hasText: "IMAGE_QUEUE_MESSAGE" }) })
+    .getByRole("button", { name: /更多操作/ })
+    .click();
   await page.getByRole("menuitem", { name: "编辑消息", exact: true }).click();
   await button("保存排队消息").waitFor();
   await until(async () => (await queue()).paused, "Core confirms queue pause before editing");
   await page.getByTestId("composer-queued-attachment").nth(1).waitFor();
   assert.equal(await page.getByTestId("composer-queued-attachment").count(), 2);
-  await page.getByTestId("composer-queued-attachment").nth(0).getByRole("button", { name: /^移除排队附件 / }).click();
-  assert.equal(await button("保存排队消息").isEnabled(), true, "Removing retained media keeps the queued edit open until explicit Save");
+  await page
+    .getByTestId("composer-queued-attachment")
+    .nth(0)
+    .getByRole("button", { name: /^移除排队附件 / })
+    .click();
+  assert.equal(
+    await button("保存排队消息").isEnabled(),
+    true,
+    "Removing retained media keeps the queued edit open until explicit Save",
+  );
   assert.equal((await queue()).paused, true, "Removing retained media cannot resume the queue");
-  assert.deepEqual((await queue()).items.find((item) => item.id === queued.id), queued, "Removing retained media changes only the local edit, leaving the pending Core item unchanged until Save");
+  assert.deepEqual(
+    (await queue()).items.find((item) => item.id === queued.id),
+    queued,
+    "Removing retained media changes only the local edit, leaving the pending Core item unchanged until Save",
+  );
   await page.locator("input[type=file]").setInputFiles(fixtures[1]);
   await openImage();
   const addedPosition = await point(80, 80);
@@ -418,30 +805,60 @@ try {
   await finish();
   await input().fill("IMAGE_QUEUE_EDITED");
   await button("保存排队消息").click();
-  const edited = await until(async () => { const entry = (await queue()).items.find((item) => item.id === queued.id); return inputText(entry?.input ?? []).startsWith("IMAGE_QUEUE_EDITED") && entry; }, "Core persists queue image metadata edit");
-  const editedNotes = assertEnvelopes(inputText(edited.input), edited.input.filter((part) => part.type !== "text"), [
-    { attachmentIndex: 0, points: [{ ...retainedPosition, comment: "IMAGE_QUEUE_RETAINED" }] },
-    { attachmentIndex: 1, points: [{ ...addedPosition, comment: "IMAGE_QUEUE_ADDED" }] },
-  ]);
-  assert.equal(editedNotes[0].id, retainedNotes[0].id, "Retained image keeps its original annotation identity");
-  assert.equal(editedNotes[0].imageUri, retainedNotes[0].imageUri, "Removing earlier retained media changes the occurrence index without reuploading its image");
+  const edited = await until(async () => {
+    const entry = (await queue()).items.find((item) => item.id === queued.id);
+    return inputText(entry?.input ?? []).startsWith("IMAGE_QUEUE_EDITED") && entry;
+  }, "Core persists queue image metadata edit");
+  const editedNotes = assertEnvelopes(
+    inputText(edited.input),
+    edited.input.filter((part) => part.type !== "text"),
+    [
+      { attachmentIndex: 0, points: [{ ...retainedPosition, comment: "IMAGE_QUEUE_RETAINED" }] },
+      { attachmentIndex: 1, points: [{ ...addedPosition, comment: "IMAGE_QUEUE_ADDED" }] },
+    ],
+  );
+  assert.equal(
+    editedNotes[0].id,
+    retainedNotes[0].id,
+    "Retained image keeps its original annotation identity",
+  );
+  assert.equal(
+    editedNotes[0].imageUri,
+    retainedNotes[0].imageUri,
+    "Removing earlier retained media changes the occurrence index without reuploading its image",
+  );
   facts.queuedAfter = edited;
   await json("queue-before.json", queued);
   await json("queue-after.json", edited);
   await capture("06-queue-edited");
   for (const response of live) response.end(event("", true));
-  await until(async () => project(await state()).state.threads[otherId].turns.at(-1)?.status === "completed" && (await queue()).items.every((item) => item.status !== "pending" && item.status !== "running"), "edited queued message executes");
-  const queuedRequest = requests.findLast((body) => inputText(scenarioUser(body)?.content ?? "").startsWith("IMAGE_QUEUE_EDITED"));
+  await until(
+    async () =>
+      project(await state()).state.threads[otherId].turns.at(-1)?.status === "completed" &&
+      (await queue()).items.every((item) => item.status !== "pending" && item.status !== "running"),
+    "edited queued message executes",
+  );
+  const queuedRequest = requests.findLast((body) =>
+    inputText(scenarioUser(body)?.content ?? "").startsWith("IMAGE_QUEUE_EDITED"),
+  );
   assert.ok(queuedRequest, "Edited queue metadata reaches an actual model request");
   const queuedModelUser = scenarioUser(queuedRequest, "IMAGE_QUEUE_EDITED");
-  assert.ok(Array.isArray(queuedModelUser.content), "Edited queue model message retains structured image parts");
+  assert.ok(
+    Array.isArray(queuedModelUser.content),
+    "Edited queue model message retains structured image parts",
+  );
   assert.deepEqual(envelopes(inputText(queuedModelUser.content)), editedNotes);
-  checks.push("Queue editing preserves retained image metadata, reindexes after removal, offsets new annotated media and sends the edited payload through Core");
+  checks.push(
+    "Queue editing preserves retained image metadata, reindexes after removal, offsets new annotated media and sends the edited payload through Core",
+  );
   await button("新聊天").click();
   await button("在 workspace 中开始新聊天").click();
   await page.getByRole("menuitem", { name: "不在项目中工作", exact: true }).click();
   const beforeProjectless = await state();
-  const threadIdentities = (snapshot) => snapshot.projects.flatMap((owner) => Object.keys(owner.state?.threads ?? {}).map((id) => `${owner.id}:${id}`)).sort();
+  const threadIdentities = (snapshot) =>
+    snapshot.projects
+      .flatMap((owner) => Object.keys(owner.state?.threads ?? {}).map((id) => `${owner.id}:${id}`))
+      .sort();
   const projectlessRequestCount = requests.length;
   await input().fill("IMAGE_PROJECTLESS_DRAFT");
   await page.locator("input[type=file]").setInputFiles(fixtures[0]);
@@ -450,55 +867,117 @@ try {
   await confirm("IMAGE_PROJECTLESS_NOTE");
   await finish();
   assert.equal(requests.length, projectlessRequestCount, "Projectless Done never sends");
-  assert.ok(!await currentId(), "Projectless annotation remains a draft without a Core thread");
-  assert.deepEqual(threadIdentities(await state()), threadIdentities(beforeProjectless), "Projectless annotation does not create a hidden thread before Send");
+  assert.ok(!(await currentId()), "Projectless annotation remains a draft without a Core thread");
+  assert.deepEqual(
+    threadIdentities(await state()),
+    threadIdentities(beforeProjectless),
+    "Projectless annotation does not create a hidden thread before Send",
+  );
   assert.equal(await input().textContent(), "IMAGE_PROJECTLESS_DRAFT");
   await page.getByTestId("chat-send-button").click();
   const projectless = await until(async () => {
     const snapshot = await state();
     const id = await currentId();
-    const owner = snapshot.projects.find((entry) => entry.projectless && entry.state?.threads[id]?.turns?.at(-1)?.status === "completed");
-    return owner && requests.length === projectlessRequestCount + 1 && { owner, id, thread: owner.state.threads[id] };
+    const owner = snapshot.projects.find(
+      (entry) =>
+        entry.projectless && entry.state?.threads[id]?.turns?.at(-1)?.status === "completed",
+    );
+    return (
+      owner &&
+      requests.length === projectlessRequestCount + 1 && {
+        owner,
+        id,
+        thread: owner.state.threads[id],
+      }
+    );
   }, "projectless first send persists an annotated Core thread");
-  const projectlessUser = projectless.thread.turns.at(-1).items.find((item) => item.type === "userMessage");
+  const projectlessUser = projectless.thread.turns
+    .at(-1)
+    .items.find((item) => item.type === "userMessage");
   const projectlessPoints = [{ ...projectlessPosition, comment: "IMAGE_PROJECTLESS_NOTE" }];
-  const projectlessNotes = assertEnvelopes(inputText(projectlessUser.content), projectlessUser.content.filter((part) => part.type !== "text"), [{ attachmentIndex: 0, points: projectlessPoints }]);
+  const projectlessNotes = assertEnvelopes(
+    inputText(projectlessUser.content),
+    projectlessUser.content.filter((part) => part.type !== "text"),
+    [{ attachmentIndex: 0, points: projectlessPoints }],
+  );
   const projectlessModelUser = scenarioUser(requests.at(-1), "IMAGE_PROJECTLESS_DRAFT");
-  assert.ok(projectlessModelUser, "The model request contains the projectless annotated human message");
-  assert.ok(Array.isArray(projectlessModelUser.content), "Projectless annotated model message retains structured image parts");
+  assert.ok(
+    projectlessModelUser,
+    "The model request contains the projectless annotated human message",
+  );
+  assert.ok(
+    Array.isArray(projectlessModelUser.content),
+    "Projectless annotated model message retains structured image parts",
+  );
   assert.deepEqual(envelopes(inputText(projectlessModelUser.content)), projectlessNotes);
-  assert.deepEqual(projectlessModelUser.content.filter((part) => part.type === "image_url").map((part) => sha(Buffer.from(part.image_url.url.split(",")[1], "base64"))), [sha(imageBytes)]);
+  assert.deepEqual(
+    projectlessModelUser.content
+      .filter((part) => part.type === "image_url")
+      .map((part) => sha(Buffer.from(part.image_url.url.split(",")[1], "base64"))),
+    [sha(imageBytes)],
+  );
   await json("projectless-history.json", projectless.thread);
   await sentImage(0, projectlessPoints);
   await capture("07-projectless-sent");
   await button("关闭图片预览").click();
-  facts.projectless = { projectId: projectless.owner.id, threadId: projectless.id, notes: projectlessNotes };
-  checks.push("Projectless annotation creates no thread before Send, then transfers the exact original image and coordinate note to its persisted hidden Core owner");
+  facts.projectless = {
+    projectId: projectless.owner.id,
+    threadId: projectless.id,
+    notes: projectlessNotes,
+  };
+  checks.push(
+    "Projectless annotation creates no thread before Send, then transfers the exact original image and coordinate note to its persisted hidden Core owner",
+  );
   assert.deepEqual(errors, []);
   passed = true;
 } catch (error) {
   errors.push(error.stack ?? String(error));
   if (page) {
     await captureSmokeFailure(page, evidence, error);
-    await writeFile(join(evidence, "failure.aria.txt"), await page.locator("body").ariaSnapshot()).catch(() => {});
+    await writeFile(
+      join(evidence, "failure.aria.txt"),
+      await page.locator("body").ariaSnapshot(),
+    ).catch(() => {});
     await json("failure-snapshot.json", await state().catch(() => null));
   }
   process.exitCode = 1;
 } finally {
-  for (const response of live) if (!response.writableEnded && !response.destroyed) response.end(event("", true));
-  const metadata = await readFile(join(env.AREAL_CORE_HOME, "service.json"), "utf8").then(JSON.parse).catch(() => null);
-  await close().catch((error) => { errors.push(`Electron cleanup: ${error.message}`); passed = false; });
-  await withSmokeDeadline("owned application fixture lifetime close", () => application?.close(), 10000).catch((error) => { errors.push(`Application cleanup: ${error.message}`); passed = false; });
+  for (const response of live)
+    if (!response.writableEnded && !response.destroyed) response.end(event("", true));
+  const metadata = await readFile(join(env.AREAL_CORE_HOME, "service.json"), "utf8")
+    .then(JSON.parse)
+    .catch(() => null);
+  await close().catch((error) => {
+    errors.push(`Electron cleanup: ${error.message}`);
+    passed = false;
+  });
+  await withSmokeDeadline(
+    "owned application fixture lifetime close",
+    () => application?.close(),
+    10000,
+  ).catch((error) => {
+    errors.push(`Application cleanup: ${error.message}`);
+    passed = false;
+  });
   try {
     await assertApplicationStopped(binary, env, metadata);
-    await until(() => (facts.launches ?? []).every((identity) => !alive(identity.pid)), "owned GUI Main processes exit", 15000);
+    await until(
+      () => (facts.launches ?? []).every((identity) => !alive(identity.pid)),
+      "owned GUI Main processes exit",
+      15000,
+    );
     facts.cleanup.serviceExited = true;
     facts.cleanup.guiExited = true;
+  } catch (error) {
+    errors.push(`Core cleanup: ${error.message}`);
+    passed = false;
   }
-  catch (error) { errors.push(`Core cleanup: ${error.message}`); passed = false; }
   model.closeAllConnections();
   await new Promise((done) => model.close(done));
-  if (sha(await readFile(binary)) !== coreHash) { errors.push("Core binary changed during the run"); passed = false; }
+  if (sha(await readFile(binary)) !== coreHash) {
+    errors.push("Core binary changed during the run");
+    passed = false;
+  }
   if (passed && facts.cleanup.serviceExited) {
     await rm(scratch, { recursive: true });
     facts.cleanup.instanceDataRemoved = true;
@@ -506,16 +985,38 @@ try {
   await json("cleanup.json", facts.cleanup);
   await json("actions.json", actions);
   await json("model-requests.json", requests);
-  const modified = execFileSync("git", ["ls-files", "--modified", "--others", "--exclude-standard", "-z"], { cwd: root }).toString().split("\0").filter(Boolean);
+  const modified = execFileSync(
+    "git",
+    ["ls-files", "--modified", "--others", "--exclude-standard", "-z"],
+    { cwd: root },
+  )
+    .toString()
+    .split("\0")
+    .filter(Boolean);
   const sourceFiles = {};
-  for (const path of modified) sourceFiles[path] = await readFile(join(root, path)).then(sha).catch(() => null);
+  for (const path of modified)
+    sourceFiles[path] = await readFile(join(root, path))
+      .then(sha)
+      .catch(() => null);
   await json("manifest.json", {
-    passed, checks, errors, facts, frames, scratch, evidence,
+    passed,
+    checks,
+    errors,
+    facts,
+    frames,
+    scratch,
+    evidence,
     commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim(),
-    sourceFiles, diffSHA256: sha(execFileSync("git", ["diff", "--binary", "HEAD"], { cwd: root, maxBuffer: 32 * 1024 * 1024 })),
-    binary, coreSHA256: coreHash,
-    runtime: "source Electron/Main + shared service + real Core/Runtime + deterministic local model",
-    boundaries: "Native project picker fixture, actual file input, synthetic composing Enter; no real provider, OS IME candidate UI or packaged acceptance",
+    sourceFiles,
+    diffSHA256: sha(
+      execFileSync("git", ["diff", "--binary", "HEAD"], { cwd: root, maxBuffer: 32 * 1024 * 1024 }),
+    ),
+    binary,
+    coreSHA256: coreHash,
+    runtime:
+      "source Electron/Main + shared service + real Core/Runtime + deterministic local model",
+    boundaries:
+      "Native project picker fixture, actual file input, synthetic composing Enter; no real provider, OS IME candidate UI or packaged acceptance",
   });
   if (!passed) process.exitCode = 1;
   console.log(JSON.stringify({ passed, evidence, checks, errors }));

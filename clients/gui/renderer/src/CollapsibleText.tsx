@@ -1,2 +1,2 @@
-import "./CollapsibleText.css";
-export { CollapsibleText } from "@areal/ui/wip";
+import "@areal/ui/conversation.css";
+export { CollapsibleText } from "@areal/ui/compositions";

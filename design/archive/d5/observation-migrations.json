@@ -1,0 +1,47 @@
+[
+  {
+    "from": "clients/gui/design-system/conversation-flow.md",
+    "headings": [
+      "## 研究后的优化选择"
+    ],
+    "to": "design/archive/gui/conversation-design-research.md",
+    "reason": "2026-10-24 的参考研究与早期源码核对。后文生产接线已记录后续实现；现行活动、上下文及非模态规则归对应组件合同。",
+    "bytes": 4183
+  },
+  {
+    "from": "clients/gui/design-system/conversation-flow.md",
+    "headings": [
+      "## 依据与规则强度"
+    ],
+    "to": "design/archive/gui/conversation-design-research.md",
+    "reason": "用户截图观察是研究依据，现行要求已在组件与 CONV 合同维护。",
+    "bytes": 1624
+  },
+  {
+    "from": "clients/gui/design-system/conversation-flow.md",
+    "headings": [
+      "## 组件合同与实现所有者"
+    ],
+    "to": "design/archive/gui/conversation-design-research.md",
+    "reason": "此表记录迁移前源码差异，已被同文后续生产接线及实际组件合同取代。",
+    "bytes": 2936
+  },
+  {
+    "from": "clients/gui/design-system/conversation-flow.md",
+    "headings": [
+      "## 后续样例与验收清单"
+    ],
+    "to": "design/archive/gui/conversation-design-research.md",
+    "reason": "固定目录题输入与预期结果属于可重复过程证据，现行规则在组件及 CONV 合同中保持有效。",
+    "bytes": 2278
+  },
+  {
+    "from": "clients/gui/design-system/worktrees.md",
+    "headings": [
+      "## 固定样例与后续验收"
+    ],
+    "to": "design/archive/gui/worktree-design-exercise.md",
+    "reason": "固定 Worktree 设计题输入与代表条件，配合既有 exercises/worktrees.md 运行记录复现；当前组件规则仍在各就近合同。",
+    "bytes": 3052
+  }
+]

@@ -12,35 +12,88 @@ export function useConversationHistory(projectId: string, thread: Data, action: 
   current.current = owner;
   const supported = thread.displayHistory?.supported === true;
   const [failure, setFailure] = useState<{ owner: string; itemId?: string; message: string }>();
+  const mounted = useRef<string | undefined>(undefined);
   useEffect(() => {
     if (!supported) return;
-    let released = false;
     const request = { projectId, threadId: thread.id, viewId };
-    void action("history", { ...request, operation: "acquire" }).catch((error: Error) => {
-      if (!released) setFailure({ owner, message: error.message });
-    });
-    return () => { released = true; void action("history", { ...request, operation: "release" }).catch(() => {}); };
-  }, [action, owner, projectId, supported, thread.id, thread.displayHistory?.viewGeneration, viewId]);
-  const load = useCallback(async (itemId?: string) => {
-    setFailure(undefined);
-    try {
-      await action("history", { projectId, threadId: thread.id, viewId,
-        operation: itemId ? "loadItem" : "loadOlder", ...(itemId ? { itemId } : {}) });
-    } catch (error) {
-      if (current.current === owner) setFailure({ owner, itemId, message: error instanceof Error ? error.message : t("chat.history.loadFailed") });
-    }
-  }, [action, owner, projectId, thread.id, viewId, t]);
+    mounted.current = owner;
+    return () => {
+      mounted.current = undefined;
+      void action("history", { ...request, operation: "release" }).catch(() => {});
+    };
+  }, [action, owner, projectId, supported, thread.id, viewId]);
+  // 重新观察会换新的历史窗口（viewGeneration 变化），视图登记随窗口沿用。这里只重新登记，
+  // 不先释放：释放会清空已加载页并中断补全，随后再补回，顶部内容会反复消失、出现。
+  useEffect(() => {
+    if (!supported) return;
+    void action("history", { projectId, threadId: thread.id, viewId, operation: "acquire" }).catch(
+      (error: Error) => {
+        if (mounted.current === owner) setFailure({ owner, message: error.message });
+      },
+    );
+  }, [
+    action,
+    owner,
+    projectId,
+    supported,
+    thread.id,
+    thread.displayHistory?.viewGeneration,
+    viewId,
+  ]);
+  const load = useCallback(
+    async (itemId?: string, pageId?: string) => {
+      setFailure(undefined);
+      try {
+        await action("history", {
+          projectId,
+          threadId: thread.id,
+          viewId,
+          ...(itemId
+            ? { operation: "loadItem", itemId }
+            : { operation: "loadOlder", ...(pageId ? { pageId } : {}) }),
+        });
+      } catch (error) {
+        if (current.current === owner)
+          setFailure({
+            owner,
+            itemId,
+            message: error instanceof Error ? error.message : t("chat.history.loadFailed"),
+          });
+      }
+    },
+    [action, owner, projectId, thread.id, viewId, t],
+  );
   return { load, failure: failure?.owner === owner ? failure : undefined };
 }
 
-export function DeferredHistoryItem({ item, loading, error, onLoad }: {
-  item: Data; loading?: { bytes: number; totalBytes: number }; error?: string; onLoad: () => void;
+export function DeferredHistoryItem({
+  item,
+  loading,
+  error,
+  onLoad,
+}: {
+  item: Data;
+  loading?: { bytes: number; totalBytes: number };
+  error?: string;
+  onLoad: () => void;
 }) {
   const { t } = useI18n();
-  return <div className="notice" data-history-item-id={item.id}>
-    <p role="status">{loading ? t("chat.history.loadingFull", { progress: Math.floor(loading.bytes / loading.totalBytes * 100) })
-      : t("chat.history.deferred", { kind: item.originalType, size: Math.ceil(item.totalBytes / 1048576) })}</p>
-    {error && <p role="alert">{error}</p>}
-    <Button type="button" variant="ghost" size="sm" disabled={!!loading} onClick={onLoad}>{t("chat.history.loadFull")}</Button>
-  </div>;
+  return (
+    <div className="notice" data-history-item-id={item.id}>
+      <p role="status">
+        {loading
+          ? t("chat.history.loadingFull", {
+              progress: Math.floor((loading.bytes / loading.totalBytes) * 100),
+            })
+          : t("chat.history.deferred", {
+              kind: item.originalType,
+              size: Math.ceil(item.totalBytes / 1048576),
+            })}
+      </p>
+      {error && <p role="alert">{error}</p>}
+      <Button type="button" variant="ghost" size="sm" disabled={!!loading} onClick={onLoad}>
+        {t("chat.history.loadFull")}
+      </Button>
+    </div>
+  );
 }

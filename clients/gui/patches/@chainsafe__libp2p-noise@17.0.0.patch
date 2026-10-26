@@ -1,0 +1,23 @@
+diff --git a/dist/src/index.d.ts b/dist/src/index.d.ts
+--- a/dist/src/index.d.ts
++++ b/dist/src/index.d.ts
+@@ -45,7 +45,7 @@
+     peerId: PeerId;
+     privateKey: PrivateKey;
+     logger: ComponentLogger;
+-    upgrader: Upgrader;
++    upgrader: Pick<Upgrader, 'getStreamMuxers'>;
+     metrics?: Metrics;
+ }
+ export declare function noise(init?: NoiseInit): (components: NoiseComponents) => ConnectionEncrypter<NoiseExtensions>;
+diff --git a/src/index.ts b/src/index.ts
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -49,6 +49,6 @@
+   peerId: PeerId
+   privateKey: PrivateKey
+   logger: ComponentLogger
+-  upgrader: Upgrader
++  upgrader: Pick<Upgrader, 'getStreamMuxers'>
+   metrics?: Metrics
+ }

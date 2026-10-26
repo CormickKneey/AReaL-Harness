@@ -34,7 +34,7 @@ jobs:
           echo "AREAL_DESIGN_BASE=$design_base" >> "$GITHUB_ENV"
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: '22'
+          node-version: '24.22.1'
       - run: npm install --global pnpm@11.7.0
       - run: pnpm --dir clients/gui install --frozen-lockfile --ignore-scripts
       - run: pnpm --dir clients/gui build:desktop

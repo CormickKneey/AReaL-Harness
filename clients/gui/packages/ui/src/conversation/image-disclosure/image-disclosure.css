@@ -1,4 +1,69 @@
-.areal-image-disclosure { min-width: 0; }
-.areal-image-content { max-width: 260px; padding-block: var(--spacing-inline); overflow-wrap: anywhere; }
-.areal-image-content img { display: block; max-width: 100%; height: auto; }
-.areal-image-feedback { font-size: var(--text-content-caption); line-height: 1.6; color: var(--color-foreground-subtle); margin-block: var(--spacing-inline); }
+.areal-image-disclosure {
+  min-width: 0;
+}
+/* 图片入口是一条活动行，沿用活动行高度与颜色，不使用通用折叠的控件高度。 */
+.areal-image-disclosure > .areal-disclosure {
+  margin-block: 0;
+}
+.areal-image-disclosure > .areal-disclosure > .areal-disclosure-trigger {
+  gap: 6px;
+  width: auto;
+  max-width: 100%;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  font-size: var(--text-conversation);
+  line-height: var(--conversation-line);
+  color: var(--activity-foreground, var(--color-foreground-subtle));
+}
+.areal-image-disclosure
+  > .areal-disclosure
+  > .areal-disclosure-trigger:is(:hover, [aria-expanded="true"]) {
+  background: transparent;
+}
+.areal-image-disclosure > .areal-disclosure > .areal-disclosure-trigger:hover {
+  color: var(--color-foreground);
+}
+/* 通用按钮会把内部图标压到 14px；活动图标与行内图标同为 16px，箭头 14px，保证文字起点对齐。 */
+.areal-image-disclosure > .areal-disclosure > .areal-disclosure-trigger > svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+.areal-image-disclosure
+  > .areal-disclosure
+  > .areal-disclosure-trigger
+  > .areal-disclosure-indicator
+  > svg {
+  width: 14px;
+  height: 14px;
+}
+.areal-image-disclosure
+  > .areal-disclosure
+  > .areal-disclosure-trigger
+  > .areal-disclosure-indicator {
+  display: inline-flex;
+  opacity: 0;
+}
+.areal-image-disclosure
+  > .areal-disclosure
+  > .areal-disclosure-trigger:is(:hover, :focus-visible, [aria-expanded="true"])
+  > .areal-disclosure-indicator {
+  opacity: 1;
+}
+.areal-image-content {
+  max-width: 260px;
+  padding-block: var(--spacing-inline);
+  overflow-wrap: anywhere;
+}
+.areal-image-content img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+.areal-image-feedback {
+  font-size: var(--text-content-caption);
+  line-height: 1.6;
+  color: var(--color-foreground-subtle);
+  margin-block: var(--spacing-inline);
+}

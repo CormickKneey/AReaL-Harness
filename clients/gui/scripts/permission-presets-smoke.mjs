@@ -1,3 +1,4 @@
+import { makeTempDir } from "./support/temp.mjs";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
@@ -35,7 +36,7 @@ const sha = (value) => createHash("sha256").update(value).digest("hex");
 const evidenceRoot = join(root, ".scratch/permission-presets-gui");
 await mkdir(evidenceRoot, { recursive: true });
 const evidence = await mkdtemp(join(evidenceRoot, "run-"));
-const stateRoot = await mkdtemp("/private/tmp/app-");
+const stateRoot = await makeTempDir("app-");
 const owner = randomUUID();
 await writeFile(join(stateRoot, ".owner"), owner);
 const workspace = join(stateRoot, "workspace");
@@ -417,7 +418,7 @@ async function closeOwned() {
   }
   try {
     await assertApplicationStopped(binary, env, metadata);
-  } catch (error) {
+  } catch {
     assert.ok(metadata, "cleanup can only target this run's service metadata");
     const connection = new ServiceConnection();
     try {

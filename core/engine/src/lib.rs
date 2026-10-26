@@ -642,6 +642,14 @@ impl Engine {
             permissions::ProjectGrants::default()
         };
         let task_modes = task_mode::Tasks::open(root, &store)?;
+        for cell in threads.values() {
+            let state = cell.state.try_lock().expect("unpublished Thread state");
+            task_modes.directory.publish_thread(
+                &state.thread.id,
+                task_mode::directory::thread_attention(&state.thread)?,
+                false,
+            );
+        }
         Ok(Arc::new(Self {
             permissions: permissions::Permissions {
                 config: Default::default(),
@@ -803,6 +811,7 @@ impl Engine {
     async fn persist(&self, thread: &Thread) -> Result<()> {
         // 同一份编码同时用于容量检查与原子落盘，避免重复序列化及深拷贝。
         let started = std::time::Instant::now();
+        let attention = task_mode::directory::thread_attention(thread)?;
         let bytes = store::encode(thread).map_err(|e| Error::Storage(e.to_string()))?;
         tracing::debug!(target: "areal::persistence", thread_id = %thread.id, bytes = bytes.len(),
             serialize_ms = started.elapsed().as_secs_f64() * 1000.0, "thread encoded");
@@ -828,7 +837,11 @@ impl Engine {
             .save_encoded(&thread.id, bytes)
             .instrument(info_span!("persist_thread", areal.thread.id = %thread.id))
             .await
-            .map_err(|e| Error::Storage(e.to_string()))
+            .map_err(|e| Error::Storage(e.to_string()))?;
+        self.task_modes
+            .directory
+            .publish_thread(&thread.id, attention, true);
+        Ok(())
     }
 
     // 磁盘写入一旦开始就由 Core 持有。丢弃 API future 只丢弃响应等待，

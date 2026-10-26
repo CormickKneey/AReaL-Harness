@@ -1,6 +1,7 @@
+import { makeTempDir } from "./support/temp.mjs";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { mkdtemp, mkdir, readFile, writeFile, symlink } from "node:fs/promises";
+import { mkdir, readFile, writeFile, symlink } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,17 +11,21 @@ const gui = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(join(gui, "app/package.json"));
 const { ScopedResources } = require("../app/src/core/scoped-resources.cjs");
 const { executeCore } = require("../app/src/core/core-process.cjs");
+const { BUILTIN_SKILL_ID } = require("../app/src/core/builtin-skills.cjs");
 const WebSocket = require("ws");
 assert.ok(process.env.AREAL_CORE_BIN, "Set AREAL_CORE_BIN to the built Core under test");
 const binary = resolve(process.env.AREAL_CORE_BIN);
 const coreSha256 = createHash("sha256")
   .update(await readFile(binary))
   .digest("hex");
-const scratch = await mkdtemp("/private/tmp/areal-skill-capacity-");
+const scratch = await makeTempDir("areal-skill-capacity-");
 const checks = [];
 const running = new Set();
 const config = join(scratch, "config.toml");
-await writeFile(config, "schema_version=1\n");
+await writeFile(
+  config,
+  'schema_version=1\n[model]\nprovider="fixture"\nname="fixture"\n[model.providers.fixture]\nprotocol="chat-completions"\nendpoint="http://127.0.0.1:9/v1/chat/completions"\n',
+);
 const environment = {
   ...process.env,
   HOME: join(scratch, "process-home"),
@@ -128,18 +133,24 @@ try {
   const previous = await history.resources.deployment(history.project);
   let service = await start(history, previous);
   const oldThread = await create(service, previous);
-  const oldSkills = await list(service, oldThread);
+  const oldCatalog = await list(service, oldThread);
+  assert.equal(oldCatalog.length, 8);
+  assert.ok(oldCatalog.some((skill) => skill.id === BUILTIN_SKILL_ID));
+  const oldSkills = oldCatalog.filter((skill) => skill.id !== BUILTIN_SKILL_ID);
   assert.equal(oldSkills.length, 7);
   await stop(service);
   history.resources.value.skills.user = Object.fromEntries(oldSkills.map((s) => [s.id, false]));
   for (let i = 0; i < 151; i++) await skill(history.root, `current-${String(i).padStart(3, "0")}`);
   const current = await history.resources.deployment(history.project);
   const catalog = JSON.parse(await readFile(current.path, "utf8"));
-  assert.equal(catalog.skills.length, 158);
-  assert.equal(catalog.profiles.at(-1).skills.length, 151);
+  assert.equal(catalog.skills.length, 159);
+  assert.equal(catalog.profiles.at(-1).skills.length, 152);
   service = await start(history, current);
   const thread = await create(service, current);
-  const currentSkills = await list(service, thread);
+  const currentCatalog = await list(service, thread);
+  assert.equal(currentCatalog.length, 152);
+  assert.ok(currentCatalog.some((skill) => skill.id === BUILTIN_SKILL_ID));
+  const currentSkills = currentCatalog.filter((skill) => skill.id !== BUILTIN_SKILL_ID);
   assert.equal(currentSkills.length, 151);
   assert.equal(currentSkills[0].id, "current-000");
   assert.equal(currentSkills.at(-1).id, "current-150");
@@ -151,7 +162,7 @@ try {
   );
   assert.deepEqual(
     (await list(service, oldThread)).map((s) => s.id),
-    oldSkills.map((s) => s.id),
+    oldCatalog.map((s) => s.id),
   );
   assert.equal(
     (await read(service, oldThread, oldSkills[0])).text.endsWith("Instructions for old-0.\n"),
@@ -187,20 +198,24 @@ try {
   );
 
   const capacity = await fixture("capacity");
-  for (let i = 0; i < 512; i++)
+  // The mandatory built-in skill occupies one of the 512 registered slots.
+  for (let i = 0; i < 511; i++)
     await skill(i < 256 ? capacity.userHome : capacity.root, `skill-${String(i).padStart(3, "0")}`);
   const full = await capacity.resources.deployment(capacity.project);
   service = await start(capacity, full);
   const fullThread = await create(service, full);
   const fullSkills = await list(service, fullThread);
   assert.equal(fullSkills.length, 512);
-  assert.equal(fullSkills[0].id, "skill-000");
-  assert.equal(fullSkills[511].id, "skill-511");
-  for (const index of [0, 511])
+  assert.ok(fullSkills.some((skill) => skill.id === BUILTIN_SKILL_ID));
+  for (const index of [0, 510])
     assert.equal(
-      (await read(service, fullThread, fullSkills[index])).text.endsWith(
-        `Instructions for skill-${String(index).padStart(3, "0")}.\n`,
-      ),
+      (
+        await read(
+          service,
+          fullThread,
+          fullSkills.find((skill) => skill.id === `skill-${String(index).padStart(3, "0")}`),
+        )
+      ).text.endsWith(`Instructions for skill-${String(index).padStart(3, "0")}.\n`),
       true,
     );
   await stop(service);
@@ -278,7 +293,7 @@ try {
   };
   await writeFile(join(scratch, "manifest.json"), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report));
-  for (const result of cleanup) if (result.status === "rejected") throw result.reason;
+  for (const result of cleanup) assert.ifError(result.status === "rejected" ? result.reason : null);
   assert.equal(finalCoreSha256, coreSha256, "Core binary remains unchanged during acceptance");
   assert.deepEqual(activeServices, [], "No active service remains in the isolated registry");
   assert.deepEqual(livePids, [], "All observed Core and service host processes have exited");

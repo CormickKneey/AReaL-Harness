@@ -90,8 +90,74 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-function backendFixture() {
-  const backend = new CoreBackend({ binary: process.execPath, home: tmpdir() });
+test("capture restart fences configuration changes during original Host cleanup", async () => {
+  for (const scenario of ["changed", "unchanged", "ordinary", "cleanup-incomplete"]) {
+    const stopped = deferred();
+    const calls = [];
+    const project = { id: "project", service: { serviceId: "service", generation: "original" } };
+    let current = "capture-revision";
+    const backend = {
+      lifecycleOperations: {
+        generation: "desktop",
+        assertProject: (id) => assert.equal(id, project.id),
+        request: async (request) => {
+          assert.equal(request.kind, "updateProject");
+          assert.equal(request.mode, "ifIdle");
+          assert.deepEqual(request.expectedTargets, [
+            { projectId: project.id, serviceId: "service", generation: "original" },
+          ]);
+          calls.push("stop");
+          await stopped.promise;
+          return { phase: scenario === "cleanup-incomplete" ? "acceptedPending" : "completed" };
+        },
+      },
+      providers: {
+        config: {
+          current: async () => {
+            calls.push("read");
+            return { revision: current };
+          },
+        },
+      },
+      launch: async () => calls.push("launch"),
+      connect: async () => calls.push("connect"),
+      reconcile: async () => calls.push("reconcile"),
+      resources: { worktrees: { apply: async () => calls.push("worktree") } },
+    };
+    const restarting = CoreBackend.prototype.restartProject.call(
+      backend,
+      project,
+      scenario === "ordinary" ? undefined : { expectedRevision: current },
+    );
+    assert.deepEqual(calls, ["stop"]);
+    if (scenario === "changed" || scenario === "ordinary") current = "unrelated-model-edit";
+    stopped.resolve();
+    if (scenario === "changed") {
+      await assert.rejects(restarting, /配置已有其它变化/);
+      assert.deepEqual(calls, ["stop", "read"]);
+      continue;
+    }
+    if (scenario === "cleanup-incomplete") {
+      await assert.rejects(restarting, { code: "LIFECYCLE_INCOMPLETE" });
+      assert.deepEqual(calls, ["stop"]);
+      continue;
+    }
+    await restarting;
+    assert.deepEqual(calls, [
+      "stop",
+      ...(scenario === "unchanged" ? ["read"] : []),
+      "launch",
+      "connect",
+      "reconcile",
+      "worktree",
+    ]);
+  }
+});
+
+async function backendFixture(t) {
+  const home = await mkdtemp(join(tmpdir(), "areal-trajectory-backend-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const backend = new CoreBackend({ binary: process.execPath, home });
   backend.saved = [];
   return backend;
 }
@@ -100,13 +166,13 @@ test(
   "pending background status does not block a real provider apply or count as work",
   { timeout: 5000 },
   async (t) => {
-    const backend = backendFixture();
+    const backend = await backendFixture(t);
     const pendingStatus = deferred(),
-      drainEntered = deferred(),
-      releaseDrain = deferred();
+      applyEntered = deferred(),
+      releaseApply = deferred();
     t.after(() => {
       pendingStatus.resolve(status);
-      releaseDrain.resolve();
+      releaseApply.resolve();
     });
     let reads = 0,
       statusSettled = false;
@@ -116,28 +182,61 @@ test(
       return ++reads === 1 ? pendingStatus.promise : Promise.resolve(status);
     };
     const stages = [];
+    const proof = {
+      serviceId: "service-project",
+      generation: "generation-project",
+      applied: { revision: "previous", sequence: 0 },
+      modelRevision: "model-previous",
+      credentialStates: {},
+    };
     const project = {
       id: "project",
       root: join(tmpdir(), "trajectory-admission-project"),
       pending: [],
       model: { state: { threads: {}, queues: {} } },
-      service: {},
+      service: { serviceId: proof.serviceId, generation: proof.generation },
       providerRevision: "previous",
       client: {
         ready: true,
+        capabilities: {
+          methods: [
+            "areal/server/modelConfiguration/read",
+            "areal/server/modelConfiguration/apply",
+          ],
+        },
         request: async (method, params) => {
           stages.push(method);
-          if (method === "areal/server/drain") {
-            assert.deepEqual(params, { strategy: "ifIdle", timeoutMs: 30000 });
-            drainEntered.resolve();
-            await releaseDrain.promise;
-          } else assert.equal(method, "areal/server/status");
-          return { restartSafe: true };
+          if (method === "areal/server/modelConfiguration/read") {
+            assert.deepEqual(params, { expectedGeneration: proof.generation });
+            return proof;
+          }
+          if (method === "areal/server/status") return { restartSafe: true };
+          if (method === "areal/model/list") return { data: [] };
+          assert.equal(method, "areal/server/modelConfiguration/apply");
+          assert.equal(typeof params.requestId, "string");
+          assert.deepEqual(params, {
+            requestId: params.requestId,
+            expectedGeneration: proof.generation,
+            expectedApplied: proof.applied,
+            targetRevision: "current",
+            credentials: {},
+          });
+          applyEntered.resolve();
+          await releaseApply.promise;
+          const result = {
+            ...proof,
+            applied: { revision: "current", sequence: 1 },
+            modelRevision: "model-current",
+          };
+          return {
+            ...result,
+            operation: { requestId: params.requestId, state: "applied", result },
+          };
         },
       },
     };
     backend.projects.set(project.id, project);
-    // 只替换 Core I/O，配置读取、准入、排空、应用结果投影仍走真实实现。
+    // 只替换 Core I/O，配置读取、准入、应用回执校验和结果投影仍走真实实现。
     backend.providers.config.execute = async (operation) => {
       assert.equal(operation, "read");
       return {
@@ -147,10 +246,8 @@ test(
         defaultModel: null,
       };
     };
-    backend.restartProject = async (value) => {
-      assert.equal(value, project);
-      stages.push("restart");
-      project.providerRevision = "current";
+    backend.restartProject = async () => {
+      throw new Error("model configuration must not restart Core");
     };
     const reading = backend.command("trajectory", { operation: "status" }).then((value) => {
       statusSettled = true;
@@ -162,9 +259,9 @@ test(
       expectedRevision: "current",
     });
     await Promise.race([
-      drainEntered.promise,
+      applyEntered.promise,
       applying.then(() => {
-        throw new Error("apply completed before drain");
+        throw new Error("apply completed before receipt");
       }),
     ]);
     assert.equal(backend.providerUpdating, true);
@@ -177,9 +274,14 @@ test(
       await assert.rejects(backend.command(name, request), /配置正在应用/);
     }
     assert.equal(backend.activeCommands, 0);
-    releaseDrain.resolve();
+    releaseApply.resolve();
     const applied = await applying;
-    assert.deepEqual(stages, ["areal/server/status", "areal/server/drain", "restart"]);
+    assert.deepEqual(stages, [
+      "areal/server/modelConfiguration/read",
+      "areal/server/status",
+      "areal/server/modelConfiguration/apply",
+      "areal/model/list",
+    ]);
     assert.equal(applied.pendingApply, false);
     assert.equal(applied.projects[0].applied, true);
     assert.equal(backend.providerUpdating, false);
@@ -192,7 +294,7 @@ test(
 
 test("read-only status keeps real validation and closing checks while retry keeps configuration gates", async (t) => {
   const { exporter } = await fixture(t);
-  const backend = backendFixture();
+  const backend = await backendFixture(t);
   backend.trajectory = exporter;
   for (const gate of ["providerUpdating", "resourcesUpdating"]) {
     backend[gate] = true;
@@ -201,10 +303,14 @@ test("read-only status keeps real validation and closing checks while retry keep
       backend.command("trajectory", { operation: "status", config: "/other.toml" }),
       { code: "INVALID_DESKTOP_REQUEST" },
     );
-    for (const operation of ["retry", "unknown"]) {
-      await assert.rejects(backend.command("trajectory", { operation }), /配置正在应用/);
-    }
-    await assert.rejects(backend.command("send", {}), /配置正在应用/);
+    await assert.rejects(backend.command("trajectory", { operation: "retry" }), /配置正在应用/);
+    await assert.rejects(backend.command("trajectory", { operation: "unknown" }), {
+      code: "INVALID_DESKTOP_REQUEST",
+    });
+    await assert.rejects(
+      backend.command("send", { projectId: "p", threadId: "t", text: "hello" }),
+      /配置正在应用/,
+    );
     assert.equal(backend.activeCommands, 0);
     backend[gate] = false;
   }
@@ -216,7 +322,7 @@ test("read-only status keeps real validation and closing checks while retry keep
   for (const [name, request] of [
     ["trajectory", { operation: "status" }],
     ["trajectory", { operation: "retry" }],
-    ["send", {}],
+    ["send", { projectId: "p", threadId: "t", text: "hello" }],
   ]) {
     await assert.rejects(backend.command(name, request), /应用正在退出/);
   }
@@ -224,8 +330,9 @@ test("read-only status keeps real validation and closing checks while retry keep
 });
 
 test("explicit retry and ordinary send still count as work and release admission on completion or failure", async (t) => {
-  const backend = backendFixture();
+  const backend = await backendFixture(t);
   const retry = deferred(),
+    retryEntered = deferred(),
     submitted = deferred(),
     releaseSend = deferred();
   t.after(() => {
@@ -234,12 +341,22 @@ test("explicit retry and ordinary send still count as work and release admission
   });
   backend.trajectory.command = (request) => {
     validateCommand("trajectory", request);
-    return request.operation === "retry" ? retry.promise : Promise.resolve(status);
+    if (request.operation === "retry") {
+      retryEntered.resolve();
+      return retry.promise;
+    }
+    return Promise.resolve(status);
   };
   const retrying = backend.command("trajectory", { operation: "retry" });
+  await Promise.race([
+    retryEntered.promise,
+    retrying.then(() => {
+      throw new Error("retry completed before admission");
+    }),
+  ]);
   assert.equal(backend.activeCommands, 1);
   await assert.rejects(
-    backend.command("providers", { operation: "apply" }),
+    backend.command("providers", { operation: "apply", expectedRevision: "fixture" }),
     /请等待任务和操作完成/,
   );
   assert.deepEqual(await backend.command("trajectory", { operation: "status" }), status);
@@ -251,25 +368,42 @@ test("explicit retry and ordinary send still count as work and release admission
   assert.equal(backend.activeCommands, 0);
 
   const project = {
+    id: "a".repeat(24),
+    root: backend.home,
     model: { state: { threads: {} } },
-    client: { capabilities: { methods: ["areal/turn/submit"], features: { ordinaryTurnSubmit: true } } },
+    client: {
+      ready: true,
+      capabilities: { methods: ["areal/turn/submit"], features: { ordinaryTurnSubmit: true } },
+      request: async (method, params) => {
+        if (method === "thread/read") {
+          assert.deepEqual(params, { threadId: "thread", includeTurns: false });
+          return { thread: { id: "thread", sessionId: "thread" } };
+        }
+        assert.equal(method, "areal/task/list");
+        assert.deepEqual(params, { limit: 100 });
+        return { data: [], nextCursor: null };
+      },
+    },
     configurations: { thread: { revision: 0 } },
   };
   backend.start = async (id) => {
-    assert.equal(id, "project");
+    assert.equal(id, project.id);
     return project;
   };
   backend.submit = async (value, method, params) => {
     assert.equal(value, project);
     assert.equal(method, "areal/turn/submit");
-    assert.deepEqual(params, { threadId: "thread", expectedConfigRevision: 0,
-      intent: { type: "message", input: [{ type: "text", text: "fixture" }] } });
+    assert.deepEqual(params, {
+      threadId: "thread",
+      expectedConfigRevision: 0,
+      intent: { type: "message", input: [{ type: "text", text: "fixture" }] },
+    });
     submitted.resolve();
     await releaseSend.promise;
     return { turn: { id: "turn" } };
   };
   const sending = backend.command("send", {
-    projectId: "project",
+    projectId: project.id,
     threadId: "thread",
     text: "fixture",
   });
@@ -281,7 +415,7 @@ test("explicit retry and ordinary send still count as work and release admission
   ]);
   assert.equal(backend.activeCommands, 1);
   await assert.rejects(
-    backend.command("providers", { operation: "apply" }),
+    backend.command("providers", { operation: "apply", expectedRevision: "fixture" }),
     /请等待任务和操作完成/,
   );
   releaseSend.resolve();

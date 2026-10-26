@@ -1,8 +1,9 @@
+import { makeTempDir } from "./support/temp.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { createServer } from "node:http";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,7 +13,7 @@ const gui = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const require = createRequire(join(gui, "app/package.json"));
 const { CoreBackend } = require("../app/src/core/backend.cjs");
 const { executeCore } = require("../app/src/core/core-process.cjs");
-const root = await mkdtemp("/private/tmp/areal-trajectory-native-");
+const root = await makeTempDir("areal-trajectory-native-");
 const evidence = process.env.AREAL_TRAJECTORY_NATIVE_OUTPUT || root;
 await mkdir(evidence, { recursive: true });
 const binary = process.env.AREAL_CORE_BIN || resolve(gui, "../../target/debug/areal");
@@ -22,6 +23,7 @@ const binarySHA256 = createHash("sha256")
 const config = join(root, "config.toml");
 const checks = [],
   errors = [],
+  diagnostics = [],
   bodies = [],
   queries = [];
 let backend,
@@ -207,6 +209,50 @@ try {
   passed = true;
 } catch (error) {
   errors.push(error.stack);
+  if (backend) {
+    // 只保存配置版本、生命周期和已脱敏错误，不复制凭据或完整供应商配置。
+    for (const value of backend.projects.values()) {
+      const pending = backend.providers.pendingApplications.get(value.id);
+      const proof = await value.client
+        ?.request("areal/server/modelConfiguration/read", {
+          expectedGeneration: value.service?.generation,
+          ...(pending ? { requestId: pending.requestId } : {}),
+        })
+        .catch((failure) => ({ error: backend.providers.redact(failure.message) }));
+      diagnostics.push({
+        projectId: value.id,
+        providerRevision: value.providerRevision,
+        providerError: backend.providers.redact(value.providerError ?? ""),
+        application: backend.providers.applicationState(value),
+        pending: pending
+          ? {
+              requestId: pending.requestId,
+              targetRevision: pending.targetRevision,
+              expectedApplied: pending.expectedApplied,
+            }
+          : null,
+        proof: proof
+          ? {
+              applied: proof.applied,
+              modelRevision: proof.modelRevision,
+              operation: proof.operation
+                ? {
+                    requestId: proof.operation.requestId,
+                    state: proof.operation.state,
+                    error: proof.operation.error
+                      ? {
+                          code: proof.operation.error.code,
+                          message: backend.providers.redact(proof.operation.error.message),
+                        }
+                      : null,
+                  }
+                : null,
+              error: proof.error,
+            }
+          : null,
+      });
+    }
+  }
   process.exitCode = 1;
 } finally {
   release?.();
@@ -233,6 +279,7 @@ try {
     passed,
     checks,
     errors,
+    diagnostics,
     binarySHA256,
     root,
     scope:

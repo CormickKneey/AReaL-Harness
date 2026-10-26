@@ -3,7 +3,7 @@ id: side-pane-frame
 title: SidePaneFrame
 summary: 面板框架、标题区、内容与辅助资源区。
 status: experimental
-entry: wip
+entry: experimental
 layer: workbench
 category: composition
 aliases: ["面板框架、标题区、内容与辅助资源区"]
@@ -23,23 +23,23 @@ Frame、Header、Layout、Content、Auxiliary与Retained组合真实DOM；不引
 
 ## 状态
 
-默认、内容增长、聚焦、不可用，以及宿主提供的忙碌/失败/未确认；同一对象保留原身份与阅读状态。
+引用 [R-UI-COMMON-009](../../../README.md#共同合同)。
 
 ## 行为
 
-保留原实现、原生语义和交互动线。只读取props与浏览器布局，不请求Core，不访问保存配置。
+引用 [R-UI-COMMON-010](../../../README.md#共同合同)。
 
 ## 内容
 
-名称、标签、说明与结果由宿主投影；不能由视觉状态推断实际操作已完成。
+引用 [R-UI-COMMON-011](../../../README.md#共同合同)。
 
 ## 可访问性
 
-保留ref、aria、键盘、焦点及减少动态效果。字号增长与窄容器下动作仍须可达。
+引用 [R-UI-COMMON-012](../../../README.md#共同合同)。
 
 ## 规则
 
-原renderer路径保留翻译、偏好和业务适配；包只拥有UI。实验导出不代表稳定API、完整产品能力或安装包通过。
+引用 [R-UI-COMMON-013](../../../README.md#共同合同)。
 
 ## 示例
 

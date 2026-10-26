@@ -6,7 +6,7 @@ PREFIX ?= /usr/local
 DESTDIR ?=
 
 ARGS ?=
-CI_BASE ?= main
+CI_BASE ?=
 PYTHON_SOURCES := scripts tests
 WORKGROUP_ENV = AREAL_WORKGROUP_RUNTIME="$(CURDIR)/target/debug/areal-runtime" AREAL_WORKGROUP_HELPER="$(CURDIR)/target/debug/areal-runtime-fs"
 
@@ -20,7 +20,8 @@ endif
 	capacity capacity-primitives capacity-core perf runtime test-runtime runtime-smoke verify-runtime \
 	cordis-pin update-cordis sdk-test harness harness-smoke verify-harness \
 	setup setup-node sdk-build script-test launcher-test workgroup-smoke unified-execution-smoke delegation-permissions-smoke capacity-workgroup local-service-smoke upgrade-smoke tui-upgrade-smoke \
-	verify-native integration-boundaries ci-preflight
+	verify-native integration-boundaries ci-preflight ci-gui-static ci-gui-health \
+	ci-gui-portable ci-core-contracts workflow-lint hooks-install
 
 help: ## 显示常用操作（默认目标）
 	@printf '%s\n' '用法：make <target> [ARGS="..."]' ''
@@ -108,17 +109,71 @@ verify: ## 常规验收：格式、静态检查、Rust/SDK/Python 测试与 TUI 
 	$(MAKE) test
 	$(MAKE) launcher-test smoke
 
-ci-preflight: fmt-check ## 推送前快速检查；CI_BASE 指定 PR 目标分支，不替代原生与完整 CI
-	git merge-base "$(CI_BASE)" HEAD
-	$(MAKE) lint
-	python3 scripts/check-docs.py
-	python3 -m unittest scripts.tests.test_ci_contracts
-	pnpm --dir clients/gui typecheck
-	AREAL_DESIGN_BASE="$$(git merge-base "$(CI_BASE)" HEAD)" pnpm --dir clients/gui verify:design
-	AREAL_DESIGN_BASE="$$(git merge-base "$(CI_BASE)" HEAD)" pnpm --dir clients/gui run verify
+workflow-lint: ## 校验 GitHub Actions workflow
+	python3 scripts/check-workflows.py
+
+hooks-install: ## 显式安装仓库的推送前门禁
+	python3 scripts/git-hooks.py install --base "$(CI_BASE)"
+
+ci-gui-static: ## GUI 可移植静态检查；CI_BASE 必须为实际比较引用
+	@set -eu; \
+	test -n "$(CI_BASE)" || { echo 'CI_BASE is required' >&2; exit 1; }; \
+	base="$$(git merge-base "$(CI_BASE)" HEAD)"; \
+	export AREAL_DESIGN_BASE="$$base"; \
+	pnpm --dir clients/gui build:desktop; \
+	pnpm --dir clients/gui --filter @areal/ui build; \
+	pnpm --dir clients/gui check; \
+	pnpm --dir clients/gui verify:design; \
+	pnpm --dir clients/gui typecheck; \
+	pnpm --dir clients/gui run verify; \
 	pnpm --dir clients/gui test:regressions
-	pnpm --dir clients/gui test:browser-contracts
-	pnpm --dir clients/gui audit
+
+ci-gui-health: ## 无依赖安装的 GUI 健康合同与基线检查
+	@set -eu; \
+	test -n "$(CI_BASE)" || { echo 'CI_BASE is required' >&2; exit 1; }; \
+	base="$$(git merge-base "$(CI_BASE)" HEAD)"; \
+	unset AREAL_DESIGN_BASE; \
+	mkdir -p target/ci/gui; \
+	node --test clients/gui/scripts/gui-health.test.mjs clients/gui/scripts/design-system-maturity.test.mjs; \
+	if git cat-file -e "$$base:clients/gui/health-baseline.json" 2>/dev/null; then \
+		node clients/gui/scripts/gui-health.mjs --check --base="$$base"; \
+	else \
+		node clients/gui/scripts/gui-health.mjs --check; \
+	fi; \
+	node clients/gui/scripts/gui-health.mjs > target/ci/gui/health.json
+
+ci-gui-portable: ## 独立构建输入并运行不依赖 Core 的 portable 合同
+	pnpm --dir clients/gui build:desktop
+	pnpm --dir clients/gui --filter @areal/ui build
+	pnpm --dir clients/gui --filter @areal/gui-renderer build
+	cd clients/gui && node scripts/test-manifest.mjs
+	cd clients/gui && AREAL_CORE_BIN= node scripts/run-portable-tests.mjs
+
+ci-core-contracts: ## 必须显式提供匹配且可执行的 AREAL_CORE_BIN；不允许跳过
+	@test -n "$(AREAL_CORE_BIN)" && test -x "$(AREAL_CORE_BIN)" || { echo 'AREAL_CORE_BIN must name the matching executable' >&2; exit 1; }
+	cd clients/gui && AREAL_CORE_BIN="$(AREAL_CORE_BIN)" node scripts/run-portable-tests.mjs --core-contracts
+
+ci-preflight: ## 推送前门禁；显式 CI_BASE，包含本机 Core 合同，不替代完整 CI
+	@set -eu; \
+	test -n "$(CI_BASE)" || { echo 'CI_BASE is required' >&2; exit 1; }; \
+	base="$$(git merge-base "$(CI_BASE)" HEAD)"; \
+	$(MAKE) fmt-check workflow-lint; \
+	$(MAKE) lint; \
+	python3 scripts/check-docs.py; \
+	python3 -m unittest scripts.tests.test_ci_contracts scripts.tests.test_git_hooks; \
+	$(MAKE) ci-gui-health ci-gui-static CI_BASE="$$base"; \
+	pnpm --dir clients/gui test:browser-contracts; \
+	pnpm --dir clients/gui audit; \
+	$(MAKE) ci-gui-portable; \
+	$(MAKE) build; \
+	core="$(if $(AREAL_CORE_BIN),$(AREAL_CORE_BIN),$(CURDIR)/target/debug/areal)"; \
+	if [ -n "$(AREAL_CORE_BIN)" ]; then \
+		test -x "$$core" || { echo 'AREAL_CORE_BIN must name the matching executable' >&2; exit 1; }; \
+		built_sha="$$(shasum -a 256 "$(CURDIR)/target/debug/areal" | cut -d ' ' -f 1)"; \
+		fixed_sha="$$(shasum -a 256 "$$core" | cut -d ' ' -f 1)"; \
+		test -n "$$built_sha" && test "$$built_sha" = "$$fixed_sha" || { echo 'AREAL_CORE_BIN SHA-256 differs from the fresh build; deploy the new artifact to the fixed path first' >&2; exit 1; }; \
+	fi; \
+	$(MAKE) ci-core-contracts AREAL_CORE_BIN="$$core"
 
 sdk-build: ## 编译两套 TypeScript SDK
 	npm --prefix runtime/sdk-typescript run build

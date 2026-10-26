@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { ActivityIcon } from "../../activity-icons.js";
 import { Disclosure } from "../../components/disclosure/disclosure.js";
 
 export type ActivityGroupProps = {
@@ -11,11 +12,28 @@ export type ActivityGroupProps = {
 };
 
 /** A reading group, not an event grouper or execution-state owner. */
-export function ActivityGroup({ label, children, icon, indicator, status, presentation }: ActivityGroupProps) {
-  return <div className="areal-activity-group" data-presentation={presentation}>
-    <Disclosure presentation={presentation} label={label} icon={icon} indicator={indicator} keepMounted>
-      <div className="areal-activity-list" role="region" aria-label="分组活动列表" tabIndex={0}>{children}</div>
-    </Disclosure>
-    {status && <div className="areal-activity-status">{status}</div>}
-  </div>;
+export function ActivityGroup({
+  label,
+  children,
+  icon,
+  indicator,
+  status,
+  presentation,
+}: ActivityGroupProps) {
+  return (
+    <div className="areal-activity-group" data-presentation={presentation}>
+      <Disclosure
+        presentation={presentation}
+        label={label}
+        icon={icon}
+        indicator={indicator ?? <ActivityIcon kind="chevron" size={14} />}
+        keepMounted
+      >
+        <div className="areal-activity-list" role="region" aria-label="分组活动列表" tabIndex={0}>
+          {children}
+        </div>
+      </Disclosure>
+      {status && <div className="areal-activity-status">{status}</div>}
+    </div>
+  );
 }

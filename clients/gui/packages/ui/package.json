@@ -10,7 +10,8 @@
     "tokens.json",
     "agent-guide.md",
     "README.md",
-    "README.en.md"
+    "README.en.md",
+    "token-reference.md"
   ],
   "exports": {
     "./content": {
@@ -24,10 +25,6 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    },
-    "./wip": {
-      "types": "./dist/wip.d.ts",
-      "default": "./dist/wip.js"
     },
     "./cn": {
       "types": "./dist/lib/utils.d.ts",
@@ -76,12 +73,20 @@
       "types": "./dist/lib/code-comment-types.d.ts",
       "default": "./dist/lib/code-comment-types.js"
     },
-    "./workbench.css": "./dist/workbench.css"
+    "./workbench.css": "./dist/workbench.css",
+    "./compositions": {
+      "types": "./dist/compositions.d.ts",
+      "default": "./dist/compositions.js"
+    },
+    "./experimental": {
+      "types": "./dist/experimental.d.ts",
+      "default": "./dist/experimental.js"
+    }
   },
   "scripts": {
-    "generate": "node scripts/foundations.mjs",
-    "build": "node scripts/foundations.mjs --check && tsc && node scripts/documents.mjs",
-    "check": "node scripts/foundations.mjs --check && node scripts/documents.mjs --check && node --test scripts/assets.test.mjs"
+    "generate": "node scripts/foundations.mjs && node scripts/token-reference.mjs --write",
+    "build": "node scripts/foundations.mjs --check && node scripts/token-reference.mjs && tsc && node scripts/documents.mjs",
+    "check": "node scripts/foundations.mjs --check && node scripts/token-reference.mjs && node scripts/documents.mjs --check && node --test scripts/assets.test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "1.8.0",
@@ -99,7 +104,8 @@
     "react-dom": "^19.2.8"
   },
   "devDependencies": {
-    "typescript": "5.9.3",
+    "@typescript/native": "npm:typescript@7.0.2",
+    "typescript": "npm:@typescript/typescript6@6.0.2",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0"
   }

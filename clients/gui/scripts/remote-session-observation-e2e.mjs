@@ -1,9 +1,10 @@
+import { makeTempDir } from "./support/temp.mjs";
 import { selectRemoteTransport, requireBrowserTransport } from "./remote-conformance-transport.mjs";
 const transport = selectRemoteTransport();
 await requireBrowserTransport(transport, "remote-session-observation-e2e");
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { mkdtemp, mkdir, readFile, writeFile, appendFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile, appendFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
@@ -37,14 +38,18 @@ const { serviceIdentity } = require("../app/src/core/service-config.cjs");
 const { RemoteControl } = require("../app/src/core/remote.cjs");
 const { createOwner } = require("../app/src/core/application-owner.cjs");
 const WebSocket = require("ws");
-const scratch = await mkdtemp("/private/tmp/areal-remote-rc04-");
+const scratch = await makeTempDir("areal-remote-rc04-");
 // Share one fixture app identity with the externally hosted DesktopService.
 const applicationOwner = createOwner(join(scratch, "electron"));
-const application = await applicationFixture(gui, join(scratch, "application"), `
+const application = await applicationFixture(
+  gui,
+  join(scratch, "application"),
+  `
 require(${JSON.stringify(join(gui, "app/src/core/application-owner.cjs"))}).createOwner = profile => {
   require('node:assert/strict').equal(require('node:fs').realpathSync(profile), ${JSON.stringify(applicationOwner.profile)});
   return ${JSON.stringify(applicationOwner)};
-};`);
+};`,
+);
 console.log(`RC04 evidence ${scratch}`);
 const workspace = join(scratch, "workspace"),
   home = join(scratch, "desktop"),
@@ -556,9 +561,12 @@ async function desktopCommand(name, params) {
 async function pairBrowser() {
   const invite = await remote.control({ operation: "pair" });
   const target = await browser.newPage();
-  await target.addInitScript(() => localStorage.setItem(
-    "areal-gui:application-preferences", JSON.stringify({ nextPromptSuggestions: false }),
-  ));
+  await target.addInitScript(() =>
+    localStorage.setItem(
+      "areal-gui:application-preferences",
+      JSON.stringify({ nextPromptSuggestions: false }),
+    ),
+  );
   target.setDefaultTimeout(15000);
   target.on("pageerror", (error) => errors.push(error.message));
   await target.goto(invite.payload);
@@ -581,26 +589,33 @@ async function pairBrowser() {
   return { page: target, peer: pending.id };
 }
 async function chooseDetail(target, threadId) {
-  if (await target.getByRole("button", {name:"返回项目列表",exact:true}).isVisible())
-    await target.getByRole("button", {name:"返回项目列表",exact:true}).click();
-  const projectButton=target.getByRole("button",{name:"workspace",exact:true});
-  if(await projectButton.getAttribute("aria-expanded")==="true")await projectButton.click();
+  if (await target.getByRole("button", { name: "返回项目列表", exact: true }).isVisible())
+    await target.getByRole("button", { name: "返回项目列表", exact: true }).click();
+  const projectButton = target.getByRole("button", { name: "workspace", exact: true });
+  if ((await projectButton.getAttribute("aria-expanded")) === "true") await projectButton.click();
   await projectButton.click();
   // Bind the real public row to Core identity; overview titles may use first-input previews.
-  const row=target.locator(`.remote-session-row[data-thread-id="${threadId}"]`);
-  await until(async()=>{
-    if(await row.isVisible())return true;
-    const more=target.getByRole("button",{name:/^(Show more|加载更多)$/});
-    if(await more.first().isVisible())await more.first().click();
+  const row = target.locator(`.remote-session-row[data-thread-id="${threadId}"]`);
+  await until(async () => {
+    if (await row.isVisible()) return true;
+    const more = target.getByRole("button", { name: /^(Show more|加载更多)$/ });
+    if (await more.first().isVisible()) await more.first().click();
     return false;
-  },"original Thread visible after project refresh");
+  }, "original Thread visible after project refresh");
   await row.click();
 }
 async function openDetail(target, threadId) {
   await chooseDetail(target, threadId);
-  await until(async()=>await target.locator('.remote-chat-heading').getAttribute('data-thread-id')===threadId && !(await target.locator('#session-error').textContent()),'Remote baseline');
+  await until(
+    async () =>
+      (await target.locator(".remote-chat-heading").getAttribute("data-thread-id")) === threadId &&
+      !(await target.locator("#session-error").textContent()),
+    "Remote baseline",
+  );
 }
-async function detailState(target) {return target.locator('.remote-chat-heading').evaluate(el=>el.dataset);}
+async function detailState(target) {
+  return target.locator(".remote-chat-heading").evaluate((el) => el.dataset);
+}
 // Electron evaluate 不提供 Node require；文件写入留在父进程，丢失诊断必须显式标记。
 async function drainNativeDiagnostics(phase) {
   if (!app || !navigationProbeStarted) return;
@@ -813,9 +828,12 @@ try {
   });
   desktop = await app.firstWindow();
   await desktop.getByTestId("areal-workbench").waitFor({ timeout: 60000 });
-  await desktop.evaluate(() => localStorage.setItem(
-    "areal-gui:application-preferences", JSON.stringify({ nextPromptSuggestions: false }),
-  ));
+  await desktop.evaluate(() =>
+    localStorage.setItem(
+      "areal-gui:application-preferences",
+      JSON.stringify({ nextPromptSuggestions: false }),
+    ),
+  );
   await desktop.reload();
   desktop.setDefaultTimeout(15000);
   await desktop.getByTestId("areal-workbench").waitFor({ timeout: 60000 });
@@ -843,11 +861,16 @@ try {
     project.endpoint = proxy.endpoint;
     await openDetail(page, baselineId);
     assert.match(await page.locator("#remote-session-ui .messages").textContent(), /RC04_RESULT/);
-    assert.equal((await detailState(page)).configRevision,"1");
-    assert.equal((await detailState(page)).ownership,"ordinary");
+    assert.equal((await detailState(page)).configRevision, "1");
+    assert.equal((await detailState(page)).ownership, "ordinary");
     const native = await readThread(baselineId);
     const nativeItemIds = native.turns.flatMap((turn) =>
-      turn.items.filter((item) => item.type === "userMessage" || item.type === "agentMessage" && item.text?.trim()).map((item) => item.id),
+      turn.items
+        .filter(
+          (item) =>
+            item.type === "userMessage" || (item.type === "agentMessage" && item.text?.trim()),
+        )
+        .map((item) => item.id),
     );
     assert.deepEqual(
       await page
@@ -869,7 +892,7 @@ try {
       options: { appendInstructions: "RC04 config revision" },
     });
     await until(
-      async () => (await detailState(page)).configRevision==="2",
+      async () => (await detailState(page)).configRevision === "2",
       "native configuration revision event",
     );
     checks.push(
@@ -912,7 +935,9 @@ try {
       expectedRevision: queue.revision,
     });
     await until(
-      async () => (await detailState(page)).queueCount==="1" && (await detailState(page)).queuePaused==="true",
+      async () =>
+        (await detailState(page)).queueCount === "1" &&
+        (await detailState(page)).queuePaused === "true",
       "native queue count and pause projected",
     );
     const beforeGap = recordedBaseline.subscriptionId;
@@ -997,12 +1022,11 @@ try {
     }, "queued TaskRun behind ordinary active Turn");
     await openDetail(page, (await detailState(page)).threadId);
     await until(
-      async () => (await detailState(page)).taskId===task.id,
+      async () => (await detailState(page)).taskId === task.id,
       "live Core ownership replaces shared baseline",
     );
     await until(
-      async () =>
-        (await detailState(peerTwo.page)).taskId===task.id,
+      async () => (await detailState(peerTwo.page)).taskId === task.id,
       "other viewer receives rebaseline ownership",
     );
     await writer.request("areal/task/cancel", {
@@ -1020,7 +1044,7 @@ try {
     }, "cancelled queued Run settled");
     await openDetail(page, (await detailState(page)).threadId);
     await until(
-      async () => (await detailState(page)).ownership==="ordinary",
+      async () => (await detailState(page)).ownership === "ordinary",
       "cancelled queued task releases ordinary Thread rights",
     );
     finish(streams.get("RC04_STREAM_OWNERSHIP"), "OWNERSHIP_DONE");
@@ -1107,14 +1131,21 @@ try {
     finish(streams.get("RC04_STREAM_SLOW"), "SLOW_DONE");
     await settled(slowId);
     await until(
-      async () => (await detailState(page)).status==="idle",
+      async () => (await detailState(page)).status === "idle",
       "normal device still observes completion",
     );
     assert.equal(await page.locator("#session-error").textContent(), "");
     assert.equal(project.client.ready, true);
-    const originalSlowText=(await readThread(slowId)).turns.at(-1).items.findLast(item=>item.type==="agentMessage").text;
-    assert.equal(originalSlowText,"BEGIN|" + "界".repeat(340) + "x".repeat(sent) + "SLOW_DONE");
-    await until(async()=>await page.locator(".assistant-message .conversation-markdown").last().textContent()===originalSlowText,"full body preserves every original Unicode character and later delta");
+    const originalSlowText = (await readThread(slowId)).turns
+      .at(-1)
+      .items.findLast((item) => item.type === "agentMessage").text;
+    assert.equal(originalSlowText, "BEGIN|" + "界".repeat(340) + "x".repeat(sent) + "SLOW_DONE");
+    await until(
+      async () =>
+        (await page.locator(".assistant-message .conversation-markdown").last().textContent()) ===
+        originalSlowText,
+      "full body preserves every original Unicode character and later delta",
+    );
     slowSocket._socket.resume();
     slowSocket.terminate();
     faults.push({
@@ -1140,11 +1171,18 @@ try {
     await page.getByRole("button", { name: "更早历史", exact: true }).click();
     await until(
       async () =>
-        (await page.locator("#remote-session-ui .messages").textContent()).includes("RC04_HISTORY_0_"),
+        (await page.locator("#remote-session-ui .messages").textContent()).includes(
+          "RC04_HISTORY_0_",
+        ),
       "earlier native history",
     );
     assert.equal(await page.locator("[data-side-item-id]").count(), 10);
-    await until(async()=>await page.locator(".user-message .user-bubble").first().textContent()==="RC04_HISTORY_0_" + "界".repeat(1000),"complete earlier original body");
+    await until(
+      async () =>
+        (await page.locator(".user-message .user-bubble").first().textContent()) ===
+        "RC04_HISTORY_0_" + "界".repeat(1000),
+      "complete earlier original body",
+    );
     const preview = await page.locator(".user-message .user-bubble").first().textContent();
     assert.equal(preview.includes("\uFFFD"), false);
     checks.push(
@@ -1321,12 +1359,16 @@ try {
           item: structuredClone(params.item),
         });
     });
-    await desktopCommand("send", {projectId,threadId:browserThread.threadId,text:"Observe the current native page"});
+    await desktopCommand("send", {
+      projectId,
+      threadId: browserThread.threadId,
+      text: "Observe the current native page",
+    });
     // Each approval binds a distinct native call. Wait for the prepared observe
     // card so a second click cannot target the previous describe request.
-    await desktop.getByRole("button",{name:"允许一次",exact:true}).click();
-    await desktop.getByText("操作：observe",{exact:true}).waitFor();
-    await desktop.getByRole("button",{name:"允许一次",exact:true}).click();
+    await desktop.getByRole("button", { name: "允许一次", exact: true }).click();
+    await desktop.getByText("操作：observe", { exact: true }).waitFor();
+    await desktop.getByRole("button", { name: "允许一次", exact: true }).click();
     const claim = await until(async () => {
       const state = await previewState();
       return state.browser?.control === "agent" ? state : null;
@@ -1467,14 +1509,19 @@ try {
       threadId: browserThread.threadId,
       text: "Observe the same native page again",
     });
-    await desktop.getByRole("button",{name:"允许一次",exact:true}).click();
-    await desktop.getByText("操作：observe",{exact:true}).waitFor();
-    await desktop.getByRole("button",{name:"允许一次",exact:true}).click();
+    await desktop.getByRole("button", { name: "允许一次", exact: true }).click();
+    await desktop.getByText("操作：observe", { exact: true }).waitFor();
+    await desktop.getByRole("button", { name: "允许一次", exact: true }).click();
     const nextObservation = await until(
       () =>
         nativeFacts.observations
           .slice(observationCount)
-          .find((value) => value.request.phase === "execute" && !previousTurns.has(value.request.turnId) && value.response),
+          .find(
+            (value) =>
+              value.request.phase === "execute" &&
+              !previousTurns.has(value.request.turnId) &&
+              value.response,
+          ),
       "new original Turn native observe",
       60000,
     );
@@ -1605,9 +1652,12 @@ try {
   secureOutputs.get(paired.peer).send(preRestartEvent);
   await new Promise((resolve) => setTimeout(resolve, 250));
   assert.match(await page.locator("#session-attention").textContent(), /executionUnknown/);
-  assert.equal((await detailState(page)).threadId,unknownId);
+  assert.equal((await detailState(page)).threadId, unknownId);
   assert.equal(await page.locator(`[data-side-item-id="${inFlight.item.id}"]`).count(), 1);
-  assert.match(await page.locator(`[data-side-item-id="${inFlight.item.id}"]`).textContent(), /UNKNOWN/i);
+  assert.match(
+    await page.locator(`[data-side-item-id="${inFlight.item.id}"]`).textContent(),
+    /UNKNOWN/i,
+  );
   await assertUnknown("afterStaleEvent");
   phase("after-stale-oracle-passed");
   faults.push({

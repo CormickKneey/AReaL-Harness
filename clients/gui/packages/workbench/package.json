@@ -9,6 +9,14 @@
       "import": "./client/desktop-contract.js",
       "require": "./client/desktop-contract.cjs"
     },
+    "./desktop-contract/transport": {
+      "types": "./client/desktop-contract/transport.cjs",
+      "default": "./client/desktop-contract/transport.cjs"
+    },
+    "./desktop-contract/mcp-page": {
+      "types": "./client/desktop-contract/mcp-page.cjs",
+      "default": "./client/desktop-contract/mcp-page.cjs"
+    },
     "./model-selection": {
       "import": "./client/model-selection.js",
       "require": "./client/model-selection.cjs"
@@ -18,6 +26,81 @@
       "require": "./client/state-projection.cjs"
     },
     "./core-model": "./client/core-model.js",
-    "./core-panels": "./client/core-panels.js"
+    "./core-panels": "./client/core-panels.js",
+    "./core-model-contract": {
+      "types": "./client/core-model-contract.js",
+      "default": "./client/core-model-contract.js"
+    },
+    "./desktop-contract/shared": {
+      "types": "./client/desktop-contract/shared.cjs",
+      "default": "./client/desktop-contract/shared.cjs"
+    },
+    "./desktop-contract/conversation-history": {
+      "types": "./client/desktop-contract/conversation-history.cjs",
+      "default": "./client/desktop-contract/conversation-history.cjs"
+    },
+    "./desktop-contract/conversation": {
+      "types": "./client/desktop-contract/conversation.cjs",
+      "default": "./client/desktop-contract/conversation.cjs"
+    },
+    "./desktop-contract/desktop-control": {
+      "types": "./client/desktop-contract/desktop-control.cjs",
+      "default": "./client/desktop-contract/desktop-control.cjs"
+    },
+    "./desktop-contract/provider": {
+      "types": "./client/desktop-contract/provider.cjs",
+      "default": "./client/desktop-contract/provider.cjs"
+    },
+    "./desktop-contract/resource": {
+      "types": "./client/desktop-contract/resource.cjs",
+      "default": "./client/desktop-contract/resource.cjs"
+    },
+    "./desktop-contract/catalog": {
+      "types": "./client/desktop-contract/catalog.cjs",
+      "default": "./client/desktop-contract/catalog.cjs"
+    },
+    "./desktop-contract/feedback": {
+      "types": "./client/desktop-contract/feedback.cjs",
+      "default": "./client/desktop-contract/feedback.cjs"
+    },
+    "./desktop-contract/trajectory": {
+      "types": "./client/desktop-contract/trajectory.cjs",
+      "default": "./client/desktop-contract/trajectory.cjs"
+    },
+    "./desktop-contract/management-tasks": {
+      "types": "./client/desktop-contract/management-tasks.cjs",
+      "default": "./client/desktop-contract/management-tasks.cjs"
+    },
+    "./desktop-contract/workspace-worktrees": {
+      "types": "./client/desktop-contract/workspace-worktrees.cjs",
+      "default": "./client/desktop-contract/workspace-worktrees.cjs"
+    },
+    "./desktop-contract/library-media": {
+      "types": "./client/desktop-contract/library-media.cjs",
+      "default": "./client/desktop-contract/library-media.cjs"
+    },
+    "./desktop-contract/management": {
+      "types": "./client/desktop-contract/management.cjs",
+      "default": "./client/desktop-contract/management.cjs"
+    },
+    "./desktop-contract/workspace": {
+      "types": "./client/desktop-contract/workspace.cjs",
+      "default": "./client/desktop-contract/workspace.cjs"
+    },
+    "./desktop-contract/desktop-control-resources": {
+      "types": "./client/desktop-contract/desktop-control-resources.cjs",
+      "default": "./client/desktop-contract/desktop-control-resources.cjs"
+    },
+    "./desktop-contract/management-context": {
+      "types": "./client/desktop-contract/management-context.cjs",
+      "default": "./client/desktop-contract/management-context.cjs"
+    },
+    "./desktop-contract/management-mcp": {
+      "types": "./client/desktop-contract/management-mcp.cjs",
+      "default": "./client/desktop-contract/management-mcp.cjs"
+    }
+  },
+  "dependencies": {
+    "@modelcontextprotocol/core": "2.3.0"
   }
 }

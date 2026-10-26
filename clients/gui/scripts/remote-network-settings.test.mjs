@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { createServer } from "../renderer/node_modules/vite/dist/node/index.js";
+import { createServer } from "vite-plus";
 const require = createRequire(new URL("../renderer/package.json", import.meta.url));
 const React = require("react");
 const { renderToStaticMarkup } = require("react-dom/server");
@@ -12,30 +12,38 @@ test("Settings renders the Serve/organization consent and explicit unknown phone
   const vite = await createServer({
     root: fileURLToPath(new URL("../renderer/", import.meta.url)),
     configFile: false,
-    plugins: [{
-      name: "static-locale-preferences",
-      enforce: "pre",
-      resolveId(id, importer) {
-        if (id.endsWith("/settings/applicationPreferences.js") && importer?.endsWith("/i18n/IntlProvider.tsx"))
-          return "\0static-locale-preferences";
+    plugins: [
+      {
+        name: "static-locale-preferences",
+        enforce: "pre",
+        resolveId(id, importer) {
+          if (
+            id.endsWith("/settings/applicationPreferences.js") &&
+            importer?.endsWith("/i18n/IntlProvider.tsx")
+          )
+            return "\0static-locale-preferences";
+        },
+        load(id) {
+          if (id === "\0static-locale-preferences")
+            return 'export function useApplicationPreferences() { return { locale: "zh-CN" }; }';
+        },
       },
-      load(id) {
-        if (id === "\0static-locale-preferences")
-          return 'export function useApplicationPreferences() { return { locale: "zh-CN" }; }';
-      },
-    }],
+    ],
     resolve: { alias: { "@": fileURLToPath(new URL("../renderer/src/", import.meta.url)) } },
     optimizeDeps: { noDiscovery: true, include: [] },
     server: { middlewareMode: true, watch: null },
     appType: "custom",
-    esbuild: { jsx: "automatic" },
+    oxc: { jsx: { runtime: "automatic" } },
   });
   try {
     const { MobileSettings } = await vite.ssrLoadModule("/src/settings/MobileSettings.tsx");
     const { catalogs } = await vite.ssrLoadModule("/src/i18n/messages.ts");
     const html = renderToStaticMarkup(
-      React.createElement(IntlProvider, { locale: "zh-CN", messages: catalogs["zh-CN"] },
-        React.createElement(MobileSettings, { action: async () => ({}), projects: [] })),
+      React.createElement(
+        IntlProvider,
+        { locale: "zh-CN", messages: catalogs["zh-CN"] },
+        React.createElement(MobileSettings, { action: async () => ({}), projects: [] }),
+      ),
     );
     assert.match(html, /Tailscale Serve/);
     assert.match(html, /Tailscale Funnel · 公网/);

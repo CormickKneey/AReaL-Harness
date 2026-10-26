@@ -1,7 +1,49 @@
 import { useMemo } from "react";
-import { MarkdownTable as View, type MarkdownTableProps } from "@areal/ui/wip";
+import { MarkdownTable as View, type MarkdownTableProps } from "@areal/ui/experimental";
 import { useZCodeIntl } from "../../i18n/IntlProvider.js";
 import { toast } from "../ui/toast.js";
-export { buildMarkdownTableText, buildCsvTableText, resolveMarkdownTableStickyScrollbarMode, resolveMarkdownTableStickyScrollbarOffset, resolveMarkdownTableFrameDistances, resolveMarkdownTableVirtualScrollbarMetrics, resolveMarkdownTableVirtualScrollMax, MarkdownTableHeader, MarkdownTableBody, MarkdownTableRow, MarkdownTableHead, MarkdownTableCell } from "@areal/ui/wip";
-export type { MarkdownTableRows, MarkdownTableLabels, MarkdownTableProps, MarkdownTableHeaderProps, MarkdownTableBodyProps, MarkdownTableRowProps, MarkdownTableHeadProps, MarkdownTableCellProps } from "@areal/ui/wip";
-export function MarkdownTable(props: MarkdownTableProps) { const { intl } = useZCodeIntl(); const labels = useMemo(() => ({ copyFailed: (error: string) => intl.formatMessage({ id: "markdownTable.copyFailed" }, { error }), copySucceeded: intl.formatMessage({ id: "markdownTable.copySucceeded" }), downloadFailed: intl.formatMessage({ id: "markdownTable.downloadFailed" }), copyMarkdown: intl.formatMessage({ id: "markdownTable.copyMarkdown" }), downloadCsv: intl.formatMessage({ id: "markdownTable.downloadCsv" }), openPreview: intl.formatMessage({ id: "markdownTable.openPreview" }), collapseScrollMode: intl.formatMessage({ id: "markdownTable.collapseScrollMode" }), expandScrollMode: intl.formatMessage({ id: "markdownTable.expandScrollMode" }), previewTitle: intl.formatMessage({ id: "markdownTable.previewTitle" }), previewDescription: intl.formatMessage({ id: "markdownTable.previewDescription" }), closeDialog: intl.formatMessage({ id: "common.closeDialog" }) }), [intl]); return <View labels={labels} onNotify={toast} {...props} />; }
+export {
+  buildMarkdownTableText,
+  buildCsvTableText,
+  resolveMarkdownTableStickyScrollbarMode,
+  resolveMarkdownTableStickyScrollbarOffset,
+  resolveMarkdownTableFrameDistances,
+  resolveMarkdownTableVirtualScrollbarMetrics,
+  resolveMarkdownTableVirtualScrollMax,
+  MarkdownTableHeader,
+  MarkdownTableBody,
+  MarkdownTableRow,
+  MarkdownTableHead,
+  MarkdownTableCell,
+} from "@areal/ui/experimental";
+export type {
+  MarkdownTableRows,
+  MarkdownTableLabels,
+  MarkdownTableProps,
+  MarkdownTableHeaderProps,
+  MarkdownTableBodyProps,
+  MarkdownTableRowProps,
+  MarkdownTableHeadProps,
+  MarkdownTableCellProps,
+} from "@areal/ui/experimental";
+export function MarkdownTable(props: MarkdownTableProps) {
+  const { intl } = useZCodeIntl();
+  const labels = useMemo(
+    () => ({
+      copyFailed: (error: string) =>
+        intl.formatMessage({ id: "markdownTable.copyFailed" }, { error }),
+      copySucceeded: intl.formatMessage({ id: "markdownTable.copySucceeded" }),
+      downloadFailed: intl.formatMessage({ id: "markdownTable.downloadFailed" }),
+      copyMarkdown: intl.formatMessage({ id: "markdownTable.copyMarkdown" }),
+      downloadCsv: intl.formatMessage({ id: "markdownTable.downloadCsv" }),
+      openPreview: intl.formatMessage({ id: "markdownTable.openPreview" }),
+      collapseScrollMode: intl.formatMessage({ id: "markdownTable.collapseScrollMode" }),
+      expandScrollMode: intl.formatMessage({ id: "markdownTable.expandScrollMode" }),
+      previewTitle: intl.formatMessage({ id: "markdownTable.previewTitle" }),
+      previewDescription: intl.formatMessage({ id: "markdownTable.previewDescription" }),
+      closeDialog: intl.formatMessage({ id: "common.closeDialog" }),
+    }),
+    [intl],
+  );
+  return <View labels={labels} onNotify={toast} {...props} />;
+}

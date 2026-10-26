@@ -1,0 +1,65 @@
+[
+  {
+    "path": "clients/gui/renderer/src/CollapsibleText.md",
+    "bytes": 960,
+    "sha256": "92e8d9cee9cd80fcba0b7e928b79266c74550adc6e52ddae7ca3f9ceb91f35ef",
+    "active": true,
+    "sourceRevision": "6e06c3fbd43e1a267b1a74de713a289f45bd7674"
+  },
+  {
+    "path": "clients/gui/renderer/src/DecisionCard.md",
+    "bytes": 2275,
+    "sha256": "b5c905d9a3a447a359c9327ab06a720fe7b7e07557f0571439c476fc257b5180",
+    "active": true,
+    "sourceRevision": "6e06c3fbd43e1a267b1a74de713a289f45bd7674"
+  },
+  {
+    "path": "clients/gui/renderer/src/Messages.md",
+    "bytes": 4390,
+    "sha256": "b5fd8f545170920113a53f4af69e41cf3b6ed8e9ae92d399bdda25b636595a21",
+    "active": true,
+    "sourceRevision": "6e06c3fbd43e1a267b1a74de713a289f45bd7674"
+  },
+  {
+    "path": "clients/gui/renderer/src/components/ui/action-button.md",
+    "bytes": 1054,
+    "sha256": "c33442b08392a32bc6c8ce2d42200351035bc92d194b1b9604fefaccea928f6e",
+    "active": true,
+    "sourceRevision": "6e06c3fbd43e1a267b1a74de713a289f45bd7674"
+  },
+  {
+    "path": "clients/gui/renderer/src/components/ui/feedback.md",
+    "bytes": 1399,
+    "sha256": "80d627f2f9768e271db52eb16ea4e290eea6cc5a68080c855098cd2f23aaccb5",
+    "active": true,
+    "sourceRevision": "6e06c3fbd43e1a267b1a74de713a289f45bd7674"
+  },
+  {
+    "path": "clients/gui/renderer/src/components/ui/select.md",
+    "bytes": 1000,
+    "sha256": "377c1ad0161854d2ff6428266aeade69154eeead882f41fe1688b3ef555b2dec",
+    "active": true,
+    "sourceRevision": "6e06c3fbd43e1a267b1a74de713a289f45bd7674"
+  },
+  {
+    "path": "clients/gui/renderer/src/components/ui/switch.md",
+    "bytes": 901,
+    "sha256": "b1499482d8467dcb157aa5021d86be42e0e4e9bce1b78494ed7c4ac29ded178b",
+    "active": true,
+    "sourceRevision": "6e06c3fbd43e1a267b1a74de713a289f45bd7674"
+  },
+  {
+    "path": "clients/gui/renderer/src/settings/SettingsPageParts.md",
+    "bytes": 3353,
+    "sha256": "2bf85056ddcfc4663dc7fbb3d017c81aecfb2ad4079b39802acf10e21469cc9e",
+    "active": true,
+    "sourceRevision": "6e06c3fbd43e1a267b1a74de713a289f45bd7674"
+  },
+  {
+    "path": "clients/gui/renderer/src/settings/SettingsSearchInput.md",
+    "bytes": 1208,
+    "sha256": "54ff926e9684fe23f0297345d2a2e2aec300f71c948c2f54234ccef917dca7d5",
+    "active": true,
+    "sourceRevision": "6e06c3fbd43e1a267b1a74de713a289f45bd7674"
+  }
+]

@@ -13,17 +13,30 @@ async function fixture(t) {
   t.after(() => rm(root, { recursive: true, force: true }));
   await cp(join(gui, "design-system"), join(root, "design-system"), { recursive: true });
   const registry = JSON.parse(await readFile(join(root, "design-system/registry.json"), "utf8"));
+  const ruleRegistry = JSON.parse(await readFile(join(root, registry.ruleRegistry), "utf8"));
+  const referencedRules = new Set([
+    ...registry.patterns.flatMap((item) => item.rules ?? []),
+    ...registry.interactionFamilies.flatMap((item) => item.rules),
+    "CONV-READ-01",
+  ]);
   const sources = [
     ...registry.tokenSources,
-    ...registry.components.map(item => item.source),
-    ...registry.patterns.map(item => item.reference),
+    ...ruleRegistry.rules
+      .filter((rule) => referencedRules.has(rule.id))
+      .map((rule) => rule.owner.split("#")[0].replace(/^clients\/gui\//, "")),
+    ...registry.components.map((item) => item.source),
+    ...registry.patterns.map((item) => item.reference),
     "renderer/src/design-system/catalog.ts",
     "renderer/src/design-system/base-components.ts",
     "packages/ui/src/index.ts",
-    "packages/ui/src/wip.ts",
+    "packages/ui/src/compositions.ts",
+    "packages/ui/src/experimental.ts",
     registry.baseCandidate.snapshot.owner.split("#")[0],
-    ...registry.baseCandidate.admissions.flatMap(item => [item.contract.split("#")[0], ...item.consumers]),
-    ...registry.baseCandidate.evidence.flatMap(item => [item.checker, item.report.split("#")[0]]),
+    ...registry.baseCandidate.admissions.flatMap((item) => [
+      item.contract.split("#")[0],
+      ...item.consumers,
+    ]),
+    ...registry.baseCandidate.evidence.flatMap((item) => [item.checker, item.report.split("#")[0]]),
   ];
   for (const name of await readdir(join(root, "design-system/surfaces"))) {
     const item = JSON.parse(await readFile(join(root, "design-system/surfaces", name), "utf8"));
@@ -34,19 +47,32 @@ async function fixture(t) {
     await mkdir(dirname(join(root, source)), { recursive: true });
     await cp(join(gui, source), join(root, source));
   }
-  const pattern = registry.patterns.find(item => item.id === "P-CONVERSATION");
+  const pattern = registry.patterns.find((item) => item.id === "P-CONVERSATION");
   pattern.ruleSource = "design-system/patterns.md";
   pattern.rules = ["CONV-READ-01"];
   pattern.states = ["ready", "busy", "failed", "unknown", "reading-history"];
   const surface = {
-    schemaVersion: 1, id: "conversation-contract-check", intent: "检查对话规则引用，不验收UI",
-    pattern: "P-CONVERSATION", target: pattern.reference, runtime: "component-preview",
+    schemaVersion: 1,
+    id: "conversation-contract-check",
+    intent: "检查对话规则引用，不验收UI",
+    pattern: "P-CONVERSATION",
+    target: pattern.reference,
+    runtime: "component-preview",
     reference: { kind: "existing-code", path: "renderer/src/Messages.tsx", visualTarget: null },
     rules: ["CONV-READ-01"],
-    slots: { timeline: ["Messages", "TurnExecution", "ToolEvent"], composer: ["ConversationComposer"], context: ["ToolEvent"] },
-    states: ["ready", "busy", "failed", "unknown", "reading-history"].map(id => ({ id, condition: "固定输入", expected: "按规则核对" })),
+    slots: {
+      timeline: ["Messages", "TurnExecution", "ToolEvent"],
+      composer: ["ConversationComposer"],
+      context: ["ToolEvent"],
+    },
+    states: ["ready", "busy", "failed", "unknown", "reading-history"].map((id) => ({
+      id,
+      condition: "固定输入",
+      expected: "按规则核对",
+    })),
     conditions: { themes: ["dark"], fontSizes: [14], widthModes: ["wide"], reducedMotion: [true] },
-    invariants: ["目录检查不证明运行行为"], evidence: { status: "pending", artifacts: [], gaps: ["未运行组件"] },
+    invariants: ["目录检查不证明运行行为"],
+    evidence: { status: "pending", artifacts: [], gaps: ["未运行组件"] },
   };
   // 避免已有同模式页面因测试替换必需规则产生无关失败。
   for (const name of await readdir(join(root, "design-system/surfaces"))) {
@@ -55,94 +81,197 @@ async function fixture(t) {
   }
   const save = async () => {
     await writeFile(join(root, "design-system/registry.json"), JSON.stringify(registry));
-    await writeFile(join(root, "design-system/surfaces/conversation-contract-check.json"), JSON.stringify(surface));
+    await writeFile(
+      join(root, "design-system/surfaces/conversation-contract-check.json"),
+      JSON.stringify(surface),
+    );
   };
-  return { root, registry, pattern, surface, save };
+  return { root, registry, ruleRegistry, pattern, surface, save };
 }
 
-test("规则引用合法且旧设置合同无需补字段", async t => {
-  const f = await fixture(t); await f.save();
+test("规则引用合法且旧设置合同无需补字段", async (t) => {
+  const f = await fixture(t);
+  await f.save();
   const result = await verifyDesignCatalog({ root: f.root, write: true });
   assert.ok(result.surfaces >= 4);
 });
-test("对话合同不能遗漏模式要求的规则", async t => {
-  const f = await fixture(t); delete f.surface.rules; await f.save();
+test("对话合同不能遗漏模式要求的规则", async (t) => {
+  const f = await fixture(t);
+  delete f.surface.rules;
+  await f.save();
   await assert.rejects(verifyDesignCatalog({ root: f.root, write: true }), /rules/);
 });
-test("对话合同不能发明规则ID", async t => {
-  const f = await fixture(t); f.surface.rules.push("CONV-INVENTED-01"); await f.save();
-  await assert.rejects(verifyDesignCatalog({ root: f.root, write: true }), /unknown rule CONV-INVENTED-01/);
+test("对话合同不能发明规则ID", async (t) => {
+  const f = await fixture(t);
+  f.surface.rules.push("CONV-INVENTED-01");
+  await f.save();
+  await assert.rejects(
+    verifyDesignCatalog({ root: f.root, write: true }),
+    /unknown rule CONV-INVENTED-01/,
+  );
 });
-test("目录规则必须指向唯一定义", async t => {
-  const f = await fixture(t); f.pattern.rules = ["CONV-MISSING-01"]; f.surface.rules = ["CONV-MISSING-01"]; await f.save();
-  await assert.rejects(verifyDesignCatalog({ root: f.root, write: true }), /CONV-MISSING-01.*definition/);
+test("目录规则必须指向唯一定义", async (t) => {
+  const f = await fixture(t);
+  f.pattern.rules = ["CONV-MISSING-01"];
+  f.surface.rules = ["CONV-MISSING-01"];
+  await f.save();
+  await assert.rejects(
+    verifyDesignCatalog({ root: f.root, write: true }),
+    /CONV-MISSING-01.*definition/,
+  );
 });
-test("动态题不能遗漏历史阅读检查点", async t => {
-  const f = await fixture(t); f.surface.states = f.surface.states.filter(item => item.id !== "reading-history"); await f.save();
-  await assert.rejects(verifyDesignCatalog({ root: f.root, write: true }), /missing required state reading-history/);
+test("动态题不能遗漏历史阅读检查点", async (t) => {
+  const f = await fixture(t);
+  f.surface.states = f.surface.states.filter((item) => item.id !== "reading-history");
+  await f.save();
+  await assert.rejects(
+    verifyDesignCatalog({ root: f.root, write: true }),
+    /missing required state reading-history/,
+  );
 });
 
-test("交互分类不能引用不存在的生产所有者", async t => {
-  const f = await fixture(t); f.registry.interactionFamilies[0].components.push("InventedControl"); await f.save();
-  await assert.rejects(verifyDesignCatalog({ root: f.root, write: true }), /unknown component InventedControl/);
+test("交互分类不能引用不存在的生产所有者", async (t) => {
+  const f = await fixture(t);
+  f.registry.interactionFamilies[0].components.push("InventedControl");
+  await f.save();
+  await assert.rejects(
+    verifyDesignCatalog({ root: f.root, write: true }),
+    /unknown component InventedControl/,
+  );
 });
-test("页面不能发明交互分类", async t => {
-  const f = await fixture(t); f.surface.interactionFamilies = ["I-INVENTED"]; await f.save();
-  await assert.rejects(verifyDesignCatalog({ root: f.root, write: true }), /unknown interaction family I-INVENTED/);
+test("页面不能发明交互分类", async (t) => {
+  const f = await fixture(t);
+  f.surface.interactionFamilies = ["I-INVENTED"];
+  await f.save();
+  await assert.rejects(
+    verifyDesignCatalog({ root: f.root, write: true }),
+    /unknown interaction family I-INVENTED/,
+  );
 });
 
-test("Base rejects an unknown promotion status", async t => {
-  const f = await fixture(t); f.registry.baseCandidate.status = "released"; await f.save();
+test("Base rejects an unknown promotion status", async (t) => {
+  const f = await fixture(t);
+  f.registry.baseCandidate.status = "released";
+  await f.save();
   await assert.rejects(verifyDesignCatalog({ root: f.root, write: true }), /baseCandidate.status/);
 });
-test("Base requires admission coverage for every member", async t => {
-  const f = await fixture(t); delete f.registry.baseCandidate.admissions; await f.save();
-  await assert.rejects(verifyDesignCatalog({ root: f.root, write: true }), /baseCandidate.admissions/);
+test("Base requires admission coverage for every member", async (t) => {
+  const f = await fixture(t);
+  delete f.registry.baseCandidate.admissions;
+  await f.save();
+  await assert.rejects(
+    verifyDesignCatalog({ root: f.root, write: true }),
+    /baseCandidate.admissions/,
+  );
 });
-test("Base rejects unknown and duplicate admissions", async t => {
+test("Base rejects unknown and duplicate admissions", async (t) => {
   for (const duplicate of [false, true]) {
     const f = await fixture(t);
     const entry = f.registry.baseCandidate.admissions[0];
-    f.registry.baseCandidate.admissions = [...f.registry.baseCandidate.admissions, { ...entry, id: duplicate ? "Button" : "InventedControl" }];
+    f.registry.baseCandidate.admissions = [
+      ...f.registry.baseCandidate.admissions,
+      { ...entry, id: duplicate ? "Button" : "InventedControl" },
+    ];
     await f.save();
-    await assert.rejects(verifyDesignCatalog({ root: f.root, write: true }), duplicate ? /duplicate entry/ : /unknown admitted member InventedControl/);
+    await assert.rejects(
+      verifyDesignCatalog({ root: f.root, write: true }),
+      duplicate ? /duplicate entry/ : /unknown admitted member InventedControl/,
+    );
   }
 });
-test("Base rejects broken contract and consumer references", async t => {
+test("Base rejects broken contract and consumer references", async (t) => {
   for (const field of ["contract", "consumers"]) {
     const f = await fixture(t);
-    f.registry.baseCandidate.admissions[0][field] = field === "contract" ? "renderer/src/missing-contract.md" : ["renderer/src/missing-consumer.tsx"];
+    f.registry.baseCandidate.admissions[0][field] =
+      field === "contract"
+        ? "renderer/src/missing-contract.md"
+        : ["renderer/src/missing-consumer.tsx"];
     await f.save();
-    await assert.rejects(verifyDesignCatalog({ root: f.root, write: true }), /missing-(contract|consumer)/);
+    await assert.rejects(
+      verifyDesignCatalog({ root: f.root, write: true }),
+      /missing-(contract|consumer)/,
+    );
   }
 });
-test("Base rejects empty finite state sets", async t => {
+test("Base rejects empty finite state sets", async (t) => {
   const f = await fixture(t);
-  f.registry.baseCandidate.admissions[0].states = []; await f.save();
+  f.registry.baseCandidate.admissions[0].states = [];
+  await f.save();
   await assert.rejects(verifyDesignCatalog({ root: f.root, write: true }), /Button.states/);
 });
-test("A frozen Base requires an exact source revision", async t => {
-  const f = await fixture(t); f.registry.baseCandidate.status = "frozen-beta";
-  f.registry.baseCandidate.snapshot = { owner: "design-system/base.md", revision: null }; await f.save();
+test("A frozen Base requires an exact source revision", async (t) => {
+  const f = await fixture(t);
+  f.registry.baseCandidate.status = "frozen-beta";
+  f.registry.baseCandidate.snapshot = { owner: "design-system/base.md", revision: null };
+  await f.save();
   await assert.rejects(verifyDesignCatalog({ root: f.root, write: true }), /snapshot.revision/);
 });
-test("Base source entry drift requires regeneration", async t => {
-  const f = await fixture(t); await f.save();
+test("Base source entry drift requires regeneration", async (t) => {
+  const f = await fixture(t);
+  await f.save();
   await verifyDesignCatalog({ root: f.root, write: true });
   await writeFile(join(f.root, "renderer/src/design-system/base-components.ts"), "export {};\n");
-  await assert.rejects(verifyDesignCatalog({ root: f.root }), /Design catalog is stale.*base-components/);
+  await assert.rejects(
+    verifyDesignCatalog({ root: f.root }),
+    /Design catalog is stale.*base-components/,
+  );
 });
 
-test("Base rejects an omitted member and unmapped evidence", async t => {
+test("Base rejects an omitted member and unmapped evidence", async (t) => {
   const missing = await fixture(t);
-  missing.registry.baseCandidate.admissions = missing.registry.baseCandidate.admissions.filter(item => item.id !== "Button"); await missing.save();
-  await assert.rejects(verifyDesignCatalog({ root: missing.root, write: true }), /missing admission Button/);
+  missing.registry.baseCandidate.admissions = missing.registry.baseCandidate.admissions.filter(
+    (item) => item.id !== "Button",
+  );
+  await missing.save();
+  await assert.rejects(
+    verifyDesignCatalog({ root: missing.root, write: true }),
+    /missing admission Button/,
+  );
   const unknown = await fixture(t);
-  unknown.registry.baseCandidate.admissions[0].evidence = ["E-INVENTED"]; await unknown.save();
-  await assert.rejects(verifyDesignCatalog({ root: unknown.root, write: true }), /unknown evidence E-INVENTED/);
+  unknown.registry.baseCandidate.admissions[0].evidence = ["E-INVENTED"];
+  await unknown.save();
+  await assert.rejects(
+    verifyDesignCatalog({ root: unknown.root, write: true }),
+    /unknown evidence E-INVENTED/,
+  );
 });
-test("Base rejects a broken evidence anchor", async t => {
+test("Base rejects a broken evidence anchor", async (t) => {
   const f = await fixture(t);
-  f.registry.baseCandidate.evidence[0].report = "design-system/base.md#missing-proof"; await f.save();
+  f.registry.baseCandidate.evidence[0].report = "design-system/base.md#missing-proof";
+  await f.save();
   await assert.rejects(verifyDesignCatalog({ root: f.root, write: true }), /missing-proof/);
+});
+
+test("Base package admission rejects experimental entry migration", async (t) => {
+  const f = await fixture(t);
+  f.registry.components.find((item) => item.id === "SettingsRow").importFrom =
+    "@areal/ui/experimental";
+  const compositions = join(f.root, "packages/ui/src/compositions.ts");
+  const experimental = join(f.root, "packages/ui/src/experimental.ts");
+  const declaration = (await readFile(compositions, "utf8"))
+    .split("\n")
+    .find((line) => line.includes("{ SettingsRow }"));
+  await writeFile(compositions, (await readFile(compositions, "utf8")).replace(declaration, ""));
+  await writeFile(experimental, (await readFile(experimental, "utf8")) + declaration + "\n");
+  await f.save();
+  await assert.rejects(
+    verifyDesignCatalog({ root: f.root, write: true }),
+    /admitted package member SettingsRow.*experimental/,
+  );
+});
+
+test("pattern references follow the registered component rule owner", async (t) => {
+  const f = await fixture(t);
+  const rule = f.ruleRegistry.rules.find((rule) => rule.id === "CONV-READ-01");
+  const previous = rule.owner.split("#")[0].replace(/^clients\/gui\//, "");
+  const document = await readFile(join(f.root, previous), "utf8");
+  await writeFile(join(f.root, previous), document.replace("`CONV-READ-01`：", "历史规则引用："));
+  rule.owner = "clients/gui/renderer/src/owned-rule.md#rule";
+  await writeFile(
+    join(f.root, "renderer/src/owned-rule.md"),
+    "# rule\n\n`CONV-READ-01`：保持历史阅读位置。\n",
+  );
+  await writeFile(join(f.root, f.registry.ruleRegistry), JSON.stringify(f.ruleRegistry));
+  await f.save();
+  await verifyDesignCatalog({ root: f.root, write: true });
 });

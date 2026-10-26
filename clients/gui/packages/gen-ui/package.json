@@ -7,7 +7,10 @@
   "exports": {
     "./contract": "./contract.ts",
     "./references": "./references.ts",
-    "./node": "./dist/node.cjs",
+    "./node": {
+      "types": "./node.ts",
+      "default": "./dist/node.cjs"
+    },
     "./runtime": "./dist/guest.js",
     "./assets/*": "./assets/*"
   },
@@ -18,7 +21,7 @@
   "devDependencies": {
     "esbuild": "0.28.2",
     "@types/node": "26.6.4",
-    "typescript": "5.9.3"
+    "typescript": "7.0.2"
   },
   "scripts": {
     "build": "node build.mjs",

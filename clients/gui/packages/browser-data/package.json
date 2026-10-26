@@ -13,7 +13,15 @@
       "default": "./dist/index.cjs"
     }
   },
-  "files": ["dist", "src", "LICENSE", "NOTICE", "UPSTREAM.json", "README.md", "README.zh-CN.md"],
+  "files": [
+    "dist",
+    "src",
+    "LICENSE",
+    "NOTICE",
+    "UPSTREAM.json",
+    "README.md",
+    "README.zh-CN.md"
+  ],
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit",
@@ -27,8 +35,8 @@
   "devDependencies": {
     "@types/node": "26.6.4",
     "@types/ws": "8.18.1",
-    "electron": "44.9.1",
+    "electron": "44.9.3",
     "esbuild": "0.28.2",
-    "typescript": "5.9.3"
+    "typescript": "7.0.2"
   }
 }

@@ -98,9 +98,9 @@ test("Desktop proposal is sanitized and only the owned live Direct listener can 
     assert.deepEqual(Object.keys(proposal).sort(), ["confirmation", "proposalId", "publicOrigin"]);
     assert.equal(proposal.publicOrigin, "https://fixture.example.ts.net");
     assert.match(proposal.confirmation, /手机.*tailnet/);
-    await assert.rejects(
-      f.remote.control({ operation: "networkApply", proposalId: proposal.proposalId }),
-      { code: "confirmation-required" },
+    assert.throws(
+      () => f.remote.control({ operation: "networkApply", proposalId: proposal.proposalId }),
+      /无效手机设置参数/,
     );
     await f.remote.control({
       operation: "networkApply",
@@ -371,19 +371,21 @@ test("renderer targets, executables, stale proposals and disappeared listeners c
       { executable: "/bin/echo" },
       { publicOrigin: "https://evil.example" },
     ]) {
-      await assert.rejects(f.remote.control({ operation: "networkPropose", ...extra }), {
-        code: "invalid-network-request",
-      });
+      assert.throws(
+        () => f.remote.control({ operation: "networkPropose", ...extra }),
+        /无效手机设置参数/,
+      );
     }
     const p = await f.remote.control({ operation: "networkPropose" });
-    await assert.rejects(
-      f.remote.control({
-        operation: "networkApply",
-        proposalId: p.proposalId,
-        confirmed: true,
-        target: `http://127.0.0.1:${privateServer.address().port}`,
-      }),
-      { code: "invalid-network-request" },
+    assert.throws(
+      () =>
+        f.remote.control({
+          operation: "networkApply",
+          proposalId: p.proposalId,
+          confirmed: true,
+          target: `http://127.0.0.1:${privateServer.address().port}`,
+        }),
+      /无效手机设置参数/,
     );
     await f.remote.control({ operation: "disableDirect" });
     await f.remote.control({ operation: "enableDirect" });
@@ -671,16 +673,15 @@ test("Funnel scope requires both local confirmations, binds a fresh proposal and
     assert.notEqual(plan.proposalId, privatePlan.proposalId);
     assert.equal(JSON.stringify(plan).includes("target"), false);
     for (const confirmations of [{ confirmed: true }, { publicConfirmed: true }]) {
-      await assert.rejects(
-        f.remote.control({
-          operation: "networkChangeScope",
-          proposalId: plan.proposalId,
-          ...confirmations,
-        }),
-        {
-          code: confirmations.confirmed ? "public-confirmation-required" : "confirmation-required",
-        },
-      );
+      const request = {
+        operation: "networkChangeScope",
+        proposalId: plan.proposalId,
+        ...confirmations,
+      };
+      if (confirmations.confirmed)
+        await assert.rejects(f.remote.control(request), { code: "public-confirmation-required" });
+      if (!confirmations.confirmed)
+        assert.throws(() => f.remote.control(request), /无效手机设置参数/);
       assert.equal((await f.readCli()).mutations.length, 1);
     }
     const { createRequire } = await import("node:module");
@@ -806,15 +807,16 @@ test("public scope denies stale proposals, injected authority, listener loss and
           { record: {} },
           { scope: "private" },
         ])
-          await assert.rejects(
-            f.remote.control({
-              operation: "networkChangeScope",
-              proposalId: plan.proposalId,
-              confirmed: true,
-              publicConfirmed: true,
-              ...extra,
-            }),
-            { code: "invalid-network-request" },
+          assert.throws(
+            () =>
+              f.remote.control({
+                operation: "networkChangeScope",
+                proposalId: plan.proposalId,
+                confirmed: true,
+                publicConfirmed: true,
+                ...extra,
+              }),
+            /无效手机设置参数/,
           );
         if (reason === "replacement")
           await f.remote.control({ operation: "networkProposeScope", scope: "public" });

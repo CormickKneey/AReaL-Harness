@@ -3,7 +3,7 @@ id: message-attachments
 title: Attachments
 summary: 消息媒体、文件与来源附件。
 status: experimental
-entry: wip
+entry: experimental
 layer: conversation
 category: composition
 aliases: ["消息媒体、文件与来源附件"]
@@ -23,23 +23,23 @@ exports: ["getMediaCategory", "getAttachmentLabel", "useAttachmentsContext", "us
 
 ## 状态
 
-默认、内容增长、聚焦、不可用，以及宿主提供的忙碌/失败/未确认；同一对象保留原身份与阅读状态。
+引用 [R-UI-COMMON-009](../../../README.md#共同合同)。
 
 ## 行为
 
-保留原实现、原生语义和交互动线。只读取props与浏览器布局，不请求Core，不访问保存配置。
+引用 [R-UI-COMMON-010](../../../README.md#共同合同)。
 
 ## 内容
 
-名称、标签、说明与结果由宿主投影；不能由视觉状态推断实际操作已完成。
+引用 [R-UI-COMMON-011](../../../README.md#共同合同)。
 
 ## 可访问性
 
-保留ref、aria、键盘、焦点及减少动态效果。字号增长与窄容器下动作仍须可达。
+引用 [R-UI-COMMON-012](../../../README.md#共同合同)。
 
 ## 规则
 
-保留原AI Elements Apache-2.0来源说明。组件只展示宿主提供的已授权URL/元数据，权限与媒体读取不迁入包。
+`R-MESSAGEATTACHMENTS-001` 保留原AI Elements Apache-2.0来源说明。组件只展示宿主提供的已授权URL/元数据，权限与媒体读取不迁入包。
 
 ## 示例
 

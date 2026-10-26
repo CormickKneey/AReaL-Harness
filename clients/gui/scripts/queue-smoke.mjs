@@ -1,3 +1,4 @@
+import { makeTempDir } from "./support/temp.mjs";
 import { assertApplicationStopped } from "./application-cleanup.mjs";
 import { respondToSessionName } from "./model-fixture.mjs";
 import {
@@ -9,7 +10,7 @@ import {
 import assert from "node:assert/strict";
 
 import { createRequire } from "node:module";
-import { mkdtemp, mkdir, writeFile, readFile, rename } from "node:fs/promises";
+import { mkdir, writeFile, readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
@@ -24,7 +25,7 @@ const binary = process.env.AREAL_GUI_EXECUTABLE
   ? resolve(dirname(process.env.AREAL_GUI_EXECUTABLE), "../Resources/areal-core/bin/areal")
   : process.env.AREAL_CORE_BIN || join(root, "target/debug/areal");
 assert.ok(binary, "AREAL_CORE_BIN must point to the actual built Core");
-const scratch = await mkdtemp("/private/tmp/areal-gui-");
+const scratch = await makeTempDir("areal-gui-");
 const workspace = join(scratch, "workspace");
 await mkdir(workspace);
 await mkdir(join(scratch, "user-home"));
@@ -109,8 +110,7 @@ const errors = [],
   checks = [];
 const button = (name) => page.getByRole("button", { name, exact: true });
 const state = () => page.evaluate(() => window.arealDesktop.snapshot());
-const project = (snapshot) =>
-  snapshot.projects.find((p) => p.root === workspace && !p.projectless);
+const project = (snapshot) => snapshot.projects.find((p) => p.root === workspace && !p.projectless);
 async function call(name, params) {
   const result = await page.evaluate(
     async ({ name, params }) => {
@@ -394,15 +394,23 @@ try {
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1440, 960));
   await button("展开侧栏").click();
   await input().fill("3 已编辑");
-  const uploadsBeforeQueuedPaste = (await call("media", {
-    projectId: pid, threadId: tid, operation: "list",
-  })).uploads;
+  const uploadsBeforeQueuedPaste = (
+    await call("media", {
+      projectId: pid,
+      threadId: tid,
+      operation: "list",
+    })
+  ).uploads;
   await input().evaluate((element, text) => {
     const clipboardData = new DataTransfer();
     clipboardData.setData("text/plain", text);
-    element.dispatchEvent(new ClipboardEvent("paste", {
-      clipboardData, bubbles: true, cancelable: true,
-    }));
+    element.dispatchEvent(
+      new ClipboardEvent("paste", {
+        clipboardData,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
   }, "第一行\n第二行\n第三行\n第四行\n第五行");
   await page.getByRole("button", { name: "在文本框中显示 ›", exact: true }).waitFor();
   assert.equal(await input().textContent(), "3 已编辑", "queued pasted text stays folded");
@@ -563,8 +571,7 @@ try {
   assert.ok(await button("保存").isDisabled());
   await button("核对编辑操作").click();
   await until(
-    (s) =>
-      !project(s).pending.length && pending(s).some((i) => i.input[0].text === "2 对账更新"),
+    (s) => !project(s).pending.length && pending(s).some((i) => i.input[0].text === "2 对账更新"),
     "update receipt reconciled",
   );
   await page.waitForFunction((key) => !localStorage.getItem(`${key}:queue-edit`), key);
@@ -581,7 +588,9 @@ try {
   await app.evaluate(() => {
     globalThis.queueFixtureConnection.prototype.fixtureDrop = "areal/queue/steer";
   });
-  await row("2 对账更新").getByRole("button", { name: /引导/ }).click();
+  await row("2 对账更新")
+    .getByRole("button", { name: /引导/ })
+    .click();
   await button("核对队列操作").waitFor();
   await button("核对队列操作").click();
   await until(
@@ -591,8 +600,8 @@ try {
   const after = await state();
   const transferred = queue(after).items.find((i) => i.input[0].text === "2 对账更新");
   assert.equal(transferred.status, "steered");
-  const messages = project(after).state.threads[tid].turns
-    .flatMap((t) => t.items)
+  const messages = project(after)
+    .state.threads[tid].turns.flatMap((t) => t.items)
     .filter((i) => i.type === "userMessage" && i.content.some((p) => p.text === "2 对账更新"));
   assert.equal(messages.length, 1);
   assert.equal(
@@ -609,7 +618,12 @@ try {
     .click();
   await until((s) => pending(s).length === 0, "empty queue");
   await page.waitForFunction(() => !document.querySelector(".composer-queue-row"));
-  await call("stop", { projectId: pid, threadId: tid, turnId: project(await state()).state.threads[tid].turns.at(-1).id, requestId: randomUUID() });
+  await call("stop", {
+    projectId: pid,
+    threadId: tid,
+    turnId: project(await state()).state.threads[tid].turns.at(-1).id,
+    requestId: randomUUID(),
+  });
   await until(
     (s) => project(s).state.threads[tid].turns.at(-1)?.status !== "inProgress",
     "turn stop",
@@ -625,11 +639,18 @@ try {
   );
   throw error;
 } finally {
-  const stoppingAdapter = await readFile(join(scratch, "core/service.json"), "utf8").then(JSON.parse).catch(error => { if (error.code === "ENOENT") return null; throw error; });
+  const stoppingAdapter = await readFile(join(scratch, "core/service.json"), "utf8")
+    .then(JSON.parse)
+    .catch((error) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
   await quit();
   try {
     await assertApplicationStopped(binary, env, stoppingAdapter);
-    checks.push("application quit stops the isolated adapter and all Core generations, including projectless");
+    checks.push(
+      "application quit stops the isolated adapter and all Core generations, including projectless",
+    );
   } catch (error) {
     console.error("Adapter fixture cleanup:", error.message);
     if (passed) {

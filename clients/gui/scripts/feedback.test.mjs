@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 const require = createRequire(new URL("../app/package.json", import.meta.url));
 const { freezeContext } = require("../app/src/core/feedback-context.cjs");
 const { UserFeedback } = require("../app/src/core/feedback.cjs");
+const { CoreBackend } = require("../app/src/core/backend.cjs");
 const { validateCommand } = require("@areal/workbench/desktop-contract");
 
 const thread = () => ({
@@ -105,6 +106,39 @@ async function fixture(t) {
   return { feedback, backend, main, sent, sideCalls, prepare, home };
 }
 
+test("feedback uses the routed execution owner after public request validation", async (t) => {
+  const x = await fixture(t);
+  const backend = new CoreBackend({ binary: "/fixture/areal", home: x.home });
+  backend.saved = [
+    { id: "project", root: x.home },
+    { id: "execution", root: join(x.home, "worktree"), logicalProjectId: "project" },
+  ];
+  backend.worktrees.threadOwners.set("main", "execution");
+  backend.feedback = x.feedback;
+  const draft = await backend.command("feedback", {
+    operation: "prepare",
+    projectId: "project",
+    threadId: "main",
+    turnId: "first",
+    itemId: "reply",
+    rating: "down",
+  });
+  assert.equal(draft.projectId, "execution");
+  assert.equal(draft.threadId, "main");
+  await assert.rejects(
+    backend.command("feedback", {
+      operation: "prepare",
+      projectId: "project",
+      threadId: "main",
+      turnId: "first",
+      itemId: "reply",
+      rating: "down",
+      logicalProjectId: "project",
+    }),
+    /无效桌面操作或参数/,
+  );
+});
+
 test("freezes authoritative history through rated reply and excludes later items and turns", async () => {
   const main = thread();
   const frozen = await freezeContext(
@@ -136,6 +170,7 @@ test("fork feedback assembles full inherited fragments and rejects snapshot drif
     sourceTurnId: "inherited",
     sourceTurnStatus: "completed",
     sourceItemId: "old-reply",
+    turn: { id: "inherited", status: "completed" },
     item: { id: "old-reply", type: "agentMessage", text: "完整继承上下文🌊" },
   };
   const raw = JSON.stringify(entry),

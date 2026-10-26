@@ -1,24 +1,22 @@
-import { useI18n, UiMessageError, type UiMessage, type MessageId, formatUiMessage } from "../i18n/IntlProvider.js";
+import type { ResourceRequest, Scope } from "@areal/workbench/desktop-contract/resource";
+import { normalizeMcp } from "@areal/workbench/desktop-contract/resource";
+import {
+  useI18n,
+  UiMessageError,
+  type UiMessage,
+  type MessageId,
+  formatUiMessage,
+} from "../i18n/IntlProvider.js";
 import { SettingsDisclosure } from "./SettingsDisclosure.js";
 import { useSettingsOperation } from "./useSettingsOperation.js";
 import { useDraftBlocker, useGuardedNavigation } from "./UnsavedChanges.js";
 import { useEffect, useRef, useState } from "react";
-import {
-  BookOpen,
-  Plug,
-  Settings,
-  Monitor,
-} from "lucide-react";
+import { BookOpen, Plug, Settings, Monitor } from "lucide-react";
 import { Button } from "../components/ui/button.js";
 import { Input } from "../components/ui/input.js";
 import { Switch } from "../components/ui/switch.js";
 import { SettingsSearchInput } from "./SettingsSearchInput.js";
-import {
-  SettingsBadge,
-  SettingsGroupCard,
-  SettingsRow,
-  SettingsSection,
-} from "./SettingsPageParts.js";
+import { SettingsBadge } from "./SettingsPageParts.js";
 import {
   EmptySettings,
   Feedback,
@@ -32,7 +30,11 @@ import { SettingsSegmentedTabs } from "./SettingsSegmentedTabs.js";
 import { MessageResponse } from "../components/ai-elements/message.js";
 import { ResourceScope, CatalogEmpty, type ScopedProps } from "./ScopedSkillsSettings.js";
 import type { Data } from "../services.js";
-import { pluginSourceLabel, pluginMcpStateLabel, type PluginMcpResource } from "./pluginResources.js";
+import {
+  pluginSourceLabel,
+  pluginMcpStateLabel,
+  type PluginMcpResource,
+} from "./pluginResources.js";
 const resourceMcpStateMessages: Record<string, MessageId> = {
   notApplied: "settings.resourceSettings.notApplied",
   connected: "settings.resourceSettings.connected",
@@ -42,8 +44,14 @@ const resourceMcpStateMessages: Record<string, MessageId> = {
   connecting: "settings.resourceSettings.connecting",
 };
 export function McpSettings({
-  project, action, scope: controlledScope, onScopeChange,
-  pluginServers = [], onManagePlugin, onRefreshPlugins, addRequest = 0,
+  project,
+  action,
+  scope: controlledScope,
+  onScopeChange,
+  pluginServers = [],
+  onManagePlugin,
+  onRefreshPlugins,
+  addRequest = 0,
 }: ScopedProps & {
   addRequest?: number;
   pluginServers?: PluginMcpResource[];
@@ -53,10 +61,16 @@ export function McpSettings({
   const { t, intl } = useI18n();
   const [localScope, setLocalScope] = useState("user");
   const scope = controlledScope ?? localScope;
-  const setScope = (value: string) => { setLocalScope(value); onScopeChange?.(value); };
-  const api = (operation: string, values: Data = {}) =>
-    action("resources", { projectId: project?.id, scope, operation, ...values });
-  const state = useResource(() => api("mcp"), `${scope}:${project?.id}`);
+  const setScope = (value: string) => {
+    setLocalScope(value);
+    onScopeChange?.(value);
+  };
+  const owner: Scope =
+    scope === "user"
+      ? { scope: "user", projectId: project?.id }
+      : { scope: "project", projectId: project?.id };
+  const api = <P extends ResourceRequest>(request: P) => action("resources", request);
+  const state = useResource(() => api({ ...owner, operation: "mcp" }), `${scope}:${project?.id}`);
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState<Data | null>(null);
   const [config, setConfig] = useState("");
@@ -65,29 +79,59 @@ export function McpSettings({
   const operation = useSettingsOperation();
   const { busy, error, message, setError, setMessage } = operation;
   const disabled =
-    busy || state.loading || (scope === "project" && (!project?.state?.connected || project?.pending?.length > 0));
-  const run = (task: () => Promise<void>) => operation.run(async () => { await task(); await state.refresh(); });
-  const discard = () => { setDraft(null); setError(""); };
+    busy ||
+    state.loading ||
+    (scope === "project" && (!project?.state?.connected || project?.pending?.length > 0));
+  const run = (task: () => Promise<void>) =>
+    operation.run(async () => {
+      await task();
+      await state.refresh();
+    });
+  const discard = () => {
+    setDraft(null);
+    setError("");
+  };
   const save = async () => {
-    if (!draft || disabled) throw new UiMessageError({ id: "settings.resourceSettings.cannotSaveRightNowTryAgainLater" });
-    if (!draft.id.trim()) throw new UiMessageError({ id: "settings.resourceSettings.serverIDCannotBeEmpty" });
+    if (!draft || disabled)
+      throw new UiMessageError({ id: "settings.resourceSettings.cannotSaveRightNowTryAgainLater" });
+    if (!draft.id.trim())
+      throw new UiMessageError({ id: "settings.resourceSettings.serverIDCannotBeEmpty" });
     let parsed: Data;
-    try { parsed = JSON.parse(config); }
-    catch { throw new UiMessageError({ id: "settings.resourceSettings.theMCPConfigurationIsNotValidJSON" }); }
-    if (!parsed || Array.isArray(parsed) || typeof parsed !== "object" || !parsed.transport)
-      throw new UiMessageError({ id: "settings.resourceSettings.provideAnMCPConfigurationContainingTransport" });
-    const transport = parsed.transport;
-    if (transport.type === "stdio" && !transport.command?.trim()) throw new UiMessageError({ id: "settings.resourceSettings.commandCannotBeEmpty" });
-    if (transport.type === "streamableHttp") {
-      try { if (!["http:", "https:"].includes(new URL(transport.url).protocol)) throw new Error(); }
-      catch { throw new UiMessageError({ id: "settings.resourceSettings.theServerURLMustBeAValid" }); }
+    try {
+      parsed = JSON.parse(config);
+    } catch {
+      throw new UiMessageError({
+        id: "settings.resourceSettings.theMCPConfigurationIsNotValidJSON",
+      });
     }
-    const result = await api("mcpSave", {
-      id: draft.id.trim(), expectedRevision: scope === "user" ? state.value?.revision : draft.revision, config: parsed,
+    if (!parsed || Array.isArray(parsed) || typeof parsed !== "object" || !parsed.transport)
+      throw new UiMessageError({
+        id: "settings.resourceSettings.provideAnMCPConfigurationContainingTransport",
+      });
+    const transport = parsed.transport;
+    if (transport.type === "stdio" && !transport.command?.trim())
+      throw new UiMessageError({ id: "settings.resourceSettings.commandCannotBeEmpty" });
+    if (transport.type === "streamableHttp") {
+      try {
+        if (!["http:", "https:"].includes(new URL(transport.url).protocol)) throw new Error();
+      } catch {
+        throw new UiMessageError({ id: "settings.resourceSettings.theServerURLMustBeAValid" });
+      }
+    }
+    const result = await api({
+      ...owner,
+      operation: "mcpSave",
+      id: draft.id.trim(),
+      expectedRevision: scope === "user" ? state.value?.revision : draft.revision,
+      config: normalizeMcp(parsed),
     });
     setDraft(null);
     await state.refresh();
-    setMessage(result.warning || { id: "settings.resourceSettings.configurationSaved" });
+    setMessage(
+      ("warning" in result && result.warning) || {
+        id: "settings.resourceSettings.configurationSaved",
+      },
+    );
   };
   useDraftBlocker({
     label: { id: "settings.resourceSettings.mcpConfiguration" },
@@ -108,12 +152,21 @@ export function McpSettings({
     setConfig(baseline.current.config);
     setError("");
   };
-  useEffect(() => { if (addRequest) edit(); }, [addRequest]);
-  const source = t("settings.resourceSettings.standaloneResourcesValue", { value0: scope === "user" ? t("settings.resourceSettings.user") : t("settings.resourceSettings.currentProject") });
+  useEffect(() => {
+    if (addRequest) edit();
+  }, [addRequest]);
+  const source = t("settings.resourceSettings.standaloneResourcesValue", {
+    value0:
+      scope === "user"
+        ? t("settings.resourceSettings.user")
+        : t("settings.resourceSettings.currentProject"),
+  });
   const packageItems = pluginServers.filter((item) =>
-    `${item.serverId} ${pluginSourceLabel(item.owner, t)}`.toLowerCase().includes(query.toLowerCase()),
+    `${item.serverId} ${pluginSourceLabel(item.owner, t)}`
+      .toLowerCase()
+      .includes(query.toLowerCase()),
   );
-  const items = (state.loading ? [] : state.value?.data ?? []).filter((item: Data) =>
+  const items = (state.loading ? [] : (state.value?.data ?? [])).filter((item: Data) =>
     [
       item.id,
       source,
@@ -130,9 +183,22 @@ export function McpSettings({
       {!draft && (
         <>
           <div className="resource-catalog-bar">
-            <ResourceScope value={scope} onChange={v=>{setScope(v);setQuery("");setError("");setMessage("");}} project={project} disabled={busy}/>
+            <ResourceScope
+              value={scope}
+              onChange={(v) => {
+                setScope(v);
+                setQuery("");
+                setError("");
+                setMessage("");
+              }}
+              project={project}
+              disabled={busy}
+            />
             <strong>
-              MCP <small>{intl.formatNumber((state.value?.data?.length ?? 0) + pluginServers.length)}</small>
+              MCP{" "}
+              <small>
+                {intl.formatNumber((state.value?.data?.length ?? 0) + pluginServers.length)}
+              </small>
             </strong>
             <SettingsSearchInput
               value={query}
@@ -144,17 +210,21 @@ export function McpSettings({
             />
           </div>
           <SettingsToolbar
-            description={scope === "user" ? t("settings.resourceSettings.reusableAcrossAllProjectsTheConnectionToggle") : t("settings.resourceSettings.onlyForTheCurrentProject")}
+            description={
+              scope === "user"
+                ? t("settings.resourceSettings.reusableAcrossAllProjectsTheConnectionToggle")
+                : t("settings.resourceSettings.onlyForTheCurrentProject")
+            }
             loading={state.loading}
             disabled={disabled}
-            onRefresh={() => { void state.refresh(); void onRefreshPlugins?.(); }}
+            onRefresh={() => {
+              void state.refresh();
+              void onRefreshPlugins?.();
+            }}
             onAdd={() => edit()}
             addLabel={t("settings.resourceSettings.addMCP")}
           />
-          <Feedback
-            error={state.error || (!draft ? error : "")}
-            message={message}
-          />
+          <Feedback error={state.error || (!draft ? error : "")} message={message} />
           <div className="settings-resource-list">
             {items.map((item: Data) => (
               <article key={`standalone:${scope}:${item.id}`} aria-label={`${item.id} · ${source}`}>
@@ -170,29 +240,26 @@ export function McpSettings({
                       }`.trim()}
                     >
                       {item.config.transport?.type} ·{" "}
-                      {item.config.transport?.command ??
-                        item.config.transport?.url ??
-                        ""}
+                      {item.config.transport?.command ?? item.config.transport?.url ?? ""}
                     </p>
                   </div>
                   <SettingsBadge>
-                    {resourceMcpStateMessages[item.state] ? t(resourceMcpStateMessages[item.state]) : item.state}
+                    {resourceMcpStateMessages[item.state]
+                      ? t(resourceMcpStateMessages[item.state])
+                      : item.state}
                   </SettingsBadge>
                   <Button
                     variant="ghost"
                     aria-label={t("settings.resourceSettings.editMCPValue", { value0: item.id })}
                     disabled={
-                      disabled ||
-                      !["disconnected", "failed", "notApplied"].includes(item.state)
+                      disabled || !["disconnected", "failed", "notApplied"].includes(item.state)
                     }
                     onClick={() => edit(item)}
                   >
                     <Settings />
                   </Button>
                   <Switch
-                    checked={
-                      !["disconnected", "failed", "notApplied"].includes(item.state)
-                    }
+                    checked={!["disconnected", "failed", "notApplied"].includes(item.state)}
                     disabled={disabled || !project || item.state === "connecting"}
                     aria-label={
                       ["disconnected", "failed", "notApplied"].includes(item.state)
@@ -204,17 +271,33 @@ export function McpSettings({
                         const connecting = ["disconnected", "failed", "notApplied"].includes(
                           item.state,
                         );
-                        await api(connecting ? "mcpConnect" : "mcpDisconnect", {
+                        await api({
+                          ...owner,
+                          operation: connecting ? "mcpConnect" : "mcpDisconnect",
+                          projectId: project?.id,
                           id: item.id,
                           expectedRevision: item.revision,
                         });
-                        setMessage({ id: "settings.resourceSettings.connectionStatusRefreshedForValue", values: { value0: item.id } });
+                        setMessage({
+                          id: "settings.resourceSettings.connectionStatusRefreshedForValue",
+                          values: { value0: item.id },
+                        });
                       })
                     }
                   />
                 </div>
                 {item.error && <Feedback error={item.error} />}
-                <SettingsDisclosure className="mt-3" title={<> {t("settings.resourceSettings.toolCount", { count: item.tools?.length ?? 0 })} </>}>
+                <SettingsDisclosure
+                  className="mt-3"
+                  title={
+                    <>
+                      {" "}
+                      {t("settings.resourceSettings.toolCount", {
+                        count: item.tools?.length ?? 0,
+                      })}{" "}
+                    </>
+                  }
+                >
                   {item.tools?.length ? (
                     item.tools.map((tool: Data) => (
                       <div className="settings-tool" key={tool.name}>
@@ -224,44 +307,56 @@ export function McpSettings({
                     ))
                   ) : (
                     <p className="settings-muted">
-                      {t("settings.resourceSettings.noToolsAvailableYetConnectAndRefresh")}</p>
+                      {t("settings.resourceSettings.noToolsAvailableYetConnectAndRefresh")}
+                    </p>
                   )}
                 </SettingsDisclosure>
               </article>
             ))}
             {packageItems.map((item) => (
-              <article key={item.key} aria-label={`${item.serverId} · ${pluginSourceLabel(item.owner, t)}`}>
+              <article
+                key={item.key}
+                aria-label={`${item.serverId} · ${pluginSourceLabel(item.owner, t)}`}
+              >
                 <div className="resource-title">
                   <Plug size={20} />
                   <div>
                     <strong>{item.serverId}</strong>
                     <p>{pluginSourceLabel(item.owner, t)}</p>
-                    <p>{item.owner.compatibilityBlocked ? t("operations.componentIncompatible") : item.owner.enabled ? t("settings.resourceSettings.enabledInCurrentProject") : t("settings.resourceSettings.disabledInCurrentProject")}</p>
+                    <p>
+                      {item.owner.compatibilityBlocked
+                        ? t("operations.componentIncompatible")
+                        : item.owner.enabled
+                          ? t("settings.resourceSettings.enabledInCurrentProject")
+                          : t("settings.resourceSettings.disabledInCurrentProject")}
+                    </p>
                   </div>
                   <SettingsBadge>{pluginMcpStateLabel(item.state, t)}</SettingsBadge>
-                  <Button variant="outline" onClick={() => onManagePlugin?.(item.owner.pluginId)}>{t("settings.resourceSettings.managePlugin")}</Button>
+                  <Button variant="outline" onClick={() => onManagePlugin?.(item.owner.pluginId)}>
+                    {t("settings.resourceSettings.managePlugin")}
+                  </Button>
                 </div>
               </article>
             ))}
           </div>
           {!state.loading && !items.length && !packageItems.length && (
-            <CatalogEmpty kind="mcp" query={query} scope={scope} onAdd={()=>edit()}/>
+            <CatalogEmpty kind="mcp" query={query} scope={scope} onAdd={() => edit()} />
           )}
-
         </>
       )}
       {draft && (
         <section className="resource-editor">
-          <Button
-            type="button"
-            variant="ghost"
-            disabled={busy}
-            onClick={() => navigate(discard)}
-          >
-            {t("settings.resourceSettings.backToMCPServers")}</Button>
-          <h2>{draft.revision || draft.runtimeId ? t("settings.resourceSettings.editMCPServer") : t("settings.resourceSettings.addMCPServer")}</h2>
+          <Button type="button" variant="ghost" disabled={busy} onClick={() => navigate(discard)}>
+            {t("settings.resourceSettings.backToMCPServers")}
+          </Button>
+          <h2>
+            {draft.revision || draft.runtimeId
+              ? t("settings.resourceSettings.editMCPServer")
+              : t("settings.resourceSettings.addMCPServer")}
+          </h2>
           <p className="settings-muted">
-            {t("settings.resourceSettings.configureALocalCommandOrHTTPService")}</p>
+            {t("settings.resourceSettings.configureALocalCommandOrHTTPService")}
+          </p>
           <form
             className="settings-form"
             onSubmit={(e) => {
@@ -271,7 +366,8 @@ export function McpSettings({
           >
             <fieldset disabled={disabled}>
               <label>
-                {t("settings.resourceSettings.serverID")}<Input
+                {t("settings.resourceSettings.serverID")}
+                <Input
                   required
                   value={draft.id}
                   disabled={!!draft.revision || !!draft.runtimeId}
@@ -288,9 +384,12 @@ export function McpSettings({
                 disabled={busy}
                 onClick={() => navigate(discard)}
               >
-                {t("settings.resourceSettings.cancel")}</Button>
+                {t("settings.resourceSettings.cancel")}
+              </Button>
               <Button type="submit" disabled={disabled}>
-                {busy ? t("settings.resourceSettings.saving") : t("settings.resourceSettings.saveMCPConfiguration")}
+                {busy
+                  ? t("settings.resourceSettings.saving")
+                  : t("settings.resourceSettings.saveMCPConfiguration")}
               </Button>
             </div>
           </form>
@@ -322,10 +421,7 @@ function SkillContent({
       offset,
       maxBytes: 8192,
     });
-  const state = useResource(
-    () => read(0),
-    `${skill.id}:${skill.revision}:${resource}`,
-  );
+  const state = useResource(() => read(0), `${skill.id}:${skill.revision}:${resource}`);
   const [extra, setExtra] = useState<Data[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<UiMessage | string>("");
@@ -338,13 +434,22 @@ function SkillContent({
   return (
     <>
       <Feedback
-        error={(state.error || error) ? t("settings.resourceSettings.couldNotReadValueValue", { value0: resource, value1: formatUiMessage(t, state.error || error) }) : undefined}
+        error={
+          state.error || error
+            ? t("settings.resourceSettings.couldNotReadValueValue", {
+                value0: resource,
+                value1: formatUiMessage(t, state.error || error),
+              })
+            : undefined
+        }
         message={state.loading ? t("settings.resourceSettings.loadingResource") : undefined}
       />
       {state.value && (
         <>
           <p className="settings-muted">
-            {resource} · {last?.sizeBytes == null ? "" : intl.formatNumber(last.sizeBytes)} {t("settings.resourceSettings.bytes")}</p>
+            {resource} · {last?.sizeBytes == null ? "" : intl.formatNumber(last.sizeBytes)}{" "}
+            {t("settings.resourceSettings.bytes")}
+          </p>
           <SettingsSegmentedTabs
             items={[
               { value: "preview", label: t("settings.resourceSettings.preview") },
@@ -371,9 +476,7 @@ function SkillContent({
               </MessageResponse>
             </div>
           ) : (
-            <pre className="skill-content">
-              {new TextDecoder().decode(new Uint8Array(bytes))}
-            </pre>
+            <pre className="skill-content">{new TextDecoder().decode(new Uint8Array(bytes))}</pre>
           )}
           {!last?.eof && (
             <Button
@@ -392,7 +495,8 @@ function SkillContent({
                 }
               }}
             >
-              {t("settings.resourceSettings.readMore")}</Button>
+              {t("settings.resourceSettings.readMore")}
+            </Button>
           )}
         </>
       )}
@@ -418,18 +522,17 @@ export function TaskSkillsSettings(props: SettingsProps) {
   const [resource, setResource] = useState("SKILL.md");
   const [resourcePath, setResourcePath] = useState("SKILL.md");
   const items = (state.value?.data ?? []).filter((item: Data) =>
-    [item.id, item.name, item.description]
-      .join(" ")
-      .toLowerCase()
-      .includes(query.toLowerCase()),
+    [item.id, item.name, item.description].join(" ").toLowerCase().includes(query.toLowerCase()),
   );
   return (
     <div className="resource-settings">
       <div className="resource-catalog-bar">
         <span className="resource-scope">
-          <Monitor size={16} /> {t("settings.resourceSettings.currentTask")}</span>
+          <Monitor size={16} /> {t("settings.resourceSettings.currentTask")}
+        </span>
         <strong>
-          {t("settings.resourceSettings.skills")}<small>{intl.formatNumber(state.value?.data?.length ?? 0)}</small>
+          {t("settings.resourceSettings.skills")}
+          <small>{intl.formatNumber(state.value?.data?.length ?? 0)}</small>
         </strong>
         <SettingsSearchInput
           placeholder={t("settings.resourceSettings.searchSkills")}
@@ -441,18 +544,20 @@ export function TaskSkillsSettings(props: SettingsProps) {
         />
       </div>
       <SettingsToolbar
-        description={t("settings.resourceSettings.thisTaskHasValueBoundSkillsSelect", { value0: state.value?.data?.length ?? 0 })}
+        description={t("settings.resourceSettings.thisTaskHasValueBoundSkillsSelect", {
+          value0: state.value?.data?.length ?? 0,
+        })}
         loading={state.loading}
         onRefresh={() => void state.refresh()}
       />
       <Feedback error={state.error} />
       <div className="settings-resource-list">
         {items.map((item: Data) => (
-          <article
-            className="skill-resource-row"
-            key={`${item.id}:${item.revision}`}
-          >
-            <button
+          <article className="skill-resource-row" key={`${item.id}:${item.revision}`}>
+            <Button
+              unstyled
+              data-slot={undefined}
+              type="submit"
               className="resource-card"
               disabled={!item.available}
               aria-label={item.id}
@@ -466,7 +571,10 @@ export function TaskSkillsSettings(props: SettingsProps) {
               <span>
                 <strong>{item.name || item.id}</strong>
                 <small title={item.description}>
-                  {item.description || t("settings.resourceSettings.versionValueViewSkillContent", { value0: item.revision })}
+                  {item.description ||
+                    t("settings.resourceSettings.versionValueViewSkillContent", {
+                      value0: item.revision,
+                    })}
                 </small>
               </span>
               <SettingsBadge>
@@ -476,7 +584,7 @@ export function TaskSkillsSettings(props: SettingsProps) {
                     ? t("settings.resourceSettings.read")
                     : t("settings.resourceSettings.available")}
               </SettingsBadge>
-            </button>
+            </Button>
           </article>
         ))}
       </div>
@@ -495,7 +603,9 @@ export function TaskSkillsSettings(props: SettingsProps) {
           title={selected.name || selected.id}
           description={
             selected.description ||
-            t("settings.resourceSettings.versionValueSkillResourcesForTheCurrent", { value0: selected.revision })
+            t("settings.resourceSettings.versionValueSkillResourcesForTheCurrent", {
+              value0: selected.revision,
+            })
           }
           onClose={() => {
             setSelected(null);
@@ -510,7 +620,8 @@ export function TaskSkillsSettings(props: SettingsProps) {
             }}
           >
             <label>
-              {t("settings.resourceSettings.skillResources")}<Input
+              {t("settings.resourceSettings.skillResources")}
+              <Input
                 aria-label={t("settings.resourceSettings.skillResources")}
                 value={resourcePath}
                 onChange={(e) => setResourcePath(e.target.value)}
@@ -518,7 +629,8 @@ export function TaskSkillsSettings(props: SettingsProps) {
               />
             </label>
             <Button type="submit" variant="outline">
-              {t("settings.resourceSettings.readResource")}</Button>
+              {t("settings.resourceSettings.readResource")}
+            </Button>
             <Button
               type="button"
               variant="ghost"
@@ -527,7 +639,8 @@ export function TaskSkillsSettings(props: SettingsProps) {
                 setResourcePath("SKILL.md");
               }}
             >
-              {t("settings.resourceSettings.backToSKILLMd")}</Button>
+              {t("settings.resourceSettings.backToSKILLMd")}
+            </Button>
           </form>
           <SkillContent
             key={`${selected.id}:${selected.revision}:${resource}`}

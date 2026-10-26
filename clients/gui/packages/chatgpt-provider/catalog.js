@@ -2,16 +2,20 @@ import { ProviderError, responseError, safeRefresh } from "./errors.js";
 import { subscriptionModelHints } from "./adapters.js";
 
 export class ModelCatalog {
+  /** @param {import('./account.js').ChatGPTAccount} session @param {import('./network.js').SubscriptionFetch} fetch */
   constructor(session, fetch, { now = Date.now, ttlMs = 30_000 } = {}) {
-    Object.assign(this, { session, fetch, now, ttlMs });
+    this.session = session;
+    this.fetch = fetch;
+    this.now = now;
+    this.ttlMs = ttlMs;
     this.clear();
     session.on("changed", () => this.clear());
   }
   clear() {
-    this.models = [];
+    /** @type {import('./subscription-contract.js').SubscriptionModel[]} */ this.models = [];
     this.transportHints = new Map();
-    this.revision = null;
-    this.fetchedAt = null;
+    /** @type {number|null} */ this.revision = null;
+    /** @type {number|null} */ this.fetchedAt = null;
     this.expiresAt = 0;
   }
   metadata() {

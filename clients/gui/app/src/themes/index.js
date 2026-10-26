@@ -1,4 +1,5 @@
-'use strict';
+// @ts-check
+"use strict";
 
 /**
  * Themes — one mapping, many palettes.
@@ -17,18 +18,32 @@
  * schemes, all MIT licensed, each carrying its author and source.
  */
 
-const { readFileSync, existsSync, readdirSync } = require('node:fs');
-const { join } = require('node:path');
+const { readFileSync, existsSync, readdirSync } = require("node:fs");
+const { join } = require("node:path");
+const { modelRecord } = require("@areal/workbench/core-model-contract");
+/** @typedef {Record<'bg'|'bgAlt'|'bgRaised'|'bgOverlay'|'text'|'textMuted'|'textFaint'|'border'|'accent'|'accentText'|'green'|'red'|'yellow'|'purple'|'cyan',string>} Colors */
+/** @typedef {Record<string,unknown> & {id:string,name:string,colors:Colors}} Theme */
 
-const BUILTIN_PATH = join(__dirname, 'palettes.json');
-const CONTROLS_CSS = readFileSync(join(__dirname, 'controls.css'), 'utf8');
+const BUILTIN_PATH = join(__dirname, "palettes.json");
+const CONTROLS_CSS = readFileSync(join(__dirname, "controls.css"), "utf8");
 
 /** Colour keys every palette must define; a theme missing one is rejected. */
 const REQUIRED = [
-  'bg', 'bgAlt', 'bgRaised', 'bgOverlay',
-  'text', 'textMuted', 'textFaint',
-  'border', 'accent', 'accentText',
-  'green', 'red', 'yellow', 'purple', 'cyan',
+  "bg",
+  "bgAlt",
+  "bgRaised",
+  "bgOverlay",
+  "text",
+  "textMuted",
+  "textFaint",
+  "border",
+  "accent",
+  "accentText",
+  "green",
+  "red",
+  "yellow",
+  "purple",
+  "cyan",
 ];
 
 const HEX = /^#[0-9a-fA-F]{6}$/;
@@ -65,14 +80,17 @@ const FONT_SAFE = /^[A-Za-z0-9 ,'"一-龥_-]{0,160}$/;
  */
 const MAX_GLOWS = 3;
 
+/** @param {unknown} raw */
 function glowsOf(raw) {
   if (!Array.isArray(raw)) return [];
+  /** @param {unknown} v @param {number} lo @param {number} hi @param {number} fallback */
   const clamp = (v, lo, hi, fallback) => {
     const n = Number(v);
     return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : fallback;
   };
   return raw
-    .filter((g) => g && typeof g === 'object' && HEX.test(String(g.color ?? '')))
+    .filter(modelRecord)
+    .filter((g) => HEX.test(String(g.color ?? "")))
     .slice(0, MAX_GLOWS)
     .map((g) => ({
       color: String(g.color),
@@ -83,20 +101,28 @@ function glowsOf(raw) {
     }));
 }
 
+/** @param {Theme} theme */
 function styleOf(theme) {
-  const raw = (theme && theme.style) || {};
-  const out = {};
-  out.glows = glowsOf(raw.glows);
-  for (const [key, limit] of Object.entries(STYLE_LIMITS)) {
+  const raw = modelRecord(theme.style) ? theme.style : {};
+  /** @param {keyof typeof STYLE_LIMITS} key */
+  const number = (key) => {
+    const limit = STYLE_LIMITS[key];
     const value = Number(raw[key]);
-    out[key] = Number.isFinite(value)
+    return Number.isFinite(value)
       ? Math.min(limit.max, Math.max(limit.min, value))
       : limit.fallback;
-  }
-  out.fontUi = FONT_SAFE.test(String(raw.fontUi ?? '')) && raw.fontUi ? String(raw.fontUi) : '';
-  out.fontMono = FONT_SAFE.test(String(raw.fontMono ?? '')) && raw.fontMono ? String(raw.fontMono) : '';
-  out.uppercase = raw.uppercase === true;
-  return out;
+  };
+  return {
+    glows: glowsOf(raw.glows),
+    radius: number("radius"),
+    borderWidth: number("borderWidth"),
+    shadowOffset: number("shadowOffset"),
+    fontScale: number("fontScale"),
+    fontUi: FONT_SAFE.test(String(raw.fontUi ?? "")) && raw.fontUi ? String(raw.fontUi) : "",
+    fontMono:
+      FONT_SAFE.test(String(raw.fontMono ?? "")) && raw.fontMono ? String(raw.fontMono) : "",
+    uppercase: raw.uppercase === true,
+  };
 }
 
 /**
@@ -104,28 +130,43 @@ function styleOf(theme) {
  * input: a bad colour would land inside a stylesheet, so every value has to be
  * a plain hex colour and nothing else.
  */
-function validate(theme) {
-  if (!theme || typeof theme !== 'object') return 'not an object';
-  if (typeof theme.id !== 'string' || !/^[a-z0-9][a-z0-9-]{0,48}$/.test(theme.id)) {
-    return 'id must be lowercase letters, digits and dashes';
-  }
-  if (typeof theme.name !== 'string' || !theme.name.trim()) return 'missing name';
+/** @param {unknown} value @returns {value is Colors} */
+function colorsOf(value) {
+  return (
+    modelRecord(value) &&
+    REQUIRED.every((key) => typeof value[key] === "string" && HEX.test(value[key]))
+  );
+}
+/** @param {unknown} theme @returns {Theme|string} */
+function readTheme(theme) {
+  if (!modelRecord(theme)) return "not an object";
+  if (typeof theme.id !== "string" || !/^[a-z0-9][a-z0-9-]{0,48}$/.test(theme.id))
+    return "id must be lowercase letters, digits and dashes";
+  if (typeof theme.name !== "string" || !theme.name.trim()) return "missing name";
+  if (!modelRecord(theme.colors)) return "missing colors";
   const colors = theme.colors;
-  if (!colors || typeof colors !== 'object') return 'missing colors';
-  for (const key of REQUIRED) {
-    if (!HEX.test(String(colors[key] ?? ''))) return `colors.${key} must be a #rrggbb value`;
+  if (!colorsOf(colors)) {
+    const key = REQUIRED.find((key) => typeof colors[key] !== "string" || !HEX.test(colors[key]));
+    return `colors.${key} must be a #rrggbb value`;
   }
-  return null;
+  return { ...theme, id: theme.id, name: theme.name, colors };
+}
+/** @param {unknown} theme */
+function validate(theme) {
+  const parsed = readTheme(theme);
+  return typeof parsed === "string" ? parsed : null;
 }
 
 /** Built-in palettes, plus anything valid the user has dropped in. */
+/** @param {string} [userDir] */
 function loadThemes(userDir) {
-  const themes = [];
+  /** @type {Array<Theme & {custom:boolean}>} */ const themes = [];
   const seen = new Set();
-  const add = (theme, origin) => {
-    const bad = validate(theme);
-    if (bad) {
-      console.warn(`[dsh-gui] ignoring theme from ${origin}: ${bad}`);
+  /** @param {unknown} raw @param {string} origin */
+  const add = (raw, origin) => {
+    const theme = readTheme(raw);
+    if (typeof theme === "string") {
+      console.warn(`[dsh-gui] ignoring theme from ${origin}: ${theme}`);
       return;
     }
     if (seen.has(theme.id)) {
@@ -133,24 +174,30 @@ function loadThemes(userDir) {
       return;
     }
     seen.add(theme.id);
-    themes.push({ ...theme, custom: origin !== 'built-in' });
+    themes.push({ ...theme, custom: origin !== "built-in" });
   };
 
   try {
-    for (const theme of JSON.parse(readFileSync(BUILTIN_PATH, 'utf8')).themes) add(theme, 'built-in');
+    /** @type {unknown} */ const palette = JSON.parse(readFileSync(BUILTIN_PATH, "utf8"));
+    if (!modelRecord(palette) || !Array.isArray(palette.themes)) throw new Error("missing themes");
+    for (const theme of palette.themes) add(theme, "built-in");
   } catch (err) {
-    console.warn(`[dsh-gui] built-in themes unreadable: ${err.message}`);
+    console.warn(
+      `[dsh-gui] built-in themes unreadable: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
   // A user theme is just a .json file in the themes directory — no install
   // step, no restart beyond a reload of the list.
   if (userDir && existsSync(userDir)) {
     for (const file of readdirSync(userDir)) {
-      if (!file.endsWith('.json')) continue;
+      if (!file.endsWith(".json")) continue;
       try {
-        add(JSON.parse(readFileSync(join(userDir, file), 'utf8')), file);
+        add(JSON.parse(readFileSync(join(userDir, file), "utf8")), file);
       } catch (err) {
-        console.warn(`[dsh-gui] ignoring theme file ${file}: ${err.message}`);
+        console.warn(
+          `[dsh-gui] ignoring theme file ${file}: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
   }
@@ -158,18 +205,20 @@ function loadThemes(userDir) {
 }
 
 /** #rrggbb → "r, g, b", for building rgba() values. */
+/** @param {string} hex */
 function rgb(hex) {
-  return [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(', ');
+  return [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(", ");
 }
 
 /** Blend two hex colours, for the shades a palette does not name. */
+/** @param {string} a @param {string} b @param {number} weight */
 function mix(a, b, weight) {
   const parts = [1, 3, 5].map((i) => {
     const left = parseInt(a.slice(i, i + 2), 16);
     const right = parseInt(b.slice(i, i + 2), 16);
     return Math.round(left + (right - left) * weight);
   });
-  return `#${parts.map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+  return `#${parts.map((v) => v.toString(16).padStart(2, "0")).join("")}`;
 }
 
 /**
@@ -178,9 +227,10 @@ function mix(a, b, weight) {
  * Written for both selectors: the engine sets its dark tokens on
  * `body[data-ds-dark-theme]`, so a bare `body` rule alone loses to it.
  */
+/** @param {Theme} theme */
 function engineCss(theme) {
   const c = theme.colors;
-  const sel = 'body, body[data-ds-dark-theme]';
+  const sel = "body, body[data-ds-dark-theme]";
   const lines = [
     // Marker: lets a caller tell "the sheet is applied" apart from "the sheet
     // is applied but something else wins", which are very different bugs.
@@ -305,36 +355,52 @@ function engineCss(theme) {
   // cascade than anything injected at did-finish-load and wins ties on order.
   // Measured — an earlier version without this applied cleanly (a marker
   // property did change) while every contested token kept the engine's value.
-  const fontUi = '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif';
-  for (const [name, size, height] of [['xxxs-11', 11, 16], ['xxs-12', 12, 18], ['xs-13', 13, 20], ['s-13', 13, 20], ['s-14', 14, 22], ['m-16', 14, 22]]) {
+  const fontUi =
+    '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif';
+  /** @type {Array<[string,number,number]>} */
+  const fontSteps = [
+    ["xxxs-11", 11, 16],
+    ["xxs-12", 12, 18],
+    ["xs-13", 13, 20],
+    ["s-13", 13, 20],
+    ["s-14", 14, 22],
+    ["m-16", 14, 22],
+  ];
+  for (const [name, size, height] of fontSteps) {
     lines.push(`--dsw-font-${name}: 400 ${size}px/${height}px ${fontUi}`);
-    lines.push(`--dsw-font-${name.replace(/-(\d+)$/, '-strong-$1')}: 600 ${size}px/${height}px ${fontUi}`);
+    lines.push(
+      `--dsw-font-${name.replace(/-(\d+)$/, "-strong-$1")}: 600 ${size}px/${height}px ${fontUi}`,
+    );
   }
-  let css = `${sel} {\n  ${lines.map((l) => `${l} !important`).join(';\n  ')};\n}\n${CONTROLS_CSS}\n`;
-  css += `.areal-code-token { color: var(--token-${theme.dark === false ? 'light' : 'dark'}) !important; }\n`;
+  let css = `${sel} {\n  ${lines.map((l) => `${l} !important`).join(";\n  ")};\n}\n${CONTROLS_CSS}\n`;
+  css += `.areal-code-token { color: var(--token-${theme.dark === false ? "light" : "dark"}) !important; }\n`;
   // The wash, if the theme has one. Kept out of the token block above because
   // it is a paint on the surface, not a token the engine's components read —
   // and without it a light theme is a grey rectangle in the main view while the
   // panel beside it is lit, which reads as two different apps.
   const image = bgImage(styleOf(theme));
-  if (image !== 'none') {
-    css += `${sel} {\n  background-image: ${image} !important;\n` +
-           `  background-attachment: fixed !important;\n}\n`;
+  if (image !== "none") {
+    css +=
+      `${sel} {\n  background-image: ${image} !important;\n` +
+      `  background-attachment: fixed !important;\n}\n`;
   }
   return css;
 }
 
 /** Compose the washes into one background-image value, or `none`. */
+/** @param {ReturnType<typeof styleOf>} style */
 function bgImage(style) {
-  if (!style.glows.length) return 'none';
+  if (!style.glows.length) return "none";
   return style.glows
-    .map((g) =>
-      `radial-gradient(${g.size}% ${g.size}% at ${g.x}% ${g.y}%, ` +
-      `rgba(${rgb(g.color)}, ${g.alpha}), rgba(${rgb(g.color)}, 0) 70%)`,
+    .map(
+      (g) =>
+        `radial-gradient(${g.size}% ${g.size}% at ${g.x}% ${g.y}%, ` +
+        `rgba(${rgb(g.color)}, ${g.alpha}), rgba(${rgb(g.color)}, 0) 70%)`,
     )
-    .join(', ');
+    .join(", ");
 }
 
+/** @param {Theme} theme */
 function panelCss(theme) {
   const c = theme.colors;
   const s = styleOf(theme);
@@ -370,12 +436,13 @@ function panelCss(theme) {
     `--add-bg: rgba(${rgb(c.green)}, 0.12)`,
     `--rem-bg: rgba(${rgb(c.red)}, 0.12)`,
   ];
-  let css = `:root {\n  ${lines.join(';\n  ')};\n}\n`;
+  let css = `:root {\n  ${lines.join(";\n  ")};\n}\n`;
   css += `body { font-family: var(--font-ui); }\n* { letter-spacing: 0; }\nbutton, input, select, textarea { font-family: var(--font-ui); font-size: 13px; }\n`;
   return css;
 }
 
 /** Terminal colours, so xterm follows the theme rather than staying fixed. */
+/** @param {Theme} theme */
 function terminalTheme(theme) {
   const c = theme.colors;
   return {
@@ -393,13 +460,13 @@ function terminalTheme(theme) {
     cyan: c.cyan,
     white: c.text,
     brightBlack: c.textFaint,
-    brightRed: mix(c.red, '#ffffff', 0.25),
-    brightGreen: mix(c.green, '#ffffff', 0.25),
-    brightYellow: mix(c.yellow, '#ffffff', 0.25),
-    brightBlue: mix(c.accent, '#ffffff', 0.25),
-    brightMagenta: mix(c.purple, '#ffffff', 0.25),
-    brightCyan: mix(c.cyan, '#ffffff', 0.25),
-    brightWhite: '#ffffff',
+    brightRed: mix(c.red, "#ffffff", 0.25),
+    brightGreen: mix(c.green, "#ffffff", 0.25),
+    brightYellow: mix(c.yellow, "#ffffff", 0.25),
+    brightBlue: mix(c.accent, "#ffffff", 0.25),
+    brightMagenta: mix(c.purple, "#ffffff", 0.25),
+    brightCyan: mix(c.cyan, "#ffffff", 0.25),
+    brightWhite: "#ffffff",
   };
 }
 

@@ -1,3 +1,4 @@
+import { makeTempDir } from "./support/temp.mjs";
 // 原生 T18–T34：真实 DesktopService/Core/Runtime/Noise；本机安全存储用显式 fixture。
 import assert from "node:assert/strict";
 import { CoreClient } from "../packages/runtime-client/core.js";
@@ -5,7 +6,7 @@ import { createRequire } from "node:module";
 import { fork, execFileSync } from "node:child_process";
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -229,7 +230,7 @@ async function taskOwnedPreflight({
         resourcesUncertain: true,
         reason: "Task cancellation and Run/worker settlement were not confirmed",
       });
-    if (cleanupError && !evidence.failure) throw cleanupError;
+    if (!evidence.failure) assert.ifError(cleanupError);
   }
 }
 
@@ -536,7 +537,7 @@ if (process.argv[2] === "--host-worker") {
           : 1) &&
       repetitions <= 100,
   );
-  const scratch = await mkdtemp("/private/tmp/rc05-native-");
+  const scratch = await makeTempDir("rc05-native-");
   const workspace = join(scratch, "workspace"),
     home = join(scratch, "desktop"),
     userHome = join(scratch, "user"),
@@ -1059,9 +1060,11 @@ if (process.argv[2] === "--host-worker") {
         if (!entry) return;
         waiting.delete(message.id);
         clearTimeout(entry.timer);
-        message.error
-          ? entry.reject(Object.assign(new Error(message.error.message), message.error))
-          : entry.resolve(message.result);
+        if (message.error) {
+          entry.reject(Object.assign(new Error(message.error.message), message.error));
+          return;
+        }
+        entry.resolve(message.result);
       });
       worker.once("exit", (code) => {
         clearTimeout(timer);
@@ -2345,7 +2348,11 @@ if (process.argv[2] === "--host-worker") {
       const beforeDispatches = await control("dispatches");
       await pause(4500);
       const after = await taskRead(created.id);
-      assert.equal(after.runs.length, runCount, "paused background Task never creates a replacement Run");
+      assert.equal(
+        after.runs.length,
+        runCount,
+        "paused background Task never creates a replacement Run",
+      );
       assert.equal(after.paused, true);
       assert.equal(await control("dispatches"), beforeDispatches);
       assert.equal(await readFile(join(workspace, "effects", effect), "utf8"), "ready");
@@ -2800,16 +2807,27 @@ if (process.argv[2] === "--host-worker") {
       try {
         const auth = JSON.parse(await readFile(instance.authFile, "utf8"));
         const token = auth.principals.find((principal) => principal.id === "desktop-owner").token;
-        client = new CoreClient({ createSocket: () => new WebSocket(instance.endpoint, {
-          headers: { Authorization: `Bearer ${token}` },
-        }) });
+        client = new CoreClient({
+          createSocket: () =>
+            new WebSocket(instance.endpoint, {
+              headers: { Authorization: `Bearer ${token}` },
+            }),
+        });
         await client.connect();
-        drainStatus.push({ serviceId: instance.serviceId,
-          status: await client.request("areal/server/status") });
+        drainStatus.push({
+          serviceId: instance.serviceId,
+          status: await client.request("areal/server/status"),
+        });
       } catch (error) {
-        phaseErrors.push({ phase: "drain-diagnosis", serviceId: instance.serviceId, message: error.message });
+        phaseErrors.push({
+          phase: "drain-diagnosis",
+          serviceId: instance.serviceId,
+          message: error.message,
+        });
         passed = false;
-      } finally { client?.close(); }
+      } finally {
+        client?.close();
+      }
     }
     if (worker?.exitCode === null && worker.signalCode === null) {
       try {
@@ -2845,43 +2863,96 @@ if (process.argv[2] === "--host-worker") {
         );
       } catch (error) {
         const status = drainStatus.find((entry) => entry.serviceId === instance.serviceId)?.status;
-        const unknownOnly = status && status.restartSafe === false && status.unresolvedTools?.length === 1 &&
-          status.runtime?.activeProcesses === 0 && status.activeTurns.length === 0 &&
-          status.activeTasks === 0 && status.activeGoals.length === 0 &&
-          status.resources.length === 0 && status.compactions.length === 0 && status.workgroups.length === 0;
-        const expectedGuard = (settlementOnly || taskPauseOnly) && passed && unknownOnly &&
+        const unknownOnly =
+          status &&
+          status.restartSafe === false &&
+          status.unresolvedTools?.length === 1 &&
+          status.runtime?.activeProcesses === 0 &&
+          status.activeTurns.length === 0 &&
+          status.activeTasks === 0 &&
+          status.activeGoals.length === 0 &&
+          status.resources.length === 0 &&
+          status.compactions.length === 0 &&
+          status.workgroups.length === 0;
+        const expectedGuard =
+          (settlementOnly || taskPauseOnly) &&
+          passed &&
+          unknownOnly &&
           error.stderr?.toString().includes("service drain is incomplete");
-        cleanup.push({ serviceId: instance.serviceId, gracefulDrain: false,
-          unknownDrainGuardVerified: expectedGuard, error: error.message });
+        cleanup.push({
+          serviceId: instance.serviceId,
+          gracefulDrain: false,
+          unknownDrainGuardVerified: expectedGuard,
+          error: error.message,
+        });
         if (!expectedGuard) {
-          phaseErrors.push({ phase: "service-stop", serviceId: instance.serviceId, message: error.message });
+          phaseErrors.push({
+            phase: "service-stop",
+            serviceId: instance.serviceId,
+            message: error.message,
+          });
           passed = false;
         }
         // Isolated fixture termination is separate from successful safe drain.
         // Preserve the original UNKNOWN record; never acknowledge or replay it for cleanup.
         try {
-          const current = JSON.parse(await readFile(join(registry, "services", instance.serviceId, "service.json"), "utf8"));
+          const current = JSON.parse(
+            await readFile(join(registry, "services", instance.serviceId, "service.json"), "utf8"),
+          );
           assert.equal(current.hostPid, instance.hostPid);
           assert.equal(current.generation, instance.generation);
-          const command = execFileSync("ps", ["-p", String(instance.hostPid), "-o", "command="], {encoding:"utf8"}).trim();
+          const command = execFileSync("ps", ["-p", String(instance.hostPid), "-o", "command="], {
+            encoding: "utf8",
+          }).trim();
           assert.ok(command.startsWith(`${binary} service-host`));
           process.kill(instance.hostPid, "SIGTERM");
-          await waitFor(async () => {
-            try {
-              const result = JSON.parse(execFileSync(binary,
-                ["service", "status", "--instance", instance.serviceId, "--json"],
-                { env: { ...process.env, AREAL_HARNESS_SERVICE_HOME: registry }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
-              return result.state === "stopped";
-            } catch { return false; } // Host shutdown can briefly refuse its control socket.
-          }, "isolated service Host terminated", 15000);
-          await waitFor(() => {
-            try { process.kill(instance.hostPid, 0); return false; }
-            catch (error) { if (error.code === "ESRCH")return true; throw error; }
-          }, "isolated Host process exit", 15000);
-          cleanup.push({ serviceId: instance.serviceId, isolatedHarnessTermination: true, acknowledgedUnknown: false });
+          await waitFor(
+            async () => {
+              try {
+                const result = JSON.parse(
+                  execFileSync(
+                    binary,
+                    ["service", "status", "--instance", instance.serviceId, "--json"],
+                    {
+                      env: { ...process.env, AREAL_HARNESS_SERVICE_HOME: registry },
+                      encoding: "utf8",
+                      stdio: ["ignore", "pipe", "pipe"],
+                    },
+                  ),
+                );
+                return result.state === "stopped";
+              } catch {
+                return false;
+              } // Host shutdown can briefly refuse its control socket.
+            },
+            "isolated service Host terminated",
+            15000,
+          );
+          await waitFor(
+            () => {
+              try {
+                process.kill(instance.hostPid, 0);
+                return false;
+              } catch (error) {
+                if (error.code === "ESRCH") return true;
+                throw error;
+              }
+            },
+            "isolated Host process exit",
+            15000,
+          );
+          cleanup.push({
+            serviceId: instance.serviceId,
+            isolatedHarnessTermination: true,
+            acknowledgedUnknown: false,
+          });
         } catch (cleanupError) {
           passed = false;
-          phaseErrors.push({ phase: "isolated-host-termination", serviceId: instance.serviceId, message: cleanupError.message });
+          phaseErrors.push({
+            phase: "isolated-host-termination",
+            serviceId: instance.serviceId,
+            message: cleanupError.message,
+          });
         }
       }
     }

@@ -1,0 +1,186 @@
+[
+  {
+    "from": "clients/gui/packages/ui/src/conversation/native-content/native-content.md",
+    "to": "clients/gui/packages/ui/src/conversation/native-content/native-content.md",
+    "reason": "细化合同保留同一注册表/投影和拒绝动态能力，避免两段重复。",
+    "original": "共享content入口提供数据类型、严格校验、围栏投影、注册表与toText。组件只接收已校验数据，不接受模型组件名、HTML、样式、事件或执行回调。",
+    "originalBytes": 191,
+    "replacementBytes": 86
+  },
+  {
+    "from": "clients/gui/packages/ui/src/conversation/native-content/native-content.md",
+    "to": "clients/gui/packages/ui/src/conversation/native-content/native-content.md",
+    "reason": "围栏、历史权威、新类型登记和动态模块边界已由同页详细合同定义。",
+    "original": "<!-- rule:R-NATIVECONTENT-005 -->\n实验入口使用conversation.css；模型只输出areal-ui JSON围栏。原文仍是历史权威，本组件不发模型、工具或网络请求。新类型须在同一注册表提供校验和文字回退，不引入动态模块加载。",
+    "originalBytes": 273,
+    "replacementBytes": 119
+  },
+  {
+    "from": "clients/gui/design-system/content-system.md",
+    "to": "clients/gui/packages/ui/src/conversation/native-content/native-content.md",
+    "reason": "内容协议属于真实共享投影/组件所有者；当前路线只链接合同。",
+    "original": "<!-- rule:R-CONTENT-029 -->\n`@areal/ui/content`提供可重建的内容投影、严格校验与`toText`；不成为第二份Core历史。`areal-ui` JSON围栏必须包含`version:1`、`type`和`title`，支持metric、key-value、table、bar-chart、timeline、callout六种只读数据。字段、长度和数量受限；额外动作/样式/URL字段、未知版本或无效数据回退到可展开的原文。普通代码围栏与嵌套示例保持文字，不执行生成脚本。未闭合原生块在流式中占位，结束后仍无效则显示原文入口。\n\n<!-- rule:R-CONTENT-030 -->\n每种原生类型登记校验、文字投影、流式策略和最小占位信息。可信React组件决定DOM，模型字符串只作转义文本。图表数据可展开、内容可复制；没有模型自定义事件、动态模块或工具权限。当前消息复制使用同一投影；Rust/TUI、导出、搜索和模型回放仍消费原始历史，尚未迁入JS注册表，不能声称全部渠道自动采用`toText`。",
+    "originalBytes": 1022,
+    "replacementBytes": 188
+  },
+  {
+    "from": "clients/gui/design-system/content-system.md",
+    "to": "clients/gui/packages/ui/src/conversation/decision-card/decision-card.md + clients/gui/packages/ui/src/conversation/question-card/question-card.md",
+    "reason": "两组件已有完整相同规则，包括原ApprovalRequest/AskUserQuestion权威；删除第三份定义。",
+    "original": "<!-- rule:R-CONTENT-032 -->\n审批初态显示至多三行原因、一行目标和两行命令摘要，完整理由与原始请求默认折叠且始终可查；浏览器、终端、电脑与文件请求共用此规则；批准范围、提交锁和UNKNOWN核对仍由ApprovalRequest管理。Ask User使用包内QuestionCard，一次聚焦一题，选择只修改草稿，明确发送才提交；稍后回答/关闭保留草稿，不伪造Core不支持的跳过。操作页脚在正文滚动区之外。",
+    "originalBytes": 501,
+    "replacementBytes": 266
+  },
+  {
+    "from": "clients/gui/design-system/content-system.md",
+    "to": "clients/gui/renderer/src/Messages.md",
+    "reason": "跨内容整合归实际Messages产品所有者，保留运行时和公式能力限制。",
+    "original": "<!-- rule:R-CONTENT-031 -->\nMessages将Markdown、原生内容和已验证的Gen UI引用交错展示。Gen UI仍要求已完成助手消息与有效制品；MCP Apps沿原工具结果宿主，不经过新的只读数据目录。不新增SDK/依赖，不承诺任意HTML、MathJax或全部TeX宏包。公式开启单美元兼容，保留代码/价格排除；未闭合单美元公式先显示文字。KaTeX沿已有版本提供MathML、mhchem与选区原式复制。",
+    "originalBytes": 466,
+    "replacementBytes": 116
+  },
+  {
+    "from": "clients/gui/design-system/content-system.md",
+    "to": "clients/gui/renderer/src/Messages.md",
+    "reason": "运行耗时不归ThinkingStatus；归Messages/TurnProgress产品合同。",
+    "original": "<!-- rule:R-CONTENT-033 -->\n过程耗时跨语言统一显示`Working for 15m 29s`，作为可折叠的过程标题在运行中与完成后都显示。普通失败工具不占默认活动列表，过程标题旁只保留一个可查看原始记录的标识，不重复计数文案。结果未知和需要恢复的动作继续可见。断连时不冒充继续精确计时。",
+    "originalBytes": 373,
+    "replacementBytes": 119
+  },
+  {
+    "from": "clients/gui/design-system/worktrees.md",
+    "to": "clients/gui/packages/ui/src/workbench/task-list-item/task-list-item.md + clients/gui/packages/ui/src/worktree/worktree-workspace/worktree-workspace.md",
+    "reason": "侧栏和工作区动作分别归实际现有组合，未移全局模式。",
+    "original": "<!-- rule:WT-IDENTITY-01 -->\n`WT-IDENTITY-01`（WT-R04～06）：会话名称仍为侧栏主内容；尾部以一个紧凑 GitFork 标明 Worktree。不得为每个会话常驻第二行 UUID 分支或完整路径。正在准备时可以显示准备态，已绑定后才标为“在 Worktree 工作”，取消且未绑定不能留下成功标识。\n\n标识使用可读名称 / tooltip，说明“Worktree”、当前状态与完整分支；目录在工作区详情可读。它与未读点、运行状态分别占位，不相互覆盖。颜色只辅助状态，减弱动效后仍能区分正在准备与已绑定。\n\n<!-- rule:R-WORKTREE-018 -->\n会话头部的工作区入口展示真实目录、分支和已选环境；可用 Actions 位于此入口的详情内。Action 只在实际宿主允许时可运行，显示真实运行、失败和未知结果，不把“已接受”写成“已完成”。Actions 不塞入侧栏会话行，也不扩成另一个常驻工具栏。",
+    "originalBytes": 975,
+    "replacementBytes": 265
+  },
+  {
+    "from": "clients/gui/design-system/worktrees.md",
+    "to": "design/archive/gui/worktree-reference-observations.md",
+    "reason": "逐图观察属于冻结研究证据，当前采纳规则不归档。",
+    "original": "| 参考 ID | 对应用户图片 | 直接可见的设计 | 本文采用 |\n| --- | --- | --- | --- |\n| WT-R01 | 图 1 | Environments 的项目列表，名称在左、添加在右 | 项目先行的列表入口 |\n| WT-R02 | 图 2 | 独立环境编辑页、面包屑、分开的 Setup / Cleanup 平台标签、Actions 空态 | 编辑层级与字段组织 |\n| WT-R03 | 图 3 | General 分组设置、下方项目与 Worktree 的紧凑目录列表 | 配置组与资源列表分区 |\n| WT-R04 | 图 4 | 用户消息下方的轻量创建标识、启动说明、等待中的 Composer | 创建成功与可发送分开呈现 |\n| <!-- rule:R-WORKTREE-003 --> WT-R05 | 图 5 | 创建标题、进度、详情日志、同排的不用 Worktree / 取消 | 可展开的准备过程 |\n| WT-R06 | 图 6 | 正常对话、普通 Composer、侧栏分叉标识 | 准备结束后回归正常聊天 |\n| WT-R07 | 图 7 | 环境编辑页的 Back 入口变体 | 固定采用有项目归属的返回路径 |\n| WT-R08 | 图 8 | 原位置的分支子页、搜索、分组、选中勾、长分支名 | 单浮层内的分支选择 |\n| WT-R09 | 图 9 | Composer 上方上下文条、最右齿轮、三行配置菜单 | 配置入口与菜单结构 |\n\n<!-- rule:R-WORKTREE-004 -->\n这些是静态图片，未提供版本、CSS viewport、DPR、缩放或完整操作录制。全窗图与局部图的像素比例不同，不能用附件显示尺寸推导 CSS 尺寸、时长或默认展开状态。下文明确标记的“设计决定”补齐未观察状态；原图仅留在本地证据中，以 WT-R01～09 关联，不迁入公开源码。",
+    "originalBytes": 1604,
+    "replacementBytes": 165
+  },
+  {
+    "from": "clients/gui/design-system/base.md",
+    "to": "design/archive/gui/base-candidate-history.md",
+    "reason": "0.1.x固定快照与历史题目的过程证据；当前Base使用、成员、兼容与验收合同保留。",
+    "original": "## 候选快照的探索题\n\n[设置迁移题](exercises/settings-reflow.md)固定 `269ab4ec` 为输入，试用问题到证据的记录方法。它检验现有设置组合承受新内容的能力；候选快照固定仅用于实验复现，不表示 Base 已正式冻结、用户已接受视觉效果或正式阶段 C 已完成。\n\n<!-- rule:R-BASE-010 -->\n候选 `0.1.1` 的设置切片收敛：SettingsSelect 使用既有 control 尺寸和 navigation 圆角；设置预览与题目使用默认 Switch。输入快照 `0.1.0` 的对照暴露了紧凑档选择歧义，此处在公共所有者修正，不增加页面 CSS。当前仍保留窄容器上下排列的既有布局规则，未据参考的单一宽度更改断点。\n\n<!-- rule:R-BASE-011 -->\n候选 `0.1.2` 按[设置说明题](exercises/settings-contrast.md)核对明暗与对比度端点后，仅修订深色设置说明默认层级；保留本产品对比度斜率、明亮主题较强说明角色、禁用和已完成过程信息。自定义颜色通过原偏好归一化和派生，不增加消费者覆写。\n\n<!-- rule:R-BASE-012 -->\n[内容/决策迁移题](exercises/decision-transfer.md)固定候选0.1.2作为输入，组合现有 CollapsibleText 与 ApprovalRequest。长内容、窄容器、大字号与回执/失败/未知的探索不增加生产样式；窄卡正文沿用内部滚动，页脚动作留在滚动区外。该题保留候选版本，不因新增fixture提升Base版本，也不据一个额外题目声称通用性或盲测通过。\n\n候选`0.1.3`将Messages、TurnProgress、TurnExecution和ToolEvent的过程/阅读切片纳入组合层，依据[动态信息流题](exercises/conversation-flow.md)。共享所有者统一phased/legacy过程收敛，工具详情保持挂载；正常终态与工具失败、UNKNOWN、未结算分别验证。正文增长时的可见锚点及显式返回通过生产阅读逻辑处理；预览尺寸只约束题目容器，不添加产品设计值。完整P-CONVERSATION仍在候选范围外，资源宿主返回、重连、真实执行及桌面验收未覆盖。\n\n<!-- rule:R-BASE-013 -->\n候选0.1.4协调当前生产设置变体与共享输入布局；SettingsSelect使用其既有sm，主满屏资源输入显式compact，Side默认布局不被祖先改变。较早题目的0.1.1/0.1.3尺寸与图片展开方式属于对应快照，不能覆盖当前生产所有者。该修订不冻结视觉基线，不将整个SidePane或完整资源生命周期纳入Base准入。\n",
+    "originalBytes": 2495,
+    "replacementBytes": 169
+  },
+  {
+    "from": "clients/gui/design-system/structured-flow.md",
+    "to": "clients/gui/design-system/governance.md",
+    "reason": "执行表只拥有步骤和独有动作；重复的证据元数据、裁决状态与验证范围引用已有唯一治理规则。",
+    "original": "| <!-- rule:R-FLOW-014 --> 2. 固定参考与当前运行 | 复用适用的run manifest、原图、事件、阅读位置和录像；缺少会改变实现的观察时，补一条有界旅程。参考与实现分别登记版本、条件和身份。 | 能将每段媒体定位到对应run与状态；列出条件不匹配、采样间隙和时钟误差。动态结论有过程证据。 |",
+    "originalBytes": 383,
+    "replacementBytes": 358
+  },
+  {
+    "from": "clients/gui/design-system/structured-flow.md",
+    "to": "clients/gui/design-system/governance.md",
+    "reason": "执行表只拥有步骤和独有动作；重复的证据元数据、裁决状态与验证范围引用已有唯一治理规则。",
+    "original": "| <!-- rule:R-FLOW-016 --> 4. 关键帧与日志核查 | 按候选边界、冲突或重要动作查看关键帧总览，并放大相关原图；核对原始动作、人工展开、回看/跟随、父子独立状态与运行重置。 | 每个候选都有原图/事件引用或明确缺口；按[差异筛选准入](governance.md#差异筛选准入)分开观察与推断，并说明可比较维度。 |",
+    "originalBytes": 400,
+    "replacementBytes": 287
+  },
+  {
+    "from": "clients/gui/design-system/structured-flow.md",
+    "to": "clients/gui/design-system/governance.md",
+    "reason": "执行表只拥有步骤和独有动作；重复的证据元数据、裁决状态与验证范围引用已有唯一治理规则。",
+    "original": "| <!-- rule:R-FLOW-017 --> 5. 筛选并定位所有者 | 在现有run报告中裁决候选；缺少载体时复制[核查模板](templates/evidence-review.template.json)。选当前任务内已确认的缺口，写规则ID、生产所有者、原因假设与关闭条件。 | 每条候选已标记采纳、拒绝、保留差异或待补证据；只有达到准入条件的项进入实现。没有成立缺口时，记录无需修改并结束该问题。 |",
+    "originalBytes": 455,
+    "replacementBytes": 280
+  },
+  {
+    "from": "clients/gui/design-system/structured-flow.md",
+    "to": "clients/gui/design-system/governance.md",
+    "reason": "执行表只拥有步骤和独有动作；重复的证据元数据、裁决状态与验证范围引用已有唯一治理规则。",
+    "original": "| <!-- rule:R-FLOW-018 --> 7. 重放与比较 | 在最终源码/构建上重放受影响的全部状态，按原关闭条件检验行为、数据结果与画面。使用真实操作和可观察到达条件。 | 原失败方式已有对应证据；重访、异常、键盘、主题/字号/宽窄按合同选代表组合。失败、未覆盖与通过分开，不用类型检查替代用户路径。 |",
+    "originalBytes": 398,
+    "replacementBytes": 374
+  },
+  {
+    "from": "clients/gui/design-system/structured-flow.md",
+    "to": "clients/gui/design-system/governance.md",
+    "reason": "完成和交付约束已有治理及Base唯一定义。",
+    "original": "| 8. 更新与交付 | 将通过验证的设计决定写回唯一规则位置；按需更新surface、inventory及registry，后者有变化时同步派生物。审阅owned diff。 | 采纳项关联最终验证与规范变更；未关闭项仍可见，交付标明fixture/桌面/安装包边界。Base版本和视觉基线按原准入处理，不随文档或模型产物自动提升。 |",
+    "originalBytes": 387,
+    "replacementBytes": 306
+  },
+  {
+    "from": "clients/gui/design-system/rule-maintenance.md",
+    "to": "clients/gui/design-system/rule-maintenance.md",
+    "reason": "定义语法改为可见ID，去除同一ID的隐藏副本。",
+    "original": "`R-RULES-001` 在正文段落、列表项或表格单元中使用 `rule` 注释声明 ID。`owner` 指向该段所在的既有标题锚点。引用使用 ID 和 owner 链接。必须、默认和可探索分别记为 `must`、`default` 和 `explore`。改写规则时明确更新原定义和登记摘要，不能只改其他文档的说明。",
+    "originalBytes": 341,
+    "replacementBytes": 321
+  },
+  {
+    "from": "clients/gui/design-system/rule-maintenance.md",
+    "to": "clients/gui/design-system/rule-maintenance.md",
+    "reason": "并发合同已冻结，不把临时paragraph定位机制写为长期工作流。",
+    "original": "`R-RULES-002` 组件合同与 D5 并发修改期间可使用 `paragraph` 定位，按同一文件、标题锚点和正文摘要确定唯一段落。该形式不允许按行号猜测。结构化规则使用 `json-pointer` 指向 registry 中的唯一字段。派生表格不形成新的正文定义。既有英文译文继续保留，以 `translationOf` 标记为同一合同的译文，不独立规定规则强度。",
+    "originalBytes": 416,
+    "replacementBytes": 231
+  },
+  {
+    "from": "design/architecture.md",
+    "to": "clients/gui/design-system/governance.md#证据分层",
+    "reason": "删除重复证据分类表；保留安装包新增边界，Web独立验证仍在下段。",
+    "original": "| 证据 | 能证明什么 | 不能替代什么 |\n| --- | --- | --- |\n| 文档与目录检查 | 链接、来源引用、规则身份、生成一致性和列明的静态约束 | 实际组件采用、用户路径或视觉效果 |\n| 生产组件预览 | 挂载条件下的有限状态、主题、字号、键盘与布局 | 权威回执、原生视图和真实生命周期 |\n| GUI 与实际接入的 Web 用户路径 | 该环境下的结果、阅读、焦点和恢复行为 | 未运行的平台、真实供应商或设备 |\n| `R-ARCH-045` 安装包 | 包资源、启动与平台集成 | 仅源码或预览通过不能代替包验收 |",
+    "originalBytes": 630,
+    "replacementBytes": 224
+  },
+  {
+    "from": "clients/gui/design-system/worktrees.md",
+    "to": "clients/gui/design-system/architecture.md#分层与所有权",
+    "reason": "既有架构和五个实际组件合同已分别拥有执行、投影和服务边界；本页只保留本领域入口。",
+    "original": "`R-WORKTREE-047` WorktreePicker、WorktreeStatus、WorktreeDirectory、WorktreeSettings、WorktreeWorkspace从私有@areal/ui/experimental消费，样式入口为worktree.css，各自有同目录MD及独立可操作实例。原WorktreeStarter、WorktreeStatus/Actions与WorktreesSettings仍拥有选项读取、事件投影、草稿、版本校验、确认及实际执行。包内不请求服务、不保存配置、不自动重放未知请求。",
+    "originalBytes": 446,
+    "replacementBytes": 250
+  },
+  {
+    "from": "clients/gui/design-system/governance.md",
+    "to": "clients/gui/design-system/base.md#复验入口",
+    "reason": "测试命令只保留原Base可执行入口；此处维护选择检查的条件。",
+    "original": "- 公共视觉组件/Token：`pnpm --dir clients/gui typecheck`、`pnpm --dir clients/gui verify:design`、`pnpm --dir clients/gui design:build`；按现有 `test:design` 保存对应明暗、字号与宽窄状态。",
+    "originalBytes": 216,
+    "replacementBytes": 145
+  },
+  {
+    "from": "clients/gui/design-system/base.md",
+    "to": "design/archive/gui/base-candidate-history.md",
+    "reason": "历史版本迁移经过属于冻结证据；0.4.1候选及previousSnapshot的当前范围仍由registry维护。",
+    "original": "0.3.0 新准入已有 SettingsSearchInput 的 search-lg 有限状态，并收敛插件管理路径，未新增生产组件或 Token 源。0.2.0 的独立输入 `c98af14e00faad1b28164f660629b57c4bccea6e` 与当时结果保留；既有消费者在 0.3.0 上的运行属于迁移回归，不再次称为独立盲试。\n\n0.4.0 只扩展 Messages 的同窗口 Renderer 阅读恢复合同，不增加成员、模式或 Token。已加载段落、偏移、草稿、原执行和显式跟随选择分别验证；完整应用重启与未加载历史不在范围内。0.2 与 0.3 的固定输入和历史结果保留，既有消费者的同题复验仍属于迁移回归。",
+    "originalBytes": 661,
+    "replacementBytes": 207
+  },
+  {
+    "from": "clients/gui/design-system/base.md",
+    "to": "clients/gui/packages/ui/src/settings/settings-page/settings-page.md",
+    "reason": "具体设置组合上下文归其真实组件合同，Base只链接成员前提。",
+    "original": "`R-BASE-009` 设置组合必须包含生产 SettingsPage 上下文。孤立 SettingsGroupCard 的库默认与挂载页面的变体可能不同；预览应复用实际组合，避免用 preview CSS 模拟生产上下文。",
+    "originalBytes": 221,
+    "replacementBytes": 140
+  },
+  {
+    "from": "clients/gui/design-system/foundations.md",
+    "to": "design/foundations/tokens.md#写样式时",
+    "reason": "默认值来源、语义变量和禁止消费者裸色已有唯一Token地图定义；截图色值禁令仍在R-TOKEN-007。",
+    "original": "| `R-TOKEN-003` 颜色 | @areal/ui 生成的语义变量（[tokens.json](../packages/ui/tokens.json) + theme.ts）及 `styles.css` 的产品别名；主文字、次文字、页面、输入、边界、危险各按角色取值；禁止在新消费者写裸颜色或复制参考截图色值 |",
+    "originalBytes": 289,
+    "replacementBytes": 175
+  },
+  {
+    "from": "clients/gui/design-system/foundations.md",
+    "to": "design/foundations/tokens.md#自动守卫",
+    "reason": "例外理由、退出条件和缺项/重复/过期检查与Token地图重复，保留唯一字段和抽样推断限制。",
+    "original": "`R-TOKEN-014` 剩余字面量由 `literal-baseline.json` 的每项 file、finding、occurrence 标识，必须包含理由与退出条件。基线更新先核对当前全部 finding，拒绝缺项、重复和过期例外，并保留已有说明。迁移前 50 项抽样分成已有 Token 未使用、缺少等价 Token、合理例外或保留债务，不据此推断某一原因占多数。\n",
+    "originalBytes": 391,
+    "replacementBytes": 321
+  }
+]

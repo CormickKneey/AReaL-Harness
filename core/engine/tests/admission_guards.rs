@@ -296,7 +296,7 @@ async fn pause_targets_current_run_but_accepted_replay_survives_new_run_and_rest
     let path = root.path().join("desktop/task-mode.json");
     let mut persisted: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    assert_eq!(persisted["version"], 5);
+    assert_eq!(persisted["version"], 6);
     let task_key = format!("{:x}", Sha256::digest(b"task"));
     let head = &mut persisted["tasks"][task_key];
     let ledger = root.path().join("desktop/task-ledger");

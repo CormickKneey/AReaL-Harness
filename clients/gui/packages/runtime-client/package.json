@@ -8,6 +8,10 @@
     "./core": {
       "types": "./core.d.ts",
       "import": "./core.js"
+    },
+    "./capabilities": {
+      "types": "./capabilities.js",
+      "default": "./capabilities.js"
     }
   }
 }

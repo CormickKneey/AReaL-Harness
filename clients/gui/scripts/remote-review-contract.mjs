@@ -213,6 +213,61 @@ try {
   const selectedPatch = reviewTurnFiles(project.root, turn, { itemId: "patch" });
   assert.equal(selectedPatch.files[0].beforeText, "After\n");
   assert.equal(selectedPatch.files[0].afterText, "Final\n");
+  const driftedBefore = "Externally formatted\n";
+  const driftedHash = createHash("sha256").update(driftedBefore).digest("hex");
+  const driftedWrite = nativeRecord(
+    "drifted-write",
+    "fs_write",
+    { text: "Later tool change\n", expectedSha256: driftedHash },
+    "Later tool change\n",
+  );
+  driftedWrite.execution.fileBefore = {
+    uri: `areal://blob/${driftedHash}`,
+    mimeType: "application/octet-stream",
+    sizeBytes: Buffer.byteLength(driftedBefore),
+  };
+  const fileBefores = new Map([[driftedWrite.id, Buffer.from(driftedBefore)]]);
+  const driftedTurn = { ...turn, items: [nativeRead, nativeWrite, nativeCreate, driftedWrite] };
+  assert.throws(() => reviewTurnFiles(project.root, driftedTurn, { fileBefores }), /外部变化/);
+  const partial = reviewTurnFiles(project.root, driftedTurn, { fileBefores, allowPartial: true });
+  assert.deepEqual(
+    partial.files.map((file) => file.path),
+    ["native.txt"],
+    "one broken chain does not hide other verified files",
+  );
+  assert.deepEqual(
+    partial.unavailableFiles.map((file) => file.path),
+    ["chain.txt"],
+  );
+  assert.match(partial.unavailableFiles[0].reason, /外部变化/);
+  assert.match(partial.notice, /未包含/);
+  assert.ok(!partial.diff.includes("chain.txt"), "external edits never enter the attributed Diff");
+  assert.equal(
+    reviewTurnFiles(project.root, driftedTurn, {
+      itemId: driftedWrite.id,
+      fileBefores,
+    }).files[0].beforeText,
+    driftedBefore,
+    "the individual write remains verifiable",
+  );
+  const allUnavailable = reviewTurnFiles(
+    project.root,
+    {
+      ...driftedTurn,
+      items: [nativeRead, nativeWrite, driftedWrite],
+    },
+    { fileBefores, allowPartial: true },
+  );
+  assert.equal(allUnavailable.files.length, 0);
+  assert.equal(
+    allUnavailable.unavailableFiles.length,
+    1,
+    "an unavailable file is never a verified zero",
+  );
+  assert.deepEqual(
+    reviewTurnFiles(project.root, turn, { allowPartial: true }).unavailableFiles,
+    [],
+  );
   const chainDiff = JSON.parse((await read()).review.chunk).diff;
   assert.equal(chainDiff.state, "available");
   assert.ok(
@@ -502,8 +557,7 @@ try {
     };
     await assert.rejects(artifact(), { code: "GRANT_CHANGED" });
     grant.revision = 1;
-    let reads = 0,
-      published = false;
+    let published = false;
     globalThis.fetch = async () => {
       turn.items = [];
       return new Response(png);

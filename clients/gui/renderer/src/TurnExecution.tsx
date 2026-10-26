@@ -1,62 +1,177 @@
 import { useI18n } from "./i18n/IntlProvider.js";
 import type { ReactNode } from "react";
-import { ActivityGroup, ThinkingStatus } from "@areal/ui/wip";
+import { ActivityGroup, ThinkingStatus } from "@areal/ui/experimental";
 import "@areal/ui/conversation.css";
 import { spawnedAgent } from "./AgentIdentity.js";
+import { CircleAlert } from "lucide-react";
 import { ActivityIcon } from "./ActivityIcon.js";
 import { ReasoningGroup } from "./ReasoningGroup.js";
-import { activityLabel, executionOutcome, executionSummary, processItems, timelineItems, toolPresentation } from "./conversationPresentation.js";
+import {
+  activityLabel,
+  activityRunLabel,
+  activityStageIcon,
+  activityRuns,
+  agentSettlements,
+  executionOutcome,
+  processItems,
+  statusTarget,
+  timelineItems,
+  toolPresentation,
+} from "./conversationPresentation.js";
 import type { Data } from "./services.js";
 
 function canAnimateTurn(project: Data, threadId: string, turn: Data) {
-  return turn.status === "inProgress" && (project.state?.threads?.[threadId]?.executionConnected ?? !!project.state?.connected) && !turn.modelRetry
-    && !project.state?.interactions?.[threadId]?.data?.some((item: Data) => item.status === "pending");
+  return (
+    turn.status === "inProgress" &&
+    (project.state?.threads?.[threadId]?.executionConnected ?? !!project.state?.connected) &&
+    !turn.modelRetry &&
+    !project.state?.interactions?.[threadId]?.data?.some((item: Data) => item.status === "pending")
+  );
 }
 
-export function TurnActivity({ turn, project, threadId }: { turn: Data; project: Data; threadId: string }) {
+/**
+ * CONV-STATUS-01: one live status per turn, at its tail. Running tools and model
+ * progress both use the sweeping one-line status; tool rows above stay static.
+ * When the host shows the pending decision card (decisionShown), the card is the
+ * only place that asks — the tail does not repeat "等待你的确认或回答".
+ */
+export function TurnActivity({
+  turn,
+  project,
+  threadId,
+  decisionShown = false,
+}: {
+  turn: Data;
+  project: Data;
+  threadId: string;
+  decisionShown?: boolean;
+}) {
   const { t } = useI18n();
   if (turn.status !== "inProgress") return null;
+  if (
+    decisionShown &&
+    project.state?.interactions?.[threadId]?.data?.some((item: Data) => item.status === "pending")
+  )
+    return null;
   const animate = canAnimateTurn(project, threadId, turn);
-  const currentTool = animate && processItems(turn.items ?? [], turn.status).findLast(item => item.type === "dynamicToolCall" && toolPresentation(item).running);
-  const detail = currentTool ? toolPresentation(currentTool).detail : undefined;
   const items = processItems(turn.items ?? [], turn.status);
-  const unconfirmed = items.some(item => item.type === "dynamicToolCall" && toolPresentation(item).status === "结果待确认");
-  const last = items.filter(item => item.type !== "modelContext").at(-1);
-  const summary = last?.type === "reasoning" ? (last.summary ?? []).filter((part: unknown) => typeof part === "string" && part.trim()).at(-1) : undefined;
+  const currentTool =
+    animate &&
+    items.findLast((item) => item.type === "dynamicToolCall" && toolPresentation(item).running);
+  const detail = currentTool ? statusTarget(toolPresentation(currentTool).detail) : undefined;
+  const unconfirmed = items.some(
+    (item) => item.type === "dynamicToolCall" && toolPresentation(item).status === "结果待确认",
+  );
+  const last = items.filter((item) => item.type !== "modelContext").at(-1);
+  const summary =
+    last?.type === "reasoning"
+      ? (last.summary ?? [])
+          .filter((part: unknown) => typeof part === "string" && part.trim())
+          .at(-1)
+      : undefined;
   const label = activityLabel(project, threadId, turn);
-  const model = animate && !currentTool && !unconfirmed;
-  return <div className="turn-activity" data-testid="turn-activity">
-    {model ? <ThinkingStatus label={summary || (/^(等待模型|正在思考)/.test(label) ? undefined : label)} />
-      : <p className="execution-status" role="status">{unconfirmed && animate && !currentTool ? t("chat.tool.unconfirmed") : label}{detail && <> {detail}</>}</p>}
-  </div>;
+  // 需要你注意的状态只在这一行表达：图标着色、文字加深，不再在过程标题或其他位置重复。
+  const tone =
+    !(project.state?.threads?.[threadId]?.executionConnected ?? project.state?.connected) ||
+    turn.modelRetry ||
+    project.state?.interactions?.[threadId]?.data?.some((item: Data) => item.status === "pending")
+      ? "attention"
+      : unconfirmed
+        ? "unknown"
+        : undefined;
+  return (
+    <div className="turn-activity" data-testid="turn-activity">
+      {currentTool ? (
+        <ThinkingStatus lines="single" label={detail ? `${label} ${detail}` : label} />
+      ) : animate && !unconfirmed ? (
+        <ThinkingStatus
+          lines="single"
+          label={summary || (/^(等待模型|正在思考)/.test(label) ? undefined : label)}
+        />
+      ) : (
+        <p className="execution-status" role="status" data-tone={tone}>
+          {tone && <CircleAlert size={14} aria-hidden="true" />}
+          <span>{unconfirmed && animate ? t("chat.tool.unconfirmed") : label}</span>
+        </p>
+      )}
+    </div>
+  );
 }
 
-/** Core work items are disclosed in order between visible conversation messages. */
-export function TurnExecution({ items, turn, project, threadId, renderItem }: {
-  items: Data[]; turn: Data; project: Data; threadId: string; renderItem: (item: Data, disclosure: { animate: boolean }) => ReactNode;
+/**
+ * Core work items are disclosed in order between visible conversation messages.
+ * 连续同一动作的工具合成一段（CONV-ACTIVITY-01）：一项时直接显示该项，多项时折叠为
+ * "已运行命令"等动词短语；思考组与子代理创建各自成段。段内顺序与原始历史一致。
+ */
+export function TurnExecution({
+  items,
+  live = false,
+  turn,
+  project,
+  threadId,
+  renderItem,
+}: {
+  items: Data[];
+  /** 运行中回合的最新执行段：其最后一段在出现后续可见内容前保持进行中。 */
+  live?: boolean;
+  turn: Data;
+  project: Data;
+  threadId: string;
+  renderItem: (item: Data, disclosure: { animate: boolean }) => ReactNode;
 }) {
+  const { t } = useI18n();
   const { unfinished } = executionOutcome(items);
-  const visibleItems = items.filter(item => item.type !== "dynamicToolCall" || !toolPresentation(item).failed);
-  const tools = visibleItems.filter(item => item.type === "dynamicToolCall");
-  const unconfirmed = tools.some(item => toolPresentation(item).status === "结果待确认");
+  // 失败的步骤留在原位，由所在活动行写明结果（CONV-ACTIVITY-01），过程标题不另作提示。
+  const visibleItems = items;
+  const tools = visibleItems.filter((item) => item.type === "dynamicToolCall");
+  const unconfirmed = tools.some((item) => toolPresentation(item).status === "结果待确认");
   const rows = timelineItems(visibleItems);
-  const reasoningCount = items.filter(item => item.type === "reasoning").length;
-  const counts = [reasoningCount && `${reasoningCount} 段思考`, tools.length && `${tools.length} 项活动`].filter(Boolean).join(" · ");
-  const label = `${executionSummary(visibleItems)}${turn.status === "failed" ? " · 回合失败" : ""}`;
-  const singleTool = rows.length === 1 && rows[0].type === "dynamicToolCall";
-  const singleReasoning = rows.length === 1 && rows[0].type === "reasoningGroup";
-  const onlyAgentEntries = rows.length > 0 && rows.every(item => !!spawnedAgent(item));
-  const direct = singleTool || singleReasoning || onlyAgentEntries;
   const canAnimate = canAnimateTurn(project, threadId, turn);
-  const iconKind = toolPresentation(tools.find(item => toolPresentation(item).running) ?? tools[0] ?? {}).kind;
   if (!rows.length) return null;
-  const status = <>
-    {unconfirmed ? <p role="status">结果待确认</p> : unfinished && turn.status !== "inProgress" && <p role="status">仍在运行</p>}
-  </>;
-  const content = rows.map(item => <div key={item.id} className="execution-row">{item.type === "reasoningGroup"
-    ? <ReasoningGroup items={item.items} />
-    : renderItem(item, { animate: canAnimate })}</div>);
-  return <div className="turn-execution" data-testid="turn-execution">
-    <ActivityGroup presentation={direct ? "inline" : "collapsible"} label={`${label}${counts ? ` · ${counts}` : ""}`} icon={tools.length > 0 ? <ActivityIcon kind={iconKind} /> : undefined} status={status}>{content}</ActivityGroup>
-  </div>;
+  const status = unconfirmed ? (
+    <p role="status">结果待确认</p>
+  ) : unfinished && turn.status !== "inProgress" ? (
+    <p role="status">仍在运行</p>
+  ) : turn.status === "failed" ? (
+    <p role="status">{t("common.turn.failed")}</p>
+  ) : null;
+  const runs = activityRuns(
+    rows,
+    (item) => !!spawnedAgent(item) || agentSettlements(item).length > 0,
+  );
+  const row = (item: Data) => (
+    <div key={item.id} className="execution-row">
+      {item.type === "reasoningGroup" ? (
+        <ReasoningGroup items={item.items} />
+      ) : (
+        renderItem(item, { animate: canAnimate })
+      )}
+    </div>
+  );
+  return (
+    <div className="turn-execution" data-testid="turn-execution">
+      {runs.map((run, index) => {
+        const last = index === runs.length - 1;
+        const grouped = run.key !== null && run.items.length > 1;
+        const icon = activityStageIcon(run.key);
+        return (
+          <ActivityGroup
+            key={run.items[0].id}
+            presentation={grouped ? "collapsible" : "inline"}
+            label={
+              run.key !== null
+                ? activityRunLabel(run, live && last)
+                : run.items[0].type === "reasoningGroup"
+                  ? t("common.turn.reasoning")
+                  : t("common.turn.activity")
+            }
+            icon={grouped ? <ActivityIcon kind={icon} /> : undefined}
+            status={last ? status : undefined}
+          >
+            {run.items.map(row)}
+          </ActivityGroup>
+        );
+      })}
+    </div>
+  );
 }

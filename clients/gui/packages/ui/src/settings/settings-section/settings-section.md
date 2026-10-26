@@ -3,7 +3,7 @@ id: settings-section
 title: SettingsSection
 summary: 组织设置标题、说明、操作与正文。
 status: experimental
-entry: wip
+entry: compositions
 layer: settings
 category: settings
 aliases: ["设置分区"]
@@ -26,19 +26,19 @@ related: ["settings-page", "settings-group-card"]
 
 ## 行为
 
-标题与操作在窄容器换行，正文保持DOM阅读顺序。不创建额外滚动或自动聚焦。
+`R-SETTINGSSECTION-001` 标题与操作在窄容器换行，正文保持DOM阅读顺序。不创建额外滚动或自动聚焦。
 
 ## 内容
 
-标题概括配置主题，说明交代作用范围。操作明确写出动作，不以分区样式暗示保存成功。
+`R-SETTINGSSECTION-002` 标题概括配置主题，说明交代作用范围。操作明确写出动作，不以分区样式暗示保存成功。
 
 ## 可访问性
 
-有标题时使用h2；正文及操作各自提供名称。分区不会替子控件生成label或添加多余键盘焦点。
+`R-SETTINGSSECTION-003` 有标题时使用h2；正文及操作各自提供名称。分区不会替子控件生成label或添加多余键盘焦点。
 
 ## 规则
 
-组件只组合插槽，不调用Intl、Store或Core。间距、字号和语义色沿用现有设计系统，不为页面实例复制样式。
+`R-SETTINGSSECTION-004` 组件只组合插槽，不调用Intl、Store或Core。间距、字号和语义色沿用现有设计系统，不为页面实例复制样式。
 
 ## 示例
 

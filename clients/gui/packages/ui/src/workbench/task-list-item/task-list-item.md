@@ -3,7 +3,7 @@ id: task-list-item
 title: MemoTaskItem
 summary: 任务行的标题、状态、工作区身份与动作。
 status: experimental
-entry: wip
+entry: experimental
 layer: workbench
 category: composition
 aliases: ["任务行的标题、状态、工作区身份与动作"]
@@ -23,24 +23,30 @@ exports: ["MemoTaskItem"]
 
 ## 状态
 
-默认、内容增长、聚焦、不可用，以及宿主提供的忙碌/失败/未确认；同一对象保留原身份与阅读状态。
+引用 [R-UI-COMMON-009](../../../README.md#共同合同)。
 
 ## 行为
 
-保留原实现、原生语义和交互动线。只读取props与浏览器布局，不请求Core，不访问保存配置。
+引用 [R-UI-COMMON-010](../../../README.md#共同合同)。
 
 ## 内容
 
-名称、标签、说明与结果由宿主投影；不能由视觉状态推断实际操作已完成。
+引用 [R-UI-COMMON-011](../../../README.md#共同合同)。
 
 ## 可访问性
 
-保留ref、aria、键盘、焦点及减少动态效果。字号增长与窄容器下动作仍须可达。
+引用 [R-UI-COMMON-012](../../../README.md#共同合同)。
 
 ## 规则
 
-任务运行/未读/置顶/Worktree事实来自宿主；拖拽由renderSurface沿原SidebarDragSurface拥有。包不排序、不改变任务归属、不归档或重命名，只表达回调意图。
+`R-TASKLISTITEM-001` 任务运行/未读/置顶/Worktree事实来自宿主；拖拽由renderSurface沿原SidebarDragSurface拥有。包不排序、不改变任务归属、不归档或重命名，只表达回调意图。
 
 ## 示例
 
 [组件目录与可操作实例](../../../../../renderer/design-system.html?ui-library#component-task-list-item)。真实业务路径沿原生产专项验证。
+
+## Worktree 身份
+
+`WT-IDENTITY-01`（WT-R04～06）：会话名称仍为侧栏主内容；尾部以一个紧凑 GitFork 标明 Worktree。不得为每个会话常驻第二行 UUID 分支或完整路径。正在准备时可以显示准备态，已绑定后才标为“在 Worktree 工作”，取消且未绑定不能留下成功标识。
+
+标识使用可读名称 / tooltip，说明“Worktree”、当前状态与完整分支；目录在工作区详情可读。它与未读点、运行状态分别占位，不相互覆盖。颜色只辅助状态，减弱动效后仍能区分正在准备与已绑定。

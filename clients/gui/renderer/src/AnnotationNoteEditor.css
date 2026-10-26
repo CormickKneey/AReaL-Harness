@@ -10,7 +10,7 @@
   border-radius: 50%;
   color: #fff;
   background: #368bee;
-  font-size: 10px;
+  font-size: var(--text-fixed-metadata);
   pointer-events: none;
 }
 .browser-annotation-editor {
@@ -72,7 +72,7 @@
 }
 .browser-annotation-editor.expanded {
   padding: 8px;
-  border-radius: 14px;
+  border-radius: var(--radius-card);
 }
 .browser-annotation-editor.expanded > small {
   display: block;
@@ -87,7 +87,7 @@
   min-height: 0;
   padding: 8px;
   border: 1px solid var(--color-border);
-  border-radius: 7px;
+  border-radius: var(--radius-compact-row);
   background: var(--color-background);
   font-size: var(--text-ui-sm);
   resize: none;

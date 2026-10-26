@@ -357,6 +357,8 @@ pub const NOTIFICATIONS: &[&str] = &[
     "areal/queue/updated",
     "areal/side/capacity",
     "areal/task/updated",
+    "areal/owner/invalidated",
+    "areal/owner/resetRequired",
     "areal/interaction/requested",
     "areal/interaction/resolved",
     "areal/thread/tools/attached",

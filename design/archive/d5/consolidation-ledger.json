@@ -1,0 +1,83 @@
+[
+  {
+    "path": "clients/gui/design-system/patterns.md",
+    "heading": "## 控件选择",
+    "removedBytes": 891,
+    "replacementBytes": 142,
+    "reason": "重复表格已由设置控件与反馈完整定义；多选、披露与导航语义由controls定义。",
+    "original": "## 控件选择\n\n| 意图 | 默认组件 | 限制 |\n| --- | --- | --- |\n| 执行一次操作或打开管理入口 | `ActionButton` / `Button` | 文字为主；不伪装成开关 |\n| 真正可双向开启/关闭 | `Switch` / `SettingsSwitch` | 读取真实状态；单向停止/清理使用操作按钮 |\n| 两个互斥设置值 | `SettingsSegmentedTabs` 或 `SettingsSelect` | 两值同时可见；不用于先后步骤或导航 |\n| 三个及以上候选单选 | `Select` / `SettingsSelect` | 收起显示当前值，展开显示选中项；不铺开一排按钮 |\n| 多选 | 现有 Checkbox / 多选拥有者 | 保留复选语义；不套单选 API |\n| 显示更多信息 | 详情面板；短内容用 `SettingsDisclosure` | 明确“展开 / 收起”，保留可访问语义；不用左侧三角 |\n\n既有控件合同的详细规则归 [设置控件与反馈](#设置控件与反馈)。\n\n",
+    "replacement": "## 控件选择\n\n见本页[设置控件与反馈](#设置控件与反馈)及跨产品[控件选择](../../../design/components/controls.md)。"
+  },
+  {
+    "path": "clients/gui/design-system/patterns.md",
+    "heading": "### 组合与变化边界",
+    "removedBytes": 1942,
+    "replacementBytes": 527,
+    "reason": "层级、增量、完成和返回矩阵逐项复述同页CONV合同；保留新增页面差异和验收检查点边界。",
+    "original": "### 组合与变化边界\n\n正常完成的阅读层级为：用户消息 → 可展开的过程总组（过程文字与常规活动，保留原顺序）→ 独立最终回答；资源沿所属内容提供入口。只有实际存在子活动时才展开下一层，不给每条纯文字强加工具外壳。执行异常与未结算资源沿权威投影保持可发现。\n\n页面允许变化的是任务文案、消息内容、真实资源、业务上下文与合法动作绑定。分组条件、人工展开保留、跟随/回看规则、反馈语义和设计数值都回到公共所有者；新增任务不另写一套页面CSS或折叠/滚动策略。过程文字和命令使用现有正文/过程角色，动作使用现有控件，间距与颜色沿Foundations；本轮观察没有足够依据修改Token。\n\n| 到达事件 | 执行事实 | 阅读/展开响应 | 不能据此声称 |\n| --- | --- | --- | --- |\n| 新消息被权威接受 | 增加本轮身份并进入执行 | 原阅读所有者处理新轮占位；冷历史与续接不冒充新提交 | Composer出现建议就是接受 |\n| 正文追加，用户回看历史 | 本轮继续执行 | 保存同一可见内容锚点；不因高度变化自动跟随 | scrollTop数值不变就一定没有跳动 |\n| 用户返回最新 | 执行状态不变 | 先观察滚动到达，再核验后续增量跟随 | 点击回执就是到达底部 |\n| 用户打开详情 | 工具状态不变 | 按详情身份记录人工选择，与父组/default分离 | 展开动作完成了工具或重新执行了它 |\n| 正常完成且final存在 | 以权威终态和资源结算判断 | 适用默认值的过程收敛；人工选择按原身份保留，final独立 | final出现就能隐藏失败/UNKNOWN/仍运行资源 |\n\n这些行是不同状态轴的交互，不组成新的全局状态机。结构化合同的states是验收检查点，不能拿它替代Core状态、重连快照或真实用户操作。\n\n",
+    "replacement": "### 组合与变化边界\n\n引用本页的 CONV-OWNER-01、CONV-GROUP-01、CONV-DISCLOSURE-01、CONV-READ-01 和 CONV-RESOURCE-01。页面允许变化的是任务文案、消息内容、真实资源、业务上下文与合法动作绑定。分组条件、人工展开保留、跟随/回看规则、反馈语义和设计数值都回到公共所有者；新增任务不另写一套页面CSS或折叠/滚动策略。\n\n结构化合同的states是验收检查点，不能拿它替代Core状态、重连快照或真实用户操作。"
+  },
+  {
+    "path": "clients/gui/design-system/automation.md",
+    "heading": "## Cindy 的机制",
+    "removedBytes": 3024,
+    "replacementBytes": 262,
+    "reason": "外部源码核对和已安装skill研究属于过程证据，当前采用规则由architecture/structured-flow定义。",
+    "original": "## Cindy 的机制\n\n固定版本和规则链接见 [references](references.md#cindy分开规则数值目录与视觉证据)。进一步核对了以下实际入口：\n\n| 机制 | 源码依据 | 作用与限制 |\n| --- | --- | --- |\n| reference → semantic → component | [design-tokens README](https://github.com/makecindy/cindy/blob/febe2e5110f5f9ef5b8e0506314f35274a98b524/packages/design-tokens/README.md)、[production.ts](https://github.com/makecindy/cindy/blob/febe2e5110f5f9ef5b8e0506314f35274a98b524/packages/design-tokens/src/production.ts) | 以 DTCG 编辑源和绑定生成生产子集，运行期不加载生成器；保留动态值和平台未接管边界 |\n| 同源生成与漂移检查 | [package.json](https://github.com/makecindy/cindy/blob/febe2e5110f5f9ef5b8e0506314f35274a98b524/packages/design-tokens/package.json)、[generate.ts](https://github.com/makecindy/cindy/blob/febe2e5110f5f9ef5b8e0506314f35274a98b524/packages/design-tokens/src/generate.ts) | 生产映射与文档摘要一起生成；check:generated 拒绝缺失、手改、过期；独立冻结预期不自动更新 |\n| 规则依据进入评审 | [check-pr-design-basis](https://github.com/makecindy/cindy/blob/febe2e5110f5f9ef5b8e0506314f35274a98b524/scripts/check-pr-design-basis.mjs)、[workflow](https://github.com/makecindy/cindy/blob/febe2e5110f5f9ef5b8e0506314f35274a98b524/.github/workflows/pr-design-basis.yml) | UI 变更需填写设计依据；只验证格式与引用，不能证明内容正确 |\n| 目录与增量审计 | [design-inventory](https://github.com/makecindy/cindy/blob/febe2e5110f5f9ef5b8e0506314f35274a98b524/scripts/design-inventory.mjs)、[layer report](https://github.com/makecindy/cindy/blob/febe2e5110f5f9ef5b8e0506314f35274a98b524/scripts/shared/design-layer-report.mjs) | 生成来源事实，区分语义引用、混合表达式与待人工判断；登记不是视觉批准 |\n\nAReaL 采纳唯一来源、生成检查与职责分离。本次保留现有 CSS/主题/偏好作为数值源；未引入 Terrazzo，也未复制其 Token、登录几何或 CI 工作流。\n\n## Product Design Skills 的方法\n\n方法来源为已安装的 `product-design@0.1.56`：`get-context`、`image-to-code`、`design-qa`、`references/existing-codebase-edits.md`。此处借鉴其步骤，不执行整站原型、模板生成或发布流程。\n\n- 先确定目标和用户结果，已有代码库先找相近流程、Token 与组件。\n- 实现前固定具体视觉目标及资产；参考序号、截图与设计稿不能被实现者自行替换。\n- 核对核心交互和实际可见状态；同 viewport、主题、内容、密度和交互状态下比较设计与实现。\n- 同时检查字体、空间、颜色、资产、文案；区分客观偏差、产品约束与主观润色，缺少任一方材料不能写视觉通过。\n\n这些 Skills 没有提供统一页面 JSON DSL。下述结构化合同是 AReaL 的适配设计，用于把这些步骤保留下来；数据格式本身不会自动产生高保真结果。\n\n",
+    "replacement": "## Cindy 的机制\n\n见[冻结参考研究](../../../design/archive/gui/automation-research.md#cindy-的机制)。\n\n## Product Design Skills 的方法\n\n见[冻结参考研究](../../../design/archive/gui/automation-research.md#product-design-skills-的方法)。"
+  },
+  {
+    "path": "clients/gui/design-system/automation.md",
+    "heading": "## REA 的问题与证据方法",
+    "removedBytes": 998,
+    "replacementBytes": 140,
+    "reason": "第三方研究及一次设置题采用情况为过程证据。",
+    "original": "## REA 的问题与证据方法\n\n参考 `morluto/rea@781d5751` 的 [Evidence](https://github.com/morluto/rea/blob/781d5751ad18b25a1fe1ffa8c6035388be8c3283/src/domain/evidence.ts)、[ResidualUnknown](https://github.com/morluto/rea/blob/781d5751ad18b25a1fe1ffa8c6035388be8c3283/src/domain/residualUnknown.ts) 和[场景比较](https://github.com/morluto/rea/blob/781d5751ad18b25a1fe1ffa8c6035388be8c3283/docs/browser-scenario-contract.md)：来源、观察/推断、局限和逐步比较需可追溯；缺失证据保持未知。这些是不同契约，不能称为一个现成的设计系统 JSON DSL。\n\nAReaL 在[设置迁移题](exercises/settings-reflow.md)中复用现有 renderer runner，记录问题、步骤、截图有效性、测量、trace 与原始材料摘要；研究结论与视觉基线批准分开。未引入 REA 工具、通用问题账本或 Token 提取器；参考应用继续由已授权的 agent-browser CDP 会话观察。视觉判断仍需选定目标和人工审查。\n\n\n",
+    "replacement": "## REA 的问题与证据方法\n\n见[冻结参考研究](../../../design/archive/gui/automation-research.md#rea-的问题与证据方法)。"
+  },
+  {
+    "path": "clients/gui/design-system/automation.md",
+    "heading": "## 无障碍与主题证据",
+    "removedBytes": 1163,
+    "replacementBytes": 278,
+    "reason": "D4当前权威已迁入accessibility；旧报告模式不再并列为当前合同。",
+    "original": "## 无障碍与主题证据\n\n正常 `test:design` 在既有交互验收后运行 axe 与主题检查。`node scripts/design-system-smoke.mjs --accessibility` 复用同一个隔离 Chrome runner，只重跑该检查。报告沿用 runner 的临时证据目录。\n\n- `theme-snapshot.json` 比较修改前基线的 30 组、49 个颜色角色。此比较阻断颜色回归。\n- `contrast-matrix.json` 记录明确用途、前景、表面、底图与最低对比度，保留默认及自定义主题的失败行。浏览器解析 `color-mix`，并用 canvas 叠加透明颜色，再计算 WCAG 比值。\n- `accessibility.json` 记录 axe 版本、页面、主题、已挂载状态、组件位置、严重问题及需人工核对的 incomplete 项。当前为报告模式，尚未启用 serious、critical 的零问题阻断。颜色债务不会自动获得例外或触发改色。\n\n键盘与 reduced-motion 继续由现有设计及桌面 smoke 拥有。axe 不证明 VoiceOver 朗读、所有菜单展开态、真实 Core 行为或任意自定义颜色可读。默认主题颜色债务、额外状态和自定义颜色处理策略仍按 D4 保留为未完成验收。\n",
+    "replacement": "## 无障碍与主题证据\n\n当前准入与检查边界引用[无障碍验收](accessibility.md)（[English](accessibility.en.md)）。历史调色板与报告模式记录见[原始自动化研究](../../../design/archive/gui/automation-research.md#无障碍与主题证据)。"
+  },
+  {
+    "path": "clients/gui/design-system/architecture.md",
+    "heading": "## 与现有所有者的映射",
+    "removedBytes": 2431,
+    "replacementBytes": 610,
+    "reason": "所有者表重复token地图、生成inventory与automation；保留computed style验收约束。",
+    "original": "## 与现有所有者的映射\n\n| 架构责任 | 当前所有者 | 接线状态 |\n| --- | --- | --- |\n| 基础值与默认主题输入 | [tokens.json](../packages/ui/tokens.json)、[theme.ts](../packages/ui/src/theme.ts) | 首批迁入单源包；生成产物由包检查，未迁入别名继续归 styles.css |\n| renderer 产品与命名主题别名 | [styles.css](../renderer/src/styles.css) | 导入包内基础层，保留当前平台/产品适配 |\n| 调色板/字体默认、规范化及派生 | [applicationSettings.ts](../renderer/src/settings/applicationSettings.ts) | 已有生产源；派生值不转成截图抄来的常量 |\n| 用户偏好、外观应用、reduced motion | [applicationPreferences.ts](../renderer/src/settings/applicationPreferences.ts) | `useAppearance` 将合法偏好写入 CSS 变量；消费端尊重这条链 |\n| 宿主题与面板主题适配 | [Main](../app/src/core/main.cjs)、[themes](../app/src/themes/index.js) | Main 调用现有 theme adapter；不能宣称 registry 已统一这些数值 |\n| 基础组件 | [UI包components](../packages/ui/src/components)；[原路径适配](../renderer/src/components/ui) | 基础控件与代码/Diff阅读器已迁入；原路径保留本地化和偏好注入，按实际状态准入Base |\n| 设置与对话组合 | [UI包components](../packages/ui/src/components)、[UI包conversation](../packages/ui/src/conversation)；原SettingsPageParts/ComposerSurface转接 | 设置选择/编辑、输入附件、决策卡、长文本、Markdown阅读与过程组合采用包内实现；编辑、授权、保存、历史投影继续归原renderer |\n| 目录/合同与生成 | [registry](registry.json)、[catalog generator](../scripts/design-system-catalog.mjs) | 原型已接入，检查来源引用与派生输出 |\n| 开发期预览 | [design-system/main.tsx](../renderer/src/design-system/main.tsx) | 已有生产组件 fixture；普通构建不包含预览入口 |\n| 检查入口 | [design-system-audit](../scripts/design-system-audit.mjs)、[package scripts](../package.json) | 已有 verify 调用链；CSS 覆盖仍有限，目录检查不证明 JSX 依从 |\n\n颜色、字体、间距等的实际优先级继续由现有 CSS cascade、主题适配与外观应用决定。Base 阶段必须以代表控件的 computed style 核对整条链，不能只因为变量存在就宣布统一。尚未观测的跨平台与自定义主题结果保持缺口。\n\n",
+    "replacement": "## 与现有所有者的映射\n\n当前数值与偏好所有者见[Token 地图](../../../design/foundations/tokens.md#每类值在哪里改)，组件与生产入口见[目录](inventory.md)，生成与检查入口见[自动化](automation.md)。这些索引分别引用实际源码，不在本页复制接线状态表。\n\n颜色、字体、间距等的实际优先级继续由现有 CSS cascade、主题适配与外观应用决定。Base 阶段必须以代表控件的 computed style 核对整条链，不能只因为变量存在就宣布统一。尚未观测的跨平台与自定义主题结果保持缺口。"
+  },
+  {
+    "path": "clients/gui/design-system/architecture.md",
+    "heading": "## 自动化分工与约束强度",
+    "removedBytes": 1251,
+    "replacementBytes": 414,
+    "reason": "检查能力表重复automation覆盖和governance证据分层。",
+    "original": "## 自动化分工与约束强度\n\n| 检查类型 | 当前 / 目标 | 正确结论 |\n| --- | --- | --- |\n| 目录路径、Token 名、模式/组件/槽位、必需状态 | 原型已阻断 | 声明合法；不能证明已使用 |\n| catalog 和文档表格漂移 | 原型已阻断 | 派生物与目录一致；不能证明设计合理 |\n| 部分迁移 CSS 的裸字号/颜色与未知变量 | 既有阻断 | 仅列明范围成立；不扩大为全仓覆盖 |\n| 生产组件状态、键盘、焦点、主题和布局 | 已有预览/脚本，Base 阶段选择代表条件执行 | 只报告实际运行条件 |\n| 新增页面绕过公共组件、复制样式、局部补丁 | 已接入 Git 增量 CSS 与静态 JSX 审计，详见[增量设计检查](automation.md#增量设计检查)；任意重复组件与动态间接样式未覆盖 | 只能证明已扫描规则范围，不能推出页面整体依从或视觉通过 |\n| 同状态视觉比较 | 后续独立证据 | 展示效果及偏差归因；不是后端或安装包验收 |\n\n截图是反馈传感器，不能成为逐页设计的唯一机制。对确定性结构约束用代码检查；对视觉质量用受控比较；对未决产品语义保留明确决策，避免把审美猜测写成 lint。\n\n",
+    "replacement": "## 自动化分工与约束强度\n\n检查范围与静态限制由[自动化](automation.md#增量设计检查)维护；证据能证明的范围由[治理](governance.md#证据分层)维护。\n\n截图是反馈传感器，不能成为逐页设计的唯一机制。对确定性结构约束用代码检查；对视觉质量用受控比较；对未决产品语义保留明确决策，避免把审美猜测写成 lint。"
+  },
+  {
+    "path": "design/components/README.md",
+    "heading": "## 分层",
+    "removedBytes": 1724,
+    "replacementBytes": 673,
+    "reason": "包层次和成熟度已有唯一consumer owner；旧wip路径与现行experimental/compositions相冲突。",
+    "original": "## 分层\n\n@areal/ui 按层组织，依赖只能从上往下：\n\n| 层 | 目录 | 放什么 |\n| --- | --- | --- |\n| core | `src/components` | 任何区域都能用的通用控件：Button、Input、Select、Popover、Dialog 等 |\n| settings | `src/settings` | 设置页专用组合：SettingsPage/Section/GroupCard/Row、SettingsSelect 等 |\n| conversation | `src/conversation` | 对话与输入区组合：消息、过程组、决策卡、ComposerActionButton 等 |\n| workbench / worktree | `src/workbench`、`src/worktree` | 工作台与 Worktree 组合 |\n\ncore 不能导入其他层，[documents.mjs](../../clients/gui/packages/ui/scripts/documents.mjs) 会拒绝反向依赖。某个区域专用的外观放在该区域的层里，不作为 core 组件的变体：例如输入区发送按钮是 conversation 层的 ComposerActionButton，不是 Button 的一个 variant。\n\n## 成熟度\n\n稳定（stable）表示 API 和外观可以放心依赖，从 `@areal/ui` 导入；实验（experimental）表示还在调整，从 `@areal/ui/wip` 导入。成熟度只由组件实际所在的入口决定，合同里的 `status` 与之对应。\n\n- core 组件在 3 个及以上生产文件中使用，就升级为稳定：把导出从 `wip.ts` 移到 `index.ts`，合同改为 `status: stable` / `entry: index`，消费者改从 `@areal/ui` 导入。\n- 暂不升级时，在组件合同的 front matter 写 `hold: <原因>`（例如“API 正在重命名”）。\n- 领域层（settings、conversation、workbench、worktree）保持实验入口。\n- [design-system-maturity](../../clients/gui/scripts/design-system-maturity.mjs) 在设计审计中统计生产消费者，达到标准却没有升级也没有 `hold` 时失败。\n\n",
+    "replacement": "## 分层\n\nGUI 的目录、依赖与实验入口由 [@areal/ui](../../clients/gui/packages/ui/README.md#分层与成熟度)维护。某个区域专用的外观放在该区域的层里，不作为 core 组件的变体：例如输入区发送按钮是 conversation 层的 ComposerActionButton，不是 Button 的一个 variant。\n\n## 成熟度\n\n引用 [@areal/ui 的分层与成熟度合同](../../clients/gui/packages/ui/README.md#分层与成熟度)。本页不再保留已废弃的 `wip` 导出说明。[design-system-maturity](../../clients/gui/scripts/design-system-maturity.mjs)按真实生产消费者检查准入；Base 与 API 稳定性分别由原所有者记录。"
+  },
+  {
+    "path": "design/architecture.md",
+    "heading": "## 知识、实现与执行分开",
+    "removedBytes": 1963,
+    "replacementBytes": 756,
+    "reason": "主题导航表已在design/README唯一维护；保留共享焦点与运行方向规则。",
+    "original": "## 知识、实现与执行分开\n\n| 职责 | 唯一设计位置 | 实现与契约责任 |\n| --- | --- | --- |\n| 取舍依据 | [设计原则](principles/README.md) | 平台引用适用理由，不复制定义 |\n| 基础表达 | [设计基础](foundations/README.md)、[Token 地图](foundations/tokens.md) | GUI 确立角色与默认值；已复用的默认值归共享源，动态偏好与浏览器适配归原所有者 |\n| 内容表达 | [内容与文案](content/README.md)、[对话内容呈现系统](content/conversation-content-system.md) | 正文、公式、结构化内容与交互页面的展示合同；GUI保留翻译、状态与资源绑定，Web按实际入口复用 |\n| 人机关系 | [人与 Agent](people-and-agents/README.md) | 现有服务判断身份、权限、受理、执行和结算 |\n| 任务组织 | [交互模式](patterns/README.md) | GUI 布局、阅读、焦点、状态投影和合法动作绑定；Web 复用时验证适配 |\n| 控件与组合 | [组件目录](components/README.md) | 真实导出、参数、平台交互及生产示例 |\n| 产品组织 | [产品与工作台](products/README.md) | 宿主拥有导航、草稿、焦点、资源归属与业务控制器 |\n| 跨主题取舍 | [设计决策](decisions/README.md) | 决策状态与重审条件在单项记录中维护 |\n\n`design/` 维护产品设计知识。`docs/design/` 和 `docs/api/` 继续维护系统执行机制与公共契约。`clients/*` 维护实现、平台专属规则和准入。设计说明不能改变执行权威。\n\n[共享焦点源](tokens/focus.css)是编译输入，由 GUI 样式构建和 Core 静态资源交付分别消费。它只提供界面默认值，不承载权限、状态或执行逻辑。\n\n运行时由产品绑定组合，组合使用通用控件，控件消费本端基础角色。通用控件不反向依赖领域组合。设计地图、目录与证据属于开发期输入，不进入执行链，也不生成通用页面 DSL。\n\n",
+    "replacement": "## 知识、实现与执行分开\n\n主题与实现入口见[设计知识地图](README.md#设计知识地图)。`design/` 维护产品设计知识。`docs/design/` 和 `docs/api/` 继续维护系统执行机制与公共契约。`clients/*` 维护实现、平台专属规则和准入。设计说明不能改变执行权威。\n\n[共享焦点源](tokens/focus.css)是编译输入，由 GUI 样式构建和 Core 静态资源交付分别消费。它只提供界面默认值，不承载权限、状态或执行逻辑。\n\n运行时由产品绑定组合，组合使用通用控件，控件消费本端基础角色。通用控件不反向依赖领域组合。设计地图、目录与证据属于开发期输入，不进入执行链，也不生成通用页面 DSL。"
+  }
+]

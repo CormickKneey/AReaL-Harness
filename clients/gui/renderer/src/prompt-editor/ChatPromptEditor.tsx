@@ -1,5 +1,5 @@
-import { ComposerActionButton } from "@areal/ui/wip";
-import { ComputerControlEntry } from '../ComputerControlEntry.js';
+import { ComposerActionButton } from "@areal/ui/experimental";
+import { ComputerControlEntry } from "../ComputerControlEntry.js";
 /* oxlint-disable eslint(max-lines) -- 输入壳同时收口 Lexical 同步、拖拽和工具栏插槽，暂不拆组件。 */
 // 输入展示壳：纯 props 组件、无 store/协议依赖；mention 面板通过 enableMentionPanel 透传。
 import type {
@@ -185,7 +185,9 @@ export function ChatPromptEditor({
   const toolbarRef = useComposerToolbarFit();
   const internalInputApiRef = useRef<LexicalChatInputHandle | null>(null);
   const resolvedInputApiRef = inputApiRef ?? internalInputApiRef;
-  const catalogSelection = useRef<ReturnType<LexicalChatInputHandle["getEditorState"]> | undefined>(undefined);
+  const catalogSelection = useRef<ReturnType<LexicalChatInputHandle["getEditorState"]> | undefined>(
+    undefined,
+  );
   const [internalTriggerPanelContainer, setInternalTriggerPanelContainer] =
     useState<HTMLDivElement | null>(null);
   const resolvedTriggerPanelContainer = triggerPanelContainer ?? internalTriggerPanelContainer;
@@ -201,13 +203,19 @@ export function ChatPromptEditor({
     scopeRef.current = { key: inputScope };
   }
   useEffect(() => {
-    setPendingReferences(0); setDropError("");
+    setPendingReferences(0);
+    setDropError("");
     onWorkspaceReferencePendingChange?.(false);
     return () => onWorkspaceReferencePendingChange?.(false);
   }, [inputScope, onWorkspaceReferencePendingChange]);
   const acceptsInputRef = useRef(!disabled);
   acceptsInputRef.current = !disabled;
-  useEffect(() => () => { scopeRef.current = { key: "" }; }, []);
+  useEffect(
+    () => () => {
+      scopeRef.current = { key: "" };
+    },
+    [],
+  );
 
   const hasSyncedInitialValueRef = useRef(false);
   const userEditedSinceMount = useRef(false);
@@ -228,7 +236,8 @@ export function ChatPromptEditor({
   const workspaceFileDragHint = intl.formatMessage({
     id: "chat.composer.workspaceFileDragHint",
   });
-  const hasActionMenu = Boolean(attachmentAction) || !!menuActions?.length || showMentionButton || showSlashButton;
+  const hasActionMenu =
+    Boolean(attachmentAction) || !!menuActions?.length || showMentionButton || showSlashButton;
 
   useEffect(() => {
     if (!syncInitialValueOnMount) {
@@ -269,15 +278,21 @@ export function ChatPromptEditor({
   const handleSubmit: FormEventHandler<HTMLFormElement> = useCallback(
     (event) => {
       event.preventDefault();
-      if (!pendingReferencesRef.current) onSubmit(resolvedInputApiRef.current?.getMarkdown() ?? latestTextRef.current);
+      if (!pendingReferencesRef.current)
+        onSubmit(resolvedInputApiRef.current?.getMarkdown() ?? latestTextRef.current);
     },
     [onSubmit, resolvedInputApiRef],
   );
 
   const handleKeyDown: KeyboardEventHandler<HTMLFormElement> = useCallback(
     (event) => {
-      if (event.key !== "Escape" || !onCancel || submitting ||
-        event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) {
+      if (
+        event.key !== "Escape" ||
+        !onCancel ||
+        submitting ||
+        event.nativeEvent.isComposing ||
+        event.nativeEvent.keyCode === 229
+      ) {
         return;
       }
 
@@ -301,7 +316,7 @@ export function ChatPromptEditor({
   const handleEditorSubmit = useCallback(
     // 适配：透传业务层返回值（false = 不 reset 编辑器，草稿保留），
     // 吞掉返回值会让 Enter 路径总是清空。
-    (value: string) => pendingReferencesRef.current ? false : onSubmit(value),
+    (value: string) => (pendingReferencesRef.current ? false : onSubmit(value)),
     [onSubmit],
   );
 
@@ -342,34 +357,75 @@ export function ChatPromptEditor({
     [onDragLeave],
   );
 
-  const insertWorkspaceFile = useCallback(async (payload: WorkspaceFileDragPayload) => {
-    if (!enableWorkspaceFileDrop || !validateWorkspaceFile || disabled || !formRef.current?.getClientRects().length) return;
-    const scope = scopeRef.current;
-    setDropError("");
-    pendingReferencesRef.current += 1;
-    setPendingReferences(pendingReferencesRef.current);
-    onWorkspaceReferencePendingChange?.(true);
-    try {
-      const validated = await validateWorkspaceFile(payload);
-      if (scope !== scopeRef.current || !acceptsInputRef.current || !formRef.current?.getClientRects().length) return;
-      appendWorkspaceFileMentionToComposer({ inputApiRef: resolvedInputApiRef,
-        currentMarkdown: resolvedInputApiRef.current?.getMarkdown() ?? latestTextRef.current,
-        payload: validated, workspacePath, workspaceIdentity, onTextChange: handleTextChange });
-    } catch (error) {
-      if (scope === scopeRef.current) setDropError(error instanceof UiMessageError ? intl.formatMessage(error.descriptor) : error instanceof Error ? error.message : String(error));
-    } finally {
-      if (scope === scopeRef.current) {
-        pendingReferencesRef.current -= 1;
-        setPendingReferences(pendingReferencesRef.current);
-        onWorkspaceReferencePendingChange?.(pendingReferencesRef.current > 0);
+  const insertWorkspaceFile = useCallback(
+    async (payload: WorkspaceFileDragPayload) => {
+      if (
+        !enableWorkspaceFileDrop ||
+        !validateWorkspaceFile ||
+        disabled ||
+        !formRef.current?.getClientRects().length
+      )
+        return;
+      const scope = scopeRef.current;
+      setDropError("");
+      pendingReferencesRef.current += 1;
+      setPendingReferences(pendingReferencesRef.current);
+      onWorkspaceReferencePendingChange?.(true);
+      try {
+        const validated = await validateWorkspaceFile(payload);
+        if (
+          scope !== scopeRef.current ||
+          !acceptsInputRef.current ||
+          !formRef.current?.getClientRects().length
+        )
+          return;
+        appendWorkspaceFileMentionToComposer({
+          inputApiRef: resolvedInputApiRef,
+          currentMarkdown: resolvedInputApiRef.current?.getMarkdown() ?? latestTextRef.current,
+          payload: validated,
+          workspacePath,
+          workspaceIdentity,
+          onTextChange: handleTextChange,
+        });
+      } catch (error) {
+        if (scope === scopeRef.current)
+          setDropError(
+            error instanceof UiMessageError
+              ? intl.formatMessage(error.descriptor)
+              : error instanceof Error
+                ? error.message
+                : String(error),
+          );
+      } finally {
+        if (scope === scopeRef.current) {
+          pendingReferencesRef.current -= 1;
+          setPendingReferences(pendingReferencesRef.current);
+          onWorkspaceReferencePendingChange?.(pendingReferencesRef.current > 0);
+        }
       }
-    }
-  }, [enableWorkspaceFileDrop, validateWorkspaceFile, disabled, resolvedInputApiRef, workspacePath, workspaceIdentity, handleTextChange, onWorkspaceReferencePendingChange, intl]);
+    },
+    [
+      enableWorkspaceFileDrop,
+      validateWorkspaceFile,
+      disabled,
+      resolvedInputApiRef,
+      workspacePath,
+      workspaceIdentity,
+      handleTextChange,
+      onWorkspaceReferencePendingChange,
+      intl,
+    ],
+  );
 
   useEffect(() => {
     if (!enableWorkspaceFileDrop || disabled) return;
     const add = (event: Event) => {
-      if (!isWorkspaceFileAddToChatEvent(event) || event.defaultPrevented || !formRef.current?.getClientRects().length) return;
+      if (
+        !isWorkspaceFileAddToChatEvent(event) ||
+        event.defaultPrevented ||
+        !formRef.current?.getClientRects().length
+      )
+        return;
       event.preventDefault();
       void insertWorkspaceFile(event.detail);
     };
@@ -377,31 +433,49 @@ export function ChatPromptEditor({
     return () => window.removeEventListener(WORKSPACE_FILE_ADD_TO_CHAT_EVENT, add);
   }, [enableWorkspaceFileDrop, disabled, insertWorkspaceFile]);
 
-  const handleDrop: DragEventHandler<HTMLDivElement> = useCallback((event) => {
-    setInternalDragging(false);
-    setWorkspaceFileDragging(false);
-    setExternalFileDragging(false);
-    if (hasWorkspaceFileDragPayload(event.dataTransfer)) {
-      event.preventDefault();
-      event.stopPropagation();
-      if (disabled || !enableWorkspaceFileDrop) return;
-      const payload = readWorkspaceFileDragPayload(event.dataTransfer);
-      if (!payload) setDropError(intl.formatMessage({ id: "chat.composer.workspaceReferenceInvalid" }));
-      else void insertWorkspaceFile(payload);
-      return;
-    }
-    if (enableExternalFileDrop && Array.from(event.dataTransfer.types).includes("Files")) {
-      event.preventDefault();
-      event.stopPropagation();
-      if (disabled) return;
-      const directory = Array.from(event.dataTransfer.items).some(item => item.webkitGetAsEntry?.()?.isDirectory);
-      const files = Array.from(event.dataTransfer.files);
-      if (directory || !files.length) setDropError(intl.formatMessage({ id: "chat.composer.externalFolderUnsupported" }));
-      else { setDropError(""); onFileDrop?.(files); }
-      return;
-    }
-    onDrop?.(event);
-  }, [disabled, enableWorkspaceFileDrop, enableExternalFileDrop, insertWorkspaceFile, onFileDrop, onDrop, intl]);
+  const handleDrop: DragEventHandler<HTMLDivElement> = useCallback(
+    (event) => {
+      setInternalDragging(false);
+      setWorkspaceFileDragging(false);
+      setExternalFileDragging(false);
+      if (hasWorkspaceFileDragPayload(event.dataTransfer)) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (disabled || !enableWorkspaceFileDrop) return;
+        const payload = readWorkspaceFileDragPayload(event.dataTransfer);
+        if (!payload)
+          setDropError(intl.formatMessage({ id: "chat.composer.workspaceReferenceInvalid" }));
+        else void insertWorkspaceFile(payload);
+        return;
+      }
+      if (enableExternalFileDrop && Array.from(event.dataTransfer.types).includes("Files")) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (disabled) return;
+        const directory = Array.from(event.dataTransfer.items).some(
+          (item) => item.webkitGetAsEntry?.()?.isDirectory,
+        );
+        const files = Array.from(event.dataTransfer.files);
+        if (directory || !files.length)
+          setDropError(intl.formatMessage({ id: "chat.composer.externalFolderUnsupported" }));
+        else {
+          setDropError("");
+          onFileDrop?.(files);
+        }
+        return;
+      }
+      onDrop?.(event);
+    },
+    [
+      disabled,
+      enableWorkspaceFileDrop,
+      enableExternalFileDrop,
+      insertWorkspaceFile,
+      onFileDrop,
+      onDrop,
+      intl,
+    ],
+  );
 
   // file tree 拖进编辑框时走的是 mention 插入，不是附件上传。
   // 这里单独使用 workspace file 文案，并从拖拽开始事件就点亮可投放状态，避免必须 over 到输入框才有反馈。
@@ -436,112 +510,170 @@ export function ChatPromptEditor({
         onDrop={handleDrop}
         className={shellClassName}
         dragging={isWorkspaceFileDropActive || isExternalFileDropActive}
-        overlay={draggingOverlayHint ? (
-          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-[inherit] bg-accent/55 backdrop-blur-sm">
-            <div className="flex items-center gap-2 rounded-full border border-border bg-accent px-4 py-2 text-ui-base text-foreground shadow-sm">
-              <Hand className="size-4 text-foreground" />
-              <span>{draggingOverlayHint}</span>
+        overlay={
+          draggingOverlayHint ? (
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-[inherit] bg-accent/55 backdrop-blur-sm">
+              <div className="flex items-center gap-2 rounded-full border border-border bg-accent px-4 py-2 text-ui-base text-foreground shadow-sm">
+                <Hand className="size-4 text-foreground" />
+                <span>{draggingOverlayHint}</span>
+              </div>
             </div>
-          </div>
-        ) : null}
+          ) : null
+        }
 
-        context={<>{topContent}{submitBlockedReason && <p id={submitDescriptionId} className="composer-submit-feedback" role="status">{submitBlockedReason}</p>}{pendingReferences > 0 && <p role="status" className="notice">{intl.formatMessage({ id: "chat.composer.workspaceReferencePending" })}</p>}{dropError && <p role="alert" className="notice text-destructive">{dropError}</p>}</>}
-        editor={<LexicalChatInput
-          placeholder={placeholder}
-          nextPrompt={nextPrompt}
-          disabled={disabled}
-          submitDisabled={submitDisabled || pendingReferences > 0}
-          allowSubmitWhenEmpty={allowSubmitWhenEmpty}
-          enterSubmits={enterSubmits}
-          onSubmit={handleEditorSubmit}
-          onModifiedSubmit={onModifiedSubmit ? value => pendingReferencesRef.current ? false : onModifiedSubmit(value) : undefined}
-          onChange={handleTextChange}
-          onFocus={onFocus}
-          triggerPanelContainer={resolvedTriggerPanelContainer}
-          workspacePath={workspacePath}
-          workspaceIdentity={workspaceIdentity}
-          taskId={taskId}
-          skillCatalogSessionId={skillCatalogSessionId}
-          inputTestId={inputTestId}
-          editorApiRef={resolvedInputApiRef}
-          promptHistory={promptHistory}
-          compactPlaceholder={compactPlaceholder}
-          onWhiteboardMentionSelected={onWhiteboardMentionSelected}
-          onPaste={onPaste}
-          excludedSlashCommandNames={excludedSlashCommandNames}
-          appSlashCommands={appSlashCommands}
-          composerCatalog={composerCatalog}
-          pluginMentionCatalog={pluginMentionCatalog}
-          enableMentionPanel={enableMentionPanel}
-        />}
-        toolbar={<ComposerToolbar ref={toolbarRef}
-          leading={<>
-              {composerCatalog ? <ComposerCatalogTrigger catalog={composerCatalog} anchor={resolvedTriggerPanelContainer} disabled={disabled}
-                onOpen={() => { catalogSelection.current = resolvedInputApiRef.current?.getEditorState(); }}
-                onChoose={entry => {
-                  if (entry.mention) resolvedInputApiRef.current?.insertMention(entry.mention, catalogSelection.current);
-                  entry.run();
-                }}
-                onClose={() => { catalogSelection.current = undefined; resolvedInputApiRef.current?.focus(); }} /> : hasActionMenu ? (
-                <ChatPromptActionMenu
-                  actionMenuTitle={actionMenuTitle}
-                  excludedSlashCommandNames={excludedSlashCommandNames}
-                  attachmentAction={attachmentAction}
-                  actions={menuActions}
-                  disabled={disabled}
-                  disabledReason={disabledReason}
-                  inputApiRef={resolvedInputApiRef}
-                  workspacePath={workspacePath}
-                  workspaceIdentity={workspaceIdentity}
-                  sessionId={taskId}
-                  container={resolvedTriggerPanelContainer}
-                  showPlugins={enableMentionPanel !== false}
-                />
-              ) : null}
-              {/* 权限/模式选择曾作为 leadingActions 先于动作菜单渲染，导致常驻顺序与产品规范相反。*/}
-              {leadingActions}
-              {onModeSwitchContainerChange ? (
-                <span ref={onModeSwitchContainerChange} className="flex shrink-0 items-center" />
-              ) : null}
-          </>}
-          trailing={<>
-            {onCancel && cancelLabel ? (
-              <ControlHintTooltip title={cancelLabel} shortcut="Esc">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-lg"
-                  onClick={onCancel}
-                  disabled={submitting}
-                  data-testid={cancelTestId}
-                  aria-label={cancelLabel}
-                >
-                  <XIcon className="size-4" />
-                  <span className="sr-only">{cancelLabel}</span>
-                </Button>
-              </ControlHintTooltip>
-            ) : null}
-            <ComputerControlEntry />
-            {betweenCancelAndSubmitAction}
-            {submitControl ?? (
-              <ControlHintTooltip title={submitBlockedReason ?? submitLabel} shortcut={submitBlockedReason ? undefined : enterSubmits ? "Enter" : "⌘/Ctrl+Enter"}>
-                <span className="inline-flex">
-                  <ComposerActionButton
-                    type="submit"
-                    size="icon"
-                    disabled={submitDisabled || pendingReferences > 0}
-                    data-testid={submitTestId ?? TID_CHAT_SEND_BUTTON}
-                    aria-label={submitLabel}
-                    aria-describedby={submitBlockedReason ? submitDescriptionId : undefined}
-                  >
-                    {submitting ? <Spinner className="size-4" /> : <SendMessageIcon className="size-5" />}
-                    <span className="sr-only">{submitLabel}</span>
-                  </ComposerActionButton>
-                </span>
-              </ControlHintTooltip>
+        context={
+          <>
+            {topContent}
+            {submitBlockedReason && (
+              <p id={submitDescriptionId} className="composer-submit-feedback" role="status">
+                {submitBlockedReason}
+              </p>
             )}
-          </>}
-        />}
+            {pendingReferences > 0 && (
+              <p role="status" className="notice">
+                {intl.formatMessage({ id: "chat.composer.workspaceReferencePending" })}
+              </p>
+            )}
+            {dropError && (
+              <p role="alert" className="notice text-destructive">
+                {dropError}
+              </p>
+            )}
+          </>
+        }
+        editor={
+          <LexicalChatInput
+            placeholder={placeholder}
+            nextPrompt={nextPrompt}
+            disabled={disabled}
+            submitDisabled={submitDisabled || pendingReferences > 0}
+            allowSubmitWhenEmpty={allowSubmitWhenEmpty}
+            enterSubmits={enterSubmits}
+            onSubmit={handleEditorSubmit}
+            onModifiedSubmit={
+              onModifiedSubmit
+                ? (value) => (pendingReferencesRef.current ? false : onModifiedSubmit(value))
+                : undefined
+            }
+            onChange={handleTextChange}
+            onFocus={onFocus}
+            triggerPanelContainer={resolvedTriggerPanelContainer}
+            workspacePath={workspacePath}
+            workspaceIdentity={workspaceIdentity}
+            taskId={taskId}
+            skillCatalogSessionId={skillCatalogSessionId}
+            inputTestId={inputTestId}
+            editorApiRef={resolvedInputApiRef}
+            promptHistory={promptHistory}
+            compactPlaceholder={compactPlaceholder}
+            onWhiteboardMentionSelected={onWhiteboardMentionSelected}
+            onPaste={onPaste}
+            excludedSlashCommandNames={excludedSlashCommandNames}
+            appSlashCommands={appSlashCommands}
+            composerCatalog={composerCatalog}
+            pluginMentionCatalog={pluginMentionCatalog}
+            enableMentionPanel={enableMentionPanel}
+          />
+        }
+        toolbar={
+          <ComposerToolbar
+            ref={toolbarRef}
+            leading={
+              <>
+                {composerCatalog ? (
+                  <ComposerCatalogTrigger
+                    catalog={composerCatalog}
+                    anchor={resolvedTriggerPanelContainer}
+                    disabled={disabled}
+                    onOpen={() => {
+                      catalogSelection.current = resolvedInputApiRef.current?.getEditorState();
+                    }}
+                    onChoose={(entry) => {
+                      if (entry.mention)
+                        resolvedInputApiRef.current?.insertMention(
+                          entry.mention,
+                          catalogSelection.current,
+                        );
+                      entry.run();
+                    }}
+                    onClose={() => {
+                      catalogSelection.current = undefined;
+                      resolvedInputApiRef.current?.focus();
+                    }}
+                  />
+                ) : hasActionMenu ? (
+                  <ChatPromptActionMenu
+                    actionMenuTitle={actionMenuTitle}
+                    excludedSlashCommandNames={excludedSlashCommandNames}
+                    attachmentAction={attachmentAction}
+                    actions={menuActions}
+                    disabled={disabled}
+                    disabledReason={disabledReason}
+                    inputApiRef={resolvedInputApiRef}
+                    workspacePath={workspacePath}
+                    workspaceIdentity={workspaceIdentity}
+                    sessionId={taskId}
+                    container={resolvedTriggerPanelContainer}
+                    showPlugins={enableMentionPanel !== false}
+                  />
+                ) : null}
+                {/* 权限/模式选择曾作为 leadingActions 先于动作菜单渲染，导致常驻顺序与产品规范相反。*/}
+                {leadingActions}
+                {onModeSwitchContainerChange ? (
+                  <span ref={onModeSwitchContainerChange} className="flex shrink-0 items-center" />
+                ) : null}
+              </>
+            }
+            trailing={
+              <>
+                {onCancel && cancelLabel ? (
+                  <ControlHintTooltip title={cancelLabel} shortcut="Esc">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-lg"
+                      onClick={onCancel}
+                      disabled={submitting}
+                      data-testid={cancelTestId}
+                      aria-label={cancelLabel}
+                    >
+                      <XIcon className="size-4" />
+                      <span className="sr-only">{cancelLabel}</span>
+                    </Button>
+                  </ControlHintTooltip>
+                ) : null}
+                <ComputerControlEntry />
+                {betweenCancelAndSubmitAction}
+                {submitControl ?? (
+                  <ControlHintTooltip
+                    title={submitBlockedReason ?? submitLabel}
+                    shortcut={
+                      submitBlockedReason ? undefined : enterSubmits ? "Enter" : "⌘/Ctrl+Enter"
+                    }
+                  >
+                    <span className="inline-flex">
+                      <ComposerActionButton
+                        type="submit"
+                        size="icon"
+                        disabled={submitDisabled || pendingReferences > 0}
+                        data-testid={submitTestId ?? TID_CHAT_SEND_BUTTON}
+                        aria-label={submitLabel}
+                        aria-describedby={submitBlockedReason ? submitDescriptionId : undefined}
+                      >
+                        {submitting ? (
+                          <Spinner className="size-4" />
+                        ) : (
+                          <SendMessageIcon className="size-5" />
+                        )}
+                        <span className="sr-only">{submitLabel}</span>
+                      </ComposerActionButton>
+                    </span>
+                  </ControlHintTooltip>
+                )}
+              </>
+            }
+          />
+        }
       />
     </form>
   );

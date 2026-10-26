@@ -25,10 +25,12 @@ type InputVariantProps = VariantProps<typeof inputVariants>;
 
 interface InputProps extends Omit<React.ComponentProps<"input">, "size">, InputVariantProps {
   htmlSize?: number;
+  /** 已有组合负责完整外观时，仅保留原生输入语义与 ref。 */
+  unstyled?: boolean;
 }
 
 const Input = React.forwardRef<HTMLInputElement, InputProps>(function Input(
-  { className, htmlSize, size = "default", type, ...props },
+  { className, htmlSize, size = "default", type, unstyled = false, ...props },
   ref,
 ) {
   return (
@@ -37,7 +39,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(function Input(
       type={type}
       size={htmlSize}
       data-slot="input"
-      className={cn(inputVariants({ size }), className)}
+      className={unstyled ? className : cn(inputVariants({ size }), className)}
       {...props}
     />
   );

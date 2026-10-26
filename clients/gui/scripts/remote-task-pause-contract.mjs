@@ -2,14 +2,15 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, mkdir } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
+import { makeTempDir } from "./support/temp.mjs";
 import { join } from "node:path";
 const require = createRequire(import.meta.url);
 const { TaskQuestions } = require("../app/src/core/remote-task-questions.cjs");
 const { SessionObservers } = require("../app/src/core/remote-session-observer.cjs");
 const { CoreBackend } = require("../app/src/core/backend.cjs");
 const { sessionCommand } = require("../app/src/core/remote-session-commands.cjs");
-const home = await mkdtemp("/private/tmp/rc09-contract-");
+const home = await makeTempDir("rc09-contract-");
 const checks = [];
 async function fixture(name) {
   const root = join(home, name);

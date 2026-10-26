@@ -24,12 +24,12 @@
   width: min(380px, calc(100vw - 32px));
   max-height: min(680px, calc(100dvh - 160px));
   border: 1px solid var(--color-border);
-  border-radius: 18px;
+  border-radius: var(--radius-composer);
   background: var(--color-background);
   color: var(--color-foreground);
   box-shadow: 0 12px 36px color-mix(in srgb, var(--color-foreground) 12%, transparent);
   font-family: var(--font-sans);
-  font-size: var(--text-ui-base, 13px);
+  font-size: var(--text-ui-base, var(--text-fixed-label));
   animation: feedback-arrive 160ms ease-out;
 }
 .user-feedback-panel[hidden] {
@@ -55,7 +55,7 @@
   border-top: 1px solid var(--color-border);
 }
 .user-feedback-panel footer > span {
-  font-size: var(--text-ui-caption, 12px);
+  font-size: var(--text-ui-caption, var(--text-fixed-caption));
   color: var(--color-foreground-subtle);
   line-height: 1.5;
 }
@@ -80,7 +80,7 @@
   width: 100%;
   padding: 10px 12px;
   border: 1px solid var(--color-border);
-  border-radius: 11px;
+  border-radius: var(--radius-feedback);
   background: var(--color-background);
   color: inherit;
   font: inherit;
@@ -90,7 +90,7 @@
 .user-feedback-description {
   margin: 0;
   color: var(--color-foreground-subtle);
-  font-size: var(--text-ui-caption, 12px);
+  font-size: var(--text-ui-caption, var(--text-fixed-caption));
   line-height: 1.6;
 }
 .feedback-refinement {
@@ -119,10 +119,10 @@
 .feedback-progress {
   position: relative;
   overflow: hidden;
-  border-radius: 6px;
+  border-radius: var(--radius-compact);
   padding: 6px 8px;
   color: var(--color-foreground-subtle);
-  font-size: var(--text-ui-caption, 12px);
+  font-size: var(--text-ui-caption, var(--text-fixed-caption));
   background: color-mix(in srgb, var(--color-foreground) 4%, transparent);
 }
 .feedback-progress > span {

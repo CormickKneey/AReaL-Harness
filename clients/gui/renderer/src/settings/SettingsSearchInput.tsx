@@ -1,1 +1,1 @@
-export { SettingsSearchInput } from "@areal/ui/wip";
+export { SettingsSearchInput } from "@areal/ui/compositions";

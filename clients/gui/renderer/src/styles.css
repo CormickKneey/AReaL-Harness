@@ -7,7 +7,6 @@
 @import "@areal/ui/themes.css";
 @import "../../../../design/tokens/focus.css";
 
-
 @import "@xterm/xterm/css/xterm.css";
 
 @source "../node_modules/streamdown/dist/*.js"; /* 显式扫描 streamdown 的运行时类名 */
@@ -79,21 +78,6 @@ body {
   line-height: inherit;
 }
 
-/* 中文模板描述按单字断行会拆开“简报”等词组，并把标点挤到下一行。
- * Chromium 支持时启用短语级换行；其它环境保留正常断行，避免 keep-all 在窄屏产生溢出。 */
-.text-wrap-phrase {
-  overflow-wrap: break-word;
-  word-break: normal;
-  line-break: strict;
-  text-wrap: pretty;
-}
-
-@supports (word-break: auto-phrase) {
-  .text-wrap-phrase {
-    word-break: auto-phrase;
-  }
-}
-
 #root {
   /*  Windows 桌面窗口拉伸后，根节点如果只靠内容撑开，Chromium 偶发会把新尺寸区域留给宿主底层。
    * 这里把 React 挂载点固定成完整动态视口，让桌面/Web/手机端都从根节点开始明确铺满可视区。 */
@@ -104,20 +88,12 @@ body {
 /* === 主题变量 === */
 
 @theme {
-  /* Adopted foundations are provided by @areal/ui; product theme aliases remain here. */
-  --animated-gradient-text-strong: rgba(10, 10, 10, 1);
-  --animated-gradient-text-soft: rgba(10, 10, 10, 0.22);
   --color-icon-blue: var(--color-terminal-bright-blue);
   --color-trajectory-user: #2563eb;
   --color-trajectory-assistant: #0f766e;
   --color-trajectory-reasoning: #7c3aed;
   --color-trajectory-tool-call: #d97706;
   --color-trajectory-tool-result: #0284c7;
-  /* 工作流因果图仪表化渲染：
-   * rule 比 --color-border 更弱——刻度与空闲轨道每图重复约 40 次，10% 会积成灰雾。 */
-  --color-workflow-rule: color-mix(in oklab, var(--color-neutral-950) 5.5%, transparent);
-  --color-workflow-trace: color-mix(in oklab, var(--color-neutral-950) 30%, transparent);
-  --color-workflow-trace-strong: color-mix(in oklab, var(--color-neutral-950) 55%, transparent);
   --color-find-highlight: #fde68a;
   --color-find-highlight-active: #facc15;
   --color-markdown-inline-code: var(--color-tag);
@@ -234,16 +210,11 @@ body {
 
 .dark {
   --color-composer-action-bar: rgba(255, 255, 255, 0.032);
-  --animated-gradient-text-strong: rgba(255, 255, 255, 1);
-  --animated-gradient-text-soft: rgba(255, 255, 255, 0.2);
   --color-trajectory-user: #60a5fa;
   --color-trajectory-assistant: #2dd4bf;
   --color-trajectory-reasoning: #a78bfa;
   --color-trajectory-tool-call: #f59e0b;
   --color-trajectory-tool-result: #38bdf8;
-  --color-workflow-rule: color-mix(in oklab, var(--color-white) 6.5%, transparent);
-  --color-workflow-trace: color-mix(in oklab, var(--color-white) 35%, transparent);
-  --color-workflow-trace-strong: color-mix(in oklab, var(--color-white) 60%, transparent);
   --color-find-highlight: #713f12;
   --color-find-highlight-active: #a16207;
   --color-card-selected: var(--color-neutral-700);
@@ -352,16 +323,11 @@ body {
 }
 
 .theme-areal-light {
-  --animated-gradient-text-strong: rgba(13, 13, 13, 1);
-  --animated-gradient-text-soft: rgba(13, 13, 13, 0.22);
   --color-trajectory-user: #2563eb;
   --color-trajectory-assistant: #0f766e;
   --color-trajectory-reasoning: #7c3aed;
   --color-trajectory-tool-call: #d97706;
   --color-trajectory-tool-result: #0284c7;
-  --color-workflow-rule: rgba(13, 13, 13, 0.055);
-  --color-workflow-trace: rgba(13, 13, 13, 0.3);
-  --color-workflow-trace-strong: rgba(13, 13, 13, 0.55);
   --color-find-highlight: #fff4eb;
   --color-find-highlight-active: #ffb26b;
   --color-card-selected: var(--color-input);
@@ -463,16 +429,11 @@ body {
 
 .theme-areal-dark {
   --color-composer-action-bar: rgba(255, 255, 255, 0.032);
-  --animated-gradient-text-strong: rgba(255, 255, 255, 1);
-  --animated-gradient-text-soft: rgba(255, 255, 255, 0.22);
   --color-trajectory-user: #60a5fa;
   --color-trajectory-assistant: #2dd4bf;
   --color-trajectory-reasoning: #a78bfa;
   --color-trajectory-tool-call: #f59e0b;
   --color-trajectory-tool-result: #38bdf8;
-  --color-workflow-rule: rgba(255, 255, 255, 0.065);
-  --color-workflow-trace: rgba(255, 255, 255, 0.35);
-  --color-workflow-trace-strong: rgba(255, 255, 255, 0.6);
   --color-find-highlight: #542500;
   --color-find-highlight-active: #ff8a30;
   --color-card-selected: var(--color-input);
@@ -634,93 +595,6 @@ body {
   height: 0;
 }
 
-@layer utilities {
-  .button-gradient {
-    background-image: linear-gradient(to bottom right, #191a1d, #747689);
-  }
-
-  .dark .button-gradient {
-    background-image: none;
-    background-color: #484a58;
-  }
-
-  .animated-gradient-text {
-    display: inline-block;
-    background: linear-gradient(
-      90deg,
-      var(--animated-gradient-text-strong) 0%,
-      var(--animated-gradient-text-strong) 34%,
-      var(--animated-gradient-text-soft) 50%,
-      var(--animated-gradient-text-strong) 66%,
-      var(--animated-gradient-text-strong) 100%
-    );
-    background-size: 300% 100%;
-    background-clip: text;
-    -webkit-background-clip: text;
-    color: transparent;
-    -webkit-text-fill-color: transparent;
-    animation: gradient-flow 4s linear infinite;
-    will-change: background-position;
-    transform: translateZ(0);
-    backface-visibility: hidden;
-  }
-
-  .animated-gradient-text-subtle {
-    --animated-gradient-text-strong: var(--color-foreground-subtle);
-  }
-
-  .cua-group-gradient-text {
-    display: inline-block;
-    background: linear-gradient(
-      90deg,
-      var(--animated-gradient-text-strong) 0%,
-      var(--animated-gradient-text-soft) 40%,
-      var(--animated-gradient-text-soft) 60%,
-      var(--animated-gradient-text-strong) 100%
-    );
-    background-size: 200% 100%;
-    background-clip: text;
-    -webkit-background-clip: text;
-    color: transparent;
-    -webkit-text-fill-color: transparent;
-    animation: cua-group-gradient-flow 1s linear infinite;
-    animation-delay: 0.5s;
-    will-change: background-position;
-    transform: translateZ(0);
-    backface-visibility: hidden;
-  }
-
-  @keyframes cua-group-gradient-flow {
-    0% {
-      background-position: 100% 0;
-    }
-
-    100% {
-      background-position: -100% 0;
-    }
-  }
-
-  @scope (:root[data-reduced-motion="true"]) {
-    .cua-group-gradient-text {
-      animation: none;
-    }
-  }
-
-  @keyframes gradient-flow {
-    0% {
-      background-position: 100% 0;
-    }
-
-    50% {
-      background-position: 0% 0;
-    }
-
-    100% {
-      background-position: 0% 0;
-    }
-  }
-}
-
 @keyframes zcode-stream-text-in {
   0% {
     opacity: 0;
@@ -752,34 +626,6 @@ body {
 
 @scope (:root[data-reduced-motion="true"]) {
   .areal-draft-prompt-waterfall {
-    animation: none;
-  }
-}
-
-@keyframes markdown-image-loading-shimmer {
-  from {
-    background-position: 100% 0;
-  }
-
-  to {
-    background-position: -100% 0;
-  }
-}
-
-.markdown-image-loading-shimmer {
-  background-color: var(--color-card);
-  background-image: linear-gradient(
-    135deg,
-    var(--color-card) 0%,
-    var(--color-background) 50%,
-    var(--color-card) 100%
-  );
-  background-size: 240% 100%;
-  animation: markdown-image-loading-shimmer 1.8s linear infinite;
-}
-
-@scope (:root[data-reduced-motion="true"]) {
-  .markdown-image-loading-shimmer {
     animation: none;
   }
 }
@@ -879,21 +725,6 @@ body {
   animation: zcode-reaction-particles 560ms cubic-bezier(0.16, 1, 0.3, 1) 60ms forwards;
 }
 
-.animate-zcode-alarm-ring {
-  animation: zcode-alarm-ring 600ms ease-in-out infinite;
-}
-
-@keyframes zcode-alarm-ring {
-  0%,
-  100% {
-    transform: rotate(-10deg);
-  }
-
-  50% {
-    transform: rotate(10deg);
-  }
-}
-
 @keyframes zcode-reaction-pop {
   0% {
     transform: scale(0);
@@ -947,19 +778,6 @@ body {
   }
 }
 
-@keyframes workspace-remote-connecting-breathe {
-  0%,
-  100% {
-    background-color: color-mix(in oklab, var(--color-brand) 10%, transparent);
-    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-brand) 10%, transparent);
-  }
-
-  50% {
-    background-color: color-mix(in oklab, var(--color-brand) 16%, transparent);
-    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-brand) 18%, transparent);
-  }
-}
-
 @keyframes zcode-task-interaction-countdown {
   from {
     transform: scaleX(var(--zcode-interaction-progress, 1));
@@ -979,10 +797,6 @@ body {
     animation: none;
     transform: scaleX(var(--zcode-interaction-progress, 1));
   }
-}
-
-.workspace-remote-connecting-breathe {
-  animation: workspace-remote-connecting-breathe 1.8s ease-in-out infinite;
 }
 
 .areal-update-charge-progress [data-slot="progress-indicator"] {
@@ -1031,55 +845,6 @@ body {
   }
 }
 
-/*
- *  通用 animate-pulse 只让 14px 的 SVG 以 2 秒周期改变透明度，运行时虽然处于 running，
- * 但视觉上几乎像静止。把专用呼吸动画挂到图标外层，同时改变透明度和缩放，确保操作状态可感知。
- */
-@keyframes browser-use-operation-breathe {
-  0%,
-  100% {
-    opacity: 0.5;
-    transform: scale(0.9);
-  }
-
-  50% {
-    opacity: 1;
-    transform: scale(1.08);
-  }
-}
-
-.browser-use-operation-breathe {
-  transform-origin: center;
-  animation: browser-use-operation-breathe 900ms ease-in-out infinite;
-  will-change: opacity, transform;
-}
-
-/*
- * Browser Use 执行期间发生 resize 时，直接降低 webview guest 的亮度，让提示不会只浮在复杂网页上。
- * filter 不增加点击遮罩，地址栏也不在该节点内，因此自动操作与用户控制仍保持可用。
- */
-.browser-use-viewport {
-  transition: filter 160ms ease-out;
-}
-
-.browser-use-viewport[data-browser-resize-dimmed="true"] {
-  filter: brightness(0.88);
-  will-change: filter;
-}
-
-@scope (:root[data-reduced-motion="true"]) {
-  .browser-use-operation-breathe {
-    animation: none;
-    opacity: 1;
-    transform: none;
-    will-change: auto;
-  }
-
-  .browser-use-viewport {
-    transition: none;
-  }
-}
-
 @keyframes task-search-result-highlight {
   0% {
     background-color: color-mix(in oklab, var(--color-brand) 20%, transparent);
@@ -1121,746 +886,6 @@ body {
   border-radius: 0.5rem;
 }
 
-/* 走马灯文字从两侧进出时只保留右侧渐隐，左边缘会出现硬切。 */
-@media (hover: hover) {
-  :root[data-reduced-motion="false"] .task-title-marquee:hover .task-title-marquee-track {
-    will-change: transform;
-  }
-}
-
-/* 工作流图·行进边：控制流进入正在运行的站所走的
- * 那条边**亮着、不动**——它说的是过去（控制流走了这条边），动作属于正在运行的灯（下面的 wf-beat）。
- * 光是灯的颜色，在灯那一头最亮、朝控制流来的方向淡去，像灯照亮了自己来的路。之前是一条沿边滚动的
- * 警示色虚线，读起来像「还在从上一站往这一站赶路」。
- * 平轨道是一条 border，光叠在 ::after 上：1.5px、圆头，从远端的全透明到 80% 处的满色，右端越过轨道
- * 末端 4px 好贴到光晕上。SVG 里的边（弧、分叉与汇合曲线、脊线的曲线）由 WorkflowMarchLight.tsx 画一条
- * .wf-lit 路径，描边是沿路径首尾铺的渐变。全是静止的墨，reduced-motion 下无需改动。
- */
-.wf-rail-march::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: -4px;
-  top: -1.25px;
-  height: 1.5px;
-  border-radius: var(--radius-pill);
-  background: linear-gradient(90deg, transparent, var(--color-warning) 80%);
-}
-.wf-lit {
-  fill: none;
-  stroke-width: 1.5;
-  stroke-linecap: round;
-}
-
-/* 侧栏脊线：行进段是两截 1.5px 的竖条，按
- * data-rail-position 选渐变——上一节的下半截从透明淡入到七成，运行那一节的上半截从七成涨到满、一直亮进
- * 灯里，整节穿过的 full 是平的七成。脊线的灯与卡上的灯同一个类（wf-lamp-running），一起搏动。
- */
-.wf-spine-march[data-rail-position="below"] {
-  background: linear-gradient(
-    180deg,
-    transparent,
-    color-mix(in oklab, var(--color-warning) 70%, transparent)
-  );
-}
-.wf-spine-march[data-rail-position="above"] {
-  background: linear-gradient(
-    180deg,
-    color-mix(in oklab, var(--color-warning) 70%, transparent),
-    var(--color-warning)
-  );
-}
-.wf-spine-march[data-rail-position="full"] {
-  background: color-mix(in oklab, var(--color-warning) 70%, transparent);
-}
-
-/* 工作流时间线·运动词汇：四个时长
- * 一条曲线，卡片、确认窗与侧栏清单共用。到场 / 弹入 / 展开 / 换词只动 opacity 与 transform，
- * 灯与墨迹只动颜色；从不动布局属性。reduced-motion 下全部归零，循环停在静止帧。
- */
-.wf-motion {
-  --wf-t-fast: 120ms;
-  --wf-t-base: 160ms;
-  --wf-t-enter: 200ms;
-  --wf-t-ink: 320ms;
-  --wf-ease: cubic-bezier(0.22, 0.61, 0.36, 1);
-  /* 正在运行的灯的心跳周期；脊线与卡共用。 */
-  --wf-beat: 1.6s;
-}
-.wf-pill {
-  box-shadow: inset 0 0 0 1px transparent;
-  transition:
-    background-color var(--wf-t-base) var(--wf-ease),
-    box-shadow var(--wf-t-base) var(--wf-ease),
-    transform var(--wf-t-fast) var(--wf-ease);
-}
-.wf-pill-avatar {
-  transition:
-    transform var(--wf-t-base) var(--wf-ease),
-    background-color var(--wf-t-base) var(--wf-ease);
-}
-.wf-pill-name {
-  transition: color var(--wf-t-base) var(--wf-ease);
-}
-.wf-pill-go {
-  opacity: 0;
-  transform: scale(0.6);
-  transition:
-    opacity var(--wf-t-base) var(--wf-ease),
-    transform var(--wf-t-base) var(--wf-ease),
-    color var(--wf-t-base) var(--wf-ease);
-}
-.wf-pill-open:hover,
-.wf-pill-open:focus-visible {
-  background-color: var(--color-surface-hover);
-  box-shadow: inset 0 0 0 1px
-    color-mix(in oklab, var(--wf-avatar, var(--color-border-hover)) 35%, transparent);
-}
-/* 代理胶囊仅用底色反馈悬停，避免彩色描边抢占状态层级。 */
-.wf-agent-pill:hover {
-  box-shadow: none;
-}
-.wf-pill-open:hover .wf-pill-avatar,
-.wf-pill-open:focus-visible .wf-pill-avatar {
-  transform: scale(1.08);
-  background-color: color-mix(
-    in oklab,
-    var(--wf-avatar, var(--color-border-hover)) 30%,
-    transparent
-  );
-}
-.wf-pill-open:hover .wf-pill-name,
-.wf-pill-open:focus-visible .wf-pill-name {
-  color: var(--color-foreground);
-}
-.wf-pill-open:hover .wf-pill-go,
-.wf-pill-open:focus-visible .wf-pill-go {
-  opacity: 1;
-  transform: none;
-  color: var(--color-foreground-subtle);
-}
-/* 产物药丸的方形瓦片：墨灰，悬停时抬到 hover 色、字形转前景色；不像头像那样
- * 放大——形状说「什么」，不抢颜色说「谁」的戏。 */
-.wf-pill-tile {
-  transition:
-    background-color var(--wf-t-base) var(--wf-ease),
-    color var(--wf-t-base) var(--wf-ease);
-}
-.wf-pill-open:hover .wf-pill-tile,
-.wf-pill-open:focus-visible .wf-pill-tile {
-  background-color: var(--color-hover);
-  color: var(--color-foreground);
-}
-/* 尾槽里 ↗ 顶替状态标记：标记缩出、箭头缩入，同一格、同一拍。 */
-.wf-pill-open:hover .wf-mark,
-.wf-pill-open:focus-visible .wf-mark {
-  opacity: 0;
-  transform: scale(0.6);
-}
-.wf-pill-open:active {
-  transform: scale(0.985);
-}
-/* 「还有 n 个」那一行（追记「五枚药丸与一扇门」）：三张脸叠成一叠、各带一圈底色描边好分开，悬停时
- * 扇开两格。它是一扇门不是状态，所以 ↗ 不等悬停就在（没有状态标记可让位，空尾槽读作「没东西」）。 */
-.wf-more-face {
-  border-radius: 35%;
-  box-shadow: 0 0 0 1.5px var(--color-background);
-  transition: margin-left var(--wf-t-base) var(--wf-ease);
-}
-.wf-more-deck > * + * {
-  margin-left: -5px;
-}
-.wf-more-row:hover .wf-more-deck > * + *,
-.wf-more-row:focus-visible .wf-more-deck > * + * {
-  margin-left: -2px;
-}
-.wf-pill-go-rest {
-  opacity: 1;
-  transform: none;
-}
-/* 迷你量条（追记「阶段名册」）的段宽随计数过渡，读作「又结算了几个」。 */
-.wf-meter-seg {
-  transition: flex-grow var(--wf-t-ink) var(--wf-ease);
-}
-/* 完成卡的产物瓦片：悬停时预览框的边
- * 抬到 hover 色、说明行的 kind 瓦片与名字转前景、尾槽里 ↗ 顶替版本号——与药丸同一套语法，
- * 只是「抬起」落在预览框上而不是整块底色上。
- * 结构（见 WorkflowArtifactTile 文件头说明）：预览框是按钮的**兄弟**，按钮用 ::after 铺满整张瓦片
- * 接住点击；所以框的悬停态从瓦片容器上用 :has() 读按钮的状态，焦点环也画在容器上。
- */
-.wf-tile-hit::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: 0.5rem;
-}
-.wf-tile:has(.wf-tile-hit:focus-visible) {
-  outline: 2px solid color-mix(in oklab, var(--color-ring) 40%, transparent);
-  outline-offset: 2px;
-  border-radius: 0.5rem;
-}
-.wf-tile-frame {
-  transition:
-    border-color var(--wf-t-base) var(--wf-ease),
-    transform var(--wf-t-fast) var(--wf-ease);
-}
-.wf-tile:has(.wf-tile-open:hover) .wf-tile-frame,
-.wf-tile:has(.wf-tile-open:focus-visible) .wf-tile-frame {
-  border-color: var(--color-border-hover);
-}
-.wf-tile-open:hover .wf-pill-tile,
-.wf-tile-open:focus-visible .wf-pill-tile {
-  background-color: var(--color-hover);
-  color: var(--color-foreground);
-}
-.wf-tile-open:hover .wf-pill-go,
-.wf-tile-open:focus-visible .wf-pill-go {
-  opacity: 1;
-  transform: none;
-  color: var(--color-foreground-subtle);
-}
-.wf-tile-open:hover .wf-mark,
-.wf-tile-open:focus-visible .wf-mark {
-  opacity: 0;
-  transform: scale(0.6);
-}
-.wf-tile:has(.wf-tile-open:active) .wf-tile-frame {
-  transform: scale(0.99);
-}
-/* 产物索引的行：交付物行之后的其余产物是一行行
- * 文字，不是框。悬停 / 聚焦时整行填 surface-hover（像侧栏行），kind 图标转前景，尾槽里 ↗ 顶替版本号——
- * 与药丸同一套语法，只是没有底色也没有描边：一行文字的抬起只需要一层填色。「还有 N 个」那一行是
- * 一扇门，↗ 不等悬停就在（wf-pill-go-rest）。
- */
-.wf-line {
-  transition: background-color var(--wf-t-base) var(--wf-ease);
-}
-.wf-line-icon {
-  transition: color var(--wf-t-base) var(--wf-ease);
-}
-.wf-line-open:hover,
-.wf-line-open:focus-visible {
-  background-color: var(--color-surface-hover);
-}
-.wf-line-open:hover .wf-line-icon,
-.wf-line-open:focus-visible .wf-line-icon {
-  color: var(--color-foreground);
-}
-.wf-line-open:hover .wf-pill-go,
-.wf-line-open:focus-visible .wf-pill-go {
-  opacity: 1;
-  transform: none;
-  color: var(--color-foreground-subtle);
-}
-.wf-line-open:hover .wf-mark,
-.wf-line-open:focus-visible .wf-mark {
-  opacity: 0;
-  transform: scale(0.6);
-}
-/* 预览区里的文档缩略：按 2× 排版再缩到一半——是内容的缩略，不是把界面字号调小。
- * 盒子的宽**和高**都按倍数放大再缩回框内：只放宽不放高，缩后的盒子只盖住框的上半截，下半截空白。 */
-.wf-preview-doc {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 200%;
-  height: 200%;
-  transform: scale(0.5);
-  transform-origin: top left;
-  padding: 22px 26px;
-  overflow: hidden;
-  animation: wf-arrive var(--wf-t-ink, 320ms) var(--wf-ease, ease);
-}
-.wf-station {
-  transition: color var(--wf-t-base) var(--wf-ease);
-}
-.wf-lamp {
-  transition:
-    background-color var(--wf-t-ink) var(--wf-ease),
-    border-color var(--wf-t-ink) var(--wf-ease),
-    box-shadow var(--wf-t-base) var(--wf-ease);
-}
-/*
- * 正在运行的灯：常亮的 3px 光晕，加每 1.6s 一下心跳（wf-beat）——灯鼓到 1.12 倍
- * 再落回，同时从光晕边缘放出一圈环，涨到灯外 8px 时淡尽。环是第二层 box-shadow，静止时透明；灯是页面上
- * 唯一在走时钟的东西。reduced-motion 下只剩常亮的光晕。
- */
-.wf-lamp-running {
-  box-shadow:
-    0 0 0 3px color-mix(in oklab, var(--color-warning) 20%, transparent),
-    0 0 0 3px transparent;
-}
-.wf-station-open:hover .wf-lamp[data-lamp="pending"] {
-  box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-foreground) 10%, transparent);
-}
-.wf-station-open:hover .wf-lamp[data-lamp="done"] {
-  box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-success) 18%, transparent);
-}
-.wf-station-open:hover .wf-lamp[data-lamp="failed"] {
-  box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-destructive) 18%, transparent);
-}
-.wf-ink {
-  transition:
-    stroke var(--wf-t-ink) var(--wf-ease),
-    fill var(--wf-t-ink) var(--wf-ease),
-    border-color var(--wf-t-ink) var(--wf-ease);
-}
-/* 入场动画不带 fill：只声明 from 帧，播完即交还给悬停过渡（标记让位、按下缩放）。 */
-.wf-arrive {
-  animation: wf-arrive var(--wf-t-enter) var(--wf-ease);
-}
-.wf-mark {
-  transform-origin: center;
-  animation: wf-mark 180ms var(--wf-ease);
-  transition:
-    opacity var(--wf-t-base) var(--wf-ease),
-    transform var(--wf-t-base) var(--wf-ease);
-}
-.wf-unfold {
-  animation: wf-unfold var(--wf-t-enter) var(--wf-ease);
-}
-.wf-swap {
-  display: inline-block;
-  animation: wf-swap var(--wf-t-enter) var(--wf-ease);
-}
-.wf-draw {
-  stroke-dasharray: 1;
-  stroke-dashoffset: 1;
-  animation: wf-draw 420ms var(--wf-ease) forwards;
-}
-.wf-caret {
-  animation: wf-caret 1s step-end infinite;
-}
-/* 草稿的笔：轨道段从左伸出、灯落地，然后名字逐字写出。 */
-.wf-rail-grow {
-  transform-origin: left center;
-  animation: wf-rail-grow var(--wf-t-base) var(--wf-ease);
-}
-.wf-land {
-  animation: wf-land var(--wf-t-enter) var(--wf-ease);
-}
-/* 轮尾摘要：展开 / 收起时外框高度在两个值之间过渡；展开时药丸挂载、依次
- * 落地（wf-arrive + 30 ms 错位），收起时只收高度。 */
-.wf-digest-plot {
-  transition: height var(--wf-t-ink) var(--wf-ease);
-}
-/* 边檐：时间线自由滚动，原生滚动条隐藏；
- * 折到檐上的站在内容里淡出（160 ms 后 visibility 才切，淡出期间不可点也不可聚焦）；檐上的灯悬停
- * 放大 1.25；底部 2px 滚动条静止时隐形，指针在时间线上或正在滚 / 拖时露出，悬停轨道加粗到 4px。
- */
-.wf-scroller {
-  scrollbar-width: none;
-}
-.wf-scroller::-webkit-scrollbar {
-  display: none;
-}
-.wf-foldable {
-  transition:
-    opacity var(--wf-t-base) var(--wf-ease),
-    visibility 0s linear 0s;
-}
-.wf-folded {
-  opacity: 0;
-  visibility: hidden;
-  transition:
-    opacity var(--wf-t-base) var(--wf-ease),
-    visibility 0s linear var(--wf-t-base);
-}
-.wf-ledge-lamp {
-  transition: transform var(--wf-t-base) var(--wf-ease);
-}
-.wf-ledge-lamp:hover,
-.wf-ledge-lamp:focus-visible {
-  transform: scale(1.25);
-}
-.wf-sb {
-  opacity: 0;
-  transition:
-    opacity var(--wf-t-base) var(--wf-ease),
-    height var(--wf-t-fast) var(--wf-ease);
-}
-.wf-timeline:hover .wf-sb,
-.wf-sb[data-scrolling="true"],
-.wf-sb[data-dragging="true"] {
-  opacity: 1;
-}
-.wf-sb:hover,
-.wf-sb[data-dragging="true"] {
-  height: 4px;
-}
-@scope (:root[data-reduced-motion="false"]) {
-  .wf-lamp-running {
-    animation: wf-beat var(--wf-beat, 1.6s) var(--wf-ease, ease-in-out) infinite;
-  }
-}
-/* 工作区 transcript：
- * 条目依次到场（wf-arrive + 每张错 24 ms，封顶 360 ms）；章头的横线从左长出；命令输出的尾巴
- * 与展开面板从上方落下；落点那个条目到位后底色亮一下再退回（一次，不是常驻的焦点带）；
- * 运行中的动词扫光；状态词换值时旧词退场新词进场（wf-swap）。全部只动 opacity / transform /
- * background-color；reduced-motion 下到场、落点与扫光都归零。
- */
-.wf-ws-entry {
-  transition: background-color var(--wf-t-base) var(--wf-ease);
-}
-.wf-ws-landed {
-  animation: wf-ws-land 1.4s var(--wf-ease) 1;
-}
-/* 详情页的落点：节头到位后底色持 400 ms 再用 800 ms 退回，一次。 */
-.wf-landed {
-  animation: wf-land 1.2s var(--wf-ease) 1;
-}
-@keyframes wf-land {
-  0%,
-  33% {
-    background-color: var(--color-surface-hover);
-  }
-  100% {
-    background-color: transparent;
-  }
-}
-@scope (:root[data-reduced-motion="true"]) {
-  .wf-landed {
-    animation: none;
-  }
-}
-.wf-ws-body {
-  animation: wf-unfold var(--wf-t-enter) var(--wf-ease);
-}
-.wf-ws-peek {
-  animation: wf-unfold var(--wf-t-enter) var(--wf-ease);
-  -webkit-mask-image:
-    linear-gradient(180deg, rgba(0, 0, 0, 0.35), #000 40%),
-    linear-gradient(90deg, #000 82%, transparent);
-  -webkit-mask-composite: source-in;
-  mask-image:
-    linear-gradient(180deg, rgba(0, 0, 0, 0.35), #000 40%),
-    linear-gradient(90deg, #000 82%, transparent);
-  mask-composite: intersect;
-}
-.wf-ws-rule {
-  transform-origin: left center;
-  animation: wf-rail-grow var(--wf-t-ink) var(--wf-ease);
-}
-.wf-ws-shine {
-  color: transparent;
-  background: linear-gradient(
-    90deg,
-    var(--color-foreground-subtle) 0%,
-    var(--color-foreground) 40%,
-    var(--color-foreground-subtle) 80%
-  );
-  background-size: 200% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  animation: wf-ws-shine 2.4s linear infinite;
-}
-@keyframes wf-ws-land {
-  0% {
-    background-color: transparent;
-  }
-  20% {
-    background-color: var(--color-surface-hover);
-  }
-  100% {
-    background-color: transparent;
-  }
-}
-@keyframes wf-ws-shine {
-  to {
-    background-position: 200% 0;
-  }
-}
-@scope (:root[data-reduced-motion="true"]) {
-  .wf-ws-landed,
-  .wf-ws-body,
-  .wf-ws-peek,
-  .wf-ws-rule {
-    animation: none;
-  }
-  .wf-ws-shine {
-    animation: none;
-    color: var(--color-foreground-subtle);
-    background: none;
-  }
-}
-/* 瓦片脸：身份色不随表情改变，动作只作用于眼睛，机身始终静止。 */
-.wf-face {
-  min-width: 20px;
-  min-height: 20px;
-  flex-shrink: 0;
-  --wf-face-body: #54b9a6;
-  --wf-face-eye: #ffffff;
-  --wf-face-x: 0px;
-  --wf-face-y: 0px;
-}
-.wf-face-eyes {
-  transform: translate(var(--wf-face-x), var(--wf-face-y));
-  transition: transform 360ms ease-in-out;
-}
-.wf-face-lids {
-  transform-box: fill-box;
-  transform-origin: center;
-}
-.wf-face [data-eye-expression] {
-  display: none;
-}
-.wf-face[data-expression="dots"] [data-eye-expression="dots"],
-.wf-face[data-expression="pill"] [data-eye-expression="pill"] {
-  display: inline;
-}
-.wf-face[data-expression="happy"] [data-eye-expression="happy"] {
-  display: inline;
-}
-.wf-face[data-expression="sleepy"] [data-eye-expression="sleepy"] {
-  display: inline;
-}
-.wf-face[data-expression="focused"] [data-eye-expression="focused"] {
-  display: inline;
-}
-.wf-face[data-expression="sad"] [data-eye-expression="sad"] {
-  display: inline;
-}
-.wf-face[data-expression="confused"] [data-eye-expression="confused"] {
-  display: inline;
-}
-
-.wf-face[data-motion="blink"] .wf-face-lids {
-  animation: wf-face-blink var(--wf-face-blink-time, 230ms) ease-in-out var(--wf-face-blinks, 2);
-}
-.wf-face[data-motion="morph"] .wf-face-lids {
-  animation: wf-face-morph 180ms ease-in-out;
-}
-.wf-face[data-motion="hop"] .wf-face-bounce {
-  animation: wf-face-hop 240ms ease-in-out var(--wf-face-hops, 2);
-}
-.wf-face-closed {
-  opacity: 0;
-}
-.wf-face[data-motion="blink"] .wf-face-closed {
-  animation: wf-face-closed-blink var(--wf-face-blink-time, 230ms) ease-in-out
-    var(--wf-face-blinks, 2);
-}
-.wf-face[data-motion="morph"] .wf-face-closed {
-  animation: wf-face-closed-morph 180ms ease-in-out;
-}
-@keyframes wf-face-blink {
-  0%,
-  70%,
-  100% {
-    transform: scaleY(1);
-    opacity: 1;
-  }
-  35% {
-    transform: scaleY(0.333333);
-    opacity: 0;
-  }
-}
-@keyframes wf-face-closed-blink {
-  0%,
-  70%,
-  100% {
-    opacity: 0;
-  }
-  35% {
-    opacity: 1;
-  }
-}
-@keyframes wf-face-morph {
-  0%,
-  100% {
-    transform: scaleY(1);
-    opacity: 1;
-  }
-  40%,
-  50% {
-    transform: scaleY(0.333333);
-    opacity: 0;
-  }
-}
-@keyframes wf-face-closed-morph {
-  0%,
-  100% {
-    opacity: 0;
-  }
-  40%,
-  50% {
-    opacity: 1;
-  }
-}
-.wf-face[data-motion="float"] .wf-face-bounce {
-  animation: wf-face-float 600ms ease-in-out var(--wf-face-floats, 1);
-}
-.wf-face[data-motion="shake"] .wf-face-bounce {
-  animation: wf-face-shake 90ms linear var(--wf-face-shakes, 3);
-}
-@keyframes wf-face-float {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  30% {
-    transform: translateY(-0.5px);
-  }
-  70% {
-    transform: translateY(0.5px);
-  }
-}
-@keyframes wf-face-shake {
-  0%,
-  100% {
-    transform: translate(0, 0);
-  }
-  25% {
-    transform: translate(-0.9px, -0.35px);
-  }
-  75% {
-    transform: translate(0.9px, 0.35px);
-  }
-}
-.wf-face[data-motion="dots-wave"] [data-eye-expression="dots"] circle {
-  animation: wf-face-dot-float 500ms ease-in-out both;
-}
-.wf-face[data-motion="dots-wave"] [data-eye-expression="dots"] circle:nth-child(2) {
-  animation-delay: 200ms;
-}
-.wf-face[data-motion="dots-wave"] [data-eye-expression="dots"] circle:nth-child(3) {
-  animation-delay: 400ms;
-}
-@keyframes wf-face-dot-float {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-1.5px);
-  }
-}
-@keyframes wf-face-hop {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  35% {
-    transform: translateY(-1px);
-  }
-  70% {
-    transform: translateY(0.7px);
-  }
-}
-@keyframes wf-arrive {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-}
-@keyframes wf-mark {
-  from {
-    opacity: 0;
-    transform: scale(0.6);
-  }
-}
-@keyframes wf-unfold {
-  from {
-    opacity: 0;
-    transform: translateY(-3px);
-  }
-}
-@keyframes wf-swap {
-  from {
-    opacity: 0;
-    transform: translateY(3px);
-  }
-}
-@keyframes wf-draw {
-  to {
-    stroke-dashoffset: 0;
-  }
-}
-@keyframes wf-caret {
-  50% {
-    opacity: 0;
-  }
-}
-@keyframes wf-rail-grow {
-  from {
-    transform: scaleX(0);
-  }
-}
-@keyframes wf-land {
-  from {
-    opacity: 0;
-    transform: scale(0.6);
-  }
-}
-@keyframes wf-beat {
-  0% {
-    transform: scale(1);
-    box-shadow:
-      0 0 0 3px color-mix(in oklab, var(--color-warning) 20%, transparent),
-      0 0 0 3px color-mix(in oklab, var(--color-warning) 35%, transparent);
-  }
-  12% {
-    transform: scale(1.12);
-  }
-  40% {
-    transform: scale(1);
-  }
-  70%,
-  100% {
-    box-shadow:
-      0 0 0 3px color-mix(in oklab, var(--color-warning) 20%, transparent),
-      0 0 0 8px color-mix(in oklab, var(--color-warning) 0%, transparent);
-  }
-}
-@scope (:root[data-reduced-motion="true"]) {
-  .wf-arrive,
-  .wf-mark,
-  .wf-unfold,
-  .wf-swap,
-  .wf-draw,
-  .wf-caret,
-  .wf-rail-grow,
-  .wf-land {
-    animation: none;
-  }
-  .wf-draw {
-    stroke-dashoffset: 0;
-  }
-  .wf-pill,
-  .wf-pill-avatar,
-  .wf-pill-tile,
-  .wf-pill-name,
-  .wf-pill-go,
-  .wf-mark,
-  .wf-station,
-  .wf-lamp,
-  .wf-ink,
-  .wf-tile-frame,
-  .wf-line,
-  .wf-line-icon,
-  .wf-meter-seg,
-  .wf-digest-plot,
-  .wf-foldable,
-  .wf-folded,
-  .wf-ledge-lamp,
-  .wf-sb {
-    transition: none;
-  }
-  .wf-preview-doc {
-    animation: none;
-  }
-  /* 瓦片脸：动作归零、不跟随指针；表情本身仍按状态显示——它是信息不是装饰。 */
-  .wf-face [data-eye-expression="dots"] circle,
-  .wf-face-body,
-  .wf-face-lids,
-  .wf-face-closed,
-  .wf-face-eyes,
-  .wf-face-bounce {
-    animation: none;
-    transition: none;
-  }
-}
-
 /* Mention 图标不进入 TextNode DOM，避免首部 img/svg 截断 Lexical 原生选区映射。 */
 .prompt-mention::before {
   content: "";
@@ -1877,32 +902,138 @@ body {
 }
 
 /* Update notice stays blue across application themes and accent preferences. */
-.areal-update-indicator { --update-notice: #2563eb; position: relative; display: inline-flex; flex-direction: column; align-items: center; gap: 4px; width: 36px; flex-shrink: 0; }
-.areal-update-error { position: absolute; left: calc(100% + 8px); bottom: 0; z-index: var(--layer-popover); width: min(280px, calc(100vw - 80px)); padding: 10px 12px; border: 1px solid var(--color-border); border-radius: var(--radius-navigation); background: var(--color-popover); color: var(--color-foreground); box-shadow: 0 5px 18px #00000014; font-size: var(--text-ui-sm); line-height: 1.5; overflow-wrap: anywhere; }
-.areal-update-action, .areal-update-current { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border: 0; border-radius: var(--radius-navigation); }
-.areal-update-action { background: var(--update-notice); color: white; cursor: var(--interactive-cursor, pointer); }
-.areal-update-action:hover { background: #1d4ed8; }
-.areal-update-action:focus-visible, .areal-update-recover:focus-visible { outline: 2px solid var(--update-notice); outline-offset: 2px; }
-.areal-update-current { font-size: var(--text-ui-xs); font-weight: 600; font-variant-numeric: tabular-nums; color: var(--color-foreground); background: var(--color-secondary); }
-.areal-update-recover { cursor: var(--interactive-cursor, pointer); color: var(--update-notice); }
-.areal-update-recover:hover { background: var(--color-selected); }
-.areal-update-indicator progress { appearance: none; width: 32px; height: 4px; border: 0; border-radius: var(--radius-pill); overflow: hidden; }
-.areal-update-indicator progress::-webkit-progress-bar { background: var(--color-secondary); border-radius: var(--radius-pill); }
-.areal-update-indicator progress::-webkit-progress-value { background: var(--update-notice); border-radius: var(--radius-pill); }
-.areal-update-floating { display: none; position: fixed; left: 12px; bottom: 16px; z-index: var(--layer-popover); }
-.areal-update-spin { animation: areal-update-spin 1.2s linear infinite; }
-@keyframes areal-update-spin { to { transform: rotate(360deg); } }
-@scope (:root[data-reduced-motion="true"]) { .areal-update-spin { animation: none; } }
+.areal-update-indicator {
+  --update-notice: #2563eb;
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 36px;
+  flex-shrink: 0;
+}
+.areal-update-error {
+  position: absolute;
+  left: calc(100% + 8px);
+  bottom: 0;
+  z-index: var(--layer-popover);
+  width: min(280px, calc(100vw - 80px));
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-navigation);
+  background: var(--color-popover);
+  color: var(--color-foreground);
+  box-shadow: var(--shadow-tooltip);
+  font-size: var(--text-ui-sm);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.areal-update-action,
+.areal-update-current {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: var(--radius-navigation);
+}
+.areal-update-action {
+  background: var(--update-notice);
+  color: white;
+  cursor: var(--interactive-cursor, pointer);
+}
+.areal-update-action:hover {
+  background: #1d4ed8;
+}
+.areal-update-action:focus-visible,
+.areal-update-recover:focus-visible {
+  outline: 2px solid var(--update-notice);
+  outline-offset: 2px;
+}
+.areal-update-current {
+  font-size: var(--text-ui-xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-foreground);
+  background: var(--color-secondary);
+}
+.areal-update-recover {
+  cursor: var(--interactive-cursor, pointer);
+  color: var(--update-notice);
+}
+.areal-update-recover:hover {
+  background: var(--color-selected);
+}
+.areal-update-indicator progress {
+  appearance: none;
+  width: 32px;
+  height: 4px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+.areal-update-indicator progress::-webkit-progress-bar {
+  background: var(--color-secondary);
+  border-radius: var(--radius-pill);
+}
+.areal-update-indicator progress::-webkit-progress-value {
+  background: var(--update-notice);
+  border-radius: var(--radius-pill);
+}
+.areal-update-floating {
+  display: none;
+  position: fixed;
+  left: 12px;
+  bottom: 16px;
+  z-index: var(--layer-popover);
+}
+.areal-update-spin {
+  animation: areal-update-spin 1.2s linear infinite;
+}
+@keyframes areal-update-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@scope (:root[data-reduced-motion="true"]) {
+  .areal-update-spin {
+    animation: none;
+  }
+}
 
 /* Application choice also controls Tailwind consumers and native-like controls. */
 @custom-variant motion-reduce (&:where([data-reduced-motion="true"], [data-reduced-motion="true"] *));
 @custom-variant motion-safe (&:where([data-reduced-motion="false"], [data-reduced-motion="false"] *));
-@utility cursor-pointer { cursor: var(--interactive-cursor, pointer); }
-.theme-diff-marker { display: inline-block; width: 1ch; margin-right: 1ch; }
+@utility cursor-pointer {
+  cursor: var(--interactive-cursor, pointer);
+}
+.theme-diff-marker {
+  display: inline-block;
+  width: 1ch;
+  margin-right: 1ch;
+}
 
-@media (max-width: 640px) { .areal-update-floating { display: block; } }
+@media (max-width: 640px) {
+  .areal-update-floating {
+    display: block;
+  }
+}
 
-.gen-ui-card { margin-block: var(--spacing-section); min-width: 0; }
-.gen-ui-card > header { justify-content: space-between; gap: var(--spacing-inline); }
-.gen-ui-card > p, .gen-ui-confirmation { padding-block: var(--spacing-field); }
-.gen-ui-confirmation textarea { width: 100%; min-height: 80px; margin-block: var(--spacing-field); }
+.gen-ui-card {
+  margin-block: var(--spacing-section);
+  min-width: 0;
+}
+.gen-ui-card > header {
+  justify-content: space-between;
+  gap: var(--spacing-inline);
+}
+.gen-ui-card > p,
+.gen-ui-confirmation {
+  padding-block: var(--spacing-field);
+}
+.gen-ui-confirmation textarea {
+  width: 100%;
+  min-height: 80px;
+  margin-block: var(--spacing-field);
+}

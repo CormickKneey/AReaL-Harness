@@ -167,6 +167,23 @@ pub fn projections() -> (Value, Value) {
         &["task/run/read"],
         schema::<areal_protocol::tasks::TaskRun>(),
     );
+    insert(
+        &["task/directory/list"],
+        schema::<areal_protocol::tasks::TaskDirectoryPage>(),
+    );
+    insert(
+        &["task/directory/read"],
+        schema::<areal_protocol::tasks::TaskDirectoryRows>(),
+    );
+    insert(
+        &["task/attention/read"],
+        schema::<areal_protocol::tasks::OwnerAttentionPage>(),
+    );
+    insert(
+        &["owner/watch"],
+        schema::<areal_protocol::tasks::OwnerWatch>(),
+    );
+    insert(&["owner/unwatch"], object(json!({"removed":boolean})));
     insert(&["task/host/ready"], object(json!({"ready":boolean})));
     insert(&["task/unsubscribe"], object(json!({"removed":boolean})));
     insert(
@@ -552,6 +569,14 @@ pub fn projections() -> (Value, Value) {
     let mut notifications = serde_json::Map::new();
     notifications.insert("areal/server/configurationChanged".into(), object(json!({"threadId":string,"configuration":object(json!({"modelRevision":string,"restartRequired":boolean,"error":nullable(string.clone())}))})));
     notifications.insert("areal/task/updated".into(), task_event);
+    notifications.insert(
+        "areal/owner/invalidated".into(),
+        schema::<areal_protocol::tasks::OwnerInvalidation>(),
+    );
+    notifications.insert(
+        "areal/owner/resetRequired".into(),
+        object(json!({"generation":string})),
+    );
     notifications.insert("areal/goal/updated".into(), goal_view);
     notifications.insert("areal/goal/cleared".into(),object(json!({"threadId":string,"revision":number,"eventSequence":number,"goal":nullable(schema::<areal_protocol::goals::Goal>()),"goalId":string})));
     notifications.insert("thread/started".into(), object(json!({"thread":thread})));

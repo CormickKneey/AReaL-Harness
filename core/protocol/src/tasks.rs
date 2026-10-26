@@ -562,3 +562,148 @@ mod worker_compatibility_tests {
         assert!(saved.get("turnId").is_none());
     }
 }
+
+/// Committed display data. Execution controls and editing use the full Task read.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TaskDirectoryRow {
+    pub id: String,
+    pub revision: u64,
+    pub channel_sequence: u64,
+    pub mode: TaskMode,
+    pub source_thread_id: Option<String>,
+    pub thread_id: Option<String>,
+    pub objective_preview: String,
+    pub objective_truncated: bool,
+    pub paused: bool,
+    pub cancelled: bool,
+    pub deleted_at: Option<i64>,
+    pub enabled: bool,
+    pub next_run_at: Option<i64>,
+    pub schedule: Option<Schedule>,
+    pub schedule_v2: Option<ScheduleV2>,
+    pub skipped_runs: u64,
+    pub last_skipped_at: Option<i64>,
+    pub last_trigger_decision: Option<TriggerDecision>,
+    pub run_count: u64,
+    pub latest_run: Option<RunDirectoryRow>,
+    pub active_run: Option<RunDirectoryRow>,
+    pub has_unsettled_work: bool,
+    pub pending_questions: u32,
+    pub pending_question_expires_at: Option<i64>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RunDirectoryRow {
+    pub id: String,
+    pub thread_id: Option<String>,
+    pub status: RunStatus,
+    pub reason_preview: Option<String>,
+    pub reason_truncated: bool,
+    pub scheduled_at: i64,
+    pub started_at: Option<i64>,
+    pub completed_at: Option<i64>,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TaskDirectoryList {
+    pub mode: Option<TaskMode>,
+    pub source_thread_id: Option<String>,
+    pub cursor: Option<String>,
+    pub limit: Option<usize>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TaskDirectoryRead {
+    pub task_ids: Vec<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TaskDirectoryPage {
+    pub generation: String,
+    pub revision: u64,
+    pub data: Vec<TaskDirectoryRow>,
+    pub next_cursor: Option<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TaskDirectoryRows {
+    pub generation: String,
+    pub revision: u64,
+    pub data: Vec<TaskDirectoryRow>,
+    pub removed: Vec<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OwnerAttention {
+    pub id: String,
+    pub kind: OwnerAttentionKind,
+    pub task_id: Option<String>,
+    pub run_id: Option<String>,
+    pub thread_id: Option<String>,
+    pub question_id: Option<String>,
+    pub interaction_id: Option<String>,
+    pub objective_preview: String,
+    pub summary: String,
+    pub expires_at: Option<i64>,
+}
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum OwnerAttentionKind {
+    AsyncQuestion,
+    Approval,
+    SyncQuestion,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OwnerAttentionRead {
+    pub task_ids: Option<Vec<String>>,
+    pub thread_ids: Option<Vec<String>>,
+    pub cursor: Option<String>,
+    pub limit: Option<usize>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OwnerAttentionPage {
+    pub generation: String,
+    pub revision: u64,
+    pub data: Vec<OwnerAttention>,
+    pub next_cursor: Option<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OwnerWatch {
+    pub generation: String,
+    pub sequence: u64,
+    pub directory_revision: u64,
+    pub attention_revision: u64,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OwnerInvalidation {
+    pub generation: String,
+    pub sequence: u64,
+    pub changed_tasks: Vec<String>,
+    pub changed_threads: Vec<String>,
+    pub facts: Vec<OwnerNoticeFact>,
+}
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum OwnerNoticeKind {
+    TaskCompleted,
+    QuestionPending,
+    InteractionPending,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OwnerNoticeFact {
+    pub kind: OwnerNoticeKind,
+    pub task_id: Option<String>,
+    pub run_id: Option<String>,
+    pub thread_id: Option<String>,
+    pub question_id: Option<String>,
+    pub interaction_id: Option<String>,
+    pub interaction_kind: Option<OwnerAttentionKind>,
+    pub objective_preview: String,
+    pub expires_at: Option<i64>,
+}

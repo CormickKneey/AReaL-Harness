@@ -9,6 +9,11 @@ areal_protocol::method_catalog! {
     "areal/task/update" => Mutation, Task;
     "areal/task/runNow" => Mutation, Task;
     "areal/task/list" => Read;
+    "areal/task/directory/list" => Read;
+    "areal/task/directory/read" => Read;
+    "areal/task/attention/read" => Read;
+    "areal/owner/watch" => Subscription;
+    "areal/owner/unwatch" => Subscription;
     "areal/task/read" => Read;
     "areal/task/runs/list" => Read;
     "areal/task/run/read" => Read;
@@ -23,6 +28,21 @@ areal_protocol::method_catalog! {
     "areal/channel/read" => Read;
     "areal/channel/reply" => Mutation, Task;
     "areal/inbox/list" => Read;
+}
+
+pub(crate) fn authorize_owner(principal: &auth::Principal) -> Result<(), RpcError> {
+    if principal.thread_ids.is_some()
+        || !principal.allows(auth::Permission::Observe)
+        || !(principal.id == "desktop-owner"
+            || (principal.id == "trusted-embedded-host" && principal.token.is_empty()))
+    {
+        return Err(RpcError {
+            code: -32003,
+            message: "trusted unrestricted Desktop owner required".into(),
+            data: Some(json!({"reason":"PERMISSION_DENIED"})),
+        });
+    }
+    Ok(())
 }
 
 pub(crate) async fn authorize(
@@ -42,12 +62,30 @@ pub(crate) async fn dispatch(
     method: &str,
     params: Value,
 ) -> Result<Value, RpcError> {
+    if matches!(
+        method,
+        "areal/task/directory/list" | "areal/task/directory/read" | "areal/task/attention/read"
+    ) {
+        authorize_owner(principal)?;
+    }
     let authorized = if let Some(id) = params["taskId"].as_str() {
         Some(authorize(engine, principal, id).await?)
     } else {
         None
     };
     match method {
+        "areal/task/directory/list" => engine
+            .task_directory_list(parse(params)?)
+            .map(|v| json!(v))
+            .map_err(map_error),
+        "areal/task/directory/read" => engine
+            .task_directory_read(parse(params)?)
+            .map(|v| json!(v))
+            .map_err(map_error),
+        "areal/task/attention/read" => engine
+            .owner_attention_read(parse(params)?)
+            .map(|v| json!(v))
+            .map_err(map_error),
         "areal/task/schedule/preview" => engine
             .task_schedule_preview(parse(params)?)
             .map(|v| json!(v))
@@ -431,6 +469,7 @@ mod tests {
             tool_host: dynamic_tools::ToolHost::new(tx.clone(), stop.clone()),
             initialized: true,
             ready: true,
+            owner_subscription: None,
             subscriptions: HashMap::new(),
             suppressed: HashSet::new(),
             tx,

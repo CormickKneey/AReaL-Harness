@@ -1,13 +1,14 @@
 // 磁盘 journal + 生产 Gateway/Backend；原生 RPC 为确定性 fixture，不是原生验收。
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { mkdtemp, readFile, mkdir } from "node:fs/promises";
+import { readFile, mkdir } from "node:fs/promises";
+import { makeTempDir } from "./support/temp.mjs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 const require = createRequire(import.meta.url);
 const { CoreBackend } = require("../app/src/core/backend.cjs");
 const { sessionCommand } = require("../app/src/core/remote-session-commands.cjs");
-const home = await mkdtemp("/private/tmp/rc05-fixture-");
+const home = await makeTempDir("rc05-fixture-");
 const checks = [];
 const deferred = () => {
   let resolve;
@@ -35,7 +36,11 @@ async function fixture(name) {
   const client = {
     ready: true,
     capabilities: {
-      features: { threadStartAdmissionGuard: true, turnStartAdmissionGuard: true, permissionPresets: true },
+      features: {
+        threadStartAdmissionGuard: true,
+        turnStartAdmissionGuard: true,
+        permissionPresets: true,
+      },
       methods: ["areal/thread/start", "areal/turn/start"],
     },
     request(method, params) {
@@ -48,7 +53,8 @@ async function fixture(name) {
           : { turn: { id: randomUUID() } };
       receipts.set(params.requestId, [
         {
-          method, requestId: params.requestId,
+          method,
+          requestId: params.requestId,
           threadId: result.thread?.id ?? params.threadId,
           result: method === "areal/thread/start" ? null : result,
         },
@@ -359,18 +365,30 @@ await check("send-authoritative-ownership-precedes-cached-busy-without-writes", 
   assert.deepEqual(f.project.outcomes, {});
   assert.deepEqual(results, ["TASK_CONTROL_REQUIRED", "TURN_BUSY", "TASK_CONTROL_REQUIRED"]);
 });
-await check("paused-empty-queue-allows-explicit-send-but-pending-queue-stays-blocked", async (f) => {
-  const send = (queue) => sessionCommand(f.remote, f.connection,
-    f.request("session.send", {threadId:"t",expectedConfigRevision:1,text:"explicit follow-up"}),
-    value => value, async () => ({ownership:{kind:"ordinary"},status:"idle",configRevision:1,queue}));
-  const accepted = await send({paused:true,pendingCount:0});
-  assert.equal(accepted.admissionState,"accepted");
-  const calls = f.calls.length;
-  for (const paused of [true,false]) {
-    await assert.rejects(send({paused,pendingCount:1}),{code:"TARGET_CHANGED"});
-    assert.equal(f.calls.length,calls,"pending queue must never reach native dispatch");
-  }
-});
+await check(
+  "paused-empty-queue-allows-explicit-send-but-pending-queue-stays-blocked",
+  async (f) => {
+    const send = (queue) =>
+      sessionCommand(
+        f.remote,
+        f.connection,
+        f.request("session.send", {
+          threadId: "t",
+          expectedConfigRevision: 1,
+          text: "explicit follow-up",
+        }),
+        (value) => value,
+        async () => ({ ownership: { kind: "ordinary" }, status: "idle", configRevision: 1, queue }),
+      );
+    const accepted = await send({ paused: true, pendingCount: 0 });
+    assert.equal(accepted.admissionState, "accepted");
+    const calls = f.calls.length;
+    for (const paused of [true, false]) {
+      await assert.rejects(send({ paused, pendingCount: 1 }), { code: "TARGET_CHANGED" });
+      assert.equal(f.calls.length, calls, "pending queue must never reach native dispatch");
+    }
+  },
+);
 await check("utf8-invalid-grants-capabilities-and-configuration", async (f) => {
   const params = { threadId: "t", expectedConfigRevision: 1, text: "界".repeat(21846) };
   await assert.rejects(f.run(f.request("session.send", params)), { code: "INVALID_PARAMS" });

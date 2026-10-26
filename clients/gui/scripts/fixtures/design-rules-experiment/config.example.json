@@ -1,0 +1,21 @@
+{
+  "sourceRevision": "0000000000000000000000000000000000000000",
+  "before": "/absolute/path/to/d5-before",
+  "after": "/absolute/path/to/d5-after",
+  "output": "/absolute/path/to/new-experiment-results",
+  "tokenizer": "/absolute/path/to/count-design-tokens",
+  "tokenizerLabel": "tiktoken 0.12.0 o200k_base proxy, cumulative reads",
+  "codex": "codex",
+  "model": "gpt-6.1-sol",
+  "reasoningEffort": "high",
+  "timeoutMs": 900000,
+  "setup": [
+    ["pnpm", "install", "--offline", "--frozen-lockfile"],
+    ["pnpm", "design:sync"],
+    ["pnpm", "design:build"]
+  ],
+  "checks": [
+    ["pnpm", "verify:design"],
+    ["pnpm", "test:design"]
+  ]
+}

@@ -2,6 +2,17 @@ name: GUI checks
 
 on:
   workflow_dispatch:
+    inputs:
+      comparison_base:
+        description: Ancestor commit used for incremental source checks
+        required: false
+        type: string
+      qualification:
+        description: Optional repeated platform qualification; reports require review before promotion
+        required: false
+        type: choice
+        options: [none, linux-feasibility, macos-baseline]
+        default: none
   pull_request:
   push:
     branches: [main]
@@ -31,48 +42,167 @@ jobs:
     outputs:
       gui: ${{ steps.scope.outputs.gui }}
       release: ${{ steps.scope.outputs.release }}
+      smoke_matrix: ${{ steps.tests.outputs.matrix }}
+      baseline_matrix: ${{ steps.tests.outputs.baseline }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: Validate workflow definitions before scheduling builds
+        run: python3 scripts/check-workflows.py
       - id: scope
         run: python3 scripts/ci-scope.py
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.22.1'
+      - id: tests
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          args=()
+          if [ -n "$PR_BASE" ]; then
+            args+=("--base=$(git merge-base "$PR_BASE" HEAD)")
+          fi
+          echo "matrix=$(node clients/gui/scripts/test-manifest.mjs --ci-matrix "${args[@]}")" >> "$GITHUB_OUTPUT"
+          node --input-type=module - <<'NODE' >> "$GITHUB_OUTPUT"
+          import { readTestManifest } from './clients/gui/scripts/test-manifest.mjs';
+          const entries = (await readTestManifest()).filter(entry => entry.layer === 'e2e' && entry.platforms.includes('darwin') && !entry.requires.includes('desktop-input'));
+          console.log('baseline=' + JSON.stringify({ include: entries.map(entry => ({ script: entry.script, scenario: entry.script.replaceAll(':', '-') })) }));
+          NODE
 
-  gui:
+  gui-health:
+    name: Linux GUI static health
     needs: scope
     if: needs.scope.outputs.gui == 'true'
-    name: macOS GUI build and contracts
-    runs-on: macos-15
-    timeout-minutes: 60
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
           fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.22.1'
       - name: Select design audit baseline
         env:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           PUSH_BASE: ${{ github.event.before }}
+          COMPARISON_BASE: ${{ inputs.comparison_base }}
         run: |
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
             design_base="$(git merge-base "$PR_BASE" HEAD)"
           elif [ "$GITHUB_EVENT_NAME" = "push" ] && [ -n "$PUSH_BASE" ] && [[ ! "$PUSH_BASE" =~ ^0+$ ]]; then
             design_base="$PUSH_BASE"
+          elif [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ -n "$COMPARISON_BASE" ]; then
+            design_base="$(git rev-parse --verify --end-of-options "$COMPARISON_BASE^{commit}")"
           else
             design_base="$(git rev-parse HEAD^)"
           fi
           git cat-file -e "$design_base^{commit}"
+          git merge-base --is-ancestor "$design_base" HEAD
           echo "AREAL_DESIGN_BASE=$design_base" >> "$GITHUB_ENV"
+      - name: Check dependency-free health contracts and reviewed baseline
+        run: make ci-gui-health CI_BASE="$AREAL_DESIGN_BASE"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: linux-gui-health
+          path: target/ci/gui/health.json
+          if-no-files-found: warn
+
+
+  gui-portable:
+    name: Linux GUI portable contracts
+    needs: scope
+    if: needs.scope.outputs.gui == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Start measured portable interval
+        run: echo "GUI_PORTABLE_STARTED=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: '22'
+          node-version: '24.22.1'
+      - name: Install locked GUI dependencies
+        run: |
+          npm install --global pnpm@11.7.0
+          pnpm --dir clients/gui install --frozen-lockfile
+      - name: Select design audit baseline
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BASE: ${{ github.event.before }}
+          COMPARISON_BASE: ${{ inputs.comparison_base }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            design_base="$(git merge-base "$PR_BASE" HEAD)"
+          elif [ "$GITHUB_EVENT_NAME" = "push" ] && [ -n "$PUSH_BASE" ] && [[ ! "$PUSH_BASE" =~ ^0+$ ]]; then
+            design_base="$PUSH_BASE"
+          elif [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ -n "$COMPARISON_BASE" ]; then
+            design_base="$(git rev-parse --verify --end-of-options "$COMPARISON_BASE^{commit}")"
+          else
+            design_base="$(git rev-parse HEAD^)"
+          fi
+          git cat-file -e "$design_base^{commit}"
+          git merge-base --is-ancestor "$design_base" HEAD
+          echo "AREAL_DESIGN_BASE=$design_base" >> "$GITHUB_ENV"
+      - name: Check portable GUI source before native builds
+        run: make ci-gui-static CI_BASE="$AREAL_DESIGN_BASE"
+      - name: Validate registered portable tests
+        run: make ci-gui-portable
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.2.0'
+      - name: Verify Relay contracts with their required runtime
+        run: |
+          npm --prefix services/remote-relay ci --ignore-scripts
+          pnpm --dir clients/gui run test:remote-relay
+      - name: Record portable interval
+        if: always()
+        run: |
+          mkdir -p target/ci/gui
+          node --input-type=module - <<'NODE'
+          import { writeFileSync } from 'node:fs';
+          const elapsedMs = Date.now() - Number(process.env.GUI_PORTABLE_STARTED) * 1000;
+          writeFileSync('target/ci/gui/portable-interval.json', JSON.stringify({ elapsedMs, withinTenMinutes: elapsedMs < 600000, scope: 'first run step through final report; excludes runner provisioning and artifact upload', runId: process.env.GITHUB_RUN_ID, attempt: process.env.GITHUB_RUN_ATTEMPT, sha: process.env.GITHUB_SHA }, null, 2) + '\n');
+          NODE
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: linux-gui-portable
+          path: target/ci/gui/portable-*.json
+          if-no-files-found: warn
+
+  gui:
+    needs: [scope, gui-health, gui-portable]
+    if: needs.scope.outputs.gui == 'true'
+    name: macOS GUI build and contracts
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - name: Prepare isolated build temporary root
+        run: |
+          mkdir -p "$RUNNER_TEMP/gui-build"
+          echo "TMPDIR=$RUNNER_TEMP/gui-build" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.22.1'
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       - name: Locate GUI dependency cache
         id: tools
         run: |
           npm install --global pnpm@11.7.0
           echo "store=$(pnpm --dir clients/gui store path --silent)" >> "$GITHUB_OUTPUT"
+          echo "node=$(node --version)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
         with:
           path: |
@@ -82,22 +212,21 @@ jobs:
           key: gui-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('clients/gui/pnpm-lock.yaml') }}
       - name: Prepare locked GUI dependencies
         run: |
-          mkdir -p target/ci/gui
+          mkdir -p target/ci/gui "$TMPDIR"
           rustup show
           if ! command -v cmake; then brew install cmake; fi
           make gui-install
+      - name: Restore Vite+ task cache
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: clients/gui/node_modules/.vite/task-cache
+          key: gui-tasks-${{ runner.os }}-${{ runner.arch }}-${{ steps.tools.outputs.node }}-${{ hashFiles('clients/gui/pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            gui-tasks-${{ runner.os }}-${{ runner.arch }}-${{ steps.tools.outputs.node }}-${{ hashFiles('clients/gui/pnpm-lock.yaml') }}-
       - name: Build desktop package entry points
         run: pnpm --dir clients/gui build:desktop
-      - name: Verify design contracts and incremental audit
-        run: pnpm --dir clients/gui verify:design 2>&1 | tee target/ci/gui/design.log
-      - name: Verify fast GUI regressions
-        run: pnpm --dir clients/gui run test:regressions
       - name: Record tool and cache fingerprints
         run: python3 scripts/ci-fingerprint.py > target/ci/gui/fingerprint.json
-      - name: Check GUI types and public boundaries
-        run: |
-          pnpm --dir clients/gui typecheck 2>&1 | tee target/ci/gui/typecheck.log
-          pnpm --dir clients/gui run verify 2>&1 | tee target/ci/gui/public.log
       - name: Verify native Core process lifecycle
         run: pnpm --dir clients/gui run test:core-process 2>&1 | tee target/ci/gui/core-process.log
       - name: Verify macOS DMG staging
@@ -109,14 +238,17 @@ jobs:
         run: |
           make build 2>&1 | tee target/ci/gui/core-build.log
           make gui-build 2>&1 | tee target/ci/gui/gui-build.log
+          pnpm --dir clients/gui design:build 2>&1 | tee target/ci/gui/design-build.log
       - name: Check registered desktop RPC routes
         run: cargo test --locked -p areal-app-server --lib desktop_registered_methods_have_dispatch_routes 2>&1 | tee target/ci/gui/rpc-routes.log
+      - name: Check renderer bundle budgets
+        run: node clients/gui/scripts/bundle-budget.mjs --check > target/ci/gui/bundle-report.json
       - name: Archive smoke inputs from this exact build
         run: |
           git rev-parse HEAD > target/ci/gui/source.sha
           tar -czf target/ci/gui/gui-smoke-inputs.tar.gz \
             target/ci/gui/source.sha target/debug/areal target/debug/areal-runtime \
-            target/debug/areal-runtime-fs target/debug/shells clients/gui/renderer/dist
+            target/debug/areal-runtime-fs target/debug/shells clients/gui/renderer/dist clients/gui/dist/design-system
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: macos-gui-smoke-inputs
@@ -130,44 +262,29 @@ jobs:
           path: |
             target/ci/gui/*.log
             target/ci/gui/fingerprint.json
-            /private/tmp/areal-core-process-*/
-            /private/tmp/areal-browser-*/
-            /private/tmp/shared-browser-06-evidence-*/
+            target/ci/gui/bundle-report.json
+            clients/gui/renderer/dist/bundle-analysis.json
+            ${{ runner.temp }}/gui-build/
           retention-days: 7
 
-  smoke:
-    name: macOS GUI smoke (${{ matrix.scenario }})
+  core-contracts:
+    name: macOS Core contracts
     needs: [scope, gui]
     if: needs.scope.outputs.gui == 'true'
     runs-on: macos-15
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      max-parallel: 6
-      matrix:
-        include:
-          - scenario: history
-            script: test:history-compat
-          - scenario: migration
-            script: test:e2e
-          - scenario: composer
-            script: test:composer
-          - scenario: model-selection
-            script: test:model-selection
-          - scenario: queue
-            script: test:queue
-          - scenario: conversation-derivation
-            script: test:conversation-derivation
-          - scenario: side-chat
-            script: test:side-chat-parity
     steps:
+      - name: Prepare isolated contract temporary root
+        run: |
+          mkdir -p "$RUNNER_TEMP/gui-core-contracts"
+          echo "TMPDIR=$RUNNER_TEMP/gui-core-contracts" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
           fetch-depth: 0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: '22'
+          node-version: '24.22.1'
       - name: Locate GUI dependency cache
         id: tools
         run: |
@@ -181,7 +298,75 @@ jobs:
             ~/Library/Caches/ms-playwright
           key: gui-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('clients/gui/pnpm-lock.yaml') }}
       - name: Prepare locked GUI dependencies
-        run: make gui-install
+        run: |
+          mkdir -p "$TMPDIR"
+          pnpm --dir clients/gui install --frozen-lockfile
+      - name: Build desktop package entry points
+        run: pnpm --dir clients/gui build:desktop
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: macos-gui-smoke-inputs
+          path: target/ci/gui
+      - name: Restore and verify matching build
+        run: |
+          tar -xzf target/ci/gui/gui-smoke-inputs.tar.gz
+          test "$(cat target/ci/gui/source.sha)" = "$(git rev-parse HEAD)"
+          test -x target/debug/areal
+          test -x target/debug/areal-runtime
+          test -x target/debug/areal-runtime-fs
+      - name: Verify registered Core-dependent contracts
+        env:
+          AREAL_CORE_BIN: ${{ github.workspace }}/target/debug/areal
+          AREAL_PORTABLE_TEST_REPORT: ${{ github.workspace }}/target/ci/gui/core-contracts.json
+        run: node clients/gui/scripts/run-portable-tests.mjs --core-contracts 2>&1 | tee target/ci/gui/core-contracts.log
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: macos-core-contracts-evidence
+          path: |
+            target/ci/gui/core-contracts.log
+            target/ci/gui/core-contracts.json
+            ${{ runner.temp }}/gui-core-contracts/
+          retention-days: 7
+
+  smoke:
+    name: macOS GUI smoke (${{ matrix.scenario }})
+    needs: [scope, gui]
+    if: needs.scope.outputs.gui == 'true'
+    runs-on: macos-15
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix: ${{ fromJSON(needs.scope.outputs.smoke_matrix) }}
+    steps:
+      - name: Prepare isolated smoke temporary root
+        run: |
+          mkdir -p "$RUNNER_TEMP/gui-smoke"
+          echo "TMPDIR=$RUNNER_TEMP/gui-smoke" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.22.1'
+      - name: Locate GUI dependency cache
+        id: tools
+        run: |
+          npm install --global pnpm@11.7.0
+          echo "store=$(pnpm --dir clients/gui store path --silent)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: |
+            ${{ steps.tools.outputs.store }}
+            ~/Library/Caches/electron
+            ~/Library/Caches/ms-playwright
+          key: gui-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('clients/gui/pnpm-lock.yaml') }}
+      - name: Prepare locked GUI dependencies
+        run: |
+          mkdir -p "$TMPDIR"
+          make gui-install
       - name: Build desktop package entry points
         run: pnpm --dir clients/gui build:desktop
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -206,9 +391,9 @@ jobs:
         run: |
           python3 - <<'PYTHON'
           import glob
+          import os
           import tarfile
-          roots = ["target/ci/gui/smoke.log", ".scratch/gui-evidence", ".scratch/side-chat-parity"]
-          roots += [path for pattern in ("/private/tmp/areal-gui-*", "/private/tmp/ams-*", "/private/tmp/ahc-*", "/private/tmp/scp-*") for path in glob.glob(pattern)]
+          roots = ["target/ci/gui/smoke.log", ".scratch/gui-evidence", ".scratch/side-chat-parity", os.environ["TMPDIR"]]
           with tarfile.open("gui-smoke-evidence.tar.gz", "w:gz") as archive:
               for path in roots:
                   if glob.glob(path):
@@ -222,9 +407,100 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  linux-feasibility:
+    name: Linux Electron repeated qualification
+    needs: scope
+    if: github.event_name == 'workflow_dispatch' && inputs.qualification == 'linux-feasibility'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.22.1'
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      - name: Prepare native Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap xvfb libgtk-3-0 libnss3 libasound2t64 libgbm1 cmake
+          npm install --global pnpm@11.7.0
+          make gui-install
+      - name: Build and freeze qualification inputs
+        run: |
+          make build
+          make gui-build
+          mkdir -p .local/dev-bin/gui-qualification
+          cp -R target/debug/areal target/debug/areal-runtime target/debug/areal-runtime-fs target/debug/areal-runtime-reaper target/debug/shells .local/dev-bin/gui-qualification/
+      - name: Qualify five sandboxed journeys with ten first attempts each
+        env:
+          AREAL_CORE_BIN: ${{ github.workspace }}/.local/dev-bin/gui-qualification/areal
+        run: xvfb-run -a node clients/gui/scripts/repeat-tests.mjs --profile=linux-feasibility --output=target/ci/gui/linux-feasibility
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: linux-gui-feasibility
+          path: |
+            target/ci/gui/linux-feasibility/
+            .scratch/startup-connection-investigation/
+          if-no-files-found: warn
+          retention-days: 7
+
+  macos-baseline:
+    name: macOS repeated baseline (${{ matrix.scenario }})
+    needs: [scope, gui]
+    if: github.event_name == 'workflow_dispatch' && inputs.qualification == 'macos-baseline'
+    runs-on: macos-15
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix: ${{ fromJSON(needs.scope.outputs.baseline_matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '24.22.1'
+      - name: Prepare locked GUI dependencies
+        run: |
+          npm install --global pnpm@11.7.0
+          make gui-install
+          pnpm --dir clients/gui build:desktop
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: macos-gui-smoke-inputs
+          path: target/ci/gui
+      - name: Restore and freeze matching Core inputs
+        run: |
+          tar -xzf target/ci/gui/gui-smoke-inputs.tar.gz
+          test "$(cat target/ci/gui/source.sha)" = "$(git rev-parse HEAD)"
+          mkdir -p .local/dev-bin/gui-qualification
+          cp -R target/debug/areal target/debug/areal-runtime target/debug/areal-runtime-fs target/debug/shells .local/dev-bin/gui-qualification/
+      - name: Record five first attempts
+        env:
+          AREAL_CORE_BIN: ${{ github.workspace }}/.local/dev-bin/gui-qualification/areal
+          SMOKE_SCRIPT: ${{ matrix.script }}
+        run: node clients/gui/scripts/repeat-tests.mjs --profile=macos-baseline "--scripts=$SMOKE_SCRIPT" --output=target/ci/gui/macos-baseline
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: macos-gui-baseline-${{ matrix.scenario }}
+          path: |
+            target/ci/gui/macos-baseline/
+            .scratch/gui-evidence/
+            .scratch/side-chat-parity/
+            .scratch/startup-connection-investigation/
+          if-no-files-found: warn
+          retention-days: 7
+
   gate:
     name: GUI gate
-    needs: [scope, gui, smoke]
+    needs: [scope, gui-health, gui-portable, gui, core-contracts, smoke]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -237,5 +513,8 @@ jobs:
           SCOPE_RESULT: ${{ needs.scope.result }}
           WORK_RESULT: ${{ needs.gui.result }}
           SMOKE_RESULT: ${{ needs.scope.outputs.gui == 'false' && 'success' || needs.smoke.result }}
+          CORE_RESULT: ${{ needs.scope.outputs.gui == 'false' && 'success' || needs.core-contracts.result }}
+          HEALTH_RESULT: ${{ needs.scope.outputs.gui == 'false' && 'success' || needs.gui-health.result }}
+          PORTABLE_RESULT: ${{ needs.scope.outputs.gui == 'false' && 'success' || needs.gui-portable.result }}
           NEEDED: ${{ needs.scope.outputs.gui }}
         run: python3 scripts/ci-gate.py

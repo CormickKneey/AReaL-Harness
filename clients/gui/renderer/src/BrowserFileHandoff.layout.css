@@ -1,0 +1,13 @@
+.preview-file-status {
+  display: block;
+  max-height: var(--browser-file-status-max-height);
+  overflow: auto;
+}
+
+.preview-file-status [role="listitem"] {
+  display: flex;
+  align-items: center;
+  gap: var(--browser-file-status-inline-gap);
+  overflow-wrap: anywhere;
+  padding: var(--browser-file-status-block-padding) 0;
+}

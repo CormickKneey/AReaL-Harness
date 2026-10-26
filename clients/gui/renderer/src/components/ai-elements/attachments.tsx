@@ -1,1 +1,19 @@
-export { type AttachmentData, type AttachmentMediaCategory, type AttachmentVariant, getMediaCategory, getAttachmentLabel, useAttachmentsContext, useAttachmentContext, type AttachmentsProps, Attachments, type AttachmentProps, Attachment, type AttachmentPreviewProps, AttachmentPreview, type AttachmentInfoProps, AttachmentInfo, type AttachmentRemoveProps, AttachmentRemove } from "@areal/ui/wip";
+export {
+  type AttachmentData,
+  type AttachmentMediaCategory,
+  type AttachmentVariant,
+  getMediaCategory,
+  getAttachmentLabel,
+  useAttachmentsContext,
+  useAttachmentContext,
+  type AttachmentsProps,
+  Attachments,
+  type AttachmentProps,
+  Attachment,
+  type AttachmentPreviewProps,
+  AttachmentPreview,
+  type AttachmentInfoProps,
+  AttachmentInfo,
+  type AttachmentRemoveProps,
+  AttachmentRemove,
+} from "@areal/ui/experimental";

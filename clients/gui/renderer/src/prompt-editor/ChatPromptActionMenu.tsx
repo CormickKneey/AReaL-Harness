@@ -6,11 +6,7 @@ import { AttachmentIcon as PaperclipIcon } from "../interfaceIcons.js";
 import { ComposerPlusIcon } from "../homeChromeIcons.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import { Button } from "@/components/ui/button.js";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover.js";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover.js";
 import type { LexicalChatInputHandle } from "@/LexicalChatInput.js";
 export type ComposerMenuAction = {
   id: string;
@@ -98,13 +94,23 @@ export function ChatPromptActionMenu({
           return true;
         }}
         onKeyDown={(event) => {
-          const buttons = [...(contentRef.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [])];
+          const buttons = [
+            ...(contentRef.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ??
+              []),
+          ];
           if (!buttons.length) return;
           const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
           if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
             event.preventDefault();
             event.stopPropagation();
-            const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : event.key === "ArrowDown" ? (index + 1) % buttons.length : (index <= 0 ? buttons.length : index) - 1;
+            const next =
+              event.key === "Home"
+                ? 0
+                : event.key === "End"
+                  ? buttons.length - 1
+                  : event.key === "ArrowDown"
+                    ? (index + 1) % buttons.length
+                    : (index <= 0 ? buttons.length : index) - 1;
             buttons[next]?.focus();
           } else if (index === -1 && ["Enter", " "].includes(event.key)) {
             event.preventDefault();
@@ -113,29 +119,42 @@ export function ChatPromptActionMenu({
           }
         }}
       >
-        <div className="px-2 py-1 text-ui-caption leading-[1.42857] text-foreground-subtle">添加</div>
+        <div className="px-2 py-1 text-ui-caption leading-[1.42857] text-foreground-subtle">
+          添加
+        </div>
         {attachmentAction && (
-          <button
+          <Button
+            unstyled
+            data-slot={undefined}
             type="button"
             onClick={() => select(attachmentAction.onSelect)}
             className="flex w-full items-center gap-2 rounded-[15px] px-2 py-[5px] text-left text-ui-caption leading-[1.42857] hover:bg-hover focus-visible:bg-hover outline-none"
           >
             <PaperclipIcon className="size-4 shrink-0" />
-            <span
-              className="truncate font-normal"
-              data-testid={attachmentAction.menuItemTestId}
-            >
+            <span className="truncate font-normal" data-testid={attachmentAction.menuItemTestId}>
               {attachmentAction.label}
             </span>
-          </button>
+          </Button>
         )}
-        {actions.map(item => <button key={item.id} type="button" disabled={item.disabled}
-          onClick={() => select(item.onSelect)}
-          className="flex w-full items-center gap-2 rounded-[15px] px-2 py-[5px] text-left text-ui-caption leading-[1.42857] hover:bg-hover focus-visible:bg-hover outline-none disabled:opacity-50 disabled:cursor-not-allowed">
-          <span className="size-4 shrink-0 [&>svg]:size-4">{item.icon}</span>
-          <span className="shrink-0">{item.label}</span>
-          {item.description && <span className="min-w-0 truncate text-ui-sm text-foreground-subtle">{item.description}</span>}
-        </button>)}
+        {actions.map((item) => (
+          <Button
+            unstyled
+            data-slot={undefined}
+            key={item.id}
+            type="button"
+            disabled={item.disabled}
+            onClick={() => select(item.onSelect)}
+            className="flex w-full items-center gap-2 rounded-[15px] px-2 py-[5px] text-left text-ui-caption leading-[1.42857] hover:bg-hover focus-visible:bg-hover outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <span className="size-4 shrink-0 [&>svg]:size-4">{item.icon}</span>
+            <span className="shrink-0">{item.label}</span>
+            {item.description && (
+              <span className="min-w-0 truncate text-ui-sm text-foreground-subtle">
+                {item.description}
+              </span>
+            )}
+          </Button>
+        ))}
       </PopoverContent>
     </Popover>
   );

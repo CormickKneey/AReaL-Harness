@@ -1,0 +1,20 @@
+// @ts-check
+"use strict";
+// Generated from the actual Desktop routing tables and checked Core schemas.
+/** @typedef {import("./management-mcp-protocol.cjs").RequestMap&import("./management-plugins-protocol.cjs").RequestMap&import("./management-configuration-protocol.cjs").RequestMap&import("./management-thread-protocol.cjs").RequestMap&import("./management-processes-protocol.cjs").RequestMap&import("./management-execution-protocol.cjs").RequestMap&import("./management-agents-protocol.cjs").RequestMap&import("./management-workgroups-protocol.cjs").RequestMap&import("./management-plugin-setup-protocol.cjs").RequestMap&import("./management-tasks-protocol.cjs").RequestMap} RequestMap */
+/** @typedef {import("./management-mcp-protocol.cjs").ResponseMap&import("./management-plugins-protocol.cjs").ResponseMap&import("./management-configuration-protocol.cjs").ResponseMap&import("./management-thread-protocol.cjs").ResponseMap&import("./management-processes-protocol.cjs").ResponseMap&import("./management-execution-protocol.cjs").ResponseMap&import("./management-agents-protocol.cjs").ResponseMap&import("./management-workgroups-protocol.cjs").ResponseMap&import("./management-plugin-setup-protocol.cjs").ResponseMap&import("./management-tasks-protocol.cjs").ResponseMap} ResponseMap */
+/** @param {string} operation */
+function protocolFor(operation) {
+  if (["mcpFormResourcePrepare","mcpFormResourceRelease","mcpApps","genUiSource","mcpForms","mcpToolResult","mcp","mcpFormResourceStage","mcpSave","mcpConnect","mcpDisconnect","mcpAppOpenFromResult","mcpAppOpen","mcpAppRequest","mcpAppClose","mcpExtensionCall","mcpFormRespond","mcpFormPreview"].includes(operation)) return require("./management-mcp-protocol.cjs");
+  if (["pluginHooks","pluginMcp","plugins","plugin","pluginArchiveImport","pluginHooksConfigure","hookAcknowledge","marketplaceAdd","marketplaceAddGit","marketplaceRemove","marketplaceUpdate","pluginResolve","pluginAuthConfigure","pluginConnection","connectorConfigure","pluginInstall","pluginConfigure","pluginComponentConfigure","pluginUninstall","pluginAuth","pluginAuthCredential","connectorCredential"].includes(operation)) return require("./management-plugins-protocol.cjs");
+  if (["providers","profile","skills","skill","providerSave","providerRemove","providerProbe"].includes(operation)) return require("./management-configuration-protocol.cjs");
+  if (["inspect","context","inheritedHistory","plan","goal","permissions","interactions","server","archive","unarchive","goalCreate","goalUpdate","goalPause","goalResume","goalClear","planUpdate","contextCompact","permissionsForget","closeResources","serverDrain","serverGc","toolAcknowledge"].includes(operation)) return require("./management-thread-protocol.cjs");
+  if (["processes","process","processWait","processOutput","processCloseStdin","processStart","processWrite","processResize","processTerminate"].includes(operation)) return require("./management-processes-protocol.cjs");
+  if (["executions","execution","executionArtifact","executionWait","executionCancel","executionApply"].includes(operation)) return require("./management-execution-protocol.cjs");
+  if (["agents","agentWait","agentSpawn"].includes(operation)) return require("./management-agents-protocol.cjs");
+  if (["workflows","workflow","workgroupPolicy","workgroups","workgroup","workgroupWait","workgroupArtifact","workgroupStart","workflowStart","workgroupRevise","workgroupCancel"].includes(operation)) return require("./management-workgroups-protocol.cjs");
+  if (["pluginSetup"].includes(operation)) return require("./management-plugin-setup-protocol.cjs");
+  if (["taskSchedulePreview","taskScheduleContext","tasks","task","taskInbox","taskChannel","taskRuns","taskRun","taskCreate","taskUpdate","taskRunNow","taskPause","taskResume","taskStopRun","taskResumeRun","taskCancel","taskDelete","taskReply"].includes(operation)) return require("./management-tasks-protocol.cjs");
+  return null;
+}
+module.exports = { protocolFor };

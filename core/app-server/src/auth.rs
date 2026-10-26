@@ -147,6 +147,8 @@ pub(crate) fn permission(method: &str) -> Permission {
             | "areal/subscription/remove"
             | "areal/task/schedule/preview"
             | "areal/task/schedule/context"
+            | "areal/owner/watch"
+            | "areal/owner/unwatch"
             | "areal/task/subscribe"
             | "areal/task/unsubscribe"
     ) || method.ends_with("/list")

@@ -115,7 +115,9 @@ export async function runConversationExercise(page, scratch, gui, report) {
   await advance(2);
   await expandActivities();
   await command().locator(".tool-summary-row").first().click();
-  await command().getByRole("button", { name: "展开完整命令", exact: true }).click();
+  await command()
+    .getByRole("button", { name: /^展开完整命令 \$ / })
+    .click();
   await latest().getByRole("button", { name: "打开 fixture-summary 子对话", exact: true }).click();
   await child().waitFor();
   assert.equal(
@@ -134,7 +136,9 @@ export async function runConversationExercise(page, scratch, gui, report) {
     (await command().getByLabel("工具结果", { exact: true }).innerText()).includes("Apples: 12"),
   );
   assert.equal(
-    await command().getByRole("button", { name: "收起完整命令", exact: true }).count(),
+    await command()
+      .getByRole("button", { name: /^收起完整命令 \$ / })
+      .count(),
     1,
   );
   await snapshot(
@@ -151,7 +155,11 @@ export async function runConversationExercise(page, scratch, gui, report) {
   await region.getByRole("button", { name: "返回主对话", exact: true }).click();
   assert.equal(await image().getByText("已查看 1 张图片", { exact: true }).isVisible(), true);
   const imageToggle = image().getByRole("button", { name: "已查看 1 张图片", exact: true });
-  assert.equal(await imageToggle.getAttribute("aria-expanded"), "false", "tool image starts collapsed independently of its group");
+  assert.equal(
+    await imageToggle.getAttribute("aria-expanded"),
+    "false",
+    "tool image starts collapsed independently of its group",
+  );
   await imageToggle.click();
   const imagePreview = image().getByRole("button", { name: "预览图片 工具图片", exact: true });
   await imagePreview.waitFor();
@@ -178,22 +186,47 @@ export async function runConversationExercise(page, scratch, gui, report) {
   const inspection = dialog.getByRole("region", { name: "图片查看区域", exact: true });
   const scale = dialog.getByLabel("图片缩放比例", { exact: true });
   await scale.waitFor();
-  const initialImageWidth = await dialog.locator("img").evaluate(el => el.getBoundingClientRect().width);
+  const initialImageWidth = await dialog
+    .locator("img")
+    .evaluate((el) => el.getBoundingClientRect().width);
   await dialog.getByRole("button", { name: "放大图片", exact: true }).click();
-  assert.ok(await dialog.locator("img").evaluate(el => el.getBoundingClientRect().width) > initialImageWidth);
+  assert.ok(
+    (await dialog.locator("img").evaluate((el) => el.getBoundingClientRect().width)) >
+      initialImageWidth,
+  );
   await dialog.getByRole("button", { name: "实际大小 100%", exact: true }).click();
   assert.equal(await scale.innerText(), "100%");
-  assert.equal(Math.round(await dialog.locator("img").evaluate(el => el.getBoundingClientRect().width)), 960);
-  for (let i = 0; i < 5; i++) await dialog.getByRole("button", { name: "放大图片", exact: true }).click();
-  assert.equal(await inspection.evaluate(el => el.scrollWidth > el.clientWidth), true, "large image remains scrollable rather than clipped");
+  assert.equal(
+    Math.round(await dialog.locator("img").evaluate((el) => el.getBoundingClientRect().width)),
+    960,
+  );
+  for (let i = 0; i < 5; i++)
+    await dialog.getByRole("button", { name: "放大图片", exact: true }).click();
+  assert.equal(
+    await inspection.evaluate((el) => el.scrollWidth > el.clientWidth),
+    true,
+    "large image remains scrollable rather than clipped",
+  );
   await inspection.hover();
-  const beforePan = await inspection.evaluate(el => el.scrollLeft);
+  const beforePan = await inspection.evaluate((el) => el.scrollLeft);
   await page.mouse.wheel(180, 0);
-  await page.waitForFunction(left => document.querySelector('[aria-label="图片查看区域"]').scrollLeft > left, beforePan);
+  await page.waitForFunction(
+    (left) => document.querySelector('[aria-label="图片查看区域"]').scrollLeft > left,
+    beforePan,
+  );
   await snapshot("04b-image-zoomed", "zoomed image pans within its own scroll owner");
   await dialog.getByRole("button", { name: "适应窗口", exact: true }).click();
-  assert.equal(await inspection.evaluate(el => el.scrollWidth <= el.clientWidth + 1 && el.scrollHeight <= el.clientHeight + 1), true);
-  await snapshot("04-image-open", "production media adapter, fit/actual scale/zoom/pan and image dialog", "run2/06-image.png");
+  assert.equal(
+    await inspection.evaluate(
+      (el) => el.scrollWidth <= el.clientWidth + 1 && el.scrollHeight <= el.clientHeight + 1,
+    ),
+    true,
+  );
+  await snapshot(
+    "04-image-open",
+    "production media adapter, fit/actual scale/zoom/pan and image dialog",
+    "run2/06-image.png",
+  );
   await page.waitForFunction(
     () => Number(document.querySelector("#conversation-flow-exercise").dataset.scenarioStep) >= 5,
   );
@@ -314,17 +347,36 @@ export async function runConversationExercise(page, scratch, gui, report) {
   assert.equal(await latest().locator(".assistant-message-final").isVisible(), true);
   assert.equal(await latest().locator(".turn-progress-body .assistant-message-final").count(), 0);
   assert.ok((await final().innerText()).includes("共 32 个水果"));
-  const total = () => latest().getByRole("button", { name: "执行过程：Working for 36s", exact: true });
+  const total = () =>
+    latest().getByRole("button", { name: "执行过程：Working for 36s", exact: true });
   // Frame the settled disclosure through the real reading owner. A DOM jump
   // can be counteracted by response-space layout and is not a reader action.
   await messages.hover({ position: { x: 40, y: 40 } });
   for (let i = 0; i < 6; i++) {
-    if (await total().evaluate(el => { const r = el.getBoundingClientRect(), box = el.closest('.messages').getBoundingClientRect(); return r.top >= box.top && r.bottom < box.bottom - 150; })) break;
-    const before = await messages.evaluate(el => el.scrollTop);
+    if (
+      await total().evaluate((el) => {
+        const r = el.getBoundingClientRect(),
+          box = el.closest(".messages").getBoundingClientRect();
+        return r.top >= box.top && r.bottom < box.bottom - 150;
+      })
+    )
+      break;
+    const before = await messages.evaluate((el) => el.scrollTop);
     await page.mouse.wheel(0, -180);
-    await page.waitForFunction(top => document.querySelector('.design-preview-flow-chat .messages').scrollTop < top - 1, before);
+    await page.waitForFunction(
+      (top) => document.querySelector(".design-preview-flow-chat .messages").scrollTop < top - 1,
+      before,
+    );
   }
-  assert.equal(await total().evaluate(el => { const r = el.getBoundingClientRect(), box = el.closest('.messages').getBoundingClientRect(); return r.top >= box.top && r.bottom <= box.bottom; }), true, "completed aggregate is visibly framed with its final");
+  assert.equal(
+    await total().evaluate((el) => {
+      const r = el.getBoundingClientRect(),
+        box = el.closest(".messages").getBoundingClientRect();
+      return r.top >= box.top && r.bottom <= box.bottom;
+    }),
+    true,
+    "completed aggregate is visibly framed with its final",
+  );
   await snapshot(
     "09-completed-collapsed",
     "all activities settle; parent final stays independent",
@@ -333,7 +385,9 @@ export async function runConversationExercise(page, scratch, gui, report) {
   await total().click();
   await expandActivities();
   assert.equal(
-    await command().getByRole("button", { name: "收起完整命令", exact: true }).isVisible(),
+    await command()
+      .getByRole("button", { name: /^收起完整命令 \$ / })
+      .isVisible(),
     true,
   );
   await command().scrollIntoViewIfNeeded();
@@ -372,7 +426,15 @@ export async function runConversationExercise(page, scratch, gui, report) {
       scenario === "失败" ? "失败" : "结果待确认",
     );
     assert.equal(await latest().locator(".turn-progress-body").isVisible(), true);
-    assert.equal(await latest().locator(".areal-activity-status").filter({ hasText: scenario === "失败" ? "工具失败" : "结果待确认" }).first().isVisible(), true, "exception remains discoverable outside the collapsed group");
+    assert.equal(
+      await latest()
+        .locator(".areal-activity-status")
+        .filter({ hasText: scenario === "失败" ? "工具失败" : "结果待确认" })
+        .first()
+        .isVisible(),
+      true,
+      "exception remains discoverable outside the collapsed group",
+    );
     await expandActivities();
     await command().scrollIntoViewIfNeeded();
     await snapshot(`12-${scenario}`, "independent exception does not silently converge");
@@ -382,21 +444,25 @@ export async function runConversationExercise(page, scratch, gui, report) {
   await page.getByRole("dialog").getByRole("button", { name: "刷新原记录", exact: true }).click();
   await page.getByText(/刷新失败，仍显示上次记录/).waitFor();
   await page.getByRole("button", { name: "取消核查", exact: true }).click();
-  const unknownCalls = (
-    await region.getByLabel("本地调用记录", { exact: true }).innerText()
-  ).split(", ");
+  const unknownCalls = (await region.getByLabel("本地调用记录", { exact: true }).innerText()).split(
+    ", ",
+  );
   const parentReads = unknownCalls.filter((name) => name.startsWith("open:"));
   assert.equal(parentReads.length, 1, "unknown refresh reads the original parent once");
   assert.match(parentReads[0], /^open:flow-preview-\d+$/);
   assert.ok(
-    unknownCalls.every((name) =>
-      name === parentReads[0] ||
-      name === `media:${parentReads[0].slice(5)}` ||
-      name === "feedback:status"),
+    unknownCalls.every(
+      (name) =>
+        name === parentReads[0] ||
+        name === `media:${parentReads[0].slice(5)}` ||
+        name === "feedback:status",
+    ),
     "unknown inspection only reads the parent, its image and feedback availability, never resubmits",
   );
   assert.equal(await command().getAttribute("data-tool-status"), "结果待确认");
-  report.checks.push("UNKNOWN inspection read failure preserves original result without resubmission");
+  report.checks.push(
+    "UNKNOWN inspection read failure preserves original result without resubmission",
+  );
   for (const [theme, font, width] of [
     ["light", "14", "wide"],
     ["dark", "18", "narrow"],
@@ -426,7 +492,9 @@ export async function runConversationExercise(page, scratch, gui, report) {
     await expandActivities();
     await command().locator(".tool-summary-row").first().click();
     assert.equal(
-      await command().getByRole("button", { name: "展开完整命令", exact: true }).count(),
+      await command()
+        .getByRole("button", { name: /^展开完整命令 \$ / })
+        .count(),
       1,
       "fresh run has fresh command disclosure",
     );

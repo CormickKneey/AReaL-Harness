@@ -1,1 +1,8 @@
-export { type MarkdownUnorderedListProps, MarkdownUnorderedList, type MarkdownOrderedListProps, MarkdownOrderedList, type MarkdownListItemProps, MarkdownListItem } from "@areal/ui/wip";
+export {
+  type MarkdownUnorderedListProps,
+  MarkdownUnorderedList,
+  type MarkdownOrderedListProps,
+  MarkdownOrderedList,
+  type MarkdownListItemProps,
+  MarkdownListItem,
+} from "@areal/ui/experimental";

@@ -4,6 +4,7 @@ mod channel;
 pub use catalog::{
     PublishedTaskCatalog, PublishedTaskCatalogFallback, read_published_task_catalog,
 };
+pub(crate) mod directory;
 mod ledger;
 #[cfg(feature = "test-support")]
 pub use ledger::TaskCommitFault;
@@ -47,6 +48,8 @@ struct Snapshot {
     #[serde(skip)]
     catalog: ledger::Catalog,
     #[serde(skip)]
+    schedule_rows: BTreeMap<String, Arc<TaskDirectoryRow>>,
+    #[serde(skip)]
     root: std::path::PathBuf,
     #[cfg(feature = "test-support")]
     #[serde(skip)]
@@ -55,6 +58,7 @@ struct Snapshot {
 
 pub(crate) struct Tasks {
     state: Mutex<Snapshot>,
+    pub(crate) directory: directory::OwnerDirectory,
     events: broadcast::Sender<Value>,
     changed: Arc<tokio::sync::Notify>,
     started: AtomicBool,
@@ -68,8 +72,14 @@ pub(crate) struct Tasks {
 impl Tasks {
     pub(crate) fn open(root: &Path, store: &crate::store::Store) -> anyhow::Result<Self> {
         let mut state = Snapshot::open(root, store)?;
+        let previous = state.clone();
         state.restore_runs();
+        if serde_json::to_value(&state.tasks)? != serde_json::to_value(&previous.tasks)? {
+            state.persist(Some(&previous), None)?;
+        }
+        let directory = directory::OwnerDirectory::new(&state)?;
         Ok(Self {
+            directory,
             hosts: Mutex::new(BTreeMap::new()),
             dispatching: Arc::new(std::sync::Mutex::new(HashSet::new())),
             state: Mutex::new(state),
@@ -86,7 +96,7 @@ impl Tasks {
 impl Snapshot {
     fn restore_runs(&mut self) {
         let previous_version = self.version;
-        self.version = 5;
+        self.version = 6;
         for task in self.tasks.values_mut() {
             for run in &mut task.runs {
                 if task.mode == TaskMode::Scheduled
@@ -349,13 +359,25 @@ impl Engine {
             ));
         }
         let mut candidate = candidate;
+        let mut prepared = directory::PreparedTask::new(
+            candidate.tasks.get(task_id).ok_or(Error::NotFound)?,
+            state.tasks.get(task_id),
+        )?;
         let result = if retain_history {
             let eligible = candidate.archiveable_ids(&self.store, Some(task_id));
             candidate.compact(&eligible, Some(task_id))
         } else {
             Ok(())
         };
-        if let Err(error) = result.and_then(|_| candidate.persist(Some(state), Some(task_id))) {
+        if let Err(error) = result.and_then(|_| {
+            prepared.refresh_row(candidate.tasks.get(task_id).ok_or(Error::NotFound)?)
+        }) {
+            if matches!(error, Error::Storage(_)) {
+                self.task_modes.frozen.store(true, Ordering::Release);
+            }
+            return Err(error);
+        }
+        if let Err(error) = candidate.persist(Some(state), Some(task_id)) {
             if matches!(error, Error::Storage(_)) {
                 self.task_modes.frozen.store(true, Ordering::Release);
                 return Err(Error::Storage(format!(
@@ -365,7 +387,10 @@ impl Engine {
             return Err(error);
         }
         *state = candidate;
-        if let Some(task) = state.tasks.get(task_id) {
+        self.task_modes.directory.publish_task(prepared, true);
+        if self.task_modes.events.receiver_count() > 0
+            && let Some(task) = state.tasks.get(task_id)
+        {
             let _ = self.task_modes.events.send(notification("areal/task/updated", json!({
                 "taskId":task.id,"revision":task.revision,"channelSequence":task.channel_sequence,
                 "runId":run_id(task),"task":summary(task)

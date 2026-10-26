@@ -1,8 +1,9 @@
+import { makeTempDir } from "./support/temp.mjs";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { createServer } from "node:http";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { captureSmokeFailure, selectConversation } from "./smoke-navigation.mjs";
@@ -15,7 +16,7 @@ const { CoreBackend } = require("../app/src/core/backend.cjs");
 for (const key of ["NO_PROXY", "no_proxy"]) {
   process.env[key] = [process.env[key], "127.0.0.1", "localhost"].filter(Boolean).join(",");
 }
-const scratch = await mkdtemp("/private/tmp/areal-history-");
+const scratch = await makeTempDir("areal-history-");
 const workspace = join(scratch, "workspace");
 await mkdir(workspace);
 await mkdir(join(scratch, "user"));
@@ -270,7 +271,12 @@ try {
       });
       activeCase.finish();
     } else if (name === "interrupted") {
-      await backend.command("stop", { projectId, threadId, turnId: current().turns.at(-1).id, requestId: randomUUID() });
+      await backend.command("stop", {
+        projectId,
+        threadId,
+        turnId: current().turns.at(-1).id,
+        requestId: randomUUID(),
+      });
       activeCase.finish();
     } else activeCase.finish();
     await until(() => current().turns.at(-1).status === name, `${name} settlement`);

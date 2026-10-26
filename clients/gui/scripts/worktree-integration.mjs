@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
+import { makeTempDir } from "./support/temp.mjs";
 import { createRequire } from "node:module";
 import { createServer } from "node:http";
 import { execFileSync } from "node:child_process";
 import { randomUUID, createHash } from "node:crypto";
-import { mkdtemp, mkdir, writeFile, readFile, realpath } from "node:fs/promises";
+import { mkdir, writeFile, readFile } from "node:fs/promises";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -11,7 +12,7 @@ const root = resolve(gui, "../..");
 const creationOnly = process.argv.includes("--creation-only");
 const require = createRequire(join(gui, "app/package.json"));
 const { CoreBackend } = require("../app/src/core/backend.cjs");
-const scratch = await realpath(await mkdtemp("/tmp/aw-integration-"));
+const scratch = await makeTempDir("aw-integration-");
 const source = join(scratch, "source"),
   home = join(scratch, "desktop"),
   userHome = join(scratch, "user");
@@ -157,10 +158,32 @@ try {
   await backend.init();
   projectId = await backend.addProject(source);
   const rejectedRequest = randomUUID();
-  await assert.rejects(backend.command("create", { projectId, requestId: rejectedRequest, profile: { id: "missing-profile", revision: "v1" } }), error => error.submissionUnknown === false && error.outcome?.kind === "rejected");
-  assert.equal(projection().pending.length, 0, "known configuration rejection leaves no pending creation");
-  assert.equal((await backend.command("workspace", { projectId, operation: "worktreeRead", requestId: rejectedRequest })).state, "failed");
-  checks.push("invalid creation configuration is rejected before acceptance and clears pending without replay");
+  await assert.rejects(
+    backend.command("create", {
+      projectId,
+      requestId: rejectedRequest,
+      profile: { id: "missing-profile", revision: "v1" },
+    }),
+    (error) => error.submissionUnknown === false && error.outcome?.kind === "rejected",
+  );
+  assert.equal(
+    projection().pending.length,
+    0,
+    "known configuration rejection leaves no pending creation",
+  );
+  assert.equal(
+    (
+      await backend.command("workspace", {
+        projectId,
+        operation: "worktreeRead",
+        requestId: rejectedRequest,
+      })
+    ).state,
+    "failed",
+  );
+  checks.push(
+    "invalid creation configuration is rejected before acceptance and clears pending without replay",
+  );
   const ids = [randomUUID(), randomUUID()];
   const create = (index) =>
     backend.command("create", {
@@ -171,7 +194,11 @@ try {
     });
   const ordinary = await Promise.all([
     create(0),
-    backend.command("create", { projectId, requestId: randomUUID(), options: { permissionPreset: "fullAccess" } }),
+    backend.command("create", {
+      projectId,
+      requestId: randomUUID(),
+      options: { permissionPreset: "fullAccess" },
+    }),
   ]);
   for (const { threadId } of ordinary) {
     const thread = projection().state.threads[threadId];
@@ -179,23 +206,48 @@ try {
     assert.equal(thread.worktree, undefined);
     assert.equal(backend.worktrees.executionProjectId(projectId, threadId), projectId);
   }
-  assert.equal(backend.saved.length, 1, "ordinary concurrent creation registers no new execution host");
+  assert.equal(
+    backend.saved.length,
+    1,
+    "ordinary concurrent creation registers no new execution host",
+  );
   assert.equal(git("branch", "--show-current"), "main");
   assert.deepEqual(await create(0), ordinary[0]);
-  checks.push("concurrent ordinary conversations retain the selected directory, branch and Core with idempotent receipts");
+  checks.push(
+    "concurrent ordinary conversations retain the selected directory, branch and Core with idempotent receipts",
+  );
   const nonGit = join(scratch, "non-git");
   await mkdir(nonGit);
   const nonGitId = await backend.addProject(nonGit);
   for (let index = 0; index < 2; index++) {
-    const result = await backend.command("create", { projectId: nonGitId, requestId: randomUUID() });
-    const thread = backend.snapshot().projects.find(project => project.id === nonGitId).state.threads[result.threadId];
+    const result = await backend.command("create", {
+      projectId: nonGitId,
+      requestId: randomUUID(),
+    });
+    const thread = backend.snapshot().projects.find((project) => project.id === nonGitId).state
+      .threads[result.threadId];
     assert.equal(thread.cwd, nonGit);
     assert.equal(thread.worktree, undefined);
   }
-  const nonGitThreads = Object.keys(backend.snapshot().projects.find(project => project.id === nonGitId).state.threads);
-  await assert.rejects(backend.command("create", { projectId: nonGitId, requestId: randomUUID(), worktree: { mode: "worktree" } }));
-  assert.deepEqual(Object.keys(backend.snapshot().projects.find(project => project.id === nonGitId).state.threads), nonGitThreads);
-  checks.push("non-Git directories allow two ordinary conversations and reject explicit Worktree creation without a replacement thread");
+  const nonGitThreads = Object.keys(
+    backend.snapshot().projects.find((project) => project.id === nonGitId).state.threads,
+  );
+  await assert.rejects(
+    backend.command("create", {
+      projectId: nonGitId,
+      requestId: randomUUID(),
+      worktree: { mode: "worktree" },
+    }),
+  );
+  assert.deepEqual(
+    Object.keys(
+      backend.snapshot().projects.find((project) => project.id === nonGitId).state.threads,
+    ),
+    nonGitThreads,
+  );
+  checks.push(
+    "non-Git directories allow two ordinary conversations and reject explicit Worktree creation without a replacement thread",
+  );
   threads = [ordinary[0], await create(1)];
   assert.equal(new Set(threads.map((thread) => thread.threadId)).size, 2);
   assert.equal(
@@ -298,6 +350,12 @@ try {
         await readFile(join(directories[index], "managed-output.txt"), "utf8"),
         index ? "B" : "A",
       );
+      const cleanup = await backend.command("manage", {
+        projectId,
+        threadId,
+        operation: "closeResources",
+      });
+      assert.equal(cleanup.cleanupConfirmed, true, "exited managed processes release their scope");
     }
     checks.push(
       "managed Thread-lifetime processes and process controls use the original physical host",

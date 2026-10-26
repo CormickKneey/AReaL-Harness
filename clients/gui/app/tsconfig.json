@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "target": "ES2022",
+    "module": "NodeNext",
+    "types": ["electron", "node"],
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "typeRoots": ["node_modules/@types", "node_modules"]
+  },
+  "include": ["src/**/*.cjs", "src/**/*.js", "src/**/*.ts"]
+}

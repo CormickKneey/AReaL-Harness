@@ -300,6 +300,7 @@ struct Connection {
     experimental_api: bool,
     ready: bool,
     subscriptions: HashMap<String, CancellationToken>,
+    owner_subscription: Option<CancellationToken>,
     suppressed: HashSet<String>,
     tx: mpsc::Sender<Outbound>,
     stop: CancellationToken,
@@ -440,6 +441,7 @@ async fn connection(
         initialized: false,
         experimental_api: false,
         ready: false,
+        owner_subscription: None,
         subscriptions: HashMap::new(),
         suppressed: HashSet::new(),
         tx,
@@ -1038,6 +1040,35 @@ impl Connection {
             }
         });
     }
+    fn forward_owner(
+        &mut self,
+        generation: String,
+        mut events: broadcast::Receiver<Arc<areal_protocol::tasks::OwnerInvalidation>>,
+    ) {
+        let subscription = self.stop.child_token();
+        if let Some(old) = self.owner_subscription.replace(subscription.clone()) {
+            old.cancel();
+        }
+        let tx = self.tx.clone();
+        let stop = self.stop.clone();
+        let delivery = self.delivery.clone();
+        self.tasks.spawn(async move {
+            loop {
+                let event = tokio::select! { biased; _ = subscription.cancelled() => break, event = events.recv() => event };
+                let _delivery = delivery.lock().await;
+                if subscription.is_cancelled() { break; }
+                let value = match event {
+                    Ok(event) => json!({"jsonrpc":"2.0","method":"areal/owner/invalidated","params":event.as_ref()}),
+                    Err(_) => {
+                        if tx.try_send(Outbound::Message(json!({"jsonrpc":"2.0","method":"areal/owner/resetRequired","params":{"generation":generation}}))).is_err() { stop.cancel(); }
+                        subscription.cancel();
+                        break;
+                    }
+                };
+                if tx.try_send(Outbound::Event { value, subscription: subscription.clone() }).is_err() { stop.cancel(); break; }
+            }
+        });
+    }
     #[cfg(test)]
     async fn dispatch(
         &mut self,
@@ -1110,6 +1141,21 @@ impl Connection {
             return Ok(json!({"ready":true}));
         }
         if task_mode::METHODS.contains(&method) {
+            if matches!(method, "areal/owner/watch" | "areal/owner/unwatch") {
+                task_mode::authorize_owner(&self.principal)?;
+                if params.as_object().is_none_or(|p| !p.is_empty()) {
+                    return Err(RpcError::invalid("owner watch accepts an empty object"));
+                }
+                if method == "areal/owner/unwatch" {
+                    if let Some(old) = self.owner_subscription.take() {
+                        old.cancel();
+                    }
+                    return Ok(json!({"removed":true}));
+                }
+                let (snapshot, events) = engine.owner_watch();
+                self.forward_owner(snapshot.generation.clone(), events);
+                return Ok(json!(snapshot));
+            }
             if matches!(method, "areal/task/subscribe" | "areal/task/unsubscribe") {
                 let p: areal_protocol::tasks::TaskTarget = parse(params)?;
                 task_mode::authorize(engine, &self.principal, &p.task_id).await?;
@@ -1851,6 +1897,7 @@ mod tests {
             initialized: true,
             experimental_api: false,
             ready: true,
+            owner_subscription: None,
             subscriptions: HashMap::new(),
             suppressed: HashSet::new(),
             tx,
@@ -1888,6 +1935,7 @@ mod tests {
             initialized: true,
             experimental_api: false,
             ready: true,
+            owner_subscription: None,
             subscriptions: HashMap::new(),
             suppressed: HashSet::new(),
             tx,
@@ -1928,6 +1976,7 @@ mod tests {
             initialized: true,
             experimental_api: false,
             ready: true,
+            owner_subscription: None,
             subscriptions: (0..128)
                 .map(|n| (n.to_string(), CancellationToken::new()))
                 .collect(),

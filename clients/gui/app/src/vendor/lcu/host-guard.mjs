@@ -119,7 +119,11 @@ function sameId(a, b) {
   return typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase();
 }
 
-/** Why `app` (a bundle id) must not be approved, or undefined if it may be. */
+/** @typedef {{hosts?:Array<{bundleId:string,name:string}>,env?:NodeJS.ProcessEnv}} HostGuardOptions */
+/** Why `app` (a bundle id) must not be approved, or undefined if it may be.
+ * @param {unknown} app
+ * @param {HostGuardOptions} [options]
+ */
 export function agentHostReason(app, { hosts, env = process.env } = {}) {
   if (typeof app !== 'string' || !app || env?.[ALLOW_ENV] === '1') return undefined;
   for (const host of hosts ?? detectHostApps()) if (sameId(host.bundleId, app)) return host.name;
@@ -138,6 +142,9 @@ export function approvalApp(params) {
  * Shared by every adapter: a decline response for an approval of an agent-hosting app,
  * answered before the host or user is asked; undefined for any other request. `report` receives
  * the explanation (stderr by default; the shared client, which runs inside a TUI, passes a no-op).
+ * @param {import("@modelcontextprotocol/sdk/types.js").ElicitRequest["params"]} params
+ * @param {HostGuardOptions & {report?:(message:string)=>void}} [settings]
+ * @returns {{action:"decline"}|undefined}
  */
 export function declineAgentHostApp(params, { report = message => console.error(message), ...options } = {}) {
   const app = approvalApp(params);

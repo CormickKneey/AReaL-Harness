@@ -569,7 +569,7 @@ async fn missing_committed_task_payload_fails_closed_on_restart() {
     let catalog: Value =
         serde_json::from_slice(&std::fs::read(dir.path().join("desktop/task-mode.json")).unwrap())
             .unwrap();
-    assert_eq!(catalog["version"], 5);
+    assert_eq!(catalog["version"], 6);
     let body = catalog["tasks"]
         .as_object()
         .unwrap()
@@ -597,6 +597,9 @@ async fn commit_faults_preserve_the_committed_root_and_reconcile_unknown_replace
         let dir = tempfile::tempdir().unwrap();
         legacy(dir.path(), 0, 1, 0);
         let engine = open(dir.path());
+        let (barrier, mut updates) = engine.owner_watch();
+        let before = engine.task_directory_list(Default::default()).unwrap();
+        assert_eq!(before.data[0].revision, 1);
         engine.set_task_commit_fault(phase).await;
         let request = control("fault-stop", 1, Some("run-00000"));
         assert!(
@@ -625,6 +628,30 @@ async fn commit_faults_preserve_the_committed_root_and_reconcile_unknown_replace
                 Err(Error::Storage(_))
             ),
             "writes remain frozen until durable reconciliation"
+        );
+        assert_eq!(
+            engine
+                .task_directory_list(Default::default())
+                .unwrap()
+                .revision,
+            before.revision
+        );
+        assert!(
+            updates.try_recv().is_err(),
+            "failed commits cannot publish owner updates"
+        );
+        assert_eq!(engine.owner_watch().0.sequence, barrier.sequence);
+        let published = serde_json::to_value(
+            areal_engine::read_published_task_catalog(dir.path(), None, 100).unwrap(),
+        )
+        .unwrap();
+        let replaced = matches!(
+            phase,
+            TaskCommitFault::AfterRootReplace | TaskCommitFault::AfterRootSync
+        );
+        assert_eq!(
+            published["data"][0]["revision"],
+            if replaced { 2 } else { 1 }
         );
         engine.shutdown().await;
         drop(engine);
@@ -848,4 +875,57 @@ async fn admitted_unknown_goal_and_questions_settle_at_legacy_byte_and_receipt_c
         stopped
     );
     reopened.shutdown().await;
+}
+
+#[tokio::test]
+async fn published_directory_is_bounded_and_does_not_open_hot_task_bodies() {
+    let dir = tempfile::tempdir().unwrap();
+    legacy(dir.path(), 0, 128, 4096);
+    let engine = open(dir.path());
+    let page = engine.task_directory_list(Default::default()).unwrap();
+    let value = serde_json::to_value(&page.data[0]).unwrap();
+    assert!(value.get("runs").is_none());
+    assert!(value.get("messages").is_none());
+    assert_eq!(value["runCount"], 128);
+    assert!(serde_json::to_vec(&page.data[0]).unwrap().len() < 4096);
+    engine.shutdown().await;
+    drop(engine);
+    let root: Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("desktop/task-mode.json")).unwrap())
+            .unwrap();
+    let body = root["tasks"].as_object().unwrap().values().next().unwrap()["body"]
+        .as_str()
+        .unwrap();
+    std::fs::remove_file(dir.path().join("desktop/task-ledger").join(body)).unwrap();
+    let published = serde_json::to_value(
+        areal_engine::read_published_task_catalog(dir.path(), None, 100).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(published["data"][0]["runCount"], 128);
+    let pack = root["schedules"]["digest"].as_str().unwrap();
+    std::fs::write(dir.path().join("desktop/task-ledger").join(pack), b"{}").unwrap();
+    assert!(areal_engine::read_published_task_catalog(dir.path(), None, 100).is_err());
+}
+
+#[tokio::test]
+async fn owner_directory_publishes_after_commit_and_dirty_reads_report_removal() {
+    let dir = tempfile::tempdir().unwrap();
+    legacy(dir.path(), 0, 1, 0);
+    let engine = open(dir.path());
+    let (barrier, mut events) = engine.owner_watch();
+    engine
+        .task_control("owner".into(), "pause".into(), control("pause", 1, None))
+        .await
+        .unwrap();
+    let event = events.recv().await.unwrap();
+    assert_eq!(event.sequence, barrier.sequence + 1);
+    assert_eq!(event.changed_tasks, vec!["fixture"]);
+    let rows = engine
+        .task_directory_read(areal_protocol::tasks::TaskDirectoryRead {
+            task_ids: vec!["fixture".into(), "missing".into()],
+        })
+        .unwrap();
+    assert!(rows.data[0].paused);
+    assert_eq!(rows.removed, vec!["missing"]);
+    engine.shutdown().await;
 }

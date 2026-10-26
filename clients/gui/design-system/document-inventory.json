@@ -1,0 +1,1049 @@
+[
+  {
+    "path": "clients/gui/design-system/README.md",
+    "role": "maintainer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/design-system/accessibility.en.md",
+    "role": "maintainer",
+    "status": "active",
+    "translationOf": "clients/gui/design-system/accessibility.md"
+  },
+  {
+    "path": "clients/gui/design-system/accessibility.md",
+    "role": "maintainer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/design-system/architecture.md",
+    "role": "maintainer",
+    "status": "active",
+    "nonNormative": ["a135423527195051b724bf4f91544a79c109d8d779095859eddc525469639c4e"],
+    "nonNormativeNotes": {
+      "a135423527195051b724bf4f91544a79c109d8d779095859eddc525469639c4e": "导航或已有生成实例的说明，事实由链接所有者定义"
+    }
+  },
+  {
+    "path": "clients/gui/design-system/automation.md",
+    "role": "maintainer",
+    "status": "active",
+    "nonNormative": ["ac20272636ace8158148ceedb8af2adea7e9179f33e140e6af1c37dc40fcf44d"],
+    "nonNormativeNotes": {
+      "ac20272636ace8158148ceedb8af2adea7e9179f33e140e6af1c37dc40fcf44d": "现状或运行观察，描述该版本具备什么，不另定义设计义务"
+    }
+  },
+  {
+    "path": "clients/gui/design-system/base-evidence.md",
+    "role": "process-evidence",
+    "status": "redirect",
+    "target": "design/archive/gui/base-evidence.md"
+  },
+  {
+    "path": "clients/gui/design-system/base.md",
+    "role": "maintainer",
+    "status": "active",
+    "nonNormative": [
+      "acdf67f76ebaf3123edee16a69d127cc26ce835f4dc182fed05c75f9526b1497",
+      "6cb3afb03c6e3d03a9efe25c1da0233d0825dce95d6e8998ed9ff6a79b6f15b0"
+    ],
+    "nonNormativeNotes": {
+      "acdf67f76ebaf3123edee16a69d127cc26ce835f4dc182fed05c75f9526b1497": "现状或运行观察，描述该版本具备什么，不另定义设计义务",
+      "6cb3afb03c6e3d03a9efe25c1da0233d0825dce95d6e8998ed9ff6a79b6f15b0": "现状或运行观察，描述该版本具备什么，不另定义设计义务"
+    }
+  },
+  {
+    "path": "clients/gui/design-system/content-system.md",
+    "role": "maintainer",
+    "status": "active",
+    "nonNormative": [
+      "0b3d55291ea17a89ec58938adccaa09c2a358e0ba49001b89600ba3bfd6117ae",
+      "6149f3f68cf609876c065edfbe2013a511b10bae2605eb57876e4df37e7f1650",
+      "ad9f3e08e3a18445e2686e80dd00641525b7f8599f4bd3f364690716719f42a0",
+      "3a5c443b0672cc0066e39619f598df02897f668f56564b6f45df62a88b84d7f5",
+      "c43888c5ca5af715415b7e1146c7c7075b4abcb04db2e2117fc53425ecec4cb4",
+      "d87e9762ad4bded445743ebe3c1990e8addf1af61f6e9958de4cf38e4fe42761",
+      "0dc1572ff7c86db161629fb3c8f59295413e5efd3cd3ab9aff15129fe9be34be"
+    ],
+    "nonNormativeNotes": {
+      "0b3d55291ea17a89ec58938adccaa09c2a358e0ba49001b89600ba3bfd6117ae": "现状或运行观察，描述该版本具备什么，不另定义设计义务",
+      "6149f3f68cf609876c065edfbe2013a511b10bae2605eb57876e4df37e7f1650": "现状或运行观察，描述该版本具备什么，不另定义设计义务",
+      "ad9f3e08e3a18445e2686e80dd00641525b7f8599f4bd3f364690716719f42a0": "现状或运行观察，描述该版本具备什么，不另定义设计义务",
+      "3a5c443b0672cc0066e39619f598df02897f668f56564b6f45df62a88b84d7f5": "现状或运行观察，描述该版本具备什么，不另定义设计义务",
+      "c43888c5ca5af715415b7e1146c7c7075b4abcb04db2e2117fc53425ecec4cb4": "现状或运行观察，描述该版本具备什么，不另定义设计义务",
+      "d87e9762ad4bded445743ebe3c1990e8addf1af61f6e9958de4cf38e4fe42761": "现状或运行观察，描述该版本具备什么，不另定义设计义务",
+      "0dc1572ff7c86db161629fb3c8f59295413e5efd3cd3ab9aff15129fe9be34be": "导航或已有生成实例的说明，事实由链接所有者定义"
+    }
+  },
+  {
+    "path": "clients/gui/design-system/conversation-flow.md",
+    "role": "maintainer",
+    "status": "active",
+    "nonNormative": [
+      "667a60523d394744b48c38a63dee8c0a610b6009fcb53bc7b12678d86727409f",
+      "401d2329bc9163a14da7e8d47e440364db02d5f9fc1266259e8bb958ad8aafd4"
+    ],
+    "nonNormativeNotes": {
+      "667a60523d394744b48c38a63dee8c0a610b6009fcb53bc7b12678d86727409f": "现状或运行观察，描述该版本具备什么，不另定义设计义务",
+      "401d2329bc9163a14da7e8d47e440364db02d5f9fc1266259e8bb958ad8aafd4": "现状或运行观察，描述该版本具备什么，不另定义设计义务"
+    }
+  },
+  {
+    "path": "clients/gui/design-system/exercises/conversation-flow.md",
+    "role": "process-evidence",
+    "status": "redirect",
+    "target": "design/archive/gui/exercises/conversation-flow.md"
+  },
+  {
+    "path": "clients/gui/design-system/exercises/conversation-stage2.en.md",
+    "role": "process-evidence",
+    "status": "redirect",
+    "target": "design/archive/gui/exercises/conversation-stage2.en.md"
+  },
+  {
+    "path": "clients/gui/design-system/exercises/conversation-stage2.md",
+    "role": "process-evidence",
+    "status": "redirect",
+    "target": "design/archive/gui/exercises/conversation-stage2.md"
+  },
+  {
+    "path": "clients/gui/design-system/exercises/decision-transfer.md",
+    "role": "process-evidence",
+    "status": "redirect",
+    "target": "design/archive/gui/exercises/decision-transfer.md"
+  },
+  {
+    "path": "clients/gui/design-system/exercises/settings-contrast.md",
+    "role": "process-evidence",
+    "status": "redirect",
+    "target": "design/archive/gui/exercises/settings-contrast.md"
+  },
+  {
+    "path": "clients/gui/design-system/exercises/settings-reflow.md",
+    "role": "process-evidence",
+    "status": "redirect",
+    "target": "design/archive/gui/exercises/settings-reflow.md"
+  },
+  {
+    "path": "clients/gui/design-system/exercises/settings-stage1.en.md",
+    "role": "process-evidence",
+    "status": "redirect",
+    "target": "design/archive/gui/exercises/settings-stage1.en.md"
+  },
+  {
+    "path": "clients/gui/design-system/exercises/settings-stage1.md",
+    "role": "process-evidence",
+    "status": "redirect",
+    "target": "design/archive/gui/exercises/settings-stage1.md"
+  },
+  {
+    "path": "clients/gui/design-system/exercises/shared-workspace.en.md",
+    "role": "process-evidence",
+    "status": "redirect",
+    "target": "design/archive/gui/exercises/shared-workspace.en.md"
+  },
+  {
+    "path": "clients/gui/design-system/exercises/shared-workspace.md",
+    "role": "process-evidence",
+    "status": "redirect",
+    "target": "design/archive/gui/exercises/shared-workspace.md"
+  },
+  {
+    "path": "clients/gui/design-system/exercises/worktrees.md",
+    "role": "process-evidence",
+    "status": "redirect",
+    "target": "design/archive/gui/exercises/worktrees.md"
+  },
+  {
+    "path": "clients/gui/design-system/foundations.md",
+    "role": "maintainer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/design-system/governance.md",
+    "role": "maintainer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/design-system/interactions.en.md",
+    "role": "maintainer",
+    "status": "active",
+    "translationOf": "clients/gui/design-system/interactions.md"
+  },
+  {
+    "path": "clients/gui/design-system/interactions.md",
+    "role": "maintainer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/design-system/inventory.md",
+    "role": "maintainer",
+    "status": "active",
+    "nonNormative": [
+      "8dd054cd21335503cd5a8b51000b1ca0ceb24715127e33677718dad9fb43148c",
+      "3a6796d464392b758c941f670a9e0b0a58da5ea3f6ea2a36f6512b4f4f1c3ec3",
+      "713e81f3fd89ed14a4cc51572a9ed7476a080f9e8061c03a4a0ae0a2add43e5b"
+    ],
+    "nonNormativeNotes": {
+      "8dd054cd21335503cd5a8b51000b1ca0ceb24715127e33677718dad9fb43148c": "现状或运行观察，描述该版本具备什么，不另定义设计义务",
+      "3a6796d464392b758c941f670a9e0b0a58da5ea3f6ea2a36f6512b4f4f1c3ec3": "现状或运行观察，描述该版本具备什么，不另定义设计义务",
+      "713e81f3fd89ed14a4cc51572a9ed7476a080f9e8061c03a4a0ae0a2add43e5b": "现状或运行观察，描述该版本具备什么，不另定义设计义务"
+    }
+  },
+  {
+    "path": "clients/gui/design-system/patterns.md",
+    "role": "maintainer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/design-system/references.md",
+    "role": "process-evidence",
+    "status": "redirect",
+    "target": "design/archive/gui/reference-observations.md"
+  },
+  {
+    "path": "clients/gui/design-system/roadmap.md",
+    "role": "maintainer",
+    "status": "active",
+    "nonNormative": [
+      "9f1d0d9749d7d4b35248b25c6cd212cdadfe4a5b9ff91f005a8ba1d931979ffe",
+      "5706f40c318632b861f45395bf0155908e81ecfea90d960d19113e26e92cf577"
+    ],
+    "nonNormativeNotes": {
+      "9f1d0d9749d7d4b35248b25c6cd212cdadfe4a5b9ff91f005a8ba1d931979ffe": "现状或运行观察，描述该版本具备什么，不另定义设计义务",
+      "5706f40c318632b861f45395bf0155908e81ecfea90d960d19113e26e92cf577": "现状或运行观察，描述该版本具备什么，不另定义设计义务"
+    }
+  },
+  {
+    "path": "clients/gui/design-system/rule-maintenance.md",
+    "role": "maintainer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/design-system/structured-flow.md",
+    "role": "maintainer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/design-system/templates/video-analysis.prompt.md",
+    "role": "maintainer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/design-system/workbench-candidate.md",
+    "role": "maintainer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/design-system/workbench.md",
+    "role": "maintainer",
+    "status": "active",
+    "nonNormative": ["df8a544a907f1d01e41e41a4c50685debbbe94b14666378ce017663cadecb60d"],
+    "nonNormativeNotes": {
+      "df8a544a907f1d01e41e41a4c50685debbbe94b14666378ce017663cadecb60d": "现状或运行观察，描述该版本具备什么，不另定义设计义务"
+    }
+  },
+  {
+    "path": "clients/gui/design-system/worktrees.md",
+    "role": "maintainer",
+    "status": "active",
+    "nonNormative": [
+      "1f949037a3e7f8ff1f5e93c4f08b92580c13c9783db8c284d1885f9a1c8e4a36",
+      "0516b96a62d78e64ce1d5023cd0c8c4e7d1d7eb75b711b34f62e27f12c1f1b6e",
+      "eeed3c9c91b3602e3c0de7d22087cacae194df2948f0c2caae5bf0e76b5aefe7",
+      "135d0884225959828c4bc1f0aa6c106f18dc2cb434fe7cfcc0669dbb7ee5f951"
+    ],
+    "nonNormativeNotes": {
+      "1f949037a3e7f8ff1f5e93c4f08b92580c13c9783db8c284d1885f9a1c8e4a36": "现状或运行观察，描述该版本具备什么，不另定义设计义务",
+      "0516b96a62d78e64ce1d5023cd0c8c4e7d1d7eb75b711b34f62e27f12c1f1b6e": "现状或运行观察，描述该版本具备什么，不另定义设计义务",
+      "eeed3c9c91b3602e3c0de7d22087cacae194df2948f0c2caae5bf0e76b5aefe7": "现状或运行观察，描述该版本具备什么，不另定义设计义务",
+      "135d0884225959828c4bc1f0aa6c106f18dc2cb434fe7cfcc0669dbb7ee5f951": "现状或运行观察，描述该版本具备什么，不另定义设计义务"
+    }
+  },
+  {
+    "path": "clients/gui/packages/ui/README.en.md",
+    "role": "consumer",
+    "status": "active",
+    "translationOf": "clients/gui/packages/ui/README.md"
+  },
+  {
+    "path": "clients/gui/packages/ui/README.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/agent-guide.md",
+    "role": "consumer",
+    "status": "redirect",
+    "target": "clients/gui/packages/ui/README.md"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/action-button/action-button.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/button/button.md",
+    "role": "consumer",
+    "status": "active",
+    "nonNormative": ["2d5870931de9f3aabb564e3f05b4e5838552ead593c5617a0fda91ba7755ba17"],
+    "nonNormativeNotes": {
+      "2d5870931de9f3aabb564e3f05b4e5838552ead593c5617a0fda91ba7755ba17": "导航或已有生成实例的说明，事实由链接所有者定义"
+    }
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/card/card.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/code-viewer/code-viewer.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/command/command.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/context-menu/context-menu.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/control-hint-tooltip/control-hint-tooltip.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/dialog/dialog.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/diff-viewer/diff-viewer.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/disclosure/disclosure.md",
+    "role": "consumer",
+    "status": "active",
+    "nonNormative": ["0c4505a254c2c24cc2f4d2d7812a5a56e672b164d1fd010693111b3421a0f870"],
+    "nonNormativeNotes": {
+      "0c4505a254c2c24cc2f4d2d7812a5a56e672b164d1fd010693111b3421a0f870": "导航或已有生成实例的说明，事实由链接所有者定义"
+    }
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/dropdown-menu/dropdown-menu.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/feedback-notice/feedback-notice.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/input-group/input-group.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/input/input.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/notification-toast/notification-toast.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/popover/popover.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/select/select.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/settings-disclosure/settings-disclosure.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/spinner/spinner.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/switch/switch.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/tabs/tabs.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/textarea/textarea.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/components/tooltip/tooltip.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/activity-group/activity-group.md",
+    "role": "consumer",
+    "status": "active",
+    "nonNormative": ["788d50409774c8d55a3bfb5a93b4cd493a66a466f1ed9036f86a6aafc07ed878"],
+    "nonNormativeNotes": {
+      "788d50409774c8d55a3bfb5a93b4cd493a66a466f1ed9036f86a6aafc07ed878": "导航或已有生成实例的说明，事实由链接所有者定义"
+    }
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/attachment-card/attachment-card.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/collapsible-text/collapsible-text.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/command-details/command-details.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/composer-surface/composer-surface.md",
+    "role": "consumer",
+    "status": "active",
+    "nonNormative": ["5ad16944f48c72e46f063809cb074f49f75693f7d78e3212bc9c3b8c9e97d846"],
+    "nonNormativeNotes": {
+      "5ad16944f48c72e46f063809cb074f49f75693f7d78e3212bc9c3b8c9e97d846": "导航或已有生成实例的说明，事实由链接所有者定义"
+    }
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/composer-toolbar/composer-toolbar.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/decision-card/decision-card.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/image-disclosure/image-disclosure.md",
+    "role": "consumer",
+    "status": "active",
+    "nonNormative": ["d7c05df231d52e5047233c0ce70baf4162b767a4659e4d771c75c99e0b60952a"],
+    "nonNormativeNotes": {
+      "d7c05df231d52e5047233c0ce70baf4162b767a4659e4d771c75c99e0b60952a": "导航或已有生成实例的说明，事实由链接所有者定义"
+    }
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/markdown-blockquote/markdown-blockquote.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/markdown-list/markdown-list.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/markdown-surface/markdown-surface.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/markdown-table/markdown-table.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/message-attachments/message-attachments.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/message-code-block/message-code-block.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/native-content/native-content.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/question-card/question-card.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/subagent-panel/subagent-panel.md",
+    "role": "consumer",
+    "status": "active",
+    "nonNormative": ["1eed7359eced0ee969dae0372e6b9572d9d88fb79185548c703b128012838514"],
+    "nonNormativeNotes": {
+      "1eed7359eced0ee969dae0372e6b9572d9d88fb79185548c703b128012838514": "导航或已有生成实例的说明，事实由链接所有者定义"
+    }
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/task-context/task-context.md",
+    "role": "consumer",
+    "status": "active",
+    "nonNormative": ["9a3fe44c264b3433cf25d66e3bd6ecc5c4340aecbbafcb82a20789057c6fb825"],
+    "nonNormativeNotes": {
+      "9a3fe44c264b3433cf25d66e3bd6ecc5c4340aecbbafcb82a20789057c6fb825": "导航或已有生成实例的说明，事实由链接所有者定义"
+    }
+  },
+  {
+    "path": "clients/gui/packages/ui/src/conversation/thinking-status/thinking-status.md",
+    "role": "consumer",
+    "status": "active",
+    "nonNormative": ["e49d0df435a47246e82a86af7d1e05bd896d51282c2f246f1ddcc52c55ca1fcc"],
+    "nonNormativeNotes": {
+      "e49d0df435a47246e82a86af7d1e05bd896d51282c2f246f1ddcc52c55ca1fcc": "导航或已有生成实例的说明，事实由链接所有者定义"
+    }
+  },
+  {
+    "path": "clients/gui/packages/ui/src/generated/tokens.md",
+    "role": "consumer",
+    "status": "generated"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/settings/settings-dialog/settings-dialog.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/settings/settings-group-card/settings-group-card.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/settings/settings-page/settings-page.md",
+    "role": "consumer",
+    "status": "active",
+    "nonNormative": ["6cd99d64cc92e808f1746d9a5d24c2016cc64a14ffbd7c1aafa59245fd61897c"],
+    "nonNormativeNotes": {
+      "6cd99d64cc92e808f1746d9a5d24c2016cc64a14ffbd7c1aafa59245fd61897c": "导航或已有生成实例的说明，事实由链接所有者定义"
+    }
+  },
+  {
+    "path": "clients/gui/packages/ui/src/settings/settings-row/settings-row.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/settings/settings-search-input/settings-search-input.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/settings/settings-section/settings-section.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/settings/settings-segmented-tabs/settings-segmented-tabs.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/settings/settings-select/settings-select.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/workbench/resource-controls/resource-controls.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/workbench/scheduled-workspace/scheduled-workspace.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/workbench/settings-navigation/settings-navigation.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/workbench/side-pane-frame/side-pane-frame.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/workbench/side-pane-launcher/side-pane-launcher.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/workbench/task-list-item/task-list-item.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/workbench/task-title-overflow/task-title-overflow.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/workbench/workbench-shell/workbench-shell.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/worktree/worktree-directory/worktree-directory.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/worktree/worktree-picker/worktree-picker.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/worktree/worktree-settings/worktree-settings.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/worktree/worktree-status/worktree-status.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/src/worktree/worktree-workspace/worktree-workspace.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/packages/ui/token-reference.md",
+    "role": "consumer",
+    "status": "generated"
+  },
+  {
+    "path": "clients/gui/renderer/src/CollapsibleText.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/renderer/src/DecisionCard.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/renderer/src/Messages.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/renderer/src/components/ui/action-button.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/renderer/src/components/ui/feedback.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/renderer/src/components/ui/select.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/renderer/src/components/ui/switch.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/renderer/src/settings/SettingsPageParts.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "clients/gui/renderer/src/settings/SettingsSearchInput.md",
+    "role": "consumer",
+    "status": "active"
+  },
+  {
+    "path": "design/README.md",
+    "role": "cross-product",
+    "status": "active"
+  },
+  {
+    "path": "design/Raft 设计系统拆解.md",
+    "role": "process-evidence",
+    "status": "redirect",
+    "target": "design/archive/research/raft-design-analysis.md"
+  },
+  {
+    "path": "design/architecture.md",
+    "role": "cross-product",
+    "status": "active"
+  },
+  {
+    "path": "design/archive/README.md",
+    "role": "process-evidence",
+    "status": "archived"
+  },
+  {
+    "path": "design/archive/content/codex-typography-review.md",
+    "role": "process-evidence",
+    "status": "archived"
+  },
+  {
+    "path": "design/archive/content/interactive-content-research.md",
+    "role": "process-evidence",
+    "status": "archived"
+  },
+  {
+    "path": "design/archive/content/markdown-reuse-review.md",
+    "role": "process-evidence",
+    "status": "archived"
+  },
+  {
+    "path": "design/archive/content/native-content-reference-review.md",
+    "role": "process-evidence",
+    "status": "archived"
+  },
+  {
+    "path": "design/archive/d5/experiment-protocol.md",
+    "role": "process-evidence",
+    "status": "archived"
+  },
+  {
+    "path": "design/archive/gui/automation-research.md",
+    "role": "process-evidence",
+    "status": "archived"
+  },
+  {
+    "path": "design/archive/gui/base-candidate-history.md",
+    "role": "process-evidence",
+    "status": "archived"
+  },
+  {
+    "path": "design/archive/gui/base-evidence.md",
+    "role": "process-evidence",
+    "status": "archived"
+  },
+  {
+    "path": "design/archive/gui/component-migration.md",
+    "role": "process-evidence",
+    "status": "archived"
+  },
+  {
+    "path": "design/archive/gui/conversation-design-research.md",
+    "role": "process-evidence",
+    "status": "archived"
+  },
+  {
+    "path": "design/archive/gui/delivery.md",
+    "role": "process-evidence",
+    "status": "archived"
+  },
+  {
+    "path": "design/archive/gui/exercises/conversation-flow.md",
+    "role": "process-evidence",
+    "status": "archived"
+  },
+  {
+    "path": "design/archive/gui/exercises/conversation-stage2.en.md",
+    "role": "process-evidence",
+    "status": "archived"
+  },
+  {
+    "path": "design/archive/gui/exercises/conversation-stage2.md",
+    "role": "process-evidence",
+    "status": "archived"
+  },
+  {
+    "path": "design/archive/gui/exercises/decision-transfer.md",
+    "role": "process-evidence",
+    "status": "archived"
+  },
+  {
+    "path": "design/archive/gui/exercises/settings-contrast.md",
+    "role": "process-evidence",
+    "status": "archived"
+  },
+  {
+    "path": "design/archive/gui/exercises/settings-reflow.md",
+    "role": "process-evidence",
+    "status": "archived"
+  },
+  {
+    "path": "design/archive/gui/exercises/settings-stage1.en.md",
+    "role": "process-evidence",
+    "status": "archived"
+  },
+  {
+    "path": "design/archive/gui/exercises/settings-stage1.md",
+    "role": "process-evidence",
+    "status": "archived"
+  },
+  {
+    "path": "design/archive/gui/exercises/shared-workspace.en.md",
+    "role": "process-evidence",
+    "status": "archived"
+  },
+  {
+    "path": "design/archive/gui/exercises/shared-workspace.md",
+    "role": "process-evidence",
+    "status": "archived"
+  },
+  {
+    "path": "design/archive/gui/exercises/worktrees.md",
+    "role": "process-evidence",
+    "status": "archived"
+  },
+  {
+    "path": "design/archive/gui/reference-observations.md",
+    "role": "process-evidence",
+    "status": "archived"
+  },
+  {
+    "path": "design/archive/gui/reuse-exercise.md",
+    "role": "process-evidence",
+    "status": "archived"
+  },
+  {
+    "path": "design/archive/gui/reuse-result.md",
+    "role": "process-evidence",
+    "status": "archived"
+  },
+  {
+    "path": "design/archive/gui/roadmap.en.md",
+    "role": "process-evidence",
+    "status": "archived"
+  },
+  {
+    "path": "design/archive/gui/roadmap.md",
+    "role": "process-evidence",
+    "status": "archived"
+  },
+  {
+    "path": "design/archive/gui/worktree-design-exercise.md",
+    "role": "process-evidence",
+    "status": "archived"
+  },
+  {
+    "path": "design/archive/gui/worktree-reference-observations.md",
+    "role": "process-evidence",
+    "status": "archived"
+  },
+  {
+    "path": "design/archive/research/raft-design-analysis.md",
+    "role": "process-evidence",
+    "status": "archived"
+  },
+  {
+    "path": "design/components/README.md",
+    "role": "cross-product",
+    "status": "active",
+    "nonNormative": ["bdbd310a2c3740bb44141677fc6608e467d56659c0498c2a8e2ff373fa42aa1f"],
+    "nonNormativeNotes": {
+      "bdbd310a2c3740bb44141677fc6608e467d56659c0498c2a8e2ff373fa42aa1f": "导航或已有生成实例的说明，事实由链接所有者定义"
+    }
+  },
+  {
+    "path": "design/components/controls.md",
+    "role": "cross-product",
+    "status": "active"
+  },
+  {
+    "path": "design/components/reuse-exercise.md",
+    "role": "process-evidence",
+    "status": "redirect",
+    "target": "design/archive/gui/reuse-exercise.md"
+  },
+  {
+    "path": "design/components/reuse-result.md",
+    "role": "process-evidence",
+    "status": "redirect",
+    "target": "design/archive/gui/reuse-result.md"
+  },
+  {
+    "path": "design/content/README.md",
+    "role": "cross-product",
+    "status": "active"
+  },
+  {
+    "path": "design/content/conversation-content-system.md",
+    "role": "maintainer",
+    "status": "redirect",
+    "target": "clients/gui/design-system/content-system.md"
+  },
+  {
+    "path": "design/content/interface-copy.md",
+    "role": "cross-product",
+    "status": "active"
+  },
+  {
+    "path": "design/content/terminology.md",
+    "role": "cross-product",
+    "status": "active"
+  },
+  {
+    "path": "design/contributing.md",
+    "role": "cross-product",
+    "status": "active"
+  },
+  {
+    "path": "design/decisions/001-shared-design-knowledge.md",
+    "role": "cross-product",
+    "status": "active"
+  },
+  {
+    "path": "design/decisions/002-shared-semantics.md",
+    "role": "cross-product",
+    "status": "active"
+  },
+  {
+    "path": "design/decisions/003-whole-candidate-and-migration.md",
+    "role": "cross-product",
+    "status": "active"
+  },
+  {
+    "path": "design/decisions/004-local-ui-package.md",
+    "role": "cross-product",
+    "status": "active"
+  },
+  {
+    "path": "design/decisions/README.md",
+    "role": "cross-product",
+    "status": "active"
+  },
+  {
+    "path": "design/foundations/README.md",
+    "role": "cross-product",
+    "status": "active"
+  },
+  {
+    "path": "design/foundations/roles.md",
+    "role": "cross-product",
+    "status": "active"
+  },
+  {
+    "path": "design/foundations/tokens.md",
+    "role": "cross-product",
+    "status": "active"
+  },
+  {
+    "path": "design/patterns/README.md",
+    "role": "cross-product",
+    "status": "active"
+  },
+  {
+    "path": "design/patterns/feedback-and-recovery.md",
+    "role": "cross-product",
+    "status": "active",
+    "nonNormative": ["568ff283b88dce926b1044944b4bb024df330ba2a1183ab39b312ddab27238bd"],
+    "nonNormativeNotes": {
+      "568ff283b88dce926b1044944b4bb024df330ba2a1183ab39b312ddab27238bd": "现状或运行观察，描述该版本具备什么，不另定义设计义务"
+    }
+  },
+  {
+    "path": "design/patterns/inspect-and-return.md",
+    "role": "cross-product",
+    "status": "active"
+  },
+  {
+    "path": "design/patterns/intents.md",
+    "role": "cross-product",
+    "status": "active"
+  },
+  {
+    "path": "design/patterns/plugin-resources.md",
+    "role": "cross-product",
+    "status": "active"
+  },
+  {
+    "path": "design/patterns/settings.md",
+    "role": "cross-product",
+    "status": "active"
+  },
+  {
+    "path": "design/patterns/task-progress.md",
+    "role": "cross-product",
+    "status": "active"
+  },
+  {
+    "path": "design/people-and-agents/README.md",
+    "role": "cross-product",
+    "status": "active"
+  },
+  {
+    "path": "design/people-and-agents/context-and-evidence.md",
+    "role": "cross-product",
+    "status": "active"
+  },
+  {
+    "path": "design/people-and-agents/control-and-approval.md",
+    "role": "cross-product",
+    "status": "active"
+  },
+  {
+    "path": "design/people-and-agents/delegation-and-handoff.md",
+    "role": "cross-product",
+    "status": "active"
+  },
+  {
+    "path": "design/people-and-agents/identity-and-ownership.md",
+    "role": "cross-product",
+    "status": "active",
+    "nonNormative": ["b99dcc2166d86d7a6df7398de6ec2e6e2d5ab1a4d8286a5c231127b7443ae1c2"],
+    "nonNormativeNotes": {
+      "b99dcc2166d86d7a6df7398de6ec2e6e2d5ab1a4d8286a5c231127b7443ae1c2": "现状或运行观察，描述该版本具备什么，不另定义设计义务"
+    }
+  },
+  {
+    "path": "design/principles/README.md",
+    "role": "cross-product",
+    "status": "active"
+  },
+  {
+    "path": "design/products/README.md",
+    "role": "cross-product",
+    "status": "active",
+    "nonNormative": ["71210f7b4f771505a1990fc48621a0253614aa6e3540402580cfa43e39b235f9"],
+    "nonNormativeNotes": {
+      "71210f7b4f771505a1990fc48621a0253614aa6e3540402580cfa43e39b235f9": "导航或已有生成实例的说明，事实由链接所有者定义"
+    }
+  },
+  {
+    "path": "design/products/workbench/README.md",
+    "role": "maintainer",
+    "status": "redirect",
+    "target": "clients/gui/design-system/workbench.md"
+  },
+  {
+    "path": "design/products/workbench/candidate.md",
+    "role": "maintainer",
+    "status": "redirect",
+    "target": "clients/gui/design-system/workbench-candidate.md"
+  },
+  {
+    "path": "design/roadmap.md",
+    "role": "maintainer",
+    "status": "redirect",
+    "target": "clients/gui/design-system/roadmap.md"
+  }
+]

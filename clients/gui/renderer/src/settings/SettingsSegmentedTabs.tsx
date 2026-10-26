@@ -1,1 +1,1 @@
-export { SettingsSegmentedTabs } from "@areal/ui/wip";
+export { SettingsSegmentedTabs } from "@areal/ui/compositions";

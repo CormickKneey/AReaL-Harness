@@ -24,6 +24,6 @@ Maintained pages pair a Chinese `.md` file with an English `.en.md` file in the 
 
 Remote v2 design and implementation boundaries: [architecture](design/remote-control.en.md) · [API](api/remote-control.en.md) · [connectivity and deployment](guides/remote-control.en.md) · [acceptance plan](development/remote-control-testing.en.md) · [Host ownership](adr/0008-remote-host-ownership.en.md). Each page distinguishes implemented slices from future design; these documents do not claim full P0 delivery.
 
-Client UI implementation and design constraints: internal [design rules v1](../clients/gui/design-system/README.md) and [production component/token guide](../clients/gui/DESIGN_SYSTEM.md).
+Client UI implementation and design constraints: internal [design rules v1](../clients/gui/design-system/README.md) and [@areal/ui components and tokens](../clients/gui/packages/ui/README.en.md).
 
 - [Answer feedback](guides/user-feedback.en.md)

@@ -56,6 +56,7 @@ fn connect(principal: Arc<auth::Principal>) -> (Connection, mpsc::Receiver<Outbo
             tool_host,
             initialized: true,
             ready: true,
+            owner_subscription: None,
             subscriptions: HashMap::new(),
             suppressed: HashSet::new(),
             tx,

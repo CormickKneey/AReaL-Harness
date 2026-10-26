@@ -723,7 +723,7 @@ async fn status_unlocked(root: &Path, id: &str) -> Result<Service> {
         };
         return Ok(record);
     }
-    let live = match request(root, id, Request::Status { version: VERSION }).await {
+    let mut live = match request(root, id, Request::Status { version: VERSION }).await {
         Ok(live) => live,
         Err(error)
             if error
@@ -752,7 +752,18 @@ async fn status_unlocked(root: &Path, id: &str) -> Result<Service> {
     );
     gui_owner::check(record.owner.as_ref(), live.owner.as_ref())?;
     if live.state == State::Ready {
-        probe(&live).await?;
+        match probe(&live).await {
+            Ok(()) => {}
+            Err(error)
+                if error
+                    .downcast_ref::<reqwest::Error>()
+                    .is_some_and(reqwest::Error::is_connect) =>
+            {
+                // Core 可先退出、Host 后发布清理证明；连接失败只投影不可用，不授予恢复权。
+                live.state = State::Unavailable;
+            }
+            Err(error) => return Err(error),
+        }
     }
     Ok(live)
 }
@@ -1171,6 +1182,146 @@ mod tests {
         );
         std::fs::remove_file(directory.join("service.json")).unwrap();
         assert!(status(root.path(), &id).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn ready_host_with_unreachable_core_is_unavailable_without_cleanup_authority() {
+        for failure in [
+            "connection-refused",
+            "wrong-identity",
+            "invalid-json",
+            "unauthorized",
+        ] {
+            let root = tempfile::tempdir_in("/tmp").unwrap();
+            let id = "c".repeat(24);
+            let directory = storage::registry(root.path(), &id).unwrap();
+            storage::private_dir(&directory).unwrap();
+            let data = root.path().join("data");
+            storage::private_dir(&data).unwrap();
+            let core = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = core.local_addr().unwrap();
+            let service = Service {
+                owner: Some(areal_protocol::service::Owner::Gui {
+                    app_run_id: "fixture".into(),
+                    profile: root.path().join("profile"),
+                }),
+                identity: Identity {
+                    protocol_version: VERSION,
+                    service_id: id.clone(),
+                    generation: "original".into(),
+                    workspace: root.path().join("workspace"),
+                    data_dir: data.clone(),
+                    config_fingerprint: "fixture".into(),
+                },
+                endpoint: format!("ws://{address}"),
+                web_url: format!("http://{address}/ui"),
+                auth_file: data.join("auth.json"),
+                log_file: directory.join("host.log"),
+                core_pid: 1,
+                host_pid: 2,
+                state: State::Ready,
+            };
+            storage::write(&directory.join("service.json"), &service).unwrap();
+            storage::write(
+                &service.auth_file,
+                &json!({"principals":[{"token":"fixture"}]}),
+            )
+            .unwrap();
+            let lease = storage::open_private(&data.join("service.lock"), true).unwrap();
+            lease.try_lock_exclusive().unwrap();
+            let store = storage::open_private(&data.join("owner.lock"), true).unwrap();
+            store.try_lock_exclusive().unwrap();
+            let http = if failure == "connection-refused" {
+                drop(core);
+                None
+            } else {
+                let mut foreign = service.identity.clone();
+                foreign.generation = "foreign".into();
+                Some(tokio::spawn(async move {
+                    let (mut stream, _) = core.accept().await.unwrap();
+                    let mut request = BufReader::new(&mut stream);
+                    loop {
+                        let mut line = String::new();
+                        request.read_line(&mut line).await.unwrap();
+                        if line == "\r\n" {
+                            break;
+                        }
+                    }
+                    let (status, body) = match failure {
+                        "wrong-identity" => ("200 OK", serde_json::to_string(&foreign).unwrap()),
+                        "invalid-json" => ("200 OK", "not-json".into()),
+                        _ => ("401 Unauthorized", "denied".into()),
+                    };
+                    stream.write_all(format!("HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+                }))
+            };
+            let listener = tokio::net::UnixListener::bind(directory.join("control.sock")).unwrap();
+            let expected = service.clone();
+            let host = tokio::spawn(async move {
+                for _ in 0..if failure == "connection-refused" {
+                    2
+                } else {
+                    1
+                } {
+                    let (mut stream, _) = listener.accept().await.unwrap();
+                    let mut line = String::new();
+                    BufReader::new(&mut stream)
+                        .read_line(&mut line)
+                        .await
+                        .unwrap();
+                    assert!(matches!(
+                        serde_json::from_str::<Request>(&line).unwrap(),
+                        Request::Status { .. }
+                    ));
+                    let mut bytes = serde_json::to_vec(&Response::Ok {
+                        service: Box::new(expected.clone()),
+                    })
+                    .unwrap();
+                    bytes.push(b'\n');
+                    stream.write_all(&bytes).await.unwrap();
+                }
+            });
+            if failure == "connection-refused" {
+                let observed = status(root.path(), &id).await.unwrap();
+                assert_eq!(observed.state, State::Unavailable);
+                assert_eq!(observed.identity, service.identity);
+                let recovery = status_with_recovery(root.path(), &id).await.unwrap();
+                assert!(!recovery.recovery.eligible);
+                assert_eq!(recovery.recovery.reason, "cleanupUnconfirmed");
+            } else {
+                let error = status(root.path(), &id).await.unwrap_err();
+                match failure {
+                    "wrong-identity" => assert!(
+                        error
+                            .to_string()
+                            .contains("Core identity/generation does not match the service record")
+                    ),
+                    "invalid-json" => assert!(
+                        error
+                            .downcast_ref::<reqwest::Error>()
+                            .is_some_and(reqwest::Error::is_decode)
+                    ),
+                    _ => assert_eq!(
+                        error.downcast_ref::<reqwest::Error>().unwrap().status(),
+                        Some(reqwest::StatusCode::UNAUTHORIZED)
+                    ),
+                }
+            }
+            assert!(!storage::available(&data.join("service.lock")).unwrap());
+            assert!(!storage::store_available(&data).unwrap());
+            assert_eq!(
+                storage::read::<Service>(&directory.join("service.json"))
+                    .unwrap()
+                    .state,
+                State::Ready
+            );
+            assert!(!directory.join("crash.json").exists());
+            assert!(!directory.join("replacement.json").exists());
+            host.await.unwrap();
+            if let Some(http) = http {
+                http.await.unwrap();
+            }
+        }
     }
 
     #[test]

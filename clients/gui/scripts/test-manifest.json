@@ -1,0 +1,782 @@
+[
+  {
+    "script": "test:worktree",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["worktree", "git"],
+    "requires": ["git"]
+  },
+  {
+    "script": "test:worktree-ui",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["worktree", "git"],
+    "requires": ["browser", "git", "gui-build"]
+  },
+  {
+    "script": "test:worktree-core",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["worktree", "git"],
+    "requires": ["core-binary", "git"]
+  },
+  {
+    "script": "test:worktree-environment",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["worktree", "git"],
+    "requires": ["core-binary", "git"]
+  },
+  {
+    "script": "test:worktree-environment-ui",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["worktree", "git"],
+    "requires": ["electron", "core-binary", "git", "gui-build"]
+  },
+  {
+    "script": "test:worktree-schedule-interactions",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["worktree", "git"],
+    "requires": ["core-binary", "git"]
+  },
+  {
+    "script": "test:macos-dmg",
+    "layer": "contract",
+    "platforms": ["darwin"],
+    "areas": ["packaging"],
+    "requires": ["macos-tools"],
+    "notes": "DMG and Gatekeeper integration includes platform-specific subprocesses.",
+    "platformReason": "Uses macOS codesign, xcrun, hdiutil and Gatekeeper."
+  },
+  {
+    "script": "test:diagnostics",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["diagnostics"],
+    "requires": ["electron", "core-binary", "git", "gui-build"],
+    "notes": "Mixed command; classified by highest browser or Electron boundary."
+  },
+  {
+    "script": "test:state-projection",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["projection"],
+    "requires": []
+  },
+  {
+    "script": "test:recovery",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["recovery", "lifecycle"],
+    "requires": ["core-binary"]
+  },
+  {
+    "script": "test:creation-recovery",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["recovery", "worktree"],
+    "requires": ["electron", "core-binary", "git", "gui-build"]
+  },
+  {
+    "script": "test:service-connection",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["service", "lifecycle"],
+    "requires": []
+  },
+  {
+    "script": "test:service-feedback",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["service", "lifecycle"],
+    "requires": ["electron", "core-binary", "gui-build", "git"]
+  },
+  {
+    "script": "test:backend-toast-ui",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["feedback"],
+    "requires": ["browser", "gui-build", "git"]
+  },
+  {
+    "script": "test:task-conversation",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["tasks"],
+    "requires": ["electron", "core-binary", "git", "gui-build"]
+  },
+  {
+    "script": "test:scheduled-workspace-ui",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["schedules"],
+    "requires": ["browser", "gui-build"]
+  },
+  {
+    "script": "test:thread-schedules",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["schedules"],
+    "requires": ["electron", "core-binary", "git", "gui-build"]
+  },
+  {
+    "script": "test:execution-artifact-ui",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["artifacts"],
+    "requires": ["browser", "git", "gui-build"]
+  },
+  {
+    "script": "test:task-catalog-cold",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["tasks"],
+    "requires": ["electron", "core-binary", "gui-build", "git"]
+  },
+  {
+    "script": "test:task-catalog-startup",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["tasks"],
+    "requires": ["electron", "core-binary", "git", "gui-build"]
+  },
+  {
+    "script": "test:schedule-reliability",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["tasks", "schedules"],
+    "requires": ["electron", "core-binary", "git", "gui-build"]
+  },
+  {
+    "script": "test:schedule-reliability-lifecycle",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["tasks", "schedules", "lifecycle"],
+    "requires": ["electron", "core-binary", "git", "gui-build"]
+  },
+  {
+    "script": "test:stop-turn",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["lifecycle"],
+    "requires": ["electron", "core-binary", "git", "gui-build"],
+    "qualificationJourney": "stop-turn"
+  },
+  {
+    "script": "test:service-reopen",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["service", "lifecycle"],
+    "requires": ["electron", "browser", "core-binary", "gui-build", "git"]
+  },
+  {
+    "script": "test:lifecycle",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["lifecycle"],
+    "requires": ["electron", "core-binary", "git", "gui-build"],
+    "notes": "Mixed command; classified by highest browser or Electron boundary.",
+    "qualificationJourney": "startup-recovery"
+  },
+  {
+    "script": "test:desktop-exit",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["desktop"],
+    "requires": ["electron", "core-binary", "gui-build", "git"]
+  },
+  {
+    "script": "test:quit-draft",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["lifecycle", "draft"],
+    "requires": ["electron", "core-binary", "gui-build", "git"],
+    "qualificationJourney": "quit-draft"
+  },
+  {
+    "script": "test:quit-progress",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["lifecycle", "draft"],
+    "requires": ["electron", "core-binary", "gui-build", "git"]
+  },
+  {
+    "script": "test:legacy-recovery",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["recovery"],
+    "requires": ["electron", "core-binary", "gui-build", "git"]
+  },
+  {
+    "script": "test:lifecycle:legacy",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["lifecycle"],
+    "requires": ["electron", "core-binary", "git", "gui-build"]
+  },
+  {
+    "script": "test:queue",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["composer"],
+    "requires": ["electron", "core-binary", "git", "gui-build"],
+    "ciSmoke": "queue"
+  },
+  {
+    "script": "test:interactions",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["interaction"],
+    "requires": ["electron", "core-binary", "git", "gui-build"]
+  },
+  {
+    "script": "test:permission-presets",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["permissions"],
+    "requires": ["electron", "browser", "core-binary", "git", "gui-build"]
+  },
+  {
+    "script": "test:composer-predictions",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["composer"],
+    "requires": ["electron", "core-binary", "gui-build", "git"]
+  },
+  {
+    "script": "test:composer",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["composer"],
+    "requires": ["electron", "core-binary", "git", "gui-build"],
+    "ciSmoke": "composer"
+  },
+  {
+    "script": "test:send-admission",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["composer"],
+    "requires": ["electron", "core-binary", "git", "gui-build"]
+  },
+  {
+    "script": "test:subscription-send",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["provider", "worktree"],
+    "requires": ["electron", "core-binary", "gui-build", "git"]
+  },
+  {
+    "script": "test:provider-hot-apply",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["provider"],
+    "requires": ["electron", "core-binary", "gui-build", "git"]
+  },
+  {
+    "script": "test:context-usage",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["context"],
+    "requires": ["electron", "core-binary", "gui-build", "git"]
+  },
+  {
+    "script": "test:model-selection",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["provider"],
+    "requires": ["electron", "core-binary", "git", "gui-build"],
+    "ciSmoke": "model-selection"
+  },
+  {
+    "script": "test:history-compat",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["history"],
+    "requires": ["electron", "core-binary", "gui-build"],
+    "ciSmoke": "history"
+  },
+  {
+    "script": "test:connection",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["service"],
+    "requires": ["core-binary"]
+  },
+  {
+    "script": "test:history-navigation-ui",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["history"],
+    "requires": ["browser", "gui-build", "git"]
+  },
+  {
+    "script": "test:history-recovery",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["history"],
+    "requires": ["electron", "browser", "core-binary", "gui-build", "git"],
+    "notes": "Mixed command; classified by highest browser or Electron boundary."
+  },
+  {
+    "script": "test:startup",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["lifecycle", "startup"],
+    "requires": ["electron", "core-binary", "git", "gui-build"]
+  },
+  {
+    "script": "test:history",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["history"],
+    "requires": ["browser", "core-binary", "gui-build"],
+    "notes": "Mixed command; classified by highest browser or Electron boundary."
+  },
+  {
+    "script": "test:architecture",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["architecture"],
+    "requires": ["electron", "core-binary", "gui-build", "git"]
+  },
+  {
+    "script": "test:conversation-continue",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["conversation"],
+    "requires": ["electron", "core-binary", "gui-build", "git"]
+  },
+  {
+    "script": "test:conversation-derivation",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["conversation"],
+    "requires": ["electron", "core-binary", "git", "gui-build"],
+    "ciSmoke": "conversation-derivation"
+  },
+  {
+    "script": "test:conversation-flow",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["conversation", "design"],
+    "requires": ["browser", "gui-build"],
+    "notes": "Runs against dist/design-system; build it with design:build first."
+  },
+  {
+    "script": "test:trajectory",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["trajectory"],
+    "requires": []
+  },
+  {
+    "script": "test:trajectory-config",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["trajectory"],
+    "requires": ["core-binary"]
+  },
+  {
+    "script": "test:trajectory-ui",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["trajectory"],
+    "requires": ["browser", "gui-build"]
+  },
+  {
+    "script": "test:remote-observation",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["remote"],
+    "requires": []
+  },
+  {
+    "script": "test:remote-pairing-e2e",
+    "layer": "e2e",
+    "platforms": ["darwin"],
+    "areas": ["remote"],
+    "requires": ["electron", "browser", "core-binary", "git", "gui-build"],
+    "platformReason": "Browser executable is the installed macOS Google Chrome application."
+  },
+  {
+    "script": "test:remote-observation-e2e",
+    "layer": "e2e",
+    "platforms": ["darwin"],
+    "areas": ["remote"],
+    "requires": ["browser", "core-binary", "git", "gui-build"],
+    "platformReason": "Browser executable is the installed macOS Google Chrome application."
+  },
+  {
+    "script": "test:e2e",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["migration"],
+    "requires": ["electron", "core-binary", "git", "gui-build"],
+    "ciSmoke": "migration",
+    "qualificationJourney": "send-stream"
+  },
+  {
+    "script": "test:update",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["updates"],
+    "requires": ["electron", "core-binary", "git", "gui-build"]
+  },
+  {
+    "script": "test:core-process",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["core", "lifecycle"],
+    "requires": ["python3"]
+  },
+  {
+    "script": "test:skill-capacity",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["skills"],
+    "requires": ["core-binary"]
+  },
+  {
+    "script": "test:browser-feasibility",
+    "layer": "e2e",
+    "platforms": ["darwin"],
+    "areas": ["browser"],
+    "requires": ["electron", "git", "desktop-input", "gui-build"],
+    "notes": "Interactive native input acceptance; not an unattended CI test.",
+    "platformReason": "Requires attended native desktop input and macOS fixture acceptance."
+  },
+  {
+    "script": "test:browser-attach",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["browser"],
+    "requires": ["electron", "browser", "core-binary", "git", "gui-build"]
+  },
+  {
+    "script": "test:browser-annotations",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["browser"],
+    "requires": ["electron", "core-binary", "git", "gui-build"]
+  },
+  {
+    "script": "test:browser-loading",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["browser"],
+    "requires": ["electron", "core-binary", "git", "gui-build"]
+  },
+  {
+    "script": "test:image-annotations",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["annotations"],
+    "requires": ["electron", "core-binary", "git", "gui-build"]
+  },
+  {
+    "script": "test:browser-contracts",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["browser"],
+    "requires": []
+  },
+  {
+    "script": "test:remote-command",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["remote"],
+    "requires": []
+  },
+  {
+    "script": "test:remote-command-e2e",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["remote"],
+    "requires": ["browser", "core-binary", "gui-build", "git"]
+  },
+  {
+    "script": "test:remote-session",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["remote"],
+    "requires": []
+  },
+  {
+    "script": "test:remote-gui-e2e",
+    "layer": "e2e",
+    "platforms": ["darwin"],
+    "areas": ["remote"],
+    "requires": ["browser", "core-binary", "gui-build"],
+    "platformReason": "Browser executable is the installed macOS Google Chrome application."
+  },
+  {
+    "script": "test:remote-session-body",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["remote"],
+    "requires": []
+  },
+  {
+    "script": "test:remote-session-e2e",
+    "layer": "e2e",
+    "platforms": ["darwin"],
+    "areas": ["remote"],
+    "requires": ["electron", "browser", "core-binary", "git", "gui-build"],
+    "platformReason": "Browser executable is the installed macOS Google Chrome application."
+  },
+  {
+    "script": "test:remote-work-overview",
+    "layer": "e2e",
+    "platforms": ["darwin"],
+    "areas": ["remote"],
+    "requires": ["browser", "core-binary", "git", "gui-build"],
+    "platformReason": "Browser executable is the installed macOS Google Chrome application."
+  },
+  {
+    "script": "test:remote-interaction",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["remote"],
+    "requires": []
+  },
+  {
+    "script": "test:remote-browser",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["remote"],
+    "requires": []
+  },
+  {
+    "script": "test:remote-static",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["remote"],
+    "requires": ["gui-build"]
+  },
+  {
+    "script": "test:remote-task-pause",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["remote"],
+    "requires": []
+  },
+  {
+    "script": "test:remote-task-question",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["remote"],
+    "requires": []
+  },
+  {
+    "script": "test:remote-gui-quit",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["remote"],
+    "requires": ["electron", "browser", "core-binary", "gui-build"]
+  },
+  {
+    "script": "test:remote-review",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["remote"],
+    "requires": ["git"]
+  },
+  {
+    "script": "test:remote-network",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["remote"],
+    "requires": []
+  },
+  {
+    "script": "test:remote-relay",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["remote"],
+    "requires": ["gui-build", "node-24.2.0", "openssl"],
+    "notes": "Transport contracts use a real Relay CLI and native-shaped RPC fixtures. The Relay service currently enforces exact Node 24.2.0."
+  },
+  {
+    "script": "test:remote-relay-contracts",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["remote"],
+    "requires": ["gui-build"]
+  },
+  {
+    "script": "test:design",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["design"],
+    "requires": ["browser", "git", "gui-build"],
+    "ciSmoke": "design"
+  },
+  {
+    "script": "test:regressions",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["regression", "bundle", "design"],
+    "requires": ["python3"]
+  },
+  {
+    "script": "test:proxy",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["network"],
+    "requires": [],
+    "notes": "Optional native proxy cases require AREAL_TEST_MODEL_PROXY_BIN; ordinary Node cases are portable."
+  },
+  {
+    "script": "test:desktop-settings",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["desktop"],
+    "requires": ["electron", "core-binary", "git", "gui-build", "curl", "openssl"],
+    "qualificationJourney": "settings"
+  },
+  {
+    "script": "test:desktop-network",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["desktop"],
+    "requires": ["git"]
+  },
+  {
+    "script": "test:mcp-app-lifecycle",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["mcp"],
+    "requires": ["electron", "core-binary", "git", "gui-build"]
+  },
+  {
+    "script": "test:mcp-platform",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["mcp"],
+    "requires": ["browser", "git", "gui-build"]
+  },
+  {
+    "script": "test:mcp-page-tools",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["mcp"],
+    "requires": ["electron", "core-binary", "git", "gui-build"]
+  },
+  {
+    "script": "test:mcp-page-tools-transport",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["mcp"],
+    "requires": []
+  },
+  {
+    "script": "test:plugins",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["plugins"],
+    "requires": ["electron", "core-binary", "gui-build", "git"]
+  },
+  {
+    "script": "test:feedback",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["feedback"],
+    "requires": ["browser", "gui-build"],
+    "notes": "Mixed command; classified by highest browser or Electron boundary."
+  },
+  {
+    "script": "test:feedback-native",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["feedback"],
+    "requires": ["core-binary"]
+  },
+  {
+    "script": "test:trajectory-native",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["trajectory"],
+    "requires": ["core-binary"]
+  },
+  {
+    "script": "test:i18n",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["i18n"],
+    "requires": ["electron", "core-binary", "git", "gui-build"]
+  },
+  {
+    "script": "test:i18n-native",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["i18n"],
+    "requires": ["electron", "core-binary", "git", "macos-tools", "gui-build"]
+  },
+  {
+    "script": "test:core-crash-recovery",
+    "layer": "contract",
+    "platforms": ["darwin", "linux"],
+    "areas": ["core", "lifecycle"],
+    "requires": ["core-binary"]
+  },
+  {
+    "script": "test:recovery-electron",
+    "layer": "e2e",
+    "platforms": ["darwin"],
+    "areas": ["recovery", "lifecycle"],
+    "requires": ["electron", "core-binary", "gui-build", "git"],
+    "platformReason": "Runner explicitly asserts darwin and uses its existing macOS acceptance setup."
+  },
+  {
+    "script": "test:gen-ui",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["gen-ui"],
+    "requires": ["electron", "core-binary", "gui-build", "git"]
+  },
+  {
+    "script": "test:side-chat-parity",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["side-chat"],
+    "requires": ["electron", "core-binary", "gui-build", "git"],
+    "ciSmoke": "side-chat"
+  },
+  {
+    "script": "test:automation",
+    "layer": "e2e",
+    "platforms": ["darwin", "linux"],
+    "areas": ["schedules"],
+    "requires": ["electron", "browser", "core-binary", "gui-build", "git"]
+  },
+  {
+    "script": "test:health",
+    "layer": "unit",
+    "platforms": ["darwin", "linux"],
+    "areas": ["health"],
+    "requires": ["git"]
+  },
+  {
+    "script": "test:manifest",
+    "layer": "unit",
+    "platforms": ["darwin", "linux"],
+    "areas": ["testing"],
+    "requires": []
+  },
+  {
+    "script": "test:unit",
+    "layer": "unit",
+    "platforms": ["darwin", "linux"],
+    "areas": ["renderer", "ui"],
+    "requires": []
+  },
+  {
+    "script": "test:design-rules",
+    "layer": "contract",
+    "platforms": ["darwin", "linux", "win32"],
+    "areas": ["design"],
+    "requires": []
+  }
+]

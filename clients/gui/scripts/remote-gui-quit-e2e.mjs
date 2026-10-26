@@ -1,11 +1,12 @@
+import { makeTempDir } from "./support/temp.mjs";
 import { selectRemoteTransport, requireBrowserTransport } from "./remote-conformance-transport.mjs";
 const transport = selectRemoteTransport();
 await requireBrowserTransport(transport, "remote-gui-quit-e2e");
 import assert from "node:assert/strict";
-import {selectConversation,captureSmokeFailure} from "./smoke-navigation.mjs";
+import { selectConversation, captureSmokeFailure } from "./smoke-navigation.mjs";
 import { createRequire } from "node:module";
-import { mkdtemp, mkdir, readFile, writeFile, readdir, access } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile, readdir, access } from "node:fs/promises";
+
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
@@ -17,8 +18,14 @@ function modelStage(body) {
   const messages = body.messages ?? [];
   // Core wraps areal_context as user-role text for Chat Completions.
   // Preserve original user-Turn scoping while excluding that explicit wrapper.
-  const last = messages.findLastIndex((message) => message.role === "user" &&
-    !(typeof message.content === "string" && message.content.startsWith("AReaL runtime context (not a user request):\n")));
+  const last = messages.findLastIndex(
+    (message) =>
+      message.role === "user" &&
+      !(
+        typeof message.content === "string" &&
+        message.content.startsWith("AReaL runtime context (not a user request):\n")
+      ),
+  );
   assert.ok(
     JSON.stringify(messages[last]?.content).includes(prompt),
     "only original GUI turn may call model",
@@ -70,9 +77,7 @@ async function run() {
   const desktop = join(gui, "app");
   const require = createRequire(join(desktop, "package.json"));
   const { _electron: electron, chromium } = require("playwright-core");
-  const scratch = await mkdtemp(
-    join(process.platform === "darwin" ? "/private/tmp" : tmpdir(), "rc13-quit-"),
-  );
+  const scratch = await makeTempDir("rc13-quit-");
   const workspace = join(scratch, "workspace");
   await mkdir(workspace);
   await mkdir(join(scratch, "user-home"));
@@ -245,10 +250,11 @@ async function run() {
     await button("不在项目中工作").click();
     await page.getByRole("menuitem", { name: "新建项目", exact: true }).click();
     await until(
-      async () => (await state()).projects.find(project => project.root === workspace)?.state?.connected,
+      async () =>
+        (await state()).projects.find((project) => project.root === workspace)?.state?.connected,
       "isolated project ready",
     );
-    projectId = (await state()).projects.find(project => project.root === workspace).id;
+    projectId = (await state()).projects.find((project) => project.root === workspace).id;
     await button("设置").click();
     await button("手机连接").click();
     // 生产后台 safeStorage gate 是唯一 oracle；不替换加密实现。
@@ -278,7 +284,7 @@ async function run() {
     assert.equal(pending.length, 1);
     const approval = page.getByRole("group", { name: `确认设备 ${pending[0].id}`, exact: true });
     await approval.getByLabel("workspace", { exact: true }).check();
-    await approval.getByRole("radio", {name:"可操作",exact:true}).check();
+    await approval.getByRole("radio", { name: "可操作", exact: true }).check();
     await approval.getByRole("button", { name: "确认配对", exact: true }).click();
     await remote
       .getByRole("status")
@@ -289,8 +295,11 @@ async function run() {
       projectId,
       profile: { id: "standard", revision: "v1" },
     }));
-    await selectConversation(page,threadId);
-    await app.evaluate(({app,BrowserWindow})=>{app.focus({steal:true});BrowserWindow.getAllWindows()[0].focus();});
+    await selectConversation(page, threadId);
+    await app.evaluate(({ app, BrowserWindow }) => {
+      app.focus({ steal: true });
+      BrowserWindow.getAllWindows()[0].focus();
+    });
     await call("send", { projectId, threadId, text: prompt });
     const interaction = await until(
       async () =>
@@ -308,11 +317,11 @@ async function run() {
     report.adapterPid = adapter.pid;
     report.adapterIdentity = adapter.identity;
     report.coreGeneration = await generation();
-    const projectButton=remote.getByRole("button",{name:"workspace",exact:true});
-    if(await projectButton.getAttribute("aria-expanded")==="true")await projectButton.click();
+    const projectButton = remote.getByRole("button", { name: "workspace", exact: true });
+    if ((await projectButton.getAttribute("aria-expanded")) === "true") await projectButton.click();
     await projectButton.click();
     await remote.locator(`.remote-session-row[data-thread-id="${threadId}"]`).click();
-    await remote.getByRole("button",{name:"返回项目列表",exact:true}).click();
+    await remote.getByRole("button", { name: "返回项目列表", exact: true }).click();
     await remote.getByRole("button", { name: "审阅待处理事项", exact: true }).click();
     await until(async () => {
       if (
@@ -340,11 +349,15 @@ async function run() {
       "review after GUI exit",
     );
     await remote.locator("#attention-allow").click();
-    await remote.getByRole("button",{name:"关闭审阅",exact:true}).click();
+    await remote.getByRole("button", { name: "关闭审阅", exact: true }).click();
     await remote.locator(`.remote-session-row[data-thread-id="${threadId}"]`).click();
-    await until(async () =>
-      await remote.locator(`#remote-session-ui [data-turn-id="${turnId}"]`).getAttribute('data-turn-status') === 'completed',
-      "original remote turn completed");
+    await until(
+      async () =>
+        (await remote
+          .locator(`#remote-session-ui [data-turn-id="${turnId}"]`)
+          .getAttribute("data-turn-status")) === "completed",
+      "original remote turn completed",
+    );
     assert.equal(await remote.locator("#remote-session-ui [data-turn-id]").count(), 1);
     assert.equal(await readFile(join(workspace, "approved.txt"), "utf8"), effect);
     assert.deepEqual(stages, ["approval", "completion"]);
@@ -429,7 +442,7 @@ async function run() {
   } catch (error) {
     report.error = error.message.replace(/#(?:host|invite)=[^\s"']+/g, "#[redacted]");
     report.modelErrors = modelErrors;
-    if(page)await captureSmokeFailure(page,scratch,error);
+    if (page) await captureSmokeFailure(page, scratch, error);
     process.exitCode = report.status === "blocked" ? 2 : 1;
   } finally {
     // 失败时保留独占 scratch 与 PID 供人工恢复，绝不强杀未知或未结算工作。

@@ -1,4 +1,4 @@
-import { SettingsDialog as DialogView, SettingsToolbar as Toolbar } from "@areal/ui/wip";
+import { SettingsDialog as DialogView, SettingsToolbar as Toolbar } from "@areal/ui/experimental";
 import { useI18n } from "../i18n/IntlProvider.js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Action, Data } from "../services.js";
@@ -43,6 +43,18 @@ export function useResource(load: () => Promise<Data>, identity: string) {
   return { ...state, refresh, accept };
 }
 export { Feedback } from "../components/ui/feedback.js";
-export { EmptySettings } from "@areal/ui/wip";
-export function SettingsToolbar(props: import("react").ComponentProps<typeof Toolbar>) { const { t } = useI18n(); return <Toolbar refreshLabel={t("settings.common.refresh")} newLabel={t("settings.common.new")} {...props} />; }
-export function SettingsDialog(props: import("react").ComponentProps<typeof DialogView>) { const { t } = useI18n(); return <DialogView closeLabel={t("common.closeDialog")} {...props} />; }
+export { EmptySettings } from "@areal/ui/experimental";
+export function SettingsToolbar(props: import("react").ComponentProps<typeof Toolbar>) {
+  const { t } = useI18n();
+  return (
+    <Toolbar
+      refreshLabel={t("settings.common.refresh")}
+      newLabel={t("settings.common.new")}
+      {...props}
+    />
+  );
+}
+export function SettingsDialog(props: import("react").ComponentProps<typeof DialogView>) {
+  const { t } = useI18n();
+  return <DialogView closeLabel={t("common.closeDialog")} {...props} />;
+}

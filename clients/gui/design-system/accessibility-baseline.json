@@ -1,0 +1,5 @@
+{
+  "moderateIssues": 0,
+  "contrastExceptions": [],
+  "scope": "Mounted Base previews and the explicit default-theme text/surface matrix. test:design enforces the zero baseline against actual scans; custom palettes are diagnostic."
+}
