@@ -2,6 +2,8 @@
 
 # 测试
 
+Side Chat 的 Esc 回退测试等待任务资源外层弹层完全退出布局后，再验证主任务停止。内部 `Activity` 隐藏会早于 `keepMounted` 弹层关闭动画完成；动画期间仍应保护主任务。测试显式拉长该动画并记录弹层状态，覆盖两种主/侧任务启动顺序，不用固定 sleep 或重复发送 Esc 掩盖竞态。
+
 模型计量观察器的非干扰测试在磁盘写入仍被阻塞时等待 `drained` 结算信号，再在观察器锁内检查内存账本。客户端收到 HTTP EOF 不代表服务端 `finally` 已完成；不能用延长 sleep 或提前释放磁盘阻塞替代这个先后关系。
 
 
@@ -55,6 +57,8 @@ Composer 和队列 smoke 共用 `clients/gui/scripts/smoke-navigation.mjs` 的�
 失败状态与截图采集各最多等待 10 秒，derivation 的 Electron 退出最多等待 20 秒，超时记入证据而不覆盖原始失败。CI 的 derivation 步骤限制为 10 分钟，避免故障采集阻止后续 artifact 上传；`make script-test` 验证诊断超时与原错误传播。
 
 derivation 的连续录屏需要 Playwright 固定版本的 FFmpeg，不能只安装 Electron/npm 包。GUI CI 使用 `pnpm --dir clients/gui --filter @areal/gui-desktop exec playwright-core install ffmpeg` 安装；本地首次运行此 smoke 前也执行该命令。
+
+录屏场景在等待 Playwright `close()` 前请求正常 `app.quit()`，让产品退出与录像收尾同时进行；仍等待 `close()` 结算完成。Playwright 自身先收尾录像再请求退出，串行耗时会挤占同一个 20 秒期限。回归通过受控录像等待验证先后关系，退出不完成仍在原期限失败；不跳过草稿确认、不强制成功，也不丢弃录像。
 
 满屏 Side 使用自己的 Composer，主聊天草稿保持挂载但隐藏，避免浮动操作遮挡 Side 的模型与发送入口；分栏模式仍显示两个 Composer。derivation smoke 经真实点击检查 Side 模型选择与首问提交，并核对主草稿保留。
 
