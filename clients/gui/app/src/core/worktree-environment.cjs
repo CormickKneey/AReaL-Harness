@@ -4,10 +4,10 @@ const { randomUUID } = require("node:crypto");
 const {
   readEnvironmentProcess,
   readEnvironmentOutput,
-} = require("../../../packages/workbench/client/desktop-contract/workspace-worktrees.cjs");
+} = require("@areal/workbench/desktop-contract/workspace-worktrees");
 const {
   responses,
-} = require("../../../packages/workbench/client/desktop-contract/generated/management-processes-protocol.cjs");
+} = require("@areal/workbench/desktop-contract/generated/management-processes-protocol");
 /** @typedef {import('./worktrees.cjs').EnvironmentAttempt} Attempt */
 const TIMEOUT_MS = 600000;
 const OUTPUT_BYTES = 65536;

@@ -1,18 +1,15 @@
 // @ts-check
 "use strict";
 const { isDeepStrictEqual } = require("node:util");
-const {
-  KINDS,
-  isLifecycleReceipt,
-} = require("../../../packages/workbench/client/desktop-contract/shared.cjs");
+const { KINDS, isLifecycleReceipt } = require("@areal/workbench/desktop-contract/shared");
 /** @typedef {import('./lifecycle-operations.cjs').LifecycleKind} Kind */
 /** @typedef {import('./lifecycle-operations.cjs').LifecycleMode} Mode */
 /** @typedef {import('./lifecycle-operations.cjs').TargetPhase} TargetPhase */
-/** @typedef {{projectId:string,serviceId:string|null,generation:string|null,phase?:import('../../../packages/workbench/client/desktop-contract/shared.cjs').TargetPhase,error?:unknown}} ReferenceTarget */
+/** @typedef {{projectId:string,serviceId:string|null,generation:string|null,phase?:import('@areal/workbench/desktop-contract/shared').TargetPhase,error?:unknown}} ReferenceTarget */
 /** @typedef {{pid:number,identity:string}} DesktopIdentity */
 /** @typedef {{requestId:string,desktopGeneration:string,kind:Kind,mode:Mode,targets:ReferenceTarget[],desktop:DesktopIdentity,threadId?:string,turnId?:string,logicalProjectId?:string}} LifecycleReference */
 /** @typedef {{projectId:string,serviceId:string,generation:string,phase:TargetPhase,error?:unknown,[key:string]:unknown}} ResponseTarget */
-/** @typedef {import('../../../packages/workbench/client/desktop-contract/shared.cjs').LifecycleReceipt} LifecycleResponse */
+/** @typedef {import('@areal/workbench/desktop-contract/shared').LifecycleReceipt} LifecycleResponse */
 
 /** @param {unknown} value @returns {value is Record<string,unknown>} */
 function record(value) {

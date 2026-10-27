@@ -43,6 +43,7 @@ async function device(
     room,
     inviteSecret,
     apiVersion = "areal.remote.v2",
+    coalesceClose = false,
   } = {},
 ) {
   const { createRemoteWire } = await import("../packages/remote/src/wire.mjs");
@@ -56,6 +57,25 @@ async function device(
   const origin = transport === "relay" ? saved.relay : remote.direct.origin;
   const socket = new WebSocket(origin.replace(/^http/, "ws") + "/remote/socket", { origin });
   t.after(() => socket.terminate());
+  let holdUntilClose = false;
+  if (coalesceClose) {
+    const listen = socket.addEventListener.bind(socket);
+    const pending = [];
+    socket.addEventListener = (type, listener, ...options) =>
+      listen(
+        type,
+        type !== "message"
+          ? listener
+          : (event) => {
+              if (!holdUntilClose) return listener(event);
+              pending.push(event);
+              if (JSON.parse(event.data).type !== "close") return;
+              // 真实帧按原顺序同回调投递，复现接收数据尚在迭代队列时连接关闭。
+              for (const item of pending.splice(0)) listener(item);
+            },
+        ...options,
+      );
+  }
   const { wire, ready } = createRemoteWire(socket, {
     room: transport === "relay" ? (room ?? saved.room) : null,
   });
@@ -64,6 +84,7 @@ async function device(
     maxMessageBytes: 256 * 1024,
   });
   const messages = secure.messages();
+  holdUntilClose = coalesceClose;
   secure.send({
     method: "hello",
     apiVersion,
@@ -587,11 +608,12 @@ if (!process.env.RC12_TLS_HOME) {
     );
     assert.match(response.headers.get("content-security-policy"), /script-src 'self';/);
     const descriptor = JSON.parse(await readFile(join(assetsDir, "remote-assets.json"), "utf8"));
-    let assetReads=0;
+    let assetReads = 0;
     for (const asset of [...descriptor.assets, descriptor.worker]) {
       // Exhaustive closure checks also fetch lazy chunks and font fallbacks.
       // Respect the production 200-request/second HTTP budget.
-      if(assetReads++ > 0 && assetReads % 100 === 0)await new Promise(resolve=>setTimeout(resolve,1000));
+      if (assetReads++ > 0 && assetReads % 100 === 0)
+        await new Promise((resolve) => setTimeout(resolve, 1000));
       const res = await fetch(relay.origin + "/" + asset.path);
       assert.equal(res.status, 200);
       assert.deepEqual(
@@ -759,6 +781,10 @@ if (!process.env.RC12_TLS_HOME) {
       await waitFor(() => rejected.socket.readyState === 3);
       assert.equal((await healthy.read(code)).result.projects.length, 1);
     }
+    const coalesced = await device(t, f.remote, { coalesceClose: true });
+    assert.equal(coalesced.active?.error?.code, "FORBIDDEN");
+    await waitFor(() => coalesced.socket.readyState === 3);
+    assert.equal((await healthy.read("coalesced-close")).result.projects.length, 1);
     assert.equal(f.remote.state().connected, true);
   });
 

@@ -14,12 +14,12 @@ import {TaskCenter} from '/src/TaskCenter.tsx';import {ApplicationIntlProvider} 
 const project={id:'00000000-0000-4000-a000-000000000001',name:'Fixture project',root:'/fixture',state:{connected:true,threads:{}},core:{connectionGeneration:1},pending:[],outcomes:{}};
 const recovery=new URLSearchParams(location.search).get('recovery');
 project.desktopCapabilities={currentCommands:!new URLSearchParams(location.search).has('legacy')};
-window.calls=[];window.opened=[];window.fail=new URLSearchParams(location.search).has('fail');
+window.calls=[];window.opened=[];window.drafts=[];window.fail=new URLSearchParams(location.search).has('fail');
 const originalThread='00000000-0000-4000-a000-000000000002';
 const completedOutcome=requestId=>({accepted:true,status:'completed',threadId:originalThread,operation:{requestId,method:'areal/thread/start',target:{kind:'thread',threadId:originalThread}}});
 const rows=new URLSearchParams(location.search).has('empty')?[]:[['active','每日进展',false],['paused','每周回顾',true]].map(([id,objective,paused])=>({projectId:project.id,id,objective,paused,mode:'scheduled',sourceThreadId:id+'-thread',runs:[],nextRunAt:2000000000,schedule:{kind:'once',at:2000000000},scope:'workspace'}));
 const action=async(name,params)=>{window.calls.push({name,params});if(name==='projectless')return {projectId:project.id};if(name==='create'&&recovery)throw Object.assign(Error('Fixture create response lost'),{submissionUnknown:true,requestId:params.requestId});if(name==='workspace'&&params.operation==='worktreeRead')return {state:'missing'};if(name==='reconcile'){const requestId=window.calls.find(call=>call.name==='create')?.params.requestId;return {outcomes:recovery==='completed'?{[requestId]:completedOutcome(requestId)}:{}};}if(name==='tasks'){if(window.fail)throw Error('Fixture catalog unavailable');return {projectId:project.id,requestId:params.requestId,viewEpoch:params.viewEpoch,data:rows,hasMore:false,errors:[],owners:[{projectId:project.id,status:'ready',source:'live',coverage:{kind:'complete'},readAt:Date.now(),connectionGeneration:1}]};}if(name==='open'){project.state.threads[params.threadId]={id:params.threadId};return {};}return {data:[],enabled:false,runNow:false};};
-function Fixture(){const [projects,setProjects]=React.useState([project]);window.publishContract=currentCommands=>setProjects([{...project,desktopCapabilities:{currentCommands}}]);window.publishOutcome=()=>{const requestId=window.calls.find(call=>call.name==='create').params.requestId;setProjects([{...project,worktreeOperations:[{requestId,state:'missing'}],outcomes:{[requestId]:completedOutcome(requestId)}}]);};return <ApplicationIntlProvider><div style={{height:'100vh',display:'flex'}}><TaskCenter projects={projects} connected action={action} onOpenThread={(projectId,threadId)=>window.opened.push({projectId,threadId})} onOpenModelSettings={()=>{}} navigation={null} renderConversation={()=> <p>会话详情</p>} renderResources={()=>null}/></div></ApplicationIntlProvider>;}
+function Fixture(){const [projects,setProjects]=React.useState([project]);window.publishContract=currentCommands=>setProjects([{...project,desktopCapabilities:{currentCommands}}]);window.publishOutcome=()=>{const requestId=window.calls.find(call=>call.name==='create').params.requestId;setProjects([{...project,worktreeOperations:[{requestId,state:'missing'}],outcomes:{[requestId]:completedOutcome(requestId)}}]);};return <ApplicationIntlProvider><div style={{height:'100vh',display:'flex'}}><TaskCenter projects={projects} defaultProjectId={project.id} connected action={action} onStartDraft={(projectId,text)=>window.drafts.push({projectId,text})} onOpenThread={(projectId,threadId)=>window.opened.push({projectId,threadId})} onOpenModelSettings={()=>{}} navigation={null} renderConversation={()=> <p>会话详情</p>} renderResources={()=>null}/></div></ApplicationIntlProvider>;}
 createRoot(document.getElementById('root')).render(<Fixture/>);
 `;
 const virtual = "\0scheduled-fixture";
@@ -95,7 +95,8 @@ try {
   );
   await page.goto(url);
   await page.getByRole("button", { name: "打开自动化 每日进展", exact: true }).waitFor();
-  assert.equal(await page.getByRole("combobox", { name: "筛选项目" }).count(), 0);
+  assert.equal(await page.getByRole("combobox", { name: "运行位置筛选" }).count(), 0);
+  assert.equal(await page.getByLabel("筛选任务", { exact: true }).count(), 0);
   assert.equal(await page.getByText("项目加载状态", { exact: true }).count(), 0);
   await page
     .getByRole("group", { name: "已开启", exact: true })
@@ -133,12 +134,36 @@ try {
   await page.getByRole("button", { name: "重新加载任务", exact: true }).click();
   await page.getByRole("button", { name: "打开自动化 每日进展" }).waitFor();
   await page.setViewportSize({ width: 1100, height: 800 });
+  await page.goto(url + "?empty");
+  await page.getByRole("button", { name: "整理每日计划", exact: false }).click();
+  assert.deepEqual(await page.evaluate(() => window.drafts), [
+    {
+      projectId: "00000000-0000-4000-a000-000000000001",
+      text: "帮我创建一个定时任务：回顾我提供的计划，整理当天待办和需要关注的事项。",
+    },
+  ]);
+  assert.equal(
+    (await page.evaluate(() => window.calls)).filter((call) =>
+      ["create", "projectless"].includes(call.name),
+    ).length,
+    0,
+    "new creation only stages a draft without allocating a Thread",
+  );
   for (const mode of ["unresolved", "completed", "observed-completed"]) {
     const result = { mode, passed: false };
     try {
       await page.evaluate(() => {
         localStorage.clear();
         sessionStorage.clear();
+        // Preserve a pre-draft-flow request to exercise legacy recovery, not new creation.
+        localStorage.setItem(
+          "areal-gui:ordinary-schedule-creation",
+          JSON.stringify({
+            prepareId: crypto.randomUUID(),
+            requestId: crypto.randomUUID(),
+            text: "帮我创建一个定时任务：回顾我提供的计划，整理当天待办和需要关注的事项。",
+          }),
+        );
       });
       await page.goto(url + "?empty&recovery=" + mode);
       await page.getByRole("button", { name: "整理每日计划", exact: false }).click();
@@ -152,8 +177,13 @@ try {
         original.text,
         "帮我创建一个定时任务：回顾我提供的计划，整理当天待办和需要关注的事项。",
       );
-      if (mode === "observed-completed") await page.evaluate(() => window.publishOutcome());
-      else {
+      if (mode === "observed-completed") {
+        await page.evaluate(() => window.publishOutcome());
+        await page.waitForFunction(
+          () => !JSON.parse(localStorage.getItem("areal-gui:ordinary-schedule-creation")).pending,
+        );
+        await page.getByRole("button", { name: "检查操作状态", exact: true }).first().click();
+      } else {
         await page.getByRole("button", { name: "检查操作状态", exact: true }).first().click();
         await page.waitForFunction(() => window.calls.some((call) => call.name === "reconcile"));
       }

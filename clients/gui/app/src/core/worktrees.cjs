@@ -14,19 +14,19 @@ const {
   readWorktreeRequest,
   readOperation,
   readWorktreeRemoval,
-} = require("../../../packages/workbench/client/desktop-contract/workspace-worktrees.cjs");
+} = require("@areal/workbench/desktop-contract/workspace-worktrees");
 const { modelRecord } = require("@areal/workbench/core-model-contract");
 const { readResourceStatus } = require("./resource-observation.cjs");
 /** @typedef {import('./project-index.cjs').SavedProject} SavedProject */
 /** @typedef {import('./project-state.cjs').CoreProject} Project */
-/** @typedef {import("../../../packages/workbench/client/desktop-contract/workspace-worktrees.cjs").EnvironmentScript} EnvironmentScript */
-/** @typedef {import("../../../packages/workbench/client/desktop-contract/workspace-worktrees.cjs").EnvironmentDefinition} EnvironmentDefinition */
-/** @typedef {import("../../../packages/workbench/client/desktop-contract/workspace-worktrees.cjs").WorktreeSettings} WorktreeSettings */
-/** @typedef {import("../../../packages/workbench/client/desktop-contract/workspace-worktrees.cjs").WorktreeRequest} WorktreeRequest */
-/** @typedef {import("../../../packages/workbench/client/desktop-contract/workspace-worktrees.cjs").WorktreeRecord} WorktreeRecord */
-/** @typedef {import("../../../packages/workbench/client/desktop-contract/workspace-worktrees.cjs").EnvironmentAttempt} EnvironmentAttempt */
-/** @typedef {import("../../../packages/workbench/client/desktop-contract/workspace-worktrees.cjs").DeletionAttempt} DeletionAttempt */
-/** @typedef {import("../../../packages/workbench/client/desktop-contract/workspace-worktrees.cjs").WorktreeOperation} WorktreeOperation */
+/** @typedef {import("@areal/workbench/desktop-contract/workspace-worktrees").EnvironmentScript} EnvironmentScript */
+/** @typedef {import("@areal/workbench/desktop-contract/workspace-worktrees").EnvironmentDefinition} EnvironmentDefinition */
+/** @typedef {import("@areal/workbench/desktop-contract/workspace-worktrees").WorktreeSettings} WorktreeSettings */
+/** @typedef {import("@areal/workbench/desktop-contract/workspace-worktrees").WorktreeRequest} WorktreeRequest */
+/** @typedef {import("@areal/workbench/desktop-contract/workspace-worktrees").WorktreeRecord} WorktreeRecord */
+/** @typedef {import("@areal/workbench/desktop-contract/workspace-worktrees").EnvironmentAttempt} EnvironmentAttempt */
+/** @typedef {import("@areal/workbench/desktop-contract/workspace-worktrees").DeletionAttempt} DeletionAttempt */
+/** @typedef {import("@areal/workbench/desktop-contract/workspace-worktrees").WorktreeOperation} WorktreeOperation */
 /** @typedef {SavedProject & {state?:import('@areal/workbench/core-model-contract').CoreModelState|null,error?:string|null,core?:unknown,summaries?:import('@areal/workbench/core-model-contract').CoreThread[],configurations?:Record<string,unknown>,outcomes?:Project['outcomes'],observationErrors?:Project['observationErrors'],refreshErrors?:Project['refreshErrors'],pending?:Project['pending']}} ProjectSnapshot */
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 /** @param {string} message */
@@ -290,7 +290,7 @@ class CoreWorktrees {
       ...(latest?.intent === "cancel" ? { intent: "cancel" } : {}),
     }));
   }
-  /** @param {WorktreeOperation} value @param {import("../../../packages/workbench/client/desktop-contract/workspace-worktrees.cjs").WorktreeState} state @param {Partial<WorktreeOperation>} [patch] */
+  /** @param {WorktreeOperation} value @param {import("@areal/workbench/desktop-contract/workspace-worktrees").WorktreeState} state @param {Partial<WorktreeOperation>} [patch] */
   transition(value, state, patch = {}) {
     return this.update(value.requestId, (latest) => {
       const nextState = state === "ready" && latest.intent === "cancel" ? "cancelled" : state;

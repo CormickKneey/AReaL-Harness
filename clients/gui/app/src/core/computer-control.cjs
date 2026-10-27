@@ -18,9 +18,7 @@ const READ_OPERATIONS = new Set([
   "stop_computer_control",
 ]);
 
-const {
-  readComputerStatus,
-} = require("../../../packages/workbench/client/desktop-contract/desktop-control.cjs");
+const { readComputerStatus } = require("@areal/workbench/desktop-contract/desktop-control");
 /** @typedef {Record<string,unknown>} Fields */
 /** @typedef {Fields & {active:boolean,activeTarget?:unknown,app?:unknown,heldKeys?:number,heldButtons?:number,reason?:string}} ControlActivity */
 /** @typedef {Fields & {arguments?:Fields,computerApproval?:Fields,admissionEpoch?:number}} ComputerRequest */

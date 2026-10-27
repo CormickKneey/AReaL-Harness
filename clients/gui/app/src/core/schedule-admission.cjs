@@ -5,10 +5,7 @@ const { join, relative, isAbsolute, sep } = require("node:path");
 const { createHash } = require("node:crypto");
 const { checkoutRoot } = require("@areal/workspace-git");
 const { modelRecord } = require("@areal/workbench/core-model-contract");
-const {
-  readTask,
-  readTaskRun,
-} = require("../../../packages/workbench/client/desktop-contract/management-tasks.cjs");
+const { readTask, readTaskRun } = require("@areal/workbench/desktop-contract/management-tasks");
 const { readReceipts, receiptResult } = require("./receipt-contract.cjs");
 const { readAdmissionThread } = require("./worktree-admission.cjs");
 const { readHistoryInteractions } = require("./history-contract.cjs");
@@ -221,7 +218,7 @@ class ScheduleAdmission {
       return { ...value, anchorThreadId: threadId };
     });
   }
-  /** @param {Project} project @param {import("../../../packages/workbench/client/desktop-contract/management-tasks.cjs").Task} task */
+  /** @param {Project} project @param {import("@areal/workbench/desktop-contract/management-tasks").Task} task */
   async bind(project, task) {
     return this.serial(project, async () => {
       const value = await this.read(project);
@@ -237,7 +234,7 @@ class ScheduleAdmission {
       return { ...value, taskId: task.id };
     });
   }
-  /** @param {Project} project @param {import("../../../packages/workbench/client/desktop-contract/management-tasks.cjs").Task} task */
+  /** @param {Project} project @param {import("@areal/workbench/desktop-contract/management-tasks").Task} task */
   async sourceWorkspace(project, task) {
     const client = project.client;
     // Core 服务在 core/server/src/lib.rs 颁发 desktop-owner principal；此处只读 Core Task 的 owner。

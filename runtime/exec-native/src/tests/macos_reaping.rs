@@ -185,7 +185,18 @@ async fn detached_cleanup_does_not_signal_parallel_execution() {
     let before = std::fs::metadata(second.root().join("ticks"))
         .unwrap()
         .len();
-    tokio::time::sleep(Duration::from_millis(80)).await;
+    // A surviving sibling need not be scheduled within one fixed sample interval.
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while std::fs::metadata(second.root().join("ticks"))
+            .unwrap()
+            .len()
+            <= before
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("parallel execution did not advance after sibling cleanup");
     assert!(
         std::fs::metadata(second.root().join("ticks"))
             .unwrap()

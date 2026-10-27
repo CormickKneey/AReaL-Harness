@@ -1,10 +1,10 @@
 // @ts-check
 "use strict";
-/** @typedef {import('../../../packages/workbench/client/desktop-contract/shared.cjs').Configuration} Configuration */
-/** @typedef {import('../../../packages/workbench/client/desktop-contract/shared.cjs').Inspection} Inspection */
+/** @typedef {import('@areal/workbench/desktop-contract/shared').Configuration} Configuration */
+/** @typedef {import('@areal/workbench/desktop-contract/shared').Inspection} Inspection */
 const {
   isConfiguration,
   readInspection,
   readConfigured,
-} = require("../../../packages/workbench/client/desktop-contract/shared.cjs");
+} = require("@areal/workbench/desktop-contract/shared");
 module.exports = { isConfiguration, readInspection, readConfigured };

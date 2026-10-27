@@ -24,7 +24,6 @@ import {
 import {
   Plus,
   Search,
-  ListFilter,
   ArrowRight,
   CalendarClock,
   GitPullRequest,
@@ -34,12 +33,6 @@ import {
   BookOpen,
   Activity,
 } from "lucide-react";
-import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuCheckboxItem,
-} from "./components/ui/dropdown-menu.js";
 import { SidebarToggleIcon } from "./homeChromeIcons.js";
 import { TaskDraft, triggerExplanation, type TaskConversationRenderer } from "./TaskDraft.js";
 import { stageComposerDraft } from "./composerDraftStorage.js";
@@ -636,14 +629,7 @@ export function TaskCenter({
   };
 }) {
   const { t } = useI18n();
-  const [projectScope, setProjectScope] = useState(initialProjectId ?? defaultProjectId ?? "");
-  useEffect(
-    () => setProjectScope(initialProjectId ?? defaultProjectId ?? ""),
-    [initialProjectId, defaultProjectId],
-  );
-  const projects = projectScope
-    ? allProjects.filter((project) => project.id === projectScope)
-    : allProjects;
+  const projects = allProjects;
   const layout = useRef<HTMLElement>(null);
   const [narrow, setNarrow] = useState(false);
   useLayoutEffect(() => {
@@ -656,7 +642,6 @@ export function TaskCenter({
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [searching, setSearching] = useState(false),
     [search, setSearch] = useState("");
-  const [filters, setFilters] = useState(["已开启", "已暂停", "已完成"]);
   const [creationError, setCreationError] = useState("");
   const [creationTone, setCreationTone] = useState<"warning" | "error">("error");
   const [creationRequestId, setCreationRequestId] = useState<string>();
@@ -1414,7 +1399,10 @@ export function TaskCenter({
     if (!saved) {
       creatingRequest.current = false;
       setCreating(false);
-      onStartDraft(projectScope || undefined, `${t("operations.schedules.creationIntent")}${text}`);
+      onStartDraft(
+        initialProjectId ?? defaultProjectId,
+        `${t("operations.schedules.creationIntent")}${text}`,
+      );
       return;
     }
     const draft = saved;
@@ -1574,10 +1562,7 @@ export function TaskCenter({
   const visibleRows = listed.filter(
     (row) =>
       row.mode === "scheduled" &&
-      (row.objectivePreview ?? row.objective).toLowerCase().includes(search.toLowerCase()) &&
-      filters.includes(
-        row.cancelled || finished(row) ? "已完成" : row.paused ? "已暂停" : "已开启",
-      ),
+      (row.objectivePreview ?? row.objective).toLowerCase().includes(search.toLowerCase()),
   );
   const runHistory = task && project && (
     <>
@@ -1906,50 +1891,8 @@ export function TaskCenter({
             {t("operations.schedules.newTitle")}
           </Button>
 
-          <Select
-            value={projectScope || "all"}
-            onValueChange={(value) => setProjectScope(value === "all" ? "" : (value ?? ""))}
-          >
-            <SelectTrigger aria-label={t("operations.schedules.projectFilter")}>
-              <SelectValue>
-                {projectScope
-                  ? projectLabel(allProjects.find((project) => project.id === projectScope) ?? {})
-                  : t("operations.schedules.allProjects")}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t("operations.schedules.allProjects")}</SelectItem>
-              {allProjects
-                .filter((project) => !project.projectless)
-                .map((project) => (
-                  <SelectItem key={project.id} value={project.id}>
-                    {projectLabel(project)}
-                  </SelectItem>
-                ))}
-            </SelectContent>
-          </Select>
           <div className="task-list-subheading">
             <span>任务目录</span>
-            <DropdownMenu>
-              <DropdownMenuTrigger aria-label="筛选任务">
-                <ListFilter size={16} />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {["已开启", "已暂停", "已完成"].map((label) => (
-                  <DropdownMenuCheckboxItem
-                    key={label}
-                    checked={filters.includes(label)}
-                    onCheckedChange={(checked) =>
-                      setFilters((values) =>
-                        checked ? [...values, label] : values.filter((v) => v !== label),
-                      )
-                    }
-                  >
-                    {label}
-                  </DropdownMenuCheckboxItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
           </div>
           <div className="task-list-scroll">
             {pending.length > 0 && (
@@ -2095,7 +2038,7 @@ export function TaskCenter({
               <p>
                 {moreAvailable
                   ? "已加载任务中没有匹配项，可展开显示更多。"
-                  : listed.length || search || filters.length < 3
+                  : listed.length || search
                     ? "没有符合筛选条件的定时任务。"
                     : t("operations.schedules.catalogEmpty")}
               </p>

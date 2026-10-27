@@ -97,7 +97,7 @@ class NoiseByteStream extends AbstractMessageStream {
     if (this.stopped) return;
     this.stopped = true;
     this.source.end();
-    this.onTransportClosed();
+    // attach 排尽已接收的字节后再通知读端关闭；发送和底层连接立即停止。
     this.terminate();
   }
 }

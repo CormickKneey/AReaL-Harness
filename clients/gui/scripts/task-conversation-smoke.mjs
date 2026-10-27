@@ -10,6 +10,7 @@ import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { CoreClient } from "../packages/runtime-client/core.js";
 import { assertApplicationStopped, closeSmokeApplication } from "./application-cleanup.mjs";
+import { withSmokeDeadline } from "./smoke-deadline.mjs";
 const gui = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 for (const name of [
   "AREAL_TASK_CREATION_REGRESSION",
@@ -30,6 +31,7 @@ const binarySha256 = createHash("sha256")
   .update(await readFile(binary))
   .digest("hex");
 const scratch = await makeTempDir("areal-schedule-desktop-");
+const legacyTargetOnly = process.argv.includes("--legacy-target-only");
 const calendarRegression = process.env.AREAL_TASK_CALENDAR_REGRESSION === "1";
 const calendarDropGate = join(scratch, "calendar-drop-response"),
   calendarTrace = join(scratch, "calendar-create-requests.jsonl"),
@@ -636,12 +638,21 @@ async function until(fn, label, timeout = 60000) {
   }
   throw Error(`Timeout: ${label}`);
 }
-const snapshot = () => page.evaluate(() => window.arealDesktop.snapshot());
+const snapshot = () =>
+  legacyTargetOnly
+    ? withSmokeDeadline("legacy target snapshot", () =>
+        page.evaluate(() => window.arealDesktop.snapshot()),
+      )
+    : page.evaluate(() => window.arealDesktop.snapshot());
 async function call(name, params) {
-  const reply = await page.evaluate(
-    ({ name, params }) => window.arealDesktop.command(name, params),
-    { name, params },
-  );
+  const invoke = () =>
+    page.evaluate(({ name, params }) => window.arealDesktop.command(name, params), {
+      name,
+      params,
+    });
+  const reply = legacyTargetOnly
+    ? await withSmokeDeadline(`legacy target ${name}`, invoke)
+    : await invoke();
   assert.equal(reply.ok, true, JSON.stringify(reply));
   return reply.value;
 }
@@ -752,6 +763,91 @@ async function openLegacyFixture() {
     "explicit supported-bridge setup opens an existing legacy Task in its retained management UI",
   );
   return { owner, draft, seed, saved: { ownerId: owner.id, threadId: started.threadId } };
+}
+async function checkLegacyTargetRegression() {
+  await page.getByRole("button", { name: "定时任务", exact: true }).click();
+  const creation = await openLegacyFixture();
+  pid = creation.owner.id;
+  const history = await call("manage", {
+    projectId: pid,
+    operation: "taskDraftHistory",
+    taskId: creation.seed.id,
+  });
+  assert.equal(history.threadId, creation.saved.threadId);
+  const original = await call("manage", {
+    projectId: pid,
+    operation: "taskDraftRead",
+    threadId: history.threadId,
+  });
+  assert.ok(original.messages.some((message) => message.text === creation.seed.objective));
+  await page.getByText(creation.seed.objective, { exact: true }).first().waitFor();
+  const state = await snapshot();
+  const configuration = state.projects.find((project) => project.id === pid).configurations[
+    history.threadId
+  ];
+  const targetLine = configuration.options.appendInstructions
+    .split("\n")
+    .find((line) => line.startsWith("Current scheduled task: "));
+  const target = JSON.parse(targetLine.slice("Current scheduled task: ".length));
+  assert.equal(target.taskId, creation.seed.id);
+  assert.equal(target.expectedRevision, creation.seed.revision);
+  assert.equal(target.owner, undefined, "saved edit context is a reduced target, not a Core Task");
+  assert.equal(target.runs, undefined);
+  const info = await call("workspace", { projectId: workspacePid, operation: "info" });
+  assert.equal(info.directory, workspace);
+  const skills = await call("manage", {
+    projectId: pid,
+    operation: "skills",
+    threadId: history.threadId,
+  });
+  assert.ok(Array.isArray(skills.data), "Skills remain readable after opening legacy history");
+  await page.getByRole("button", { name: "关闭任务详情", exact: true }).click();
+  await page
+    .getByRole("button", { name: `打开自动化 ${creation.seed.objective}`, exact: true })
+    .click();
+  await until(() => page.getByTestId("chat-input").isEditable(), "legacy history stays responsive");
+  checks.push(
+    "saved reduced target opens history while snapshots, workspace info and Skills respond",
+  );
+  await page.screenshot({ path: join(scratch, "legacy-target-open.png") });
+  for (const restart of [false, true]) {
+    if (restart) {
+      await closeOwnedApp();
+      await launch();
+    }
+    if (!restart) {
+      await page.reload();
+      await page.getByTestId("areal-workbench").waitFor();
+    }
+    await page.getByRole("button", { name: "定时任务", exact: true }).click();
+    await page
+      .getByRole("button", { name: `打开自动化 ${creation.seed.objective}`, exact: true })
+      .click();
+    await until(
+      () => page.getByTestId("chat-input").isEditable(),
+      "restored legacy Composer ready",
+    );
+    const restored = await call("manage", {
+      projectId: pid,
+      operation: "taskDraftRead",
+      threadId: history.threadId,
+    });
+    assert.equal(restored.threadId, history.threadId);
+    assert.deepEqual(restored.messages, original.messages);
+    assert.equal(restored.thread.cwd, creation.owner.root);
+    assert.equal((await call("tasks", { operation: "list" })).data.length, 1);
+    assert.deepEqual((await task(creation.seed.id)).scheduleV2, creation.seed.scheduleV2);
+    assert.equal(
+      (await snapshot()).projects.find((project) => project.id === pid).configurations[
+        history.threadId
+      ].options.appendInstructions,
+      configuration.options.appendInstructions,
+    );
+    checks.push(
+      `${restart ? "desktop restart" : "renderer reload"} preserves legacy target and history`,
+    );
+  }
+  assert.deepEqual(errors, []);
 }
 async function assertGlobalCreation() {
   const main = page.getByRole("main", { name: "新建定时任务", exact: true });
@@ -2790,7 +2886,10 @@ try {
     )
   ).id;
   workspacePid = pid;
-  if (calendarRegression) {
+  if (legacyTargetOnly) {
+    await checkLegacyTargetRegression();
+    passed = true;
+  } else if (calendarRegression) {
     await checkCalendarRegression();
     passed = true;
   } else if (manualRegression) {
@@ -3351,7 +3450,7 @@ try {
   await rm(prepareFailureGate, { force: true });
   for (const gate of watchGates) await rm(gate, { force: true });
   for (const response of held) response.destroy();
-  if (page && !page.isClosed() && pid) {
+  if (page && !page.isClosed() && pid && !(legacyTargetOnly && !passed)) {
     try {
       const rows = await call("tasks", { operation: "list", limit: 100 });
       for (const entry of rows.data) {
@@ -3398,6 +3497,31 @@ try {
       identity: metadata.identity,
       desktopGeneration: metadata.desktopGeneration,
     };
+    if (legacyTargetOnly && !passed) {
+      if (metadata) {
+        try {
+          const command = execFileSync("ps", ["-p", String(metadata.pid), "-o", "command="], {
+            encoding: "utf8",
+          });
+          assert.ok(
+            command.includes("--areal-core-service"),
+            "failed fixture owns the adapter PID",
+          );
+          process.kill(metadata.pid, "SIGKILL");
+          manualCleanup.forcedAdapterExit = true;
+        } catch (error) {
+          if (error.code !== "ESRCH" && error.status !== 1)
+            errors.push("failed fixture adapter cleanup: " + error.message);
+        }
+      }
+      const handle = app?.process();
+      if (handle?.exitCode === null && handle.signalCode === null) {
+        handle.kill("SIGKILL");
+        await until(() => handle.signalCode !== null, "failed fixture Electron exits", 5000);
+        manualCleanup.forcedElectronExit = true;
+      }
+      app = null;
+    }
     try {
       if (app && app.process().exitCode === null && app.process().signalCode === null)
         await closeOwnedApp();

@@ -10,14 +10,14 @@ const { readObservationResult } = require("./history-contract.cjs");
 const {
   readLibraryState,
   readLibraryRequest,
-} = require("../../../packages/workbench/client/desktop-contract/library-media.cjs");
+} = require("@areal/workbench/desktop-contract/library-media");
 /** @typedef {{terminalInheritSystemProfile:boolean,terminalFontFamily:string,httpProxy:string,httpProxyNoProxy:string,httpProxyCaCertPath:string,hardwareAcceleration:boolean,taskNotifications:boolean}} StartupSettings */
-/** @typedef {import("../../../packages/workbench/client/desktop-contract/library-media.cjs").NavigationSummary} NavigationSummary */
-/** @typedef {import("../../../packages/workbench/client/desktop-contract/library-media.cjs").LibraryMetadata} LibraryMetadata */
-/** @typedef {import("../../../packages/workbench/client/desktop-contract/library-media.cjs").LibraryState} LibraryState */
+/** @typedef {import("@areal/workbench/desktop-contract/library-media").NavigationSummary} NavigationSummary */
+/** @typedef {import("@areal/workbench/desktop-contract/library-media").LibraryMetadata} LibraryMetadata */
+/** @typedef {import("@areal/workbench/desktop-contract/library-media").LibraryState} LibraryState */
 /** @typedef {{home:string,saved:import('./project-index.cjs').SavedProject[],projects:Map<string,import('./project-state.cjs').CoreProject>,worktrees?:{owners:(id:string)=>import('./project-index.cjs').SavedProject[]},start:(id:string)=>Promise<import('./project-state.cjs').CoreProject>,save:(name:string,value:unknown)=>Promise<unknown>,onChange:()=>void}} LibraryHost */
-/** @typedef {import("../../../packages/workbench/client/desktop-contract/library-media.cjs").SidebarItem} SidebarItem */
-/** @typedef {import("../../../packages/workbench/client/desktop-contract/library-media.cjs").LibraryRequest} LibraryRequest */
+/** @typedef {import("@areal/workbench/desktop-contract/library-media").SidebarItem} SidebarItem */
+/** @typedef {import("@areal/workbench/desktop-contract/library-media").LibraryRequest} LibraryRequest */
 const DESKTOP_SETTING_DEFAULTS = Object.freeze({
   terminalInheritSystemProfile: true,
   terminalFontFamily: "",

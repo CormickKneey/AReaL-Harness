@@ -18,9 +18,7 @@ const PRESETS = Object.freeze({
 /** @param {string} code @param {string} message */
 const pairingError = (code, message) => Object.assign(new Error(message), { code });
 
-const {
-  isRemoteRequest,
-} = require("../../../packages/workbench/client/desktop-contract/desktop-control.cjs");
+const { isRemoteRequest } = require("@areal/workbench/desktop-contract/desktop-control");
 /** @typedef {import('./remote-config.cjs').RemoteConfig} RemoteConfig */
 /** @typedef {import('./remote-config.cjs').DeviceGrant} DeviceGrant */
 /** @typedef {import('./remote-network.cjs').NetworkMapping} NetworkMapping */
@@ -944,7 +942,7 @@ class RemoteControl {
   }
 }
 /** @typedef {Record<string,unknown>} RemoteSettingsFields */
-/** @typedef {import('../../../packages/workbench/client/desktop-contract/desktop-control.cjs').RemoteRequest} RemoteSettingsRequest */
+/** @typedef {import('@areal/workbench/desktop-contract/desktop-control').RemoteRequest} RemoteSettingsRequest */
 /** @param {unknown} value @returns {value is string[]} */
 function strings(value) {
   return Array.isArray(value) && value.every((item) => typeof item === "string");

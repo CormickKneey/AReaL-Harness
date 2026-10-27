@@ -4,7 +4,7 @@ const {
   readManagementRequest,
   validateManagementResponse,
   readPluginReadiness,
-} = require("../../../packages/workbench/client/desktop-contract/management.cjs");
+} = require("@areal/workbench/desktop-contract/management");
 const { commandResponseError } = require("@areal/workbench/desktop-contract");
 const { configurePluginAuthentication } = require("./plugin-authentication.cjs");
 const { manageTask, taskOperations } = require("./tasks.cjs");

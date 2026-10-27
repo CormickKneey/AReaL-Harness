@@ -1,12 +1,12 @@
 // @ts-check
 "use strict";
 const { isDeepStrictEqual } = require("node:util");
-const { readReceipts } = require("../../../packages/workbench/client/desktop-contract/shared.cjs");
+const { readReceipts } = require("@areal/workbench/desktop-contract/shared");
 const { modelRecord } = require("@areal/workbench/core-model-contract");
 /** @typedef {import('./project-state.cjs').PendingSubmission} Pending */
-/** @typedef {import('../../../packages/workbench/client/desktop-contract/shared.cjs').ReceiptError} ReceiptError */
-/** @typedef {import('../../../packages/workbench/client/desktop-contract/shared.cjs').ReceiptResponse} ReceiptResponse */
-/** @typedef {import('../../../packages/workbench/client/desktop-contract/shared.cjs').Receipt} Receipt */
+/** @typedef {import('@areal/workbench/desktop-contract/shared').ReceiptError} ReceiptError */
+/** @typedef {import('@areal/workbench/desktop-contract/shared').ReceiptResponse} ReceiptResponse */
+/** @typedef {import('@areal/workbench/desktop-contract/shared').Receipt} Receipt */
 const creationTargets = new Map([
   ["areal/thread/start", "thread"],
   ["areal/thread/fork", "thread"],

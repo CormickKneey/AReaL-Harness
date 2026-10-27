@@ -1063,6 +1063,10 @@ async function selectionReferences() {
     "the quote is staged while the response stream remains open",
   );
   assert.ok(streamSteps.has("PARITY:STREAM_SELECTION"));
+  await until(
+    async () => (await referenceCount(main)) === 1,
+    "streamed quote accepted before the next delta",
+  );
   streamSteps.get("PARITY:STREAM_SELECTION")();
   await until(
     async () => (await streamed.innerText()).includes("STREAM_SELECTION_2"),

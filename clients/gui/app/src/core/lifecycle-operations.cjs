@@ -14,21 +14,18 @@ const {
   readTurnMetadata,
 } = require("./local-service.cjs");
 
-/** @typedef {import('../../../packages/workbench/client/desktop-contract/shared.cjs').LifecycleKind} LifecycleKind */
-/** @typedef {import('../../../packages/workbench/client/desktop-contract/shared.cjs').LifecycleMode} LifecycleMode */
-/** @typedef {import('../../../packages/workbench/client/desktop-contract/shared.cjs').TargetPhase} TargetPhase */
-/** @typedef {import('../../../packages/workbench/client/desktop-contract/shared.cjs').LifecycleIdentity} LifecycleIdentity */
-/** @typedef {import('../../../packages/workbench/client/desktop-contract/shared.cjs').LifecycleTarget & {requestId:string}} LifecycleTarget */
+/** @typedef {import('@areal/workbench/desktop-contract/shared').LifecycleKind} LifecycleKind */
+/** @typedef {import('@areal/workbench/desktop-contract/shared').LifecycleMode} LifecycleMode */
+/** @typedef {import('@areal/workbench/desktop-contract/shared').TargetPhase} TargetPhase */
+/** @typedef {import('@areal/workbench/desktop-contract/shared').LifecycleIdentity} LifecycleIdentity */
+/** @typedef {import('@areal/workbench/desktop-contract/shared').LifecycleTarget & {requestId:string}} LifecycleTarget */
 /** @typedef {{requestId:string,kind:LifecycleKind,mode:LifecycleMode,desktopGeneration:string,targets:LifecycleIdentity[],threadId?:string,turnId?:string}} LifecycleRequest */
-/** @typedef {import('../../../packages/workbench/client/desktop-contract/shared.cjs').LifecycleReceipt & {targets:LifecycleTarget[]}} LifecycleReceipt */
+/** @typedef {import('@areal/workbench/desktop-contract/shared').LifecycleReceipt & {targets:LifecycleTarget[]}} LifecycleReceipt */
 /** @typedef {import('./project-state.cjs').CoreProject} Project */
 /** @typedef {import('@areal/runtime-client/core').CoreClient} CoreClient */
 /** @typedef {InstanceType<typeof import('./backend.cjs').CoreBackend>} Backend */
 /** @typedef {{closed:boolean,clients:Set<unknown>,inflight:number}} LifecycleService */
-const {
-  KINDS,
-  isLifecycleReceipt,
-} = require("../../../packages/workbench/client/desktop-contract/shared.cjs");
+const { KINDS, isLifecycleReceipt } = require("@areal/workbench/desktop-contract/shared");
 const PHASES = new Set([
   "notAttempted",
   "acceptedPending",

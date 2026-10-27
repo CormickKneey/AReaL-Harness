@@ -3,7 +3,7 @@
 const {
   readMediaRequest,
   validateMediaResponse,
-} = require("../../../packages/workbench/client/desktop-contract/library-media.cjs");
+} = require("@areal/workbench/desktop-contract/library-media");
 const { commandResponseError } = require("@areal/workbench/desktop-contract");
 const { modelRecord } = require("@areal/workbench/core-model-contract");
 const { readObservationResult } = require("./history-contract.cjs");

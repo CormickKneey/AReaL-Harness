@@ -325,7 +325,7 @@ HTTP 仅接受当前 loopback 或已配置 HTTPS 来源的精确 Host；WebSocke
 
 Host 的 Relay `ready` 必须携带精确 `limits: {framesPerSecond, bytesPerSecond, maxFrameBytes, heartbeatIntervalMs}`；Client 的 ready-channel 格式不变。旧服务缺少该声明、声明无效或额度不足以保留心跳并承载数据时，Host 停止自动重试并报告限额/协议不可用，不猜测默认上限；管理员调整服务后在桌面显式重新启用。服务仍接受原有低额度配置，不为 Host 自动放宽运营策略。
 
-Host 在登记后跨过一秒窗口，再由同一有界队列按实际 JSON/base64 字节平滑排出 data 与 close；每块不超过服务字节额度的四分之一、总发送速率至多其四分之三，帧速率额外保留自动 pong 和窗口边界余量。通道轮转与 close 交替，缓冲计数包含关闭中的已接受字节和待发送 close。正常 close 只排出已接受的有界字节并在 15 秒内结束；撤销、授权缩小、网络来源/连接代际变化、积压超限和非法入站数据立即 terminate 丢弃，不能在失效后发送队列。
+Host 在登记后跨过一秒窗口，再由同一有界队列按实际 JSON/base64 字节平滑排出 data 与 close；每块不超过服务字节额度的四分之一、总发送速率至多其四分之三，帧速率额外保留自动 pong 和窗口边界余量。通道轮转与 close 交替，缓冲计数包含关闭中的已接受字节和待发送 close。正常 close 只排出已接受的有界字节并在 15 秒内结束；接收端先按序交付已接收的有界字节，再报告读取结束，确保与 close 同批到达的拒绝响应仍可读取；撤销、授权缩小、网络来源/连接代际变化、积压超限和非法入站数据立即 terminate 丢弃，不能在失效后发送队列。
 
 Relay 或 Host 重连关闭旧通道，重新建立应用 connection 与读取基线，不重放业务命令。同一登记被新 Host 连接替换时，旧连接停止自动重试，必须在可信桌面显式重新启用。Relay 只承载字节与存活/背压，Direct 继续拥有 HTTP、静态资源、精确 Host/Origin 和 heartbeat。
 

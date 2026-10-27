@@ -819,16 +819,41 @@ try {
           true,
           `${shape} status is the turn tail`,
         );
-        await status.scrollIntoViewIfNeeded();
         await settleLayout();
+        await status.scrollIntoViewIfNeeded();
+        // IntersectionObserver publishes visibility asynchronously after layout.
+        await page.waitForFunction(
+          (el) => {
+            const rect = el.getBoundingClientRect();
+            const clip = el.closest(".messages").getBoundingClientRect();
+            return (
+              rect.bottom > Math.max(0, clip.top) &&
+              rect.top < Math.min(innerHeight, clip.bottom) &&
+              el
+                .getAnimations({ subtree: true })
+                .some(
+                  (animation) =>
+                    animation.animationName === "areal-thinking-sweep" &&
+                    animation.playState === "running",
+                )
+            );
+          },
+          await status.elementHandle(),
+          { timeout: 5000 },
+        );
         const animations = await status.evaluate(
           (el) =>
             el
               .getAnimations({ subtree: true })
-              .filter((animation) => animation.playState === "running").length,
+              .filter(
+                (animation) =>
+                  animation.animationName === "areal-thinking-sweep" &&
+                  animation.playState === "running",
+              ).length,
         );
-        assert.ok(
-          animations > 0,
+        assert.equal(
+          animations,
+          1,
           `${shape} tail status sweeps while visible (CONV-STATUS-01: tool and model progress share one live line)`,
         );
         if (["grouped", "multiple", "single"].includes(shape))

@@ -2,9 +2,7 @@
 "use strict";
 const { mkdir, readdir, readFile } = require("node:fs/promises");
 const { join } = require("node:path");
-const {
-  readTask,
-} = require("../../../packages/workbench/client/desktop-contract/management-tasks.cjs");
+const { readTask } = require("@areal/workbench/desktop-contract/management-tasks");
 const { modelRecord } = require("@areal/workbench/core-model-contract");
 /** @typedef {{id:string,threadId?:string,ambiguous?:boolean}} OwnerRecord */
 /** @param {string} message */
@@ -86,7 +84,7 @@ class TaskWorkspaceOwners {
     owners.add(projectId);
     return JSON.stringify(previous) !== JSON.stringify(record);
   }
-  /** @param {import('./project-state.cjs').CoreProject} project @param {import("../../../packages/workbench/client/desktop-contract/management-tasks.cjs").Task} task */
+  /** @param {import('./project-state.cjs').CoreProject} project @param {import("@areal/workbench/desktop-contract/management-tasks").Task} task */
   async observe(project, task) {
     if (task?.id) await this.observeTasks(project, [task]);
   }
@@ -94,7 +92,7 @@ class TaskWorkspaceOwners {
   async observeProject(project) {
     await this.observeTasks(project, Object.values(project.model.state.tasks ?? {}));
   }
-  /** @param {import('./project-state.cjs').CoreProject} project @param {Array<{id:string,threadId?:string|null}|import("../../../packages/workbench/client/desktop-contract/management-tasks.cjs").InboxEntry>} tasks */
+  /** @param {import('./project-state.cjs').CoreProject} project @param {Array<{id:string,threadId?:string|null}|import("@areal/workbench/desktop-contract/management-tasks").InboxEntry>} tasks */
   async observeTasks(project, tasks) {
     this.registered(project.id);
     let changed = false;

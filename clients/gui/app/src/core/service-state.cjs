@@ -1,13 +1,11 @@
 // @ts-check
 "use strict";
-const {
-  isDesktopSnapshot,
-} = require("../../../packages/workbench/client/desktop-contract/shared.cjs");
+const { isDesktopSnapshot } = require("@areal/workbench/desktop-contract/shared");
 const { sameOwner } = require("./application-owner.cjs");
 
-/** @typedef {import('../../../packages/workbench/client/desktop-contract/shared.cjs').ServiceThread} ServiceThread */
-/** @typedef {import('../../../packages/workbench/client/desktop-contract/shared.cjs').ServiceProject} ServiceProject */
-/** @typedef {import('../../../packages/workbench/client/desktop-contract/shared.cjs').DesktopSnapshot} ServiceSnapshot */
+/** @typedef {import('@areal/workbench/desktop-contract/shared').ServiceThread} ServiceThread */
+/** @typedef {import('@areal/workbench/desktop-contract/shared').ServiceProject} ServiceProject */
+/** @typedef {import('@areal/workbench/desktop-contract/shared').DesktopSnapshot} ServiceSnapshot */
 /** @typedef {{connected:true,busy:boolean,providerUpdating:boolean,clients:number,activeCommands:number,starting:number,pid:number,applicationOwner?:unknown,browserCore?:Record<string,string|null>,browserControlEndpoints?:string[],[key:string]:unknown}} ServiceState */
 /** @typedef {{sequence:number,snapshot:ServiceSnapshot,service:ServiceState,[key:string]:unknown}} ServicePacket */
 

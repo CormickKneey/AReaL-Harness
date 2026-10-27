@@ -707,10 +707,8 @@ async function verifyGlobalDraftAndRun(existingTasks = []) {
   await page.getByRole("button", { name: "项目操作 workspace", exact: true }).focus();
   await page.getByRole("button", { name: "项目操作 workspace", exact: true }).click();
   await page.getByRole("menuitem", { name: "定时任务", exact: true }).click();
-  assert.match(
-    await page.getByRole("combobox", { name: "运行位置筛选", exact: true }).innerText(),
-    /workspace/,
-  );
+  assert.equal(await page.getByRole("combobox", { name: "运行位置筛选", exact: true }).count(), 0);
+  assert.equal(await page.getByLabel("筛选任务", { exact: true }).count(), 0);
   await page.getByRole("button", { name: "新建自动化", exact: true }).click();
   assert.equal(
     await page.getByTestId("areal-workbench").getAttribute("data-project-id"),
@@ -722,10 +720,8 @@ async function verifyGlobalDraftAndRun(existingTasks = []) {
     "ordinary draft initializes its creation intent",
   );
   await page.getByRole("button", { name: "定时任务", exact: true }).click();
-  assert.match(
-    await page.getByRole("combobox", { name: "运行位置筛选", exact: true }).innerText(),
-    /全部项目/,
-  );
+  assert.equal(await page.getByRole("combobox", { name: "运行位置筛选", exact: true }).count(), 0);
+  assert.equal(await page.getByLabel("筛选任务", { exact: true }).count(), 0);
   await recoverScheduledCreation();
   const independentThread = await send("THREAD_SCHEDULE_CREATE_C 每天九点在独立工作目录检查。");
   facts.ui.draftTiming.acceptedAt = await page.evaluate(
@@ -1041,6 +1037,7 @@ try {
     await selectConversation(page, sourceThreadId);
     for (const entry of [A, B]) await card(entry.id).waitFor();
     await resources();
+    await resourceRow(B.id).waitFor();
     assert.equal(await resourceRow(B.id).count(), 1);
     count = requests.length;
     await resourceRow(B.id).getByRole("button", { name: "立即运行", exact: true }).click();
@@ -1049,6 +1046,11 @@ try {
       return value.runs.some((run) => run.status === "running") && held.size && value;
     }, "second task is running at model response barrier");
     assert.ok(requests.length > count);
+    await until(async () => {
+      const view = (await snapshot()).projects.find((project) => project.id === projectId);
+      return view?.state?.tasks?.[B.id]?.revision >= busyB.revision;
+    }, "running task revision reaches the controls projection");
+    await resourceRow(B.id).getByRole("button", { name: "停止本次", exact: true }).waitFor();
     count = requests.length;
     await resourceRow(B.id).getByRole("button", { name: "删除", exact: true }).click();
     const deletedB = await until(async () => {
@@ -1077,6 +1079,7 @@ try {
     assert.equal(await page.getByTestId(`task-item-${sourceThreadId}`).count(), 1);
     await shot("04-deleted-card-history");
     await resources();
+    await resourceRow(A.id).waitFor();
     assert.equal(
       await resourceRow(B.id).count(),
       0,

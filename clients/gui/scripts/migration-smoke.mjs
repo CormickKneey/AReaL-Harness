@@ -777,15 +777,19 @@ try {
       .waitFor();
     assert.equal(await input().innerText(), "主对话草稿保持");
     const donePane = page.locator(`[data-agent-conversation="${doneChild.id}"]`);
-    const doneAvatar = await agentsPanel
-      .locator(`header [data-agent-avatar="${doneChild.id}"]`)
-      .getAttribute("src");
-    assert.ok(doneAvatar.startsWith("data:image/svg+xml"));
     assert.equal(await donePane.locator(".user-message").count(), 1);
     await donePane.locator(".turn-progress-summary").click();
     await donePane.locator(".tool-event").first().waitFor();
     await donePane.getByRole("button", { name: "查看工具原始记录", exact: true }).click();
     await donePane.getByLabel("工具结果", { exact: true }).waitFor();
+    const doneAvatar = await page
+      .locator(`[data-testid=chat-view] [data-agent-avatar="${doneChild.id}"]`)
+      .getAttribute("src");
+    assert.ok(doneAvatar.startsWith("data:image/svg+xml"));
+    assert.equal(
+      await agentsPanel.locator(`header [data-agent-avatar="${doneChild.id}"]`).getAttribute("src"),
+      doneAvatar,
+    );
     await shot("02b-agent-completed");
     await agentsPanel.getByRole("button", { name: "关闭子代理面板", exact: true }).click();
     await resources.waitFor();
@@ -1101,15 +1105,11 @@ try {
       await page
         .locator(`[data-agent-conversation="${doneChild.id}"] [data-turn-status=completed]`)
         .waitFor();
-      // 重新挂载的已完成过程组默认收起，先按用户操作展开，再核验恢复的工具记录。
-      const restoredProgress = page.locator(
-        `[data-agent-conversation="${doneChild.id}"] .turn-progress-summary`,
-      );
+      // 重新挂载的已完成过程组默认收起，先展开再等恢复的工具记录出现。
+      const restoredProgress = donePane.locator(".turn-progress-summary");
       if ((await restoredProgress.getAttribute("aria-expanded")) === "false")
         await restoredProgress.click();
-      assert.ok(
-        (await page.locator(`[data-agent-conversation="${doneChild.id}"] .tool-event`).count()) > 0,
-      );
+      await donePane.locator(".tool-event").first().waitFor();
       assert.equal(
         await agentsPanel
           .locator(`header [data-agent-avatar="${doneChild.id}"]`)

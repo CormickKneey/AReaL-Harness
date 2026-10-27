@@ -6,7 +6,7 @@ const {
   isSubmissionOutcomes,
   isOperationRef,
   isRemoteAssociation,
-} = require("../../../packages/workbench/client/desktop-contract/shared.cjs");
+} = require("@areal/workbench/desktop-contract/shared");
 
 /** @typedef {{id?:string,projectId?:string,threadId?:string,connectionGeneration?:number,code:unknown,reason?:unknown,message:string,retryable:boolean,refreshPending?:boolean,recovery?:import('@areal/runtime-client/core').Recovery}} ObservationError */
 /** @typedef {{id:string,projectId:string,connectionGeneration?:number,operation?:import('@areal/runtime-client/core').OperationRef,scope?:string,message:string,refreshPending:boolean}} RefreshError */
@@ -15,10 +15,10 @@ const {
 /** @typedef {(PendingSubmission|SubmissionOutcome) & {method:string,operationId:string,remote:RemoteAssociation}} RemoteRecord */
 /** @typedef {{client:import('@areal/runtime-client/core').CoreClient,generation?:number,deadline:number,attempt:number,running:boolean,timer?:NodeJS.Timeout|null}} Reconciliation */
 /** The mutable Desktop projection; durable execution facts stay in Core. */
-/** @typedef {import("../../../packages/workbench/client/desktop-contract/shared.cjs").SubmissionParams} SubmissionParams */
-/** @typedef {import("../../../packages/workbench/client/desktop-contract/shared.cjs").RemoteAssociation} RemoteAssociation */
-/** @typedef {import("../../../packages/workbench/client/desktop-contract/shared.cjs").PendingSubmission} PendingSubmission */
-/** @typedef {import("../../../packages/workbench/client/desktop-contract/shared.cjs").SubmissionOutcome} SubmissionOutcome */
+/** @typedef {import("@areal/workbench/desktop-contract/shared").SubmissionParams} SubmissionParams */
+/** @typedef {import("@areal/workbench/desktop-contract/shared").RemoteAssociation} RemoteAssociation */
+/** @typedef {import("@areal/workbench/desktop-contract/shared").PendingSubmission} PendingSubmission */
+/** @typedef {import("@areal/workbench/desktop-contract/shared").SubmissionOutcome} SubmissionOutcome */
 /** @typedef {import('./project-index.cjs').SavedProject & {
  * model:import('@areal/workbench/core-model').CoreTaskModel,
  * pending:PendingSubmission[],pendingWrite?:Promise<unknown>,outcomeWrite?:Promise<void>,reconciliation?:Reconciliation|null,reconciliationRead?:{client:import('@areal/runtime-client/core').CoreClient|null|undefined,generation?:number,promise:Promise<void>}|null,outcomes:Record<string,SubmissionOutcome>,
@@ -28,7 +28,7 @@ const {
  * observationErrors?:Record<string,ObservationError>,refreshErrors?:Record<string,RefreshError>,
  * observationReads?:Map<string,ObservationRead>,summaryReads?:Promise<void|import('@areal/workbench/core-model-contract').CoreThread[]>,
  * taskNotificationMonitor?:InstanceType<typeof import('./notifications.cjs').TaskNotificationMonitor>,taskViews?:Map<string,string>,
- * error:string|null,summaries:import('../../../packages/workbench/client/core-model-contract.js').CoreThread[],
+ * error:string|null,summaries:import('@areal/workbench/core-model-contract').CoreThread[],
  * service?:(import('./local-service.cjs').RecoveryTarget & {endpoint?:string,owner?:unknown,hostPid?:unknown,corePid?:unknown})|null,resourceInitializing?:boolean,endpoint?:string|null,token?:string,connectionGeneration?:number,
  * reconnectTimer?:NodeJS.Timeout|null,reconnectBlocked?:boolean,reconnectAttempt?:number,
  * crashCheck?:{generation:string,started:number},crashAttempts?:number[],crashRecovery?:{original:import('./local-service.cjs').RecoveryTarget,calls:number},journalLoaded?:boolean,client?:import('@areal/runtime-client/core').CoreClient|null,hookRevision?:string|null

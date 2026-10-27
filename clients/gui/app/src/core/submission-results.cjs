@@ -5,7 +5,7 @@ const {
   readAdmission,
   readThreadAdmission,
   readQueueAdmission,
-} = require("../../../packages/workbench/client/desktop-contract/shared.cjs");
+} = require("@areal/workbench/desktop-contract/shared");
 // Consumed fields of protocol::ManagedProcess and workgroup::service::read; other payload fields remain unknown.
 /** @typedef {Record<string,unknown> & {planRevision:number,revisions?:Record<string,{planRevision:number}>}} WorkgroupRecord */
 /** @typedef {Record<string,unknown> & {id:string,record:WorkgroupRecord}} Workgroup */
@@ -77,4 +77,4 @@ module.exports = {
   submissionError,
 };
 
-/** @typedef {import("../../../packages/workbench/client/desktop-contract/shared.cjs").Admission} Admission */
+/** @typedef {import("@areal/workbench/desktop-contract/shared").Admission} Admission */

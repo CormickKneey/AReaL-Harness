@@ -254,8 +254,6 @@ try {
     )
   ).id;
   await page.getByRole("button", { name: "定时任务", exact: true }).click();
-  await page.getByLabel("筛选任务归属").click();
-  await page.getByRole("option", { name: "workspace", exact: true }).click();
   await page.getByRole("button", { name: "新建自动化", exact: true }).click();
   const chat = page.getByTestId("chat-input");
   await chat.waitFor();
