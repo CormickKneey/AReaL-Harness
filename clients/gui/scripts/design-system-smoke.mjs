@@ -1317,6 +1317,8 @@ try {
             sideHeading: style(".side-chat-heading"),
             sideInfo: style(".side-chat-information"),
             composer: style(".composer-editor [contenteditable]"),
+            response: style(".assistant-message"),
+            userMessage: style(".user-bubble"),
             overflow: [...document.querySelectorAll(".design-preview-panel")].some(
               (el) => el.scrollWidth > el.clientWidth + 1,
             ),
@@ -1332,9 +1334,11 @@ try {
         }
         assert.equal(
           measured.composer.fontSize,
-          "12px",
+          "14px",
           "composer content font stays independent of the interface font fixture",
         );
+        assert.equal(measured.response.fontSize, "14px");
+        assert.equal(measured.userMessage.fontSize, "14px");
         assert.equal(
           await expand.getAttribute("aria-expanded"),
           "false",

@@ -4,11 +4,26 @@ import { normalizeApplicationSettings } from "./applicationSettings.js";
 test("new installations keep the current language, typography and interaction defaults", () => {
   const settings = normalizeApplicationSettings(null);
   expect(settings.locale).toBe("zh-CN");
-  expect(settings.contentSize).toBe(12);
+  expect(settings.contentSize).toBe(14);
   expect(settings.sendShortcut).toBe("enter");
   expect(settings.defaultPermissionPreset).toBe("autoReview");
   expect(settings.reducedMotion).toBe("system");
   expect(settings.terminalLocation).toBe("right");
+});
+
+test("new content defaults preserve saved sizes and do not mutate the saved preferences", () => {
+  for (const contentSize of [12, 14, 18, 24]) {
+    const saved = { contentSize, locale: "en", pointerCursor: true };
+    const original = structuredClone(saved);
+    const settings = normalizeApplicationSettings(saved);
+    expect(settings.contentSize).toBe(contentSize);
+    expect(settings.locale).toBe("en");
+    expect(settings.pointerCursor).toBe(true);
+    expect(saved).toEqual(original);
+  }
+  for (const contentSize of [undefined, null, "18", 0, 11, 25, NaN, Infinity]) {
+    expect(normalizeApplicationSettings({ contentSize }).contentSize).toBe(14);
+  }
 });
 
 test("legacy global fonts migrate into both palettes while explicit mode fonts win", () => {

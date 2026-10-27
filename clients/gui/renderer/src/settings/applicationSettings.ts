@@ -59,7 +59,7 @@ export type ApplicationSettings = {
 };
 export const DEFAULT_APPLICATION_SETTINGS: ApplicationSettings = {
   locale: "zh-CN",
-  contentSize: 12,
+  contentSize: 14,
   pointerCursor: false,
   fontSmoothing: true,
   reducedMotion: "system",

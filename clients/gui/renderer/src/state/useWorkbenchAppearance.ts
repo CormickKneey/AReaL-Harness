@@ -8,7 +8,7 @@ export function useWorkbenchAppearance(
 ) {
   const [themeReady, setThemeReady] = useState(false);
   const [uiFontSize, setUiFontSize] = useState(
-    () => Number(localStorage.getItem("areal-gui:font-size")) || 12,
+    () => Number(localStorage.getItem("areal-gui:font-size")) || 14,
   );
   useEffect(() => {
     document.documentElement.style.setProperty("--ui-font-size", `${uiFontSize}px`);

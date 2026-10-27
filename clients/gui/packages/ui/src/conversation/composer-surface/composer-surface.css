@@ -45,7 +45,7 @@
   caret-color: var(--color-foreground);
 }
 .composer-editor :is([contenteditable], textarea) {
-  /* CONV-COMPOSER-01: typed text matches the conversation it becomes (12px / ~17px at default). */
+  /* CONV-COMPOSER-01：输入与发送后的正文使用同一内容字号，默认 14px / 约 20px。 */
   font-size: var(--text-conversation);
   line-height: var(--conversation-line);
 }

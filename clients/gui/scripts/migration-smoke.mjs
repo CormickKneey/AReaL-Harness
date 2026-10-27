@@ -647,7 +647,7 @@ try {
       await page
         .locator(".task-resources-popup")
         .evaluate((el) => el.getBoundingClientRect().width),
-      268, // Default 12px UI typography and the shared inline-spacing token.
+      312, // 默认 14px 界面字号 × 22，加共享行内间距的一半。
     );
     await page.keyboard.press("Escape");
     await resources.waitFor({ state: "hidden" });

@@ -162,7 +162,7 @@ function Preview() {
       new URLSearchParams(window.location.search).has(name),
     ),
   );
-  const [fontSize, setFontSize] = useState("12");
+  const [fontSize, setFontSize] = useState("14");
   const [width, setWidth] = useState("wide");
   const [state, setState] = useState<PreviewState>("ready");
   const [text, setText] = useState("");

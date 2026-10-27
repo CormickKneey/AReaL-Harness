@@ -7,19 +7,19 @@
 
 | 变量 | 默认值 | 用途 |
 | --- | --- | --- |
-| `--ui-font-size` | `12px` | 界面默认字号；用户偏好可覆盖 |
+| `--ui-font-size` | `14px` | 界面默认字号；用户偏好可覆盖 |
 | `--ui-font-weight` | `400` | 界面常规字重 |
-| `--text-conversation` | `var(--content-font-size, 12px)` | 对话时间线字号：正文、活动行、子代理行与过程状态共用，跟随内容字号偏好 |
+| `--text-conversation` | `var(--content-font-size, 14px)` | 对话时间线字号：正文、活动行、子代理行与过程状态共用，跟随内容字号偏好 |
 | `--text-ui-xl` | `calc(var(--ui-font-size) + 4px)` | 区块标题 |
 | `--text-page-title` | `calc(var(--ui-font-size) + 8px)` | 页面标题、空态大标题 |
 | `--text-ui-lg` | `calc(var(--ui-font-size) + 2px)` | 输入框文字、卡片标题等较突出内容 |
 | `--text-ui-base` | `var(--ui-font-size)` | 界面正文、卡片内容、普通反馈；在消息正文内被重映射为内容字号 |
 | `--text-ui-caption` | `max(12px, calc(var(--ui-font-size) - 1px))` | 按钮、菜单与紧凑标签 |
-| `--text-content-caption` | `max(12px, calc(var(--content-font-size, 12px) - 1px))` | 执行摘要、状态等过程附注，跟随内容字号而非界面字号 |
-| `--text-content-h1` | `calc(var(--content-font-size, 12px) + 10px)` | 阅读内容一级标题（文件阅读器、长文档），跟随内容字号；14px 时 24px |
-| `--text-content-h2` | `calc(var(--content-font-size, 12px) + 6px)` | 阅读内容二级标题，跟随内容字号；14px 时 20px |
-| `--text-content-h3` | `calc(var(--content-font-size, 12px) + 4px)` | 阅读内容三级标题，跟随内容字号；14px 时 18px |
-| `--text-content-h4` | `calc(var(--content-font-size, 12px) + 2px)` | 阅读内容四级标题，跟随内容字号；14px 时 16px |
+| `--text-content-caption` | `max(12px, calc(var(--content-font-size, 14px) - 1px))` | 执行摘要、状态等过程附注，跟随内容字号而非界面字号 |
+| `--text-content-h1` | `calc(var(--content-font-size, 14px) + 10px)` | 阅读内容一级标题（文件阅读器、长文档），跟随内容字号；14px 时 24px |
+| `--text-content-h2` | `calc(var(--content-font-size, 14px) + 6px)` | 阅读内容二级标题，跟随内容字号；14px 时 20px |
+| `--text-content-h3` | `calc(var(--content-font-size, 14px) + 4px)` | 阅读内容三级标题，跟随内容字号；14px 时 18px |
+| `--text-content-h4` | `calc(var(--content-font-size, 14px) + 2px)` | 阅读内容四级标题，跟随内容字号；14px 时 16px |
 | `--text-ui-sm` | `max(12px, calc(var(--ui-font-size) - 2px))` | 说明文字、次要反馈、表格辅助列 |
 | `--text-ui-xs` | `max(11px, calc(var(--ui-font-size) - 3px))` | 来源细节、元信息；最小 11px，不用于正文 |
 | `--text-ui-2xs` | `calc(var(--ui-font-size) - 5px)` | 仅限工作流图轴面的例外刻度 |

@@ -2128,7 +2128,7 @@ button[aria-label="停止"] {
 .user-bubble {
   font-family: var(--font-content, var(--font-sans));
   font-size: var(--content-font-size, var(--text-fixed-body));
-  --text-ui-base: var(--content-font-size, 12px);
+  --text-ui-base: var(--text-conversation);
   font-weight: var(--ui-font-weight);
   letter-spacing: normal;
 }
